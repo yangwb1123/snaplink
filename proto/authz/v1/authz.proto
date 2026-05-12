@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package snaplink.authz.v1;
+
+option go_package = "github.com/snaplink/sso/gen/proto/authz/v1;authzv1";
+
+// Authorizer answers "can this user do X?" queries. Backed by the
+// permissions.Provider interface; supports per-app (client_id) scoping.
+service Authorizer {
+  // Check returns whether the subject holds the requested permission code.
+  // Wildcard semantics match permissions.Matches in Go: exact, "<domain>:*",
+  // and "*". Inexpensive; safe to call on every request from a sidecar.
+  rpc Check(CheckRequest) returns (CheckResponse);
+
+  // ListPermissions returns the full set of codes for the subject.
+  // Use it to warm a cache; for per-request gating prefer Check.
+  rpc ListPermissions(SubjectRequest) returns (PermissionList);
+
+  // ListRoles returns the role objects assigned to the subject.
+  rpc ListRoles(SubjectRequest) returns (RoleList);
+
+  // GetMenus returns the filtered menu tree the subject can see.
+  rpc GetMenus(SubjectRequest) returns (MenuTree);
+}
+
+message CheckRequest {
+  string subject_id = 1;
+  string client_id  = 2; // app scope; empty = global
+  string permission = 3; // permission code being requested
+}
+
+message CheckResponse {
+  bool allowed = 1;
+}
+
+message SubjectRequest {
+  string subject_id = 1;
+  string client_id  = 2;
+}
+
+message Permission {
+  string code     = 1;
+  string resource = 2;
+}
+
+message PermissionList {
+  repeated Permission permissions = 1;
+}
+
+message Role {
+  string code        = 1;
+  string name        = 2;
+  string description = 3;
+  repeated string permissions = 4; // permission codes bundled in the role
+}
+
+message RoleList {
+  repeated Role roles = 1;
+}
+
+message Button {
+  string code       = 1;
+  string name       = 2;
+  string permission = 3;
+}
+
+message MenuItem {
+  string id              = 1;
+  string name            = 2;
+  string path            = 3;
+  string icon            = 4;
+  string permission      = 5;
+  repeated Button buttons   = 6;
+  repeated MenuItem children = 7;
+}
+
+message MenuTree {
+  repeated MenuItem items = 1;
+}

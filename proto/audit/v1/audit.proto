@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package snaplink.audit.v1;
+
+option go_package = "github.com/snaplink/sso/gen/proto/audit/v1;auditv1";
+
+// AuditWriter ingests events from gateways and other services. The streaming
+// RPC is the hot path — gRPC keeps a long-lived connection so per-event
+// overhead is just the proto frame.
+service AuditWriter {
+  // StreamEvents takes events from the client one-by-one and acknowledges
+  // each by returned count when the client closes the send half.
+  rpc StreamEvents(stream Event) returns (StreamAck);
+
+  // Record is the single-event variant for callers that don't want to keep
+  // a stream open. Same Event schema.
+  rpc Record(Event) returns (RecordAck);
+}
+
+// Event mirrors audit.Event from the Go SDK; field numbers are stable.
+message Event {
+  string id              = 1;   // optional; server assigns when empty
+  string type            = 2;   // login / logout / token_issued / ...
+  string outcome         = 3;   // success | failure
+  int64  timestamp_unix  = 4;   // unix seconds; server fills if zero
+  string request_id      = 5;
+  string trace_id        = 6;
+  string span_id         = 7;
+  string parent_span_id  = 8;
+  string actor_id        = 9;
+  string actor_ip        = 10;
+  string user_agent      = 11;
+  string client_id       = 12;
+  string provider        = 13;
+  string token_strategy  = 14;
+  string session_id      = 15;
+  string token_id        = 16;
+  string reason          = 17;
+  map<string, string> metadata = 18;
+}
+
+message StreamAck {
+  int64 received_count   = 1;
+  int64 persisted_count  = 2;
+}
+
+message RecordAck {
+  string id = 1; // ID assigned by the sink
+}

@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package snaplink.discovery.v1;
+
+option go_package = "github.com/snaplink/sso/gen/proto/discovery/v1;discoveryv1";
+
+// Discovery is a thin gRPC facade over registry.Registry. Use it from
+// services that don't want to embed the registry client directly (e.g. a
+// sidecar in another language).
+service Discovery {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+  rpc Discover(DiscoverRequest) returns (DiscoverResponse);
+
+  // Watch streams Added / Removed / Updated events for a service name.
+  // The stream lives until the client cancels or the registry closes.
+  rpc Watch(WatchRequest) returns (stream ServiceEvent);
+}
+
+message Service {
+  string id       = 1;
+  string name     = 2;
+  string address  = 3;
+  int32  port     = 4;
+  repeated string tags = 5;
+  map<string, string> metadata = 6;
+  string version  = 7;
+  int64  ttl_seconds = 8;
+}
+
+message RegisterRequest  { Service service = 1; }
+message RegisterResponse {}
+
+message DeregisterRequest  { string instance_id = 1; }
+message DeregisterResponse {}
+
+message DiscoverRequest  { string service_name = 1; }
+message DiscoverResponse { repeated Service instances = 1; }
+
+message WatchRequest { string service_name = 1; }
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_ADDED       = 1;
+  EVENT_TYPE_REMOVED     = 2;
+  EVENT_TYPE_UPDATED     = 3;
+}
+
+message ServiceEvent {
+  EventType type    = 1;
+  Service   service = 2;
+}
