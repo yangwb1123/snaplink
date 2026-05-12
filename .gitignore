@@ -1,0 +1,15 @@
+# Built binaries (Go produces these at module root and cmd/*).
+/sso-server
+/cmd/sso-server/sso-server
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local test artifacts
+*.log
+*.out
+coverage.out
