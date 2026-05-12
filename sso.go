@@ -1,0 +1,292 @@
+package sso
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/permissions"
+)
+
+// Server is the core SSO orchestrator.
+type Server struct {
+	authenticators       map[string]Authenticator
+	tokenIssuers         map[string]TokenIssuer // strategy name -> issuer
+	defaultTokenStrategy string
+	userProvider         UserProvider
+	clientStore          ClientStore
+	sessionMgr           SessionManager
+	router               Router
+	middleware           []MiddlewareFunc
+	logger               Logger
+	auditor              *audit.Recorder
+	auditAPI             bool
+	requestIDMW          bool
+	permissions          permissions.Provider
+	embedPermissions     bool
+	issuer               string
+	sessionTTL           time.Duration
+	tokenTTL             time.Duration
+	baseURL              string
+}
+
+// Option configures the Server.
+type Option func(*Server)
+
+// NewServer creates a new SSO server.
+func NewServer(opts ...Option) *Server {
+	s := &Server{
+		authenticators: make(map[string]Authenticator),
+		tokenIssuers:   make(map[string]TokenIssuer),
+		issuer:         DefaultIssuer,
+		sessionTTL:     DefaultSessionDuration,
+		tokenTTL:       DefaultTokenTTL,
+		logger:         NopLogger{},
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// WithRouter sets the HTTP router.
+func WithRouter(r Router) Option {
+	return func(s *Server) { s.router = r }
+}
+
+// WithAuthenticator registers an authentication method.
+func WithAuthenticator(a Authenticator) Option {
+	return func(s *Server) { s.authenticators[a.Name()] = a }
+}
+
+// WithTokenIssuer registers a TokenIssuer under the given strategy name.
+// Clients select among registered strategies via Client.TokenStrategy.
+// If no client-level strategy is set, the Server's default strategy is used.
+func WithTokenIssuer(name string, ti TokenIssuer) Option {
+	return func(s *Server) { s.tokenIssuers[name] = ti }
+}
+
+// WithDefaultTokenStrategy names the strategy used when a Client does not
+// specify its own.
+func WithDefaultTokenStrategy(name string) Option {
+	return func(s *Server) { s.defaultTokenStrategy = name }
+}
+
+// WithUserProvider sets the user data store.
+func WithUserProvider(up UserProvider) Option {
+	return func(s *Server) { s.userProvider = up }
+}
+
+// WithClientStore sets the client application store.
+func WithClientStore(cs ClientStore) Option {
+	return func(s *Server) { s.clientStore = cs }
+}
+
+// WithSessionManager sets the session manager.
+func WithSessionManager(sm SessionManager) Option {
+	return func(s *Server) { s.sessionMgr = sm }
+}
+
+// WithLogger sets the logger.
+func WithLogger(l Logger) Option {
+	return func(s *Server) { s.logger = l }
+}
+
+// WithIssuer sets the token issuer name.
+func WithIssuer(issuer string) Option {
+	return func(s *Server) { s.issuer = issuer }
+}
+
+// WithSessionTTL sets the session lifetime.
+func WithSessionTTL(ttl time.Duration) Option {
+	return func(s *Server) { s.sessionTTL = ttl }
+}
+
+// WithTokenTTL sets the token lifetime.
+func WithTokenTTL(ttl time.Duration) Option {
+	return func(s *Server) { s.tokenTTL = ttl }
+}
+
+// WithBaseURL sets the base URL of this SSO server.
+func WithBaseURL(url string) Option {
+	return func(s *Server) { s.baseURL = url }
+}
+
+// WithAuditRecorder enables audit-event recording. The Server will emit
+// login/logout/code-send/etc. events to r. Without this option, audit calls
+// are silent no-ops.
+func WithAuditRecorder(r *audit.Recorder) Option {
+	return func(s *Server) { s.auditor = r }
+}
+
+// WithAuditAPI mounts the audit query endpoints
+// (GET /api/v1/audit/events, GET /api/v1/audit/events/:id). Requires a
+// recorder to also be set. Endpoints are unauthenticated by default — gate
+// them with middleware or a reverse proxy if exposed beyond localhost.
+func WithAuditAPI() Option {
+	return func(s *Server) { s.auditAPI = true }
+}
+
+// WithTracingMiddleware installs TracingMiddleware ahead of all routes.
+// It propagates W3C Traceparent (trace_id + span chaining) and X-Request-Id
+// (single-hop correlation) so audit events automatically pick them up.
+func WithTracingMiddleware() Option {
+	return func(s *Server) { s.requestIDMW = true }
+}
+
+// WithRequestIDMiddleware is a back-compat alias for WithTracingMiddleware.
+// New code should call WithTracingMiddleware directly.
+func WithRequestIDMiddleware() Option { return WithTracingMiddleware() }
+
+// WithPermissionProvider enables the per-user permission/role/menu lookup
+// endpoints. Without this option, those endpoints respond 501.
+func WithPermissionProvider(p permissions.Provider) Option {
+	return func(s *Server) { s.permissions = p }
+}
+
+// WithEmbedPermissionsInLogin attaches a user's roles, permissions, and menu
+// tree to the /auth/login response — convenient for SPAs that want the
+// authorization surface immediately, instead of an extra round trip.
+func WithEmbedPermissionsInLogin() Option {
+	return func(s *Server) { s.embedPermissions = true }
+}
+
+// RegisterAuthenticator adds an authenticator at runtime.
+func (s *Server) RegisterAuthenticator(a Authenticator) {
+	s.authenticators[a.Name()] = a
+}
+
+// Mount registers all SSO endpoints on the router.
+func (s *Server) Mount() {
+	if s.router == nil {
+		s.router = NewStdRouter()
+	}
+	if s.requestIDMW {
+		s.router.Use(TracingMiddleware())
+	}
+
+	s.router.GET(PathHealth, s.handleHealth)
+	s.router.GET(PathJWKS, s.handleJWKS)
+	s.router.POST(PathLogin, s.handleLogin)
+	s.router.POST(PathSendCode, s.handleSendCode)
+	s.router.GET(PathCallback, s.handleCallback)
+	s.router.POST(PathToken, s.handleToken)
+	s.router.GET(PathUserInfo, s.handleUserInfo)
+	s.router.POST(PathLogout, s.handleLogout)
+	s.router.GET(PathMyPermissions, s.handleMyPermissions)
+	s.router.GET(PathMyMenus, s.handleMyMenus)
+	s.router.GET(PathMyRoles, s.handleMyRoles)
+
+	api := s.router.Group(PathAPIPrefix)
+	api.GET(PathClientByID, s.handleGetClient)
+	if s.auditAPI && s.auditor != nil {
+		api.GET(PathAuditEvents, s.handleAuditEvents)
+		api.GET(PathAuditEventByID, s.handleAuditEventByID)
+	}
+}
+
+// Handler returns the http.Handler for the server.
+func (s *Server) Handler() http.Handler {
+	s.Mount()
+	return s.router
+}
+
+func (s *Server) getAuthenticator(name string) (Authenticator, error) {
+	a, ok := s.authenticators[name]
+	if !ok {
+		return nil, fmt.Errorf("authenticator %q not registered", name)
+	}
+	return a, nil
+}
+
+// issuerForClient returns the TokenIssuer that should mint tokens for the
+// given client. Resolution order: client.TokenStrategy → server default →
+// (if exactly one issuer is registered) that one.
+func (s *Server) issuerForClient(c *Client) (string, TokenIssuer, error) {
+	name := ""
+	if c != nil && c.TokenStrategy != "" {
+		name = c.TokenStrategy
+	} else if s.defaultTokenStrategy != "" {
+		name = s.defaultTokenStrategy
+	} else if len(s.tokenIssuers) == 1 {
+		for n := range s.tokenIssuers {
+			name = n
+		}
+	}
+	if name == "" {
+		return "", nil, fmt.Errorf("no token strategy resolvable for client")
+	}
+	ti, ok := s.tokenIssuers[name]
+	if !ok {
+		return name, nil, fmt.Errorf("token strategy %q not registered", name)
+	}
+	return name, ti, nil
+}
+
+// validateAnyToken tries each registered issuer until one accepts the token.
+// Returned issuerName lets callers correlate revocations or audit logs.
+func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
+	var lastErr error
+	for name, ti := range s.tokenIssuers {
+		claims, err := ti.Validate(ctx, token)
+		if err == nil {
+			return claims, name, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no token issuers registered")
+	}
+	return nil, "", lastErr
+}
+
+// revokeAcrossIssuers asks every registered issuer to revoke the token
+// (Revoke is expected to be tolerant of unknown tokens). Returns the names
+// of issuers that successfully revoked.
+func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) []string {
+	var revoked []string
+	for name, ti := range s.tokenIssuers {
+		if err := ti.Revoke(ctx, token); err == nil {
+			revoked = append(revoked, name)
+		}
+	}
+	return revoked
+}
+
+func (s *Server) requireDeps(deps ...string) error {
+	for _, d := range deps {
+		switch d {
+		case depTokenIssuer:
+			if len(s.tokenIssuers) == 0 {
+				return fmt.Errorf("at least one TokenIssuer is required")
+			}
+		case depUserProvider:
+			if s.userProvider == nil {
+				return fmt.Errorf("UserProvider is required")
+			}
+		case depClientStore:
+			if s.clientStore == nil {
+				return fmt.Errorf("ClientStore is required")
+			}
+		case depSessionMgr:
+			if s.sessionMgr == nil {
+				return fmt.Errorf("SessionManager is required")
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) validateSession(sessionID string) (*Session, error) {
+	ctx := context.Background()
+	session, err := s.sessionMgr.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session.IsExpired() || session.Revoked {
+		return nil, fmt.Errorf("session expired or revoked")
+	}
+	return session, nil
+}

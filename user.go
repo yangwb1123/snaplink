@@ -1,0 +1,10 @@
+package sso
+
+import "context"
+
+// UserProvider manages user data storage and retrieval.
+type UserProvider interface {
+	GetByID(ctx context.Context, id string) (*User, error)
+	GetByExternalID(ctx context.Context, provider string, externalID string) (*User, error)
+	CreateOrUpdate(ctx context.Context, user *User) error
+}
