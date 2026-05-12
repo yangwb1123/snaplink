@@ -16,6 +16,9 @@ const (
 	EventCallbackFailure EventType = "callback_failure"
 	EventClientAccess    EventType = "client_access"
 	EventPermissionQuery EventType = "permission_query"
+
+	EventNetPolicyApply  EventType = "netpolicy_apply"
+	EventNetPolicyDelete EventType = "netpolicy_delete"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
