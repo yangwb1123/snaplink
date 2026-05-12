@@ -31,6 +31,10 @@ func (g *GinRouter) POST(path string, handler sso.HandlerFunc) {
 	g.group.POST(path, g.wrapHandler(handler))
 }
 
+func (g *GinRouter) DELETE(path string, handler sso.HandlerFunc) {
+	g.group.DELETE(path, g.wrapHandler(handler))
+}
+
 func (g *GinRouter) Group(prefix string, middlewares ...sso.MiddlewareFunc) sso.Router {
 	all := append(append([]sso.MiddlewareFunc{}, g.middlewares...), middlewares...)
 	return &GinRouter{

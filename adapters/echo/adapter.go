@@ -31,6 +31,10 @@ func (e *EchoRouter) POST(path string, handler sso.HandlerFunc) {
 	e.group.POST(path, e.wrapHandler(handler))
 }
 
+func (e *EchoRouter) DELETE(path string, handler sso.HandlerFunc) {
+	e.group.DELETE(path, e.wrapHandler(handler))
+}
+
 func (e *EchoRouter) Group(prefix string, middlewares ...sso.MiddlewareFunc) sso.Router {
 	all := append(append([]sso.MiddlewareFunc{}, e.middlewares...), middlewares...)
 	return &EchoRouter{
