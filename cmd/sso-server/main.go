@@ -29,7 +29,9 @@ import (
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
 	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
 	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
+	netpolicyv1 "github.com/snaplink/sso/gen/proto/netpolicy/v1"
 	"github.com/snaplink/sso/grpcserver"
+	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
 	"github.com/snaplink/sso/registry/memory"
@@ -75,12 +77,17 @@ func main() {
 }
 
 // app bundles the wired SDK components so both HTTP and gRPC servers can
-// reuse the same Recorder / Provider / Registry instances.
+// reuse the same Recorder / Provider / Registry / netpolicy instances.
 type app struct {
-	server   *sso.Server
-	recorder *audit.Recorder
-	provider permissions.Provider
-	registry registry.Registry
+	server     *sso.Server
+	recorder   *audit.Recorder
+	provider   permissions.Provider
+	registry   registry.Registry
+	netStore   netpolicy.Store     // nil when network disabled
+	classifier *netpolicy.Classifier // nil when network disabled
+
+	// netStop closes when the Classifier's Watch loop exits (after shutdown).
+	netStop <-chan struct{}
 }
 
 func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen string) error {
@@ -89,6 +96,9 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 		return err
 	}
 	defer a.registry.Close()
+	if a.netStore != nil {
+		defer a.netStore.Close()
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Server.Listen,
@@ -160,16 +170,29 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 			grpcSrv.Stop()
 		}
 	}
+	// Wait briefly for the Classifier's watch loop to exit, so any in-flight
+	// Apply events are flushed before we drop the store reference.
+	if a.netStop != nil {
+		select {
+		case <-a.netStop:
+		case <-ctx.Done():
+		}
+	}
 	logger.Info("server stopped cleanly")
 	return nil
 }
 
-// newGRPCServer registers all three Phase A services on a fresh grpc.Server.
+// newGRPCServer registers every available service on a fresh grpc.Server.
+// Phase A: AuditWriter, Authorizer, Discovery (always). Phase B:
+// PolicyService when network is enabled.
 func newGRPCServer(a *app) *grpc.Server {
 	s := grpc.NewServer()
 	auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
 	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
 	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
+	if a.netStore != nil {
+		netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
+	}
 	return s
 }
 
@@ -227,6 +250,26 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 
+	netStore, err := cfg.BuildNetworkStore()
+	if err != nil {
+		return nil, fmt.Errorf("network policy store: %w", err)
+	}
+	var classifier *netpolicy.Classifier
+	var netStop <-chan struct{}
+	if netStore != nil {
+		classifier = netpolicy.NewClassifier()
+		done, err := classifier.Start(context.Background(), netStore)
+		if err != nil {
+			_ = netStore.Close()
+			return nil, fmt.Errorf("network classifier: %w", err)
+		}
+		netStop = done
+		opts = append(opts, sso.WithNetworkPolicy(netStore, classifier))
+		if cfg.Network.APIEnabled {
+			opts = append(opts, sso.WithNetworkPolicyAPI())
+		}
+	}
+
 	for _, a := range buildAuthenticators(cfg, logger) {
 		opts = append(opts, sso.WithAuthenticator(a))
 	}
@@ -248,7 +291,15 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}
-	return &app{server: srv, recorder: recorder, provider: provider, registry: reg}, nil
+	return &app{
+		server:     srv,
+		recorder:   recorder,
+		provider:   provider,
+		registry:   reg,
+		netStore:   netStore,
+		classifier: classifier,
+		netStop:    netStop,
+	}, nil
 }
 
 func buildAuthenticators(cfg *config.Config, logger sso.Logger) []sso.Authenticator {
@@ -330,11 +381,20 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathAuditEvents)
 		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathAuditEventByID)
 	}
+	if cfg.Network.Enabled && cfg.Network.APIEnabled {
+		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathNetPolicies)
+		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathNetPolicyByName)
+		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathNetPolicyClassify)
+		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathNetPolicyResolveMe)
+	}
 	if grpcListen != "" {
 		fmt.Printf("gRPC services on %s:\n", grpcListen)
 		fmt.Println("  snaplink.audit.v1.AuditWriter / Record + StreamEvents")
 		fmt.Println("  snaplink.authz.v1.Authorizer / Check + List* + GetMenus")
 		fmt.Println("  snaplink.discovery.v1.Discovery / Register + Discover + Watch")
+		if cfg.Network.Enabled {
+			fmt.Println("  snaplink.netpolicy.v1.PolicyService / Get + List + Apply + Delete + Watch + Classify")
+		}
 	}
 }
 

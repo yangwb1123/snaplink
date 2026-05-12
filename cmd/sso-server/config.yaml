@@ -85,6 +85,45 @@ permissions:
     - { user_id: user-alice, client_id: mobile-app, roles: [user] }
     - { user_id: user-alice, client_id: "",         roles: [items-reader] }
 
+# Network-classification control plane (Phase B microservice). Operators
+# declare named classes (intranet, public, dmz, ...) with CIDRs/hostnames
+# that identify them and the URLs the SSO server advertises back to clients
+# in that class. Policies can be updated live via the gRPC PolicyService or
+# the REST endpoints under /api/v1/netpolicy/...; seeds below are applied
+# at startup.
+#
+# Matching rules: hostnames beat CIDRs; ties broken by priority (higher wins).
+network:
+  enabled: true
+  api_enabled: true         # mount REST + gRPC PolicyService
+  store: memory             # "memory" (default) or "etcd"
+  # etcd_endpoints: [localhost:2379]
+  # etcd_prefix: /snaplink/netpolicy
+  policies:
+    - name: intranet
+      cidrs:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      hostnames:
+        - sso.intranet.local
+      priority: 100
+      advertised_base_url:   http://sso.intranet.local:8080
+      advertised_jwks_url:   http://sso.intranet.local:8080/.well-known/jwks.json
+      advertised_logout_url: http://sso.intranet.local:8080/logout
+      metadata:
+        site: hq
+
+    - name: public
+      hostnames:
+        - sso.example.com
+      priority: 50
+      advertised_base_url:   https://sso.example.com
+      advertised_jwks_url:   https://sso.example.com/.well-known/jwks.json
+      advertised_logout_url: https://sso.example.com/logout
+      metadata:
+        exposed_via: frp
+
 # Each client = one APP. Per-app policy lives here:
 #   allowed_authenticators: which login methods this app accepts
 #   token_strategy:        which TokenIssuer mints this app's tokens

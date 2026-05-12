@@ -5,6 +5,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"github.com/goccy/go-yaml"
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
+	"github.com/snaplink/sso/netpolicy"
+	"github.com/snaplink/sso/netpolicy/memory"
 	"github.com/snaplink/sso/permissions"
 )
 
@@ -27,6 +30,7 @@ type Config struct {
 	Logging        LoggingConfig         `yaml:"logging"`
 	Audit          AuditConfig           `yaml:"audit"`
 	Permissions    PermissionsConfig     `yaml:"permissions"`
+	Network        NetworkConfig         `yaml:"network"`
 	Clients        []ClientConfig        `yaml:"clients"`
 }
 
@@ -81,6 +85,74 @@ type AuditConfig struct {
 	Enabled        bool `yaml:"enabled"`
 	APIEnabled     bool `yaml:"api_enabled"`
 	MemoryCapacity int  `yaml:"memory_capacity"`
+}
+
+// NetworkConfig configures the network-classification control plane.
+//
+//   - Enabled=true wires a Store and Classifier into the Server.
+//   - APIEnabled=true additionally mounts the REST endpoints
+//     (/api/v1/netpolicy/...).
+//   - Store selects the backend; "memory" (default) is in-process, "etcd"
+//     reads from an etcd cluster (see EtcdEndpoints below).
+//   - Policies is the seed list applied at startup. Operators can also add /
+//     update / delete policies live via the API.
+type NetworkConfig struct {
+	Enabled       bool                  `yaml:"enabled"`
+	APIEnabled    bool                  `yaml:"api_enabled"`
+	Store         string                `yaml:"store"` // "memory" | "etcd"
+	EtcdEndpoints []string              `yaml:"etcd_endpoints"`
+	EtcdPrefix    string                `yaml:"etcd_prefix"`
+	Policies      []NetworkPolicySeed   `yaml:"policies"`
+}
+
+// NetworkPolicySeed is the YAML projection of netpolicy.Policy with only the
+// fields operators are allowed to set declaratively.
+type NetworkPolicySeed struct {
+	Name                string            `yaml:"name"`
+	CIDRs               []string          `yaml:"cidrs"`
+	Hostnames           []string          `yaml:"hostnames"`
+	Priority            int32             `yaml:"priority"`
+	AdvertisedBaseURL   string            `yaml:"advertised_base_url"`
+	AdvertisedJWKSURL   string            `yaml:"advertised_jwks_url"`
+	AdvertisedLogoutURL string            `yaml:"advertised_logout_url"`
+	Metadata            map[string]string `yaml:"metadata"`
+}
+
+// BuildNetworkStore returns a netpolicy.Store configured per NetworkConfig
+// and seeds it with the declared policies. Returns nil when network is
+// disabled. Callers own the returned store's lifetime — Close it at
+// shutdown.
+func (c *Config) BuildNetworkStore() (netpolicy.Store, error) {
+	if !c.Network.Enabled {
+		return nil, nil
+	}
+	var store netpolicy.Store
+	switch strings.ToLower(c.Network.Store) {
+	case "", "memory":
+		store = memory.New()
+	case "etcd":
+		// Lazy import: only construct when actually asked for, so unit tests
+		// that exercise memory mode don't need etcd reachable.
+		return nil, errors.New("config: network.store=etcd: construct via cmd/sso-server directly (needs endpoints + dial timeout)")
+	default:
+		return nil, fmt.Errorf("config: unknown network.store %q", c.Network.Store)
+	}
+	for _, seed := range c.Network.Policies {
+		if _, err := store.Apply(context.Background(), &netpolicy.Policy{
+			Name:                seed.Name,
+			CIDRs:               seed.CIDRs,
+			Hostnames:           seed.Hostnames,
+			Priority:            seed.Priority,
+			AdvertisedBaseURL:   seed.AdvertisedBaseURL,
+			AdvertisedJWKSURL:   seed.AdvertisedJWKSURL,
+			AdvertisedLogoutURL: seed.AdvertisedLogoutURL,
+			Metadata:            seed.Metadata,
+		}); err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("config: seed policy %q: %w", seed.Name, err)
+		}
+	}
+	return store, nil
 }
 
 // ServerConfig holds top-level Server tunables.
