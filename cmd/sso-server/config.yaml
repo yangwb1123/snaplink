@@ -1,0 +1,154 @@
+server:
+  issuer: snaplink-sso
+  base_url: http://localhost:8080
+  listen: ":8080"
+  session_ttl: 24h
+  token_ttl: 1h
+  default_token_strategy: jwt
+
+logging:
+  level: info
+
+audit:
+  enabled: true
+  api_enabled: true       # mounts GET /api/v1/audit/events[/:id]
+  memory_capacity: 10000  # ring buffer size for the in-memory sink
+
+permissions:
+  enabled: true
+  embed_in_login: true    # attach roles/permissions/menus to /auth/login response
+  apps:
+    - client_id: web-app
+      roles:
+        - code: admin
+          name: Administrator
+          permissions: [user:*, order:*, audit:read]
+        - code: viewer
+          name: Read-only viewer
+          permissions: [user:read, order:read]
+      menus:
+        - id: m-users
+          name: User Management
+          path: /users
+          icon: users
+          permission: user:read
+          buttons:
+            - { code: btn-user-create, name: New user, permission: user:create }
+            - { code: btn-user-delete, name: Delete user, permission: user:delete }
+        - id: m-orders
+          name: Orders
+          path: /orders
+          icon: shopping-cart
+          permission: order:read
+          children:
+            - id: m-orders-list
+              name: All orders
+              path: /orders/list
+              permission: order:read
+            - id: m-orders-refund
+              name: Refunds
+              path: /orders/refund
+              permission: order:refund
+        - id: m-audit
+          name: Audit log
+          path: /audit
+          icon: file-text
+          permission: audit:read
+
+    - client_id: mobile-app
+      roles:
+        - code: user
+          name: End user
+          permissions: [profile:read, profile:update, order:read]
+      menus:
+        - id: m-profile
+          name: My profile
+          path: /me
+          permission: profile:read
+        - id: m-my-orders
+          name: My orders
+          path: /me/orders
+          permission: order:read
+
+    # Demo bucket for the examples/remote-app smoke test. Tokens issued
+    # without an `aud` claim land under client_id="" in the appcore demo
+    # handler — this entry lets that path resolve "items:read".
+    - client_id: ""
+      roles:
+        - code: items-reader
+          name: Items reader (demo)
+          permissions: [items:read]
+
+  user_roles:
+    - { user_id: user-alice, client_id: web-app,    roles: [admin] }
+    - { user_id: user-bob,   client_id: web-app,    roles: [viewer] }
+    - { user_id: user-alice, client_id: mobile-app, roles: [user] }
+    - { user_id: user-alice, client_id: "",         roles: [items-reader] }
+
+# Each client = one APP. Per-app policy lives here:
+#   allowed_authenticators: which login methods this app accepts
+#   token_strategy:        which TokenIssuer mints this app's tokens
+#                          (must match a name registered in code via
+#                          sso.WithTokenIssuer(name, issuer))
+clients:
+  # web-app: traditional browser app — opaque session tokens, password + OTP only
+  - id: web-app
+    secret: web-secret
+    name: Web App
+    redirect_uris:
+      - http://localhost:3000/callback
+    allowed_scopes: [openid, profile, email]
+    allowed_authenticators: [password, phone, email]
+    token_strategy: session
+    active: true
+
+  # mobile-app: SPA / native — short-lived JWT, password + phone code
+  - id: mobile-app
+    secret: mobile-secret
+    name: Mobile App
+    redirect_uris:
+      - myapp://callback
+    allowed_scopes: [openid, profile]
+    allowed_authenticators: [password, phone]
+    token_strategy: jwt
+    active: true
+
+  # service-app: machine-to-machine — JWT, only key-based auth
+  - id: service-app
+    secret: service-secret
+    name: Backend Service
+    redirect_uris: []
+    allowed_scopes: [internal]
+    allowed_authenticators: [apikey, keypair, certificate]
+    token_strategy: jwt
+    active: true
+
+authenticators:
+  password:
+    enabled: true
+
+  phone:
+    enabled: true
+    code_length: 6
+    code_ttl: 5m
+
+  email:
+    enabled: true
+    code_length: 6
+    code_ttl: 10m
+
+  temp_token:
+    enabled: true
+    ttl: 15m
+
+  keypair:
+    enabled: true
+    max_clock_skew: 5m
+
+  apikey:
+    enabled: true
+
+  certificate:
+    enabled: true
+    trusted_ca_files: []
+    intermediate_files: []
