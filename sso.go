@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 )
 
@@ -26,6 +27,9 @@ type Server struct {
 	requestIDMW          bool
 	permissions          permissions.Provider
 	embedPermissions     bool
+	netStore             netpolicy.Store
+	netClassifier        *netpolicy.Classifier
+	netAPI               bool
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -153,6 +157,29 @@ func WithEmbedPermissionsInLogin() Option {
 	return func(s *Server) { s.embedPermissions = true }
 }
 
+// WithNetworkPolicy enables the network-classification control plane. store
+// is required; classifier is optional — when nil, the /classify and
+// /resolve-me endpoints respond 501.
+//
+// Pair with WithNetworkPolicyAPI() to expose the REST endpoints under
+// /api/v1/netpolicy/...; otherwise only the Server's internal callers
+// (Mount routes that need to know the request's network class) use it.
+func WithNetworkPolicy(store netpolicy.Store, classifier *netpolicy.Classifier) Option {
+	return func(s *Server) {
+		s.netStore = store
+		s.netClassifier = classifier
+	}
+}
+
+// WithNetworkPolicyAPI mounts the netpolicy REST endpoints
+// (GET/POST /api/v1/netpolicy/policies[/:name], DELETE on :name,
+// GET /api/v1/netpolicy/classify + /resolve-me). Requires WithNetworkPolicy.
+// The endpoints are unauthenticated by default — gate them with middleware
+// or a reverse proxy if exposed beyond localhost.
+func WithNetworkPolicyAPI() Option {
+	return func(s *Server) { s.netAPI = true }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -184,6 +211,14 @@ func (s *Server) Mount() {
 	if s.auditAPI && s.auditor != nil {
 		api.GET(PathAuditEvents, s.handleAuditEvents)
 		api.GET(PathAuditEventByID, s.handleAuditEventByID)
+	}
+	if s.netAPI && s.netStore != nil {
+		api.GET(PathNetPolicies, s.handleListNetPolicies)
+		api.GET(PathNetPolicyByName, s.handleGetNetPolicy)
+		api.POST(PathNetPolicies, s.handleApplyNetPolicy)
+		api.DELETE(PathNetPolicyByName, s.handleDeleteNetPolicy)
+		api.GET(PathNetPolicyClassify, s.handleClassifyNetPolicy)
+		api.GET(PathNetPolicyResolveMe, s.handleResolveMeNetPolicy)
 	}
 }
 

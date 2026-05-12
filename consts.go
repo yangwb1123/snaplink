@@ -19,6 +19,11 @@ const (
 	PathMyPermissions = "/permissions/me"
 	PathMyMenus       = "/menus/me"
 	PathMyRoles       = "/roles/me"
+
+	PathNetPolicies        = "/netpolicy/policies"
+	PathNetPolicyByName    = "/netpolicy/policies/:name"
+	PathNetPolicyClassify  = "/netpolicy/classify"
+	PathNetPolicyResolveMe = "/netpolicy/resolve-me"
 )
 
 // HTTP header names and well-known values.
@@ -87,6 +92,8 @@ const (
 	ErrAuthenticatorNotAllowed    = "authenticator_not_allowed_for_client"
 	ErrInactiveClient             = "inactive_client"
 	ErrNoTokenStrategy            = "no_token_strategy"
+	ErrNetPolicyNotConfigured     = "netpolicy_not_configured"
+	ErrNetPolicyNotFound          = "netpolicy_not_found"
 )
 
 // Status strings returned in successful responses.
