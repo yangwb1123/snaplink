@@ -13,3 +13,6 @@
 *.log
 *.out
 coverage.out
+
+# Claude Code session state
+.claude/
