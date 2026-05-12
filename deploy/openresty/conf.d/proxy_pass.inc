@@ -11,5 +11,8 @@ proxy_set_header X-Forwarded-Proto $scheme;
 # preserves any incoming X-Request-Id / Traceparent.
 proxy_set_header X-Request-Id $http_x_request_id;
 proxy_set_header Traceparent $http_traceparent;
+# X-Network is stamped by netpolicy_cache.stamp_header() at server-level
+# access_by_lua and re-read here so it appears in the upstream request.
+proxy_set_header X-Network $http_x_network;
 proxy_pass_request_headers on;
 proxy_read_timeout 30s;
