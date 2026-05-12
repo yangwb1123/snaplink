@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package snaplink.netpolicy.v1;
+
+option go_package = "github.com/snaplink/sso/gen/proto/netpolicy/v1;netpolicyv1";
+
+// PolicyService is the control-plane gRPC for network policies. Operators
+// declare classes of network (intranet, public, dmz, ...), each with the
+// CIDRs / hostnames that identify them and the URLs the SSO server should
+// advertise when answering requests from that class.
+//
+// Watch streams every Apply/Delete so edge proxies (OpenResty) and downstream
+// services can keep a hot cache without polling.
+//
+// Classify is a server-side helper for callers that don't want to ship the
+// CIDR-matching logic themselves — they just send the request's remote_addr +
+// Host header and get back the matching policy.
+service PolicyService {
+  rpc Get(GetRequest)         returns (GetResponse);
+  rpc List(ListRequest)       returns (ListResponse);
+  rpc Apply(ApplyRequest)     returns (ApplyResponse);
+  rpc Delete(DeleteRequest)   returns (DeleteResponse);
+
+  rpc Watch(WatchRequest)     returns (stream PolicyEvent);
+  rpc Classify(ClassifyRequest) returns (ClassifyResponse);
+}
+
+// NetworkPolicy is one declarative class of network. Matching rules:
+//   1. Hostnames win over CIDRs (a Host header arriving via a public DNS
+//      name beats a same-IP RFC1918 lookup).
+//   2. Among ties, higher priority wins.
+//   3. CIDR matches the longest-prefix net that covers remote_addr.
+//
+// version + updated_at_unix are set by the Store on every Apply; clients
+// MUST treat them as read-only and use them for cache invalidation.
+message NetworkPolicy {
+  string name                    = 1;
+  repeated string cidrs          = 2;
+  repeated string hostnames      = 3;
+  int32  priority                = 4;
+
+  // What URLs to hand out to callers who land in this network class.
+  string advertised_base_url     = 5;
+  string advertised_jwks_url     = 6;
+  string advertised_logout_url   = 7;
+
+  map<string, string> metadata   = 8;
+
+  int64  version                 = 9;
+  int64  updated_at_unix         = 10;
+}
+
+message GetRequest    { string name = 1; }
+message GetResponse   { NetworkPolicy policy = 1; }
+
+message ListRequest   {}
+message ListResponse  { repeated NetworkPolicy policies = 1; }
+
+message ApplyRequest  { NetworkPolicy policy = 1; }
+message ApplyResponse { NetworkPolicy policy = 1; }
+
+message DeleteRequest  { string name = 1; }
+message DeleteResponse {}
+
+message WatchRequest {}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_ADDED       = 1;
+  EVENT_TYPE_UPDATED     = 2;
+  EVENT_TYPE_REMOVED     = 3;
+}
+
+message PolicyEvent {
+  EventType     type   = 1;
+  NetworkPolicy policy = 2;
+}
+
+message ClassifyRequest {
+  string remote_addr   = 1;
+  string host          = 2;
+  // Optional: comma-separated XFF chain. Server picks the leftmost trusted IP.
+  string forwarded_for = 3;
+}
+
+message ClassifyResponse {
+  // Empty when no policy matched.
+  string        class  = 1;
+  NetworkPolicy policy = 2;
+}
