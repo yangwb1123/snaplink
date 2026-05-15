@@ -160,12 +160,14 @@ type ReleaseStoreFileConfig struct {
 	Dir string `yaml:"dir"`
 }
 
-// ReleasePinnerConfig picks the Pinner. Backend is "noop" (default;
-// records the call, no-op) or "static" (frontend bundle on-disk
-// symlink swap).
+// ReleasePinnerConfig picks the Pinner. Backend choices:
+//   - "noop"   — records the call, no-op (default; tests / dry-runs)
+//   - "static" — frontend bundle on-disk symlink swap
+//   - "docker" — docker compose pull + up -d in BundleDir
 type ReleasePinnerConfig struct {
 	Backend string                    `yaml:"backend"`
 	Static  ReleasePinnerStaticConfig `yaml:"static"`
+	Docker  ReleasePinnerDockerConfig `yaml:"docker"`
 }
 
 // ReleasePinnerStaticConfig configures the static Pinner. BundleDir
@@ -173,6 +175,16 @@ type ReleasePinnerConfig struct {
 // symlink the Pinner swaps.
 type ReleasePinnerStaticConfig struct {
 	BundleDir string `yaml:"bundle_dir"`
+}
+
+// ReleasePinnerDockerConfig configures the docker compose Pinner.
+// BundleDir is the working directory containing the operator's
+// compose file (the Pinner runs `docker compose pull && up -d` in
+// it after rewriting a managed .env). Cmd lets operators swap to
+// podman or a custom binary path; defaults to "docker".
+type ReleasePinnerDockerConfig struct {
+	BundleDir string `yaml:"bundle_dir"`
+	Cmd       string `yaml:"cmd"`
 }
 
 // ReleaseProbeConfig configures the post-Pin health probe. When

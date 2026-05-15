@@ -488,6 +488,13 @@ Layered SPI per the same plugin pattern as snapshot:
     swaps a `<BundleDir>/current` symlink via `rename(2)`. Forward
     and Rollback are symmetric here — no backend ordering to worry
     about.
+  - `releases/pinner/docker` — docker compose Pinner. Rewrites a
+    managed `.env` (RELEASE_ID, BACKEND_IMAGE, FRONTEND_IMAGE) in
+    BundleDir then runs `docker compose pull && up -d`. The compose
+    file references `${BACKEND_IMAGE}` / `${FRONTEND_IMAGE}` so the
+    up-d recreates services with the new tags. Cmd defaults to
+    `docker`; swap to `podman` when needed. Forward + Rollback
+    symmetric (compose treats the graph as a unit).
 - **`releases.Registry`** — composes Store + Pinner. Pinner runs
   first; only on success does Store advance the current pointer (so
   a half-failed deploy doesn't leave the system reporting a release
@@ -599,7 +606,9 @@ snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
                # encryption: { backend (none|passphrase), passphrase, passphrase_file }
 releases:      # enabled
                # store: { backend (file|memory), file.dir }
-               # pinner: { backend (noop|static), static.bundle_dir }
+               # pinner: { backend (noop|static|docker),
+               #          static.bundle_dir,
+               #          docker.{bundle_dir, cmd} }
                # probe: { backend ("" | http), http.url, polls, backoff }
                # snapshot_integration: bool — when true + snapshot.enabled,
                #   Rollback restores target.ConfigSnapshot before Pinner

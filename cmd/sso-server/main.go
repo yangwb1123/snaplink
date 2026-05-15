@@ -46,6 +46,7 @@ import (
 	"github.com/snaplink/sso/registry"
 	"github.com/snaplink/sso/registry/memory"
 	"github.com/snaplink/sso/releases"
+	releasedocker "github.com/snaplink/sso/releases/pinner/docker"
 	releasenoop "github.com/snaplink/sso/releases/pinner/noop"
 	releasestatic "github.com/snaplink/sso/releases/pinner/static"
 	releasehttpprobe "github.com/snaplink/sso/releases/probe/http"
@@ -549,6 +550,20 @@ func buildReleaseSubsystem(cfg *config.Config, logger sso.Logger) (*releases.Reg
 			return nil, nil, fmt.Errorf("release static pinner: %w", err)
 		}
 		logger.Info("release pinner: static", "bundle_dir", dir)
+		pinner = p
+	case "docker":
+		dir := cfg.Releases.Pinner.Docker.BundleDir
+		if dir == "" {
+			return nil, nil, errors.New("releases.pinner.backend=docker requires releases.pinner.docker.bundle_dir")
+		}
+		p, err := releasedocker.New(dir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("release docker pinner: %w", err)
+		}
+		if c := cfg.Releases.Pinner.Docker.Cmd; c != "" {
+			p.Cmd = c
+		}
+		logger.Info("release pinner: docker", "bundle_dir", dir, "cmd", p.Cmd)
 		pinner = p
 	default:
 		return nil, nil, fmt.Errorf("unknown releases.pinner.backend %q", cfg.Releases.Pinner.Backend)
