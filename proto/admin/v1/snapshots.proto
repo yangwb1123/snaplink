@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// SnapshotAdminService exports / restores the operator-managed state
+// (clients, users, roles, assignments, menus, network policies, plus the
+// bootstrap Tracker high-water mark). Every method requires the admin:*
+// scope; mutations write audit events.
+service SnapshotAdminService {
+  rpc Export(ExportSnapshotRequest) returns (ExportSnapshotResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/snapshots"
+      body: "*"
+    };
+  }
+  rpc List(ListSnapshotsRequest) returns (ListSnapshotsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/snapshots" };
+  }
+  rpc Get(GetSnapshotRequest) returns (GetSnapshotResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/snapshots/{id}" };
+  }
+  rpc Restore(RestoreSnapshotRequest) returns (RestoreSnapshotResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/snapshots/{id}:restore"
+      body: "*"
+    };
+  }
+  rpc Delete(DeleteSnapshotRequest) returns (DeleteSnapshotResponse) {
+    option (google.api.http) = { delete: "/api/v1/admin/snapshots/{id}" };
+  }
+}
+
+// ResourceCategory mirrors snapshot.ResourceCategory as a string. Stays
+// a string (not enum) so the wire schema doesn't need bumping when the
+// SDK adds a new category.
+//
+// Known values: clients, users, roles, assignments, menus, netpolicy.
+
+message ExportSnapshotRequest {
+  // Categories to omit from the export. Empty = include every wired
+  // backend's data.
+  repeated string exclude = 1;
+  // Optional human-readable node identifier stamped onto the snapshot.
+  // Useful when the same operator runs Export across many nodes.
+  string source_node_id = 2;
+}
+
+message ExportSnapshotResponse {
+  // The exported snapshot envelope (header + counts; body resources
+  // omitted from the wire response — fetch the full body via Get).
+  SnapshotMeta meta = 1;
+  // Storage key the snapshot was persisted under. Equal to
+  // meta.snapshot_id today; reserved as a separate field so future
+  // backends with translation layers can return e.g. an S3 object key.
+  string stored_as = 2;
+}
+
+message ListSnapshotsRequest {}
+
+message ListSnapshotsResponse {
+  repeated SnapshotMeta items = 1;
+}
+
+message GetSnapshotRequest { string id = 1; }
+message GetSnapshotResponse {
+  SnapshotMeta meta = 1;
+  // resources is the raw JSON body of snapshot.Snapshot.Resources,
+  // returned as-is so admin UIs can render it without the server
+  // having to mirror every SDK type into proto.
+  bytes resources_json = 2;
+}
+
+message RestoreSnapshotRequest {
+  string id = 1;
+  // Mode: merge | overwrite | replace. Defaults to merge when empty.
+  string mode = 2;
+  bool dry_run = 3;
+  bool advance_bootstrap = 4;
+  // Confirm token — required iff mode = "replace"; must equal the
+  // snapshot's own SnapshotID.
+  string confirm = 5;
+  repeated string exclude = 6;
+}
+
+message RestoreSnapshotResponse {
+  RestoreReport report = 1;
+}
+
+message DeleteSnapshotRequest { string id = 1; }
+message DeleteSnapshotResponse {}
+
+// SnapshotMeta is the header projection of a Snapshot — enough for List
+// rendering without forcing decryption. taken_at_unix is seconds since
+// epoch.
+message SnapshotMeta {
+  string schema_version = 1;
+  string snapshot_id = 2;
+  int64 taken_at_unix = 3;
+  string source_namespace = 4;
+  string source_node_id = 5;
+  int64 size_bytes = 6;
+  string codec = 7;
+  string encryption_algorithm = 8;
+  // Bootstrap tracker high-water mark recorded in this snapshot's
+  // namespace at the moment of export.
+  int32 bootstrap_applied_version = 9;
+}
+
+// RestoreReport mirrors snapshot.Report. Counts roll up across resources.
+message RestoreReport {
+  string mode = 1;
+  bool dry_run = 2;
+  map<string, CategoryCounts> items = 3;
+  BootstrapAdvance bootstrap = 4;
+  repeated string errors = 5;
+}
+
+message CategoryCounts {
+  int32 inserted = 1;
+  int32 updated = 2;
+  int32 deleted = 3;
+  int32 skipped = 4;
+}
+
+message BootstrapAdvance {
+  bool attempted = 1;
+  int32 from = 2;
+  int32 to = 3;
+  bool no_op = 4;
+  string reason = 5;
+}
