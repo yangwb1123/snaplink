@@ -62,6 +62,14 @@ const (
 	EventSnapshotExported EventType = "snapshot_exported"
 	EventSnapshotRestored EventType = "snapshot_restored"
 	EventSnapshotDeleted  EventType = "snapshot_deleted"
+
+	// Release lifecycle — Phase D-3 admin-app pin / rollback. Reason
+	// carries the release id + (for pin/rollback) the previous current
+	// id so auditors can reconstruct the deploy timeline.
+	EventReleaseRegistered EventType = "release_registered"
+	EventReleasePinned     EventType = "release_pinned"
+	EventReleaseRolledBack EventType = "release_rolled_back"
+	EventReleaseDeleted    EventType = "release_deleted"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
