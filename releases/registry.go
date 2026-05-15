@@ -4,6 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+)
+
+// Default tunables for the post-Pin health probe loop.
+const (
+	defaultProbePolls   = 6
+	defaultProbeBackoff = 5 * time.Second
 )
 
 // Registry layers Pin / Rollback / Current on top of a ReleaseStore.
@@ -12,13 +19,22 @@ import (
 // doesn't leave the system reporting a release that didn't actually
 // flip.
 //
-// All fields are required except Pinner: nil Pinner means "advance
-// the current pointer but skip the deploy step". Useful in tests and
-// when the operator uses the Pin RPC purely as a record-keeping
-// signal (the actual deploy is driven by something else).
+// Optional fields:
+//   - Pinner: nil means "advance the current pointer but skip the
+//     deploy step". Useful in tests and when the operator uses the
+//     Pin RPC purely as a record-keeping signal.
+//   - Probe + ProbePolls + ProbeBackoff: when Probe is set, Pin runs
+//     it after SetCurrent. If it fails after every attempt, Registry
+//     auto-rollbacks to the previous release (PinRollback + SetCurrent
+//     to the previous id) and returns the wrapped probe error. No
+//     probe runs on Rollback — we're trying to recover, not introduce
+//     new risk.
 type Registry struct {
-	Store  ReleaseStore
-	Pinner Pinner // optional
+	Store        ReleaseStore
+	Pinner       Pinner      // optional
+	Probe        HealthProbe // optional; when set, Pin auto-rollbacks on failure
+	ProbePolls   int         // attempts; defaults to 6
+	ProbeBackoff time.Duration // sleep between attempts; defaults to 5s
 }
 
 // PinMode tells implementations + observers whether a Pin is moving
@@ -108,5 +124,63 @@ func (r *Registry) apply(ctx context.Context, id string, mode PinMode) (*PinRepo
 	if err := r.Store.SetCurrent(ctx, id); err != nil {
 		return nil, fmt.Errorf("releases: set current: %w", err)
 	}
+
+	// Health-probe gate — only on forward Pin. Rollback intentionally
+	// skips the probe (we're recovering, not adding risk). Failure
+	// auto-rollbacks to the previous release when there is one.
+	if mode == PinForward && r.Probe != nil {
+		if probeErr := r.runProbe(ctx, target); probeErr != nil {
+			rolledBackTo := r.autoRollback(ctx, prev)
+			return nil, fmt.Errorf("releases: probe failed (auto-rollback to %q): %w", rolledBackTo, probeErr)
+		}
+	}
+
 	return &PinReport{ReleaseID: id, Mode: mode, PreviousID: prevID}, nil
+}
+
+// runProbe loops r.Probe.Probe up to ProbePolls times with
+// ProbeBackoff between attempts. First nil result wins. ctx
+// cancellation between attempts cuts the loop short.
+func (r *Registry) runProbe(ctx context.Context, target *Release) error {
+	polls := r.ProbePolls
+	if polls <= 0 {
+		polls = defaultProbePolls
+	}
+	backoff := r.ProbeBackoff
+	if backoff <= 0 {
+		backoff = defaultProbeBackoff
+	}
+	var lastErr error
+	for attempt := 0; attempt < polls; attempt++ {
+		err := r.Probe.Probe(ctx, target)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt < polls-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+	}
+	return fmt.Errorf("after %d attempts: %w", polls, lastErr)
+}
+
+// autoRollback restores the previous release as the current pointer
+// when probe fails. Returns the id we rolled back to ("" when there
+// was no previous; the failed release stays current in that case
+// because there's nowhere safe to flip to). Errors during the
+// rollback are intentionally swallowed — we already have the probe
+// failure to surface, and surfacing a second error here would mask it.
+func (r *Registry) autoRollback(ctx context.Context, prev *Release) string {
+	if prev == nil {
+		return ""
+	}
+	if r.Pinner != nil {
+		_ = r.Pinner.PinRollback(ctx, prev)
+	}
+	_ = r.Store.SetCurrent(ctx, prev.ID)
+	return prev.ID
 }

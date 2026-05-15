@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/releases"
 	"github.com/snaplink/sso/releases/store/memory"
@@ -165,5 +166,125 @@ func TestCurrent_FreshStoreReturnsErrNoCurrent(t *testing.T) {
 	r, _ := newRegistry(t, nil)
 	if _, err := r.Current(context.Background()); !errors.Is(err, releases.ErrNoCurrent) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// scriptedProbe returns the next error in a fixed sequence, then
+// returns nil for any subsequent call. Lets tests script
+// "fail-then-succeed" and "always-fail" probe behaviors precisely.
+type scriptedProbe struct {
+	calls   atomic.Int32
+	results []error
+}
+
+func (p *scriptedProbe) Probe(_ context.Context, _ *releases.Release) error {
+	idx := int(p.calls.Add(1)) - 1
+	if idx >= len(p.results) {
+		return nil
+	}
+	return p.results[idx]
+}
+
+func TestPin_ProbeSuccessKeepsRelease(t *testing.T) {
+	p := &captureP{}
+	probe := &scriptedProbe{} // empty results → all calls succeed
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, Probe: probe, ProbeBackoff: time.Millisecond}
+	ctx := context.Background()
+	_ = st.Register(ctx, mkRel("rel-1", 1))
+	if _, err := r.Pin(ctx, "rel-1"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if probe.calls.Load() != 1 {
+		t.Errorf("probe calls = %d, want 1", probe.calls.Load())
+	}
+	if p.rollback.Load() != 0 {
+		t.Errorf("rollback unexpectedly called")
+	}
+}
+
+func TestPin_ProbeFailureRollsBackToPrevious(t *testing.T) {
+	p := &captureP{}
+	wantErr := errors.New("503")
+	probe := &scriptedProbe{results: []error{wantErr, wantErr}} // both attempts fail
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, Probe: probe, ProbePolls: 2, ProbeBackoff: time.Millisecond}
+	ctx := context.Background()
+	_ = st.Register(ctx, mkRel("rel-1", 1))
+	_ = st.Register(ctx, mkRel("rel-2", 2))
+	_, _ = r.Pin(ctx, "rel-1")
+	probe.calls.Store(0) // reset for the rel-2 attempt
+
+	_, err := r.Pin(ctx, "rel-2")
+	if err == nil {
+		t.Fatal("expected probe error, got nil")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("err does not wrap probe error: %v", err)
+	}
+	// Forward count: rel-1 + rel-2 = 2; rollback count: rel-1 (auto) = 1.
+	if p.forward.Load() != 2 || p.rollback.Load() != 1 {
+		t.Errorf("pinner counts: forward=%d rollback=%d", p.forward.Load(), p.rollback.Load())
+	}
+	cur, _ := r.Current(ctx)
+	if cur == nil || cur.ID != "rel-1" {
+		t.Errorf("Current after auto-rollback = %+v", cur)
+	}
+}
+
+func TestPin_ProbeFailureNoPreviousLeavesAsIs(t *testing.T) {
+	p := &captureP{}
+	probe := &scriptedProbe{results: []error{errors.New("nope")}}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, Probe: probe, ProbePolls: 1, ProbeBackoff: time.Millisecond}
+	ctx := context.Background()
+	_ = st.Register(ctx, mkRel("rel-1", 1))
+
+	if _, err := r.Pin(ctx, "rel-1"); err == nil {
+		t.Fatal("expected probe error")
+	}
+	// No previous to roll back to — release stays current.
+	cur, _ := r.Current(ctx)
+	if cur == nil || cur.ID != "rel-1" {
+		t.Errorf("Current = %+v want rel-1", cur)
+	}
+	if p.rollback.Load() != 0 {
+		t.Errorf("rollback called with no previous: %d", p.rollback.Load())
+	}
+}
+
+func TestPin_ProbeRetriesUntilSuccess(t *testing.T) {
+	p := &captureP{}
+	probe := &scriptedProbe{results: []error{errors.New("warming up"), errors.New("warming up")}}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, Probe: probe, ProbePolls: 5, ProbeBackoff: time.Millisecond}
+	ctx := context.Background()
+	_ = st.Register(ctx, mkRel("rel-1", 1))
+
+	if _, err := r.Pin(ctx, "rel-1"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if probe.calls.Load() != 3 {
+		t.Errorf("probe calls = %d, want 3", probe.calls.Load())
+	}
+}
+
+func TestRollback_DoesNotProbe(t *testing.T) {
+	p := &captureP{}
+	probe := &scriptedProbe{results: []error{errors.New("would fail")}}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, Probe: probe, ProbePolls: 1, ProbeBackoff: time.Millisecond}
+	ctx := context.Background()
+	_ = st.Register(ctx, mkRel("rel-old", 1))
+	_ = st.Register(ctx, mkRel("rel-new", 2))
+	probe.results = nil // forward Pin should succeed
+	_, _ = r.Pin(ctx, "rel-new")
+	probeBefore := probe.calls.Load()
+
+	if _, err := r.Rollback(ctx, "rel-old"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if probe.calls.Load() != probeBefore {
+		t.Errorf("Rollback should not probe; calls before=%d after=%d", probeBefore, probe.calls.Load())
 	}
 }
