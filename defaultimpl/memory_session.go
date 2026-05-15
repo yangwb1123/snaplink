@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"sync"
 	"time"
 
@@ -13,9 +12,11 @@ import (
 
 const sessionIDBytes = 32
 
-// MemorySessionManager stores sessions in memory.
+// MemorySessionManager stores sessions in memory. Implements the full
+// sso.SessionManager including the admin extensions (ListByUser/ListAll).
 type MemorySessionManager struct {
-	sessions sync.Map // sessionID -> *sso.Session
+	mu       sync.RWMutex
+	sessions map[string]*sso.Session
 	ttl      time.Duration
 }
 
@@ -24,10 +25,10 @@ func NewMemorySessionManager(ttl ...time.Duration) *MemorySessionManager {
 	if len(ttl) > 0 {
 		d = ttl[0]
 	}
-	return &MemorySessionManager{ttl: d}
+	return &MemorySessionManager{ttl: d, sessions: make(map[string]*sso.Session)}
 }
 
-func (m *MemorySessionManager) Create(ctx context.Context, userID string) (*sso.Session, error) {
+func (m *MemorySessionManager) Create(_ context.Context, userID string) (*sso.Session, error) {
 	id := randomHex(sessionIDBytes)
 	now := time.Now()
 	session := &sso.Session{
@@ -35,38 +36,65 @@ func (m *MemorySessionManager) Create(ctx context.Context, userID string) (*sso.
 		UserID:    userID,
 		CreatedAt: now,
 		ExpiresAt: now.Add(m.ttl),
-		Revoked:   false,
 	}
-	m.sessions.Store(id, session)
+	m.mu.Lock()
+	m.sessions[id] = session
+	m.mu.Unlock()
 	return session, nil
 }
 
-func (m *MemorySessionManager) Get(ctx context.Context, sessionID string) (*sso.Session, error) {
-	v, ok := m.sessions.Load(sessionID)
+func (m *MemorySessionManager) Get(_ context.Context, sessionID string) (*sso.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[sessionID]
 	if !ok {
-		return nil, fmt.Errorf("session not found")
+		return nil, sso.ErrSessionNotFound
 	}
-	return v.(*sso.Session), nil
+	return s, nil
 }
 
-func (m *MemorySessionManager) Destroy(ctx context.Context, sessionID string) error {
-	m.sessions.Delete(sessionID)
+func (m *MemorySessionManager) Destroy(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	delete(m.sessions, sessionID)
+	m.mu.Unlock()
 	return nil
 }
 
-func (m *MemorySessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Session, error) {
-	v, ok := m.sessions.Load(sessionID)
+func (m *MemorySessionManager) Refresh(_ context.Context, sessionID string) (*sso.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sessionID]
 	if !ok {
-		return nil, fmt.Errorf("session not found")
+		return nil, sso.ErrSessionNotFound
 	}
-	s := v.(*sso.Session)
 	s.ExpiresAt = time.Now().Add(m.ttl)
-	m.sessions.Store(sessionID, s)
 	return s, nil
+}
+
+func (m *MemorySessionManager) ListByUser(_ context.Context, userID string) ([]*sso.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*sso.Session, 0)
+	for _, s := range m.sessions {
+		if s.UserID == userID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (m *MemorySessionManager) ListAll(_ context.Context) ([]*sso.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*sso.Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 func randomHex(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

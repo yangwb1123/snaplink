@@ -127,12 +127,12 @@ func TestAudit_RecordWithoutRecorderFailsPrecondition(t *testing.T) {
 func newAuthzFixture(t *testing.T) (*memory.Registry, permissions.Provider) {
 	t.Helper()
 	prov := permissions.NewMemoryProvider()
-	prov.AddRole("web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*", "order:read"}})
-	prov.SetMenus("web-app", permissions.MenuTree{
+	prov.AddRole(context.Background(), "web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*", "order:read"}})
+	prov.SetMenus(context.Background(), "web-app", permissions.MenuTree{
 		{ID: "m-users", Name: "Users", Permission: "user:read"},
 		{ID: "m-audit", Name: "Audit", Permission: "audit:read"}, // not held
 	})
-	prov.AssignRoles("user-alice", "web-app", []string{"admin"})
+	prov.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"})
 	return memory.New(), prov
 }
 

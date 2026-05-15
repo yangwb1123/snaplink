@@ -43,7 +43,7 @@ func main() {
 
 	clientStore := defaultimpl.NewMemoryClientStore()
 	for _, c := range cfg.Clients {
-		clientStore.Add(&sso.Client{
+		clientStore.AddSeed(&sso.Client{
 			ID:                    c.ID,
 			Secret:                c.Secret,
 			Name:                  c.Name,
@@ -67,7 +67,7 @@ func main() {
 		sso.WithTokenIssuer(sso.TokenStrategySession, defaultimpl.NewSessionTokenIssuer(
 			defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
 		)),
-		sso.WithUserProvider(&inMemoryUserProvider{users: make(map[string]*sso.User)}),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
 		sso.WithClientStore(clientStore),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager(cfg.Server.SessionTTL)),
 	)
@@ -209,28 +209,3 @@ func buildAuthenticators(cfg *config.Config) []sso.Authenticator {
 	return auths
 }
 
-type inMemoryUserProvider struct {
-	users map[string]*sso.User
-}
-
-func (p *inMemoryUserProvider) GetByID(_ context.Context, id string) (*sso.User, error) {
-	u, ok := p.users[id]
-	if !ok {
-		return nil, errors.New("user not found")
-	}
-	return u, nil
-}
-
-func (p *inMemoryUserProvider) GetByExternalID(_ context.Context, provider, externalID string) (*sso.User, error) {
-	for _, u := range p.users {
-		if u.Provider == provider && u.ExternalID == externalID {
-			return u, nil
-		}
-	}
-	return nil, errors.New("user not found")
-}
-
-func (p *inMemoryUserProvider) CreateOrUpdate(_ context.Context, user *sso.User) error {
-	p.users[user.ID] = user
-	return nil
-}

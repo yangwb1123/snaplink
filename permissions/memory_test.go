@@ -17,15 +17,15 @@ func fixture(t *testing.T) *permissions.MemoryProvider {
 	p := permissions.NewMemoryProvider()
 
 	// web-app
-	p.AddRole("web-app", permissions.Role{
+	p.AddRole(context.Background(), "web-app", permissions.Role{
 		Code:        "admin",
 		Permissions: []string{"user:*", "order:*", "audit:read"},
 	})
-	p.AddRole("web-app", permissions.Role{
+	p.AddRole(context.Background(), "web-app", permissions.Role{
 		Code:        "viewer",
 		Permissions: []string{"user:read", "order:read"},
 	})
-	p.SetMenus("web-app", permissions.MenuTree{
+	p.SetMenus(context.Background(), "web-app", permissions.MenuTree{
 		{
 			ID: "m-users", Name: "Users", Permission: "user:read",
 			Buttons: []permissions.Button{
@@ -49,18 +49,18 @@ func fixture(t *testing.T) *permissions.MemoryProvider {
 	})
 
 	// mobile-app
-	p.AddRole("mobile-app", permissions.Role{
+	p.AddRole(context.Background(), "mobile-app", permissions.Role{
 		Code:        "user",
 		Permissions: []string{"profile:read", "order:read"},
 	})
-	p.SetMenus("mobile-app", permissions.MenuTree{
+	p.SetMenus(context.Background(), "mobile-app", permissions.MenuTree{
 		{ID: "m-profile", Name: "Profile", Permission: "profile:read"},
 		{ID: "m-orders", Name: "Orders", Permission: "order:read"},
 	})
 
-	p.AssignRoles("user-alice", "web-app", []string{"admin"})
-	p.AssignRoles("user-bob", "web-app", []string{"viewer"})
-	p.AssignRoles("user-alice", "mobile-app", []string{"user"})
+	p.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"})
+	p.AssignRoles(context.Background(), "user-bob", "web-app", []string{"viewer"})
+	p.AssignRoles(context.Background(), "user-alice", "mobile-app", []string{"user"})
 
 	return p
 }
@@ -103,8 +103,8 @@ func TestRoles_UnknownRoleCodeSkipped(t *testing.T) {
 	// Assigning a role code that isn't defined on the client should not panic;
 	// it just silently drops out of the result.
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "real", Permissions: []string{"x"}})
-	p.AssignRoles("u", "c", []string{"real", "ghost"})
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "real", Permissions: []string{"x"}})
+	p.AssignRoles(context.Background(), "u", "c", []string{"real", "ghost"})
 
 	roles, err := p.Roles(context.Background(), "u", "c")
 	if err != nil {
@@ -117,9 +117,9 @@ func TestRoles_UnknownRoleCodeSkipped(t *testing.T) {
 
 func TestPermissions_UnionsAndDeduplicates(t *testing.T) {
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "r1", Permissions: []string{"a", "b"}})
-	p.AddRole("c", permissions.Role{Code: "r2", Permissions: []string{"b", "c"}})
-	p.AssignRoles("u", "c", []string{"r1", "r2"})
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "r1", Permissions: []string{"a", "b"}})
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "r2", Permissions: []string{"b", "c"}})
+	p.AssignRoles(context.Background(), "u", "c", []string{"r1", "r2"})
 
 	perms, err := p.Permissions(context.Background(), "u", "c")
 	if err != nil {
@@ -219,9 +219,9 @@ func TestMenus_ParentKeptWhenChildrenSurvive(t *testing.T) {
 	// see. The current implementation keeps the parent so the surviving child
 	// remains reachable.
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "r", Permissions: []string{"section:open"}})
-	p.AssignRoles("u", "c", []string{"r"})
-	p.SetMenus("c", permissions.MenuTree{
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"section:open"}})
+	p.AssignRoles(context.Background(), "u", "c", []string{"r"})
+	p.SetMenus(context.Background(), "c", permissions.MenuTree{
 		{
 			ID: "parent", Permission: "section:admin", // not held
 			Children: []permissions.MenuItem{
@@ -244,9 +244,9 @@ func TestMenus_ParentKeptWhenChildrenSurvive(t *testing.T) {
 
 func TestMenus_ParentPrunedWhenAllChildrenFiltered(t *testing.T) {
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "r", Permissions: []string{"unrelated:perm"}})
-	p.AssignRoles("u", "c", []string{"r"})
-	p.SetMenus("c", permissions.MenuTree{
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"unrelated:perm"}})
+	p.AssignRoles(context.Background(), "u", "c", []string{"r"})
+	p.SetMenus(context.Background(), "c", permissions.MenuTree{
 		{
 			ID: "parent", Permission: "section:admin",
 			Children: []permissions.MenuItem{
@@ -281,8 +281,8 @@ func TestMenus_UnknownUserReturnsEmptyNotError(t *testing.T) {
 
 func TestMenus_NoMenusConfiguredReturnsEmpty(t *testing.T) {
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "r", Permissions: []string{"x"}})
-	p.AssignRoles("u", "c", []string{"r"})
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"x"}})
+	p.AssignRoles(context.Background(), "u", "c", []string{"r"})
 
 	tree, err := p.Menus(context.Background(), "u", "c")
 	if err != nil {
@@ -295,9 +295,9 @@ func TestMenus_NoMenusConfiguredReturnsEmpty(t *testing.T) {
 
 func TestMenus_WildcardPermissionGrantsEverything(t *testing.T) {
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "god", Permissions: []string{"*"}})
-	p.AssignRoles("u", "c", []string{"god"})
-	p.SetMenus("c", permissions.MenuTree{
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "god", Permissions: []string{"*"}})
+	p.AssignRoles(context.Background(), "u", "c", []string{"god"})
+	p.SetMenus(context.Background(), "c", permissions.MenuTree{
 		{ID: "a", Permission: "anything:x"},
 		{ID: "b", Permission: "ping"},
 		{ID: "c", Permission: "deep:nested:perm"},
@@ -316,9 +316,9 @@ func TestPermissionsAndRoles_AssignmentIsCopied(t *testing.T) {
 	// AssignRoles should defensively copy the slice — mutating the caller's
 	// slice afterward must not leak into the provider's state.
 	p := permissions.NewMemoryProvider()
-	p.AddRole("c", permissions.Role{Code: "r", Permissions: []string{"x"}})
+	p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"x"}})
 	roles := []string{"r"}
-	p.AssignRoles("u", "c", roles)
+	p.AssignRoles(context.Background(), "u", "c", roles)
 
 	roles[0] = "ghost"
 

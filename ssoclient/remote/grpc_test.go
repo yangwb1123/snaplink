@@ -53,12 +53,12 @@ var (
 func authzProvider(t *testing.T) permissions.Provider {
 	t.Helper()
 	p := permissions.NewMemoryProvider()
-	p.AddRole("web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*"}})
-	p.SetMenus("web-app", permissions.MenuTree{
+	p.AddRole(context.Background(), "web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*"}})
+	p.SetMenus(context.Background(), "web-app", permissions.MenuTree{
 		{ID: "m-users", Permission: "user:read"},
 		{ID: "m-audit", Permission: "audit:read"},
 	})
-	p.AssignRoles("user-alice", "web-app", []string{"admin"})
+	p.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"})
 	return p
 }
 

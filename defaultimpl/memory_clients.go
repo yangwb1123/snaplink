@@ -2,39 +2,51 @@ package defaultimpl
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"sync"
 
 	"github.com/snaplink/sso"
 )
 
-// MemoryClientStore stores client applications in memory.
+// MemoryClientStore stores client applications in memory. Implements the full
+// sso.ClientStore including the admin extensions (List/Update/Delete/Rotate).
 type MemoryClientStore struct {
-	clients sync.Map // clientID -> *sso.Client
+	mu      sync.RWMutex
+	clients map[string]*sso.Client
 }
 
 func NewMemoryClientStore() *MemoryClientStore {
-	return &MemoryClientStore{}
+	return &MemoryClientStore{clients: make(map[string]*sso.Client)}
 }
 
-func (m *MemoryClientStore) Add(client *sso.Client) {
-	m.clients.Store(client.ID, client)
+// AddSeed inserts a client without the duplicate-check that Add enforces.
+// Used by the YAML loader to populate the store at boot — duplicates in the
+// config file should fail explicitly via validation, not collide here.
+func (m *MemoryClientStore) AddSeed(client *sso.Client) {
+	m.mu.Lock()
+	m.clients[client.ID] = client
+	m.mu.Unlock()
 }
 
-func (m *MemoryClientStore) Get(ctx context.Context, clientID string) (*sso.Client, error) {
-	v, ok := m.clients.Load(clientID)
+func (m *MemoryClientStore) Get(_ context.Context, clientID string) (*sso.Client, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.clients[clientID]
 	if !ok {
-		return nil, fmt.Errorf("client not found")
+		return nil, sso.ErrNoSuchClient
 	}
-	return v.(*sso.Client), nil
+	return c, nil
 }
 
-func (m *MemoryClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret string) error {
-	v, ok := m.clients.Load(clientID)
+func (m *MemoryClientStore) ValidateSecret(_ context.Context, clientID, clientSecret string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.clients[clientID]
 	if !ok {
-		return fmt.Errorf("client not found")
+		return sso.ErrNoSuchClient
 	}
-	c := v.(*sso.Client)
 	if c.Secret != clientSecret {
 		return fmt.Errorf("invalid client secret")
 	}
@@ -42,4 +54,72 @@ func (m *MemoryClientStore) ValidateSecret(ctx context.Context, clientID, client
 		return fmt.Errorf("client is inactive")
 	}
 	return nil
+}
+
+func (m *MemoryClientStore) List(_ context.Context) ([]*sso.Client, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*sso.Client, 0, len(m.clients))
+	for _, c := range m.clients {
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (m *MemoryClientStore) Add(_ context.Context, c *sso.Client) error {
+	if c == nil || c.ID == "" {
+		return fmt.Errorf("defaultimpl: client.ID required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.clients[c.ID]; exists {
+		return sso.ErrClientExists
+	}
+	m.clients[c.ID] = c
+	return nil
+}
+
+func (m *MemoryClientStore) Update(_ context.Context, c *sso.Client) error {
+	if c == nil || c.ID == "" {
+		return fmt.Errorf("defaultimpl: client.ID required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.clients[c.ID]; !exists {
+		return sso.ErrNoSuchClient
+	}
+	m.clients[c.ID] = c
+	return nil
+}
+
+func (m *MemoryClientStore) Delete(_ context.Context, clientID string) error {
+	m.mu.Lock()
+	delete(m.clients, clientID)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *MemoryClientStore) RotateSecret(_ context.Context, clientID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.clients[clientID]
+	if !ok {
+		return "", sso.ErrNoSuchClient
+	}
+	secret, err := generateSecret(32)
+	if err != nil {
+		return "", err
+	}
+	c.Secret = secret
+	return secret, nil
+}
+
+// generateSecret returns a base64url-encoded random string. 32 bytes ≈ 256
+// bits of entropy — comfortable for client secrets that may be long-lived.
+func generateSecret(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("defaultimpl: rand: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

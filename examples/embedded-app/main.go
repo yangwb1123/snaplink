@@ -38,11 +38,11 @@ func main() {
 	// either set aud at issue-time or pass its known client_id explicitly.
 	const appClientID = ""
 	prov := permissions.NewMemoryProvider()
-	prov.AddRole(appClientID, permissions.Role{
+	prov.AddRole(context.Background(), appClientID, permissions.Role{
 		Code:        "viewer",
 		Permissions: []string{"items:read"},
 	})
-	prov.AssignRoles("user-demo", appClientID, []string{"viewer"})
+	prov.AssignRoles(context.Background(), "user-demo", appClientID, []string{"viewer"})
 
 	// 3. Wire the ssoclient layer — all LOCAL implementations.
 	handler := &appcore.Handler{

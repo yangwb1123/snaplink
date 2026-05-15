@@ -2,12 +2,14 @@ package permissions
 
 import (
 	"context"
+	"slices"
 	"sync"
 )
 
 // MemoryProvider is a process-local Provider backed by static role/menu maps.
-// Use it for development, single-node deployments, or as a reference impl
-// when wiring a database-backed Provider.
+// Suitable for dev, single-node deployments, and as a reference impl when
+// wiring a database-backed Provider. Implements the full Provider interface
+// including the admin extensions (AddRole/RemoveRole/AssignRoles/...).
 //
 // Data model:
 //
@@ -29,31 +31,120 @@ func NewMemoryProvider() *MemoryProvider {
 	}
 }
 
-// AddRole registers a role definition for the given client.
-func (m *MemoryProvider) AddRole(clientID string, role Role) {
+// AddRole registers a role under clientID. Returns ErrRoleExists if the role
+// code already exists for that client.
+func (m *MemoryProvider) AddRole(_ context.Context, clientID string, role Role) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rolesByClient[clientID] == nil {
 		m.rolesByClient[clientID] = make(map[string]Role)
 	}
+	if _, exists := m.rolesByClient[clientID][role.Code]; exists {
+		return ErrRoleExists
+	}
 	m.rolesByClient[clientID][role.Code] = role
+	return nil
 }
 
-// SetMenus replaces the menu tree for the given client.
-func (m *MemoryProvider) SetMenus(clientID string, menus MenuTree) {
+// UpdateRole overwrites an existing role. Returns ErrRoleNotFound if the
+// role code does not exist for that client.
+func (m *MemoryProvider) UpdateRole(_ context.Context, clientID string, role Role) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.rolesByClient[clientID][role.Code]; !exists {
+		return ErrRoleNotFound
+	}
+	m.rolesByClient[clientID][role.Code] = role
+	return nil
+}
+
+// RemoveRole drops a role definition and rips it out of every user's
+// assignment list under the same client.
+func (m *MemoryProvider) RemoveRole(_ context.Context, clientID, roleCode string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.rolesByClient[clientID][roleCode]; !exists {
+		return ErrRoleNotFound
+	}
+	delete(m.rolesByClient[clientID], roleCode)
+	// Detach from any user assignments.
+	for userID, byClient := range m.assignmentsByUser {
+		if roles, ok := byClient[clientID]; ok {
+			byClient[clientID] = slices.DeleteFunc(roles, func(r string) bool { return r == roleCode })
+			m.assignmentsByUser[userID] = byClient
+		}
+	}
+	return nil
+}
+
+// SetMenus replaces the menu tree for clientID.
+func (m *MemoryProvider) SetMenus(_ context.Context, clientID string, menus MenuTree) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.menusByClient[clientID] = menus
+	return nil
 }
 
-// AssignRoles grants the user the given role codes within the given client app.
-func (m *MemoryProvider) AssignRoles(userID, clientID string, roles []string) {
+// AssignRoles grants the user the given role codes under clientID. The set
+// becomes the new role list (not a merge) — to merge, fetch via Roles() and
+// re-Assign.
+func (m *MemoryProvider) AssignRoles(_ context.Context, userID, clientID string, roles []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.assignmentsByUser[userID] == nil {
 		m.assignmentsByUser[userID] = make(map[string][]string)
 	}
 	m.assignmentsByUser[userID][clientID] = append([]string{}, roles...)
+	return nil
+}
+
+// UnassignRoles removes the given role codes from the user's assignment list
+// under clientID. Roles not currently assigned are silently ignored.
+func (m *MemoryProvider) UnassignRoles(_ context.Context, userID, clientID string, roles []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byClient := m.assignmentsByUser[userID]
+	if byClient == nil {
+		return nil
+	}
+	cur := byClient[clientID]
+	if len(cur) == 0 {
+		return nil
+	}
+	remove := make(map[string]struct{}, len(roles))
+	for _, r := range roles {
+		remove[r] = struct{}{}
+	}
+	byClient[clientID] = slices.DeleteFunc(cur, func(r string) bool {
+		_, drop := remove[r]
+		return drop
+	})
+	return nil
+}
+
+// ListAllRoles returns every role defined under clientID.
+func (m *MemoryProvider) ListAllRoles(_ context.Context, clientID string) ([]Role, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	defs := m.rolesByClient[clientID]
+	out := make([]Role, 0, len(defs))
+	for _, r := range defs {
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// ListAssignments returns every user with at least one role under clientID.
+func (m *MemoryProvider) ListAssignments(_ context.Context, clientID string) ([]Assignment, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Assignment, 0)
+	for userID, byClient := range m.assignmentsByUser {
+		if roles, ok := byClient[clientID]; ok && len(roles) > 0 {
+			out = append(out, Assignment{UserID: userID, Roles: append([]string(nil), roles...)})
+		}
+	}
+	return out, nil
 }
 
 // Roles returns all role objects assigned to userID within clientID.
@@ -74,8 +165,8 @@ func (m *MemoryProvider) Roles(_ context.Context, userID, clientID string) ([]Ro
 	return out, nil
 }
 
-// Permissions returns the union of all permission codes from the user's
-// assigned roles, deduplicated, as Permission structs.
+// Permissions returns the union of permission codes from the user's assigned
+// roles under clientID, deduplicated, as Permission structs.
 func (m *MemoryProvider) Permissions(ctx context.Context, userID, clientID string) ([]Permission, error) {
 	roles, err := m.Roles(ctx, userID, clientID)
 	if err != nil {
@@ -94,10 +185,9 @@ func (m *MemoryProvider) Permissions(ctx context.Context, userID, clientID strin
 	return out, nil
 }
 
-// Menus returns the client's menu tree filtered by the user's effective
-// permission set. Nodes whose Permission isn't held are removed; branches
-// that become empty (no children, no own permission) are pruned. Buttons are
-// filtered the same way.
+// Menus returns clientID's menu tree filtered by the user's permission set.
+// Nodes whose Permission isn't held are removed; branches that become empty
+// (no children, no own permission) are pruned. Buttons are filtered the same way.
 func (m *MemoryProvider) Menus(ctx context.Context, userID, clientID string) (MenuTree, error) {
 	m.mu.RLock()
 	full := m.menusByClient[clientID]
@@ -116,18 +206,14 @@ func (m *MemoryProvider) Menus(ctx context.Context, userID, clientID string) (Me
 func filterMenus(in MenuTree, perms []Permission) MenuTree {
 	out := make(MenuTree, 0, len(in))
 	for _, item := range in {
-		// Recurse first so we know whether children survived.
 		var kept []MenuItem
 		if len(item.Children) > 0 {
 			kept = filterMenus(item.Children, perms)
 		}
-
-		// Drop the item only if its own permission is denied AND no child survived.
 		ownAllowed := item.Permission == "" || Matches(perms, item.Permission)
 		if !ownAllowed && len(kept) == 0 {
 			continue
 		}
-
 		buttons := filterButtons(item.Buttons, perms)
 		out = append(out, MenuItem{
 			ID:         item.ID,
