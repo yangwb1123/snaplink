@@ -16,6 +16,8 @@ import (
 	"github.com/snaplink/sso/bootstrap"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/snapshot"
+	"github.com/snaplink/sso/snapshot/loader"
 )
 
 // AdminSeed bundles the dependencies that need to be reachable when the
@@ -34,6 +36,63 @@ type AdminSeed struct {
 
 	// Where to print the generated admin password. nil → fmt.Printf to stdout.
 	PasswordPrinter func(password string)
+}
+
+// RestorePlan describes a first-boot snapshot import. Pass it to
+// ApplyRestore before runner.Run() — the Restorer's AdvanceBootstrap
+// support means the Runner naturally skips seed steps already covered
+// by the snapshot (the Tracker high-water mark jumps to whatever the
+// snapshot recorded).
+//
+// We don't model this as a bootstrap.Step because the Runner skips any
+// step whose Version is <= the tracker's current applied_version, and a
+// fresh tracker starts at 0 — there's no Version that runs strictly
+// before the existing seeds (1..N) without renumbering them, which
+// would force seed_admin_user to re-run on existing deployments and
+// overwrite the captured admin password.
+type RestorePlan struct {
+	URI      string               // file://... | inline:... ; empty = no-op
+	Pipeline *snapshot.Pipeline   // codec + sealer
+	Restorer *snapshot.Restorer   // applies snap onto destination stores
+	Mode     snapshot.RestoreMode // defaults to ModeOverwrite
+}
+
+// ApplyRestore loads the snapshot at plan.URI through plan.Pipeline,
+// applies it via plan.Restorer (with AdvanceBootstrap=true so the
+// Tracker bumps to the snapshot's recorded version), and returns the
+// Report. Returns (nil, nil) when plan is nil or URI is empty —
+// callers can pass an unconditional plan and let this be a no-op.
+//
+// plan.Restorer.Tracker MUST already be wired so the bootstrap
+// high-water mark advances; otherwise the Runner will re-run seed
+// steps the snapshot already covered.
+func ApplyRestore(ctx context.Context, plan *RestorePlan) (*snapshot.Report, error) {
+	if plan == nil || plan.URI == "" {
+		return nil, nil
+	}
+	if plan.Pipeline == nil || plan.Restorer == nil {
+		return nil, errors.New("builtin.ApplyRestore: Pipeline and Restorer required")
+	}
+	st, name, err := loader.FromURI(plan.URI)
+	if err != nil {
+		return nil, fmt.Errorf("builtin.ApplyRestore: load uri: %w", err)
+	}
+	snap, err := plan.Pipeline.Load(ctx, st, name)
+	if err != nil {
+		return nil, fmt.Errorf("builtin.ApplyRestore: pipeline load: %w", err)
+	}
+	mode := plan.Mode
+	if mode == "" {
+		mode = snapshot.ModeOverwrite
+	}
+	rep, err := plan.Restorer.Restore(ctx, snap, snapshot.RestoreOptions{
+		Mode:             mode,
+		AdvanceBootstrap: true,
+	})
+	if err != nil {
+		return rep, fmt.Errorf("builtin.ApplyRestore: restore: %w", err)
+	}
+	return rep, nil
 }
 
 // Steps returns the canonical list of built-in steps the sso-server should
@@ -66,7 +125,7 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 		}
 	}
 
-	return []bootstrap.Step{
+	steps := []bootstrap.Step{
 		bootstrap.StepFunc("seed_admin_role", 1, func(ctx context.Context) error {
 			if seed.Permissions == nil {
 				return fmt.Errorf("seed_admin_role: permissions provider required")
@@ -164,6 +223,7 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 			return err
 		}),
 	}
+	return steps
 }
 
 // generatePassword returns a base64url-encoded random string of n bytes.

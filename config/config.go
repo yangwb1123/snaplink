@@ -25,15 +25,16 @@ const DefaultFileName = "config.yaml"
 
 // Config is the root configuration document.
 type Config struct {
-	Server         ServerConfig          `yaml:"server"`
-	Authenticators AuthenticatorsConfig  `yaml:"authenticators"`
-	Logging        LoggingConfig         `yaml:"logging"`
-	Audit          AuditConfig           `yaml:"audit"`
-	Permissions    PermissionsConfig     `yaml:"permissions"`
-	Network        NetworkConfig         `yaml:"network"`
-	Clients        []ClientConfig        `yaml:"clients"`
-	Admin          AdminConfig           `yaml:"admin"`
-	Bootstrap      BootstrapConfig       `yaml:"bootstrap"`
+	Server         ServerConfig         `yaml:"server"`
+	Authenticators AuthenticatorsConfig `yaml:"authenticators"`
+	Logging        LoggingConfig        `yaml:"logging"`
+	Audit          AuditConfig          `yaml:"audit"`
+	Permissions    PermissionsConfig    `yaml:"permissions"`
+	Network        NetworkConfig        `yaml:"network"`
+	Clients        []ClientConfig       `yaml:"clients"`
+	Admin          AdminConfig          `yaml:"admin"`
+	Bootstrap      BootstrapConfig      `yaml:"bootstrap"`
+	Snapshot       SnapshotConfig       `yaml:"snapshot"`
 }
 
 // AdminConfig toggles the admin control plane. When Enabled is true the
@@ -91,6 +92,42 @@ type LockEtcdConfig struct {
 	DialTimeout time.Duration `yaml:"dial_timeout"`
 	Username    string        `yaml:"username"`
 	Password    string        `yaml:"password"`
+}
+
+// SnapshotConfig configures the snapshot subsystem (Phase D-2). When
+// Enabled is false the admin SnapshotService is not mounted and the
+// bootstrap restore_from_snapshot step no-ops. Storage selects where
+// envelopes live (file/inline); Encryption selects how they're sealed
+// (none/passphrase). RestoreFrom is a snapshot URI consumed by the
+// bootstrap step on first boot — overridden by --bootstrap-restore-from.
+type SnapshotConfig struct {
+	Enabled     bool                     `yaml:"enabled"`
+	Storage     SnapshotStorageConfig    `yaml:"storage"`
+	Encryption  SnapshotEncryptionConfig `yaml:"encryption"`
+	RestoreFrom string                   `yaml:"restore_from"`
+}
+
+// SnapshotStorageConfig picks where Pipeline persists envelopes. Backend
+// is "file" (default) or "inline" (in-memory; useful for tests).
+type SnapshotStorageConfig struct {
+	Backend string             `yaml:"backend"`
+	File    SnapshotFileConfig `yaml:"file"`
+}
+
+// SnapshotFileConfig configures the file-backed Storage. Dir defaults to
+// "./snapshots" when empty.
+type SnapshotFileConfig struct {
+	Dir string `yaml:"dir"`
+}
+
+// SnapshotEncryptionConfig picks the Sealer. Backend is "none" (default,
+// envelopes are plaintext JSON) or "passphrase" (argon2id +
+// XChaCha20-Poly1305). For passphrase mode set either Passphrase
+// (literal, fine for tests) or PassphraseFile (read from disk on boot).
+type SnapshotEncryptionConfig struct {
+	Backend        string `yaml:"backend"`
+	Passphrase     string `yaml:"passphrase"`
+	PassphraseFile string `yaml:"passphrase_file"`
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the

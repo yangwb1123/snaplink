@@ -45,6 +45,11 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
 	"github.com/snaplink/sso/registry/memory"
+	"github.com/snaplink/sso/snapshot"
+	encryptionnone "github.com/snaplink/sso/snapshot/encryption/none"
+	encryptionpass "github.com/snaplink/sso/snapshot/encryption/passphrase"
+	storagefile "github.com/snaplink/sso/snapshot/storage/file"
+	storageinline "github.com/snaplink/sso/snapshot/storage/inline"
 	"google.golang.org/grpc"
 )
 
@@ -69,6 +74,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "TLS cert file (omit for HTTP)")
 	tlsKey := flag.String("tls-key", "", "TLS key file (omit for HTTP)")
 	logLevel := flag.String("log-level", "", "override logging.level (debug|info|error)")
+	restoreFrom := flag.String("bootstrap-restore-from", "", "snapshot URI for first-boot restore (overrides snapshot.restore_from); e.g. file:///var/snapshots/snap.snap")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -80,6 +86,9 @@ func main() {
 	}
 	if *logLevel != "" {
 		cfg.Logging.Level = *logLevel
+	}
+	if *restoreFrom != "" {
+		cfg.Snapshot.RestoreFrom = *restoreFrom
 	}
 
 	logger := newSlogLogger(cfg.Logging.Level)
@@ -110,6 +119,12 @@ type app struct {
 	tokenIssuers  map[string]sso.TokenIssuer
 
 	adminMW *sso.AdminMiddleware // nil when admin disabled
+
+	// Snapshot subsystem (Phase D-2). All four nil when snapshot disabled.
+	snapshotPipeline    *snapshot.Pipeline
+	snapshotStorage     snapshot.Storage
+	snapshotter         *snapshot.Snapshotter
+	snapshotRestorer    *snapshot.Restorer
 
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
@@ -247,6 +262,10 @@ func newGRPCServer(a *app) *grpc.Server {
 			Recorder:  a.recorder,
 		}))
 		adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(a.provider, a.recorder))
+		if a.snapshotPipeline != nil {
+			adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
+				a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))
+		}
 	}
 	return s
 }
@@ -277,6 +296,12 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 	}
 	if err := adminv1.RegisterPermissionAdminServiceHandlerServer(ctx, gw, grpcserver.NewPermissionAdminService(a.provider, a.recorder)); err != nil {
 		return nil, fmt.Errorf("gateway permissions: %w", err)
+	}
+	if a.snapshotPipeline != nil {
+		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
+			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder)); err != nil {
+			return nil, fmt.Errorf("gateway snapshots: %w", err)
+		}
 	}
 	logger.Info("admin REST gateway mounted", "prefix", adminAPIPathPrefix)
 
@@ -313,6 +338,30 @@ func runBootstrap(cfg *config.Config, a *app, logger sso.Logger) error {
 		AdminClientID:  cfg.Bootstrap.AdminClientID,
 		AdminRoleCode:  cfg.Bootstrap.AdminRoleCode,
 		AdminClientApp: cfg.Bootstrap.AdminClientApp,
+	}
+
+	// Snapshot restore runs BEFORE the runner so AdvanceBootstrap can
+	// bump the Tracker — that lets seed steps already covered by the
+	// snapshot skip themselves on the same boot. Restorer.Tracker must
+	// be wired here because the tracker isn't constructed until now.
+	if cfg.Snapshot.Enabled && cfg.Snapshot.RestoreFrom != "" && a.snapshotPipeline != nil && a.snapshotRestorer != nil {
+		a.snapshotRestorer.Tracker = tracker
+		plan := &builtin.RestorePlan{
+			URI:      cfg.Snapshot.RestoreFrom,
+			Pipeline: a.snapshotPipeline,
+			Restorer: a.snapshotRestorer,
+		}
+		logger.Info("bootstrap: applying snapshot restore", "uri", cfg.Snapshot.RestoreFrom)
+		rep, err := builtin.ApplyRestore(context.Background(), plan)
+		if err != nil {
+			return fmt.Errorf("snapshot restore: %w", err)
+		}
+		if rep != nil {
+			logger.Info("bootstrap: snapshot restored",
+				"mode", rep.Mode,
+				"bootstrap_advanced_to", rep.Bootstrap.To,
+				"items", len(rep.Items))
+		}
 	}
 
 	bootLock, lockCloser, err := buildBootstrapLock(cfg, logger)
@@ -384,6 +433,59 @@ func buildBootstrapLock(cfg *config.Config, logger sso.Logger) (lock.Lock, func(
 // _ keeps the noop import live for documentation purposes; we don't
 // instantiate it explicitly because nil-Lock has the same effect.
 var _ = lockNoop.New
+
+// buildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
+// SnapshotConfig. Returns (nil, nil, nil) when snapshot.enabled=false. The
+// Snapshotter / Restorer that depend on the runtime stores are wired
+// separately inside buildApp once those stores exist.
+func buildSnapshotSubsystem(cfg *config.Config, logger sso.Logger) (*snapshot.Pipeline, snapshot.Storage, error) {
+	if !cfg.Snapshot.Enabled {
+		return nil, nil, nil
+	}
+	var store snapshot.Storage
+	switch strings.ToLower(cfg.Snapshot.Storage.Backend) {
+	case "", "file":
+		dir := cfg.Snapshot.Storage.File.Dir
+		if dir == "" {
+			dir = "./snapshots"
+		}
+		s, err := storagefile.New(dir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("snapshot file storage: %w", err)
+		}
+		logger.Info("snapshot storage: file", "dir", dir)
+		store = s
+	case "inline":
+		logger.Info("snapshot storage: inline (in-memory)")
+		store = storageinline.New()
+	default:
+		return nil, nil, fmt.Errorf("unknown snapshot.storage.backend %q", cfg.Snapshot.Storage.Backend)
+	}
+
+	var sealer snapshot.Sealer
+	switch strings.ToLower(cfg.Snapshot.Encryption.Backend) {
+	case "", "none":
+		sealer = encryptionnone.New()
+	case "passphrase":
+		pass := cfg.Snapshot.Encryption.Passphrase
+		if pass == "" && cfg.Snapshot.Encryption.PassphraseFile != "" {
+			b, err := os.ReadFile(cfg.Snapshot.Encryption.PassphraseFile)
+			if err != nil {
+				return nil, nil, fmt.Errorf("snapshot passphrase file: %w", err)
+			}
+			pass = strings.TrimRight(string(b), "\r\n")
+		}
+		if pass == "" {
+			return nil, nil, errors.New("snapshot.encryption.backend=passphrase requires passphrase or passphrase_file")
+		}
+		sealer = encryptionpass.NewFromString(pass)
+		logger.Info("snapshot encryption: passphrase (argon2id+chacha20poly1305)")
+	default:
+		return nil, nil, fmt.Errorf("unknown snapshot.encryption.backend %q", cfg.Snapshot.Encryption.Backend)
+	}
+
+	return &snapshot.Pipeline{Sealer: sealer}, store, nil
+}
 
 // bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
 type bootstrapLogger struct{ inner sso.Logger }
@@ -493,6 +595,29 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		adminMW = sso.NewAdminMiddleware(srv, provider)
 	}
 
+	pipeline, snapStorage, err := buildSnapshotSubsystem(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot subsystem: %w", err)
+	}
+	var snapshotter *snapshot.Snapshotter
+	var restorer *snapshot.Restorer
+	if pipeline != nil {
+		snapshotter = &snapshot.Snapshotter{
+			Clients:     clientStore,
+			Users:       userProvider,
+			Permissions: provider,
+			NetPolicy:   netStore,
+			Namespace:   bootstrapNamespace,
+		}
+		restorer = &snapshot.Restorer{
+			Clients:     clientStore,
+			Users:       userProvider,
+			Permissions: provider,
+			NetPolicy:   netStore,
+			Namespace:   bootstrapNamespace,
+		}
+	}
+
 	reg := memory.New()
 	addr := cfg.Server.Listen
 	if addr == "" || addr[0] == ':' {
@@ -509,19 +634,23 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}
 	return &app{
-		server:       srv,
-		recorder:     recorder,
-		provider:     provider,
-		registry:     reg,
-		netStore:     netStore,
-		classifier:   classifier,
-		clientStore:  clientStore,
-		userProvider: userProvider,
-		sessionMgr:   sessionMgr,
-		tempStore:    tempStore,
-		tokenIssuers: tokenIssuers,
-		adminMW:      adminMW,
-		netStop:      netStop,
+		server:           srv,
+		recorder:         recorder,
+		provider:         provider,
+		registry:         reg,
+		netStore:         netStore,
+		classifier:       classifier,
+		clientStore:      clientStore,
+		userProvider:     userProvider,
+		sessionMgr:       sessionMgr,
+		tempStore:        tempStore,
+		tokenIssuers:     tokenIssuers,
+		adminMW:          adminMW,
+		snapshotPipeline: pipeline,
+		snapshotStorage:  snapStorage,
+		snapshotter:      snapshotter,
+		snapshotRestorer: restorer,
+		netStop:          netStop,
 	}, nil
 }
 
@@ -641,6 +770,17 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 		} {
 			fmt.Printf("  %s\n", p)
 		}
+		if cfg.Snapshot.Enabled {
+			for _, p := range []string{
+				"POST   /api/v1/admin/snapshots",
+				"GET    /api/v1/admin/snapshots",
+				"GET    /api/v1/admin/snapshots/{id}",
+				"POST   /api/v1/admin/snapshots/{id}:restore",
+				"DELETE /api/v1/admin/snapshots/{id}",
+			} {
+				fmt.Printf("  %s\n", p)
+			}
+		}
 	}
 	if grpcListen != "" {
 		fmt.Printf("gRPC services on %s:\n", grpcListen)
@@ -655,6 +795,9 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 			fmt.Println("  snaplink.admin.v1.UserAdminService / List + Get + Create + Update + Delete + ListUserSessions")
 			fmt.Println("  snaplink.admin.v1.TokenAdminService / ListSessions + Revoke + IssueTempToken")
 			fmt.Println("  snaplink.admin.v1.PermissionAdminService / *")
+			if cfg.Snapshot.Enabled {
+				fmt.Println("  snaplink.admin.v1.SnapshotAdminService / Export + List + Get + Restore + Delete")
+			}
 		}
 	}
 }
