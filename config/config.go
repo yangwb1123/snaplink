@@ -36,6 +36,7 @@ type Config struct {
 	Bootstrap      BootstrapConfig      `yaml:"bootstrap"`
 	Snapshot       SnapshotConfig       `yaml:"snapshot"`
 	Releases       ReleasesConfig       `yaml:"releases"`
+	Geo            GeoConfig            `yaml:"geo"`
 }
 
 // AdminConfig toggles the admin control plane. When Enabled is true the
@@ -202,6 +203,41 @@ type ReleaseProbeConfig struct {
 // ReleaseProbeHTTPConfig configures the http probe.
 type ReleaseProbeHTTPConfig struct {
 	URL string `yaml:"url"`
+}
+
+// GeoConfig configures the IP → geo enrichment middleware. When
+// Enabled is false the SSO server skips installing the middleware
+// entirely. Backend selects which geo.Provider implementation
+// supplies the lookups.
+//
+// The static backend is in-process and useful for small operator
+// curated tables (private RFC1918 ranges, regional office
+// blocks). Real geo coverage typically wants a future maxmind
+// backend stacked behind static — see geo/ docs.
+type GeoConfig struct {
+	Enabled bool             `yaml:"enabled"`
+	Backend string           `yaml:"backend"` // "static" (default)
+	Static  GeoStaticConfig  `yaml:"static"`
+	// LookupTimeout caps a single Lookup in the request hot path.
+	// Defaults to sso.DefaultGeoLookupTimeout (200ms) when zero.
+	LookupTimeout time.Duration `yaml:"lookup_timeout"`
+}
+
+// GeoStaticConfig configures the in-process CIDR → GeoInfo table.
+// Entries are added in declaration order; longest-prefix match
+// wins regardless.
+type GeoStaticConfig struct {
+	Entries []GeoStaticEntry `yaml:"entries"`
+}
+
+// GeoStaticEntry is one CIDR → GeoInfo mapping.
+type GeoStaticEntry struct {
+	CIDR                string `yaml:"cidr"`
+	CountryCode         string `yaml:"country_code"`
+	Region              string `yaml:"region"`
+	City                string `yaml:"city"`
+	TimeZone            string `yaml:"time_zone"`
+	RecommendedLanguage string `yaml:"recommended_language"` // BCP-47
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the

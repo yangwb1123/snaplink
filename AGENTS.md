@@ -541,6 +541,53 @@ Layered SPI per the same plugin pattern as snapshot:
   mutation emits one audit event (`release_registered|pinned|rolled_back|deleted`)
   with the release id + (for pin/rollback) the previous current id.
 
+### 6g. Geo (`geo/` + sso/geo_middleware.go)
+
+IP → geo enrichment on the auth path. The middleware extracts the
+client IP from the request (XFF first hop → X-Real-IP →
+RemoteAddr by default), looks it up via a `geo.Provider`, and
+stashes the resulting `*GeoInfo` on `HandlerContext`. The login
+handler reads it back and fills `AuthResult.RecommendedLanguage`
+when the authenticator didn't supply a stronger signal — the
+response then carries `recommended_language` so the post-login UI
+can render in the user's most-likely BCP-47 language.
+
+Geo is deliberately a UX hint, not a security signal:
+`ErrNotFound` is non-fatal, `Lookup` runs under a short timeout
+(200ms default), and a nil Provider makes the whole path no-op.
+
+- **`geo.Provider`** — single-method SPI (`Lookup(ctx, ip) →
+  *GeoInfo`). `GeoInfo` carries `CountryCode` / `Region` / `City`
+  / `TimeZone` / `RecommendedLanguage`; all optional.
+- **`geo/static`** — CIDR → GeoInfo lookup table; longest-prefix
+  match; thread-safe; for tests + small operator-curated
+  overrides (private RFC1918 ranges, regional office blocks).
+  No external deps. Future `geo/maxmind` backend stacks behind
+  this for full coverage.
+- **`geo.WithContext` / `FromContext`** — pure context.Context
+  helpers for threading `*GeoInfo` through downstream gRPC calls
+  or audit metadata enrichment.
+- **`sso.GeoMiddleware`** — `MiddlewareFunc` factory; lives in
+  the sso package because the natural import direction is
+  sso → geo (geo stays free of any sso dep). `sso.WithGeoProvider`
+  installs it on Mount; `sso.WithGeoMiddlewareOptions` tunes the
+  IP extractor / timeout / error reporter.
+- **`sso.GeoFromHandlerContext`** — typed read-back for handlers
+  + custom downstream code.
+
+**Authenticator priority**: `AuthResult.RecommendedLanguage` set by
+the Authenticator wins (e.g. a hypothetical phone Authenticator
+that knows the SIM's region); the geo fallback only fills when the
+field is empty. The `recommended_language` response key is omitted
+entirely when no source has a value, so clients can rely on its
+absence to mean "no hint, use your own preference".
+
+**Security note on `X-Forwarded-For`**: `DefaultGeoIPExtractor`
+trusts `XFF` and `X-Real-IP`, which is correct ONLY when a known
+edge proxy strips and re-sets them. Internet-facing deployments
+without an edge proxy should write a custom `GeoIPExtractor` that
+ignores forwarded headers and uses `RemoteAddr` only.
+
 ### 7. ssoclient (the local/remote split)
 
 ```go
@@ -612,6 +659,9 @@ releases:      # enabled
                # probe: { backend ("" | http), http.url, polls, backoff }
                # snapshot_integration: bool — when true + snapshot.enabled,
                #   Rollback restores target.ConfigSnapshot before Pinner
+geo:           # enabled, backend (static), lookup_timeout
+               # static.entries[]: { cidr, country_code, region, city,
+               #                     time_zone, recommended_language }
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens

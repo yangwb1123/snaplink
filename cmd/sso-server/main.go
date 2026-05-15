@@ -40,6 +40,8 @@ import (
 	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
 	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
 	netpolicyv1 "github.com/snaplink/sso/gen/proto/netpolicy/v1"
+	"github.com/snaplink/sso/geo"
+	geostatic "github.com/snaplink/sso/geo/static"
 	"github.com/snaplink/sso/grpcserver"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
@@ -620,6 +622,34 @@ func (a *snapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID st
 	return nil
 }
 
+// buildGeoProvider materialises the geo.Provider from GeoConfig.
+// Returns nil when geo.enabled=false so cmd can pass the result to
+// sso.WithGeoProvider unconditionally (the option no-ops on nil).
+func buildGeoProvider(cfg *config.Config, logger sso.Logger) (geo.Provider, error) {
+	if !cfg.Geo.Enabled {
+		return nil, nil
+	}
+	switch strings.ToLower(cfg.Geo.Backend) {
+	case "", "static":
+		p := geostatic.New()
+		for _, e := range cfg.Geo.Static.Entries {
+			if err := p.Add(e.CIDR, geo.GeoInfo{
+				CountryCode:         e.CountryCode,
+				Region:              e.Region,
+				City:                e.City,
+				TimeZone:            e.TimeZone,
+				RecommendedLanguage: e.RecommendedLanguage,
+			}); err != nil {
+				return nil, fmt.Errorf("geo static entry %q: %w", e.CIDR, err)
+			}
+		}
+		logger.Info("geo provider: static", "entries", p.Len())
+		return p, nil
+	default:
+		return nil, fmt.Errorf("unknown geo.backend %q", cfg.Geo.Backend)
+	}
+}
+
 // bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
 type bootstrapLogger struct{ inner sso.Logger }
 
@@ -719,6 +749,19 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	auths, tempStore := buildAuthenticators(cfg, logger)
 	for _, ath := range auths {
 		opts = append(opts, sso.WithAuthenticator(ath))
+	}
+
+	geoProvider, err := buildGeoProvider(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("geo provider: %w", err)
+	}
+	if geoProvider != nil {
+		opts = append(opts, sso.WithGeoProvider(geoProvider))
+		if cfg.Geo.LookupTimeout > 0 {
+			opts = append(opts, sso.WithGeoMiddlewareOptions(sso.GeoMiddlewareOptions{
+				Timeout: cfg.Geo.LookupTimeout,
+			}))
+		}
 	}
 
 	srv := sso.NewServer(opts...)
