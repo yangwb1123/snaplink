@@ -311,6 +311,13 @@ First-run init for both the SDK itself AND consumer apps. Three pieces:
   namespace". Two backends: `bootstrap/memory` (tests) and
   `bootstrap/file` (JSON file with atomic-rename writes; default for
   single-node deployments).
+- **`bootstrap/lock.Lock`** (Phase D-1) — distributed lock SPI for
+  multi-replica coordination. Backends: `noop` (default), `file`
+  (`flock(2)`), `etcd` (lease + Txn). Wired via
+  `bootstrap.WithLock(lock, key)` + `WithLockTTL` + `WithLockBlocking`.
+  The Runner takes the lock before iterating Steps, runs a heartbeat
+  goroutine that cancels in-flight Steps on lease loss, and Releases
+  on exit. Lock loss surfaces as `bootstrap.ErrLockLost`.
 - **`bootstrap.Runner`** — sorts Steps by Version, skips already-applied
   ones, runs the rest, marks each applied. Emits
   `bootstrap_step_applied/skipped/failed` audit events when wired with
@@ -417,6 +424,7 @@ clients:       # per-APP id, secret, allowed_authenticators, token_strategy
 authenticators: # per-method enable + tuning (code length, TTL, max_clock_skew, ...)
 admin:         # enabled, api_rest_enabled — gates admin gRPC + REST gateway
 bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code
+               # lock: { backend (noop|file|etcd), key, ttl, blocking, file.dir, etcd.endpoints }
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens
