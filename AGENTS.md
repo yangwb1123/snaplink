@@ -257,6 +257,107 @@ HTTP surface (mounted when `network.enabled` and `network.api_enabled`):
 
 Server-side helper for embedders: `(*sso.Server).ClassifyRequest(r) *Policy`.
 
+### 6c. gRPC Phase C — admin control plane (`proto/admin/v1/` + `grpcserver/admin_*.go`)
+
+Four v1 services under `snaplink.admin.v1.`:
+
+| Service                  | RPCs                                                                     |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `ClientAdminService`     | List, Get, Create, Update, Delete, RotateSecret                          |
+| `UserAdminService`       | List, Get, Create, Update, Delete, ListUserSessions                      |
+| `TokenAdminService`      | ListSessions, Revoke, IssueTempToken                                     |
+| `PermissionAdminService` | ListRoles, AddRole, UpdateRole, RemoveRole, ListAssignments, AssignRoles, UnassignRoles, SetMenus |
+
+All services are defined once in `.proto` and served two ways:
+
+- **gRPC** — registered in `cmd/sso-server/main.go::newGRPCServer` when
+  `admin.enabled` is true.
+- **REST** — auto-generated reverse proxy via `grpc-gateway` (the
+  `pb.gw.go` files under `gen/proto/admin/v1/`) mounted under
+  `/api/v1/admin/` when both `admin.enabled` and `admin.api_rest_enabled`
+  are true. The REST URL conventions (`POST /api/v1/admin/clients`,
+  `POST /api/v1/admin/clients/{id}:rotateSecret`, etc.) come straight from
+  the `google.api.http` annotations in the protos.
+
+**Auth + scope.** Both transports go through `sso.AdminMiddleware`
+(`admin_middleware.go`), which:
+
+1. Pulls a bearer token from `Authorization: Bearer ...` (HTTP) or the
+   `authorization` metadata key (gRPC).
+2. Validates it via `(*sso.Server).ValidateToken` — same JWT pipeline as
+   /userinfo.
+3. Looks up the subject's permissions on the token's `aud` (client ID).
+4. Requires `admin:read` for List/Get/Search/Find methods and
+   `admin:write` for everything else; the wildcard `admin:*` matches both.
+5. Stashes the actor (userID + clientID) in the request context so
+   admin handlers can attribute audit events. Read it from any handler
+   with `sso.AdminActorFromContext(ctx)`.
+
+The gRPC interceptor only fires on `/snaplink.admin.v1.*` methods; the
+HTTP middleware only fires on `/api/v1/admin/*` paths. Non-admin
+endpoints pass through unchanged.
+
+Every mutation emits an `admin_*` audit event (see `audit/event.go`):
+`admin_client_created`, `admin_user_deleted`, `admin_role_assigned`, etc.
+
+### 6d. Bootstrap (`bootstrap/` + `bootstrap/builtin/` + `ssoclient/bootstrap/`)
+
+First-run init for both the SDK itself AND consumer apps. Three pieces:
+
+- **`bootstrap.Step`** — one init action: `Name() / Version() / Run(ctx)`.
+  Versioned monotonically per namespace; the Runner only re-runs steps
+  with `Version > tracker's recorded high-water mark`.
+- **`bootstrap.Tracker`** — persists "highest applied version per
+  namespace". Two backends: `bootstrap/memory` (tests) and
+  `bootstrap/file` (JSON file with atomic-rename writes; default for
+  single-node deployments).
+- **`bootstrap.Runner`** — sorts Steps by Version, skips already-applied
+  ones, runs the rest, marks each applied. Emits
+  `bootstrap_step_applied/skipped/failed` audit events when wired with
+  `WithRecorder`.
+
+The sso-server registers four built-in Steps under namespace
+`"sso-server"` (`bootstrap/builtin/builtin.go`):
+
+1. **`seed_admin_role`** (v1) — creates the `sso-admin` role with the
+   `admin:*` permission so the admin user can hit every admin RPC.
+2. **`seed_admin_user`** (v2) — generates a 24-byte random password,
+   stores `admin` user with the password as a `seeded_password` attribute
+   (so a custom verifier can read it), assigns the admin role, and
+   prints the password ONCE to stdout. Capture it from the boot log;
+   it's never re-emitted.
+3. **`seed_default_netpolicy`** (v3) — registers an "intranet" RFC1918
+   policy if no policies exist yet. Skipped silently when netpolicy is
+   disabled or already populated.
+4. **`seed_admin_client`** (v4) — creates the `sso-admin` client with a
+   random 32-byte secret. Skipped if the operator already declared a
+   client with that ID in YAML.
+
+State file defaults to `bootstrap.json` next to the binary; override
+with `bootstrap.state_path` in the YAML config. Set
+`bootstrap.disabled: true` to skip the runner entirely (useful in tests
+or when an external orchestrator owns init).
+
+**Consumer-app helper.** `ssoclient/bootstrap` wraps the file tracker +
+namespaced runner into a one-shot facade so embedding apps don't have to
+repeat the glue:
+
+```go
+bs, _ := ssobootstrap.New("billing-app", "/var/lib/billing/init.json",
+    ssobootstrap.WithRecorder(recorder),
+    ssobootstrap.WithLogger(logger),
+)
+defer bs.Close()
+bs.Register(
+    ssobootstrap.StepFunc("create_schema", 1, createSchema),
+    ssobootstrap.StepFunc("seed_admin", 2, seedAdminUser),
+)
+_ = bs.Run(ctx)
+```
+
+The reserved namespace `"sso-server"` is rejected — pick something else.
+Multiple apps can share one state file as long as their namespaces differ.
+
 ### 7. ssoclient (the local/remote split)
 
 ```go
@@ -314,6 +415,8 @@ permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_lo
 network:       # enabled, api_enabled, store, policies[] (CIDR/hostname rules)
 clients:       # per-APP id, secret, allowed_authenticators, token_strategy
 authenticators: # per-method enable + tuning (code length, TTL, max_clock_skew, ...)
+admin:         # enabled, api_rest_enabled — gates admin gRPC + REST gateway
+bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens
