@@ -407,6 +407,50 @@ Layered SPI per the same plugin pattern as the rest of the repo:
   marshals → seals → wraps in `SealedEnvelope` (header carries codec +
   algorithm + sha256 + opaque encryption params) → stores. `Load`
   reverses it and verifies the sha256 with `ErrChecksumMismatch` on drift.
+- **`snapshot/loader.FromURI`** — turns `file:///abs/path/snap.snap` or
+  `inline:<base64>` into a `(Storage, name)` pair. Shared by the admin
+  Restore RPC and the bootstrap restore path so both speak the same URI
+  grammar.
+
+**Operator surface:**
+
+- Admin RPCs at `snaplink.admin.v1.SnapshotAdminService` (gated by
+  `admin:*` like the rest of the admin plane). REST gateway:
+
+  | Method | Path |
+  | --- | --- |
+  | POST | `/api/v1/admin/snapshots`             |
+  | GET  | `/api/v1/admin/snapshots`             |
+  | GET  | `/api/v1/admin/snapshots/{id}`        |
+  | POST | `/api/v1/admin/snapshots/{id}:restore` |
+  | DELETE | `/api/v1/admin/snapshots/{id}`     |
+
+  Sentinel mapping: `ErrSnapshotNotFound` → `NotFound`,
+  `ErrConfirmation*` / `ErrUnknownSchemaVersion` → `FailedPrecondition`,
+  `ErrChecksumMismatch` → `DataLoss`. Each mutation emits one audit
+  event (`snapshot_exported|restored|deleted`) with the snapshot id +
+  (for Restore) the mode and dry_run flag.
+- List endpoint projects only the envelope wrapper (snapshot id, codec,
+  algorithm, size_bytes); body-derived fields (taken_at_unix,
+  source_namespace, bootstrap_applied_version) stay zero — call Get to
+  populate them.
+
+**First-boot auto-restore:**
+
+- `snapshot.restore_from` YAML key + `--bootstrap-restore-from` CLI
+  override. Accepts the same URI grammar as `loader.FromURI`. CLI wins
+  when both are set; no env var fallback.
+- Runs via `bootstrap/builtin.ApplyRestore` BEFORE the bootstrap Runner
+  so `RestoreOptions.AdvanceBootstrap=true` can bump the Tracker — that
+  causes seed steps already covered by the snapshot to skip themselves
+  on the same boot. Mode defaults to `Overwrite`.
+- This path is not a `bootstrap.Step` because the Runner skips any step
+  whose `Version <= current` (a fresh tracker starts at 0, so a
+  Version=0 step would never run). Wedging it in any other version
+  would have meant renumbering the existing seeds and re-running
+  `seed_admin_user` on existing deployments — overwriting the captured
+  admin password. Re-importing onto an already-bootstrapped node is the
+  admin Restore RPC's job, not this hook's.
 
 ### 7. ssoclient (the local/remote split)
 
@@ -468,6 +512,9 @@ authenticators: # per-method enable + tuning (code length, TTL, max_clock_skew, 
 admin:         # enabled, api_rest_enabled — gates admin gRPC + REST gateway
 bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code
                # lock: { backend (noop|file|etcd), key, ttl, blocking, file.dir, etcd.endpoints }
+snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
+               # storage: { backend (file|inline), file.dir }
+               # encryption: { backend (none|passphrase), passphrase, passphrase_file }
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens
