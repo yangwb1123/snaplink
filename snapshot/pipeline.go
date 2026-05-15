@@ -165,6 +165,20 @@ func (p *Pipeline) Load(ctx context.Context, src Storage, name string) (*Snapsho
 	return codec.Unmarshal(plain)
 }
 
+// PeekEnvelope decodes the SealedEnvelope wrapper from raw bytes
+// without touching Body — useful for List endpoints that want to render
+// header metadata (snapshot id, codec, algorithm, taken_at) without
+// paying the cost of decryption + Codec.Unmarshal. The Body field on
+// the returned envelope is intentionally cleared.
+func PeekEnvelope(raw []byte) (SealedEnvelope, error) {
+	var env SealedEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return SealedEnvelope{}, fmt.Errorf("snapshot/pipeline: peek: %w", err)
+	}
+	env.Body = nil
+	return env, nil
+}
+
 func (p *Pipeline) codec() Codec {
 	if p.Codec != nil {
 		return p.Codec
