@@ -49,6 +49,18 @@ type Assignment struct {
 	Roles  []string `json:"roles"`
 }
 
+// MenuLister is an optional extension to Provider for callers that need
+// the raw menu tree per client without the user-permission filtering
+// applied by Provider.Menus. Snapshotters and admin export tools use it
+// to round-trip menu config across nodes; runtime callers should keep
+// using Provider.Menus.
+//
+// Implementations are encouraged to satisfy this interface — the in-memory
+// MemoryProvider does — but it is not required of every Provider.
+type MenuLister interface {
+	GetMenus(ctx context.Context, clientID string) (MenuTree, error)
+}
+
 // Sentinel errors returned by Provider implementations. Admin RPCs translate
 // these into gRPC status codes.
 var (

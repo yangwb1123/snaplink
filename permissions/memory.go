@@ -85,6 +85,19 @@ func (m *MemoryProvider) SetMenus(_ context.Context, clientID string, menus Menu
 	return nil
 }
 
+// GetMenus returns the raw (unfiltered) menu tree for clientID. Used by
+// the snapshot exporter; runtime callers should use Menus instead so the
+// per-user permission filter applies. Implements permissions.MenuLister.
+func (m *MemoryProvider) GetMenus(_ context.Context, clientID string) (MenuTree, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	full := m.menusByClient[clientID]
+	if full == nil {
+		return MenuTree{}, nil
+	}
+	return append(MenuTree(nil), full...), nil
+}
+
 // AssignRoles grants the user the given role codes under clientID. The set
 // becomes the new role list (not a merge) — to merge, fetch via Roles() and
 // re-Assign.
