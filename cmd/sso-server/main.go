@@ -21,11 +21,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/authenticators"
+	"github.com/snaplink/sso/bootstrap"
+	"github.com/snaplink/sso/bootstrap/builtin"
+	bootstrapfile "github.com/snaplink/sso/bootstrap/file"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/defaultimpl"
+	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
 	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
 	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
@@ -46,6 +51,10 @@ const (
 	writeTimeout      = 30 * time.Second
 	idleTimeout       = 120 * time.Second
 	shutdownTimeout   = 15 * time.Second
+
+	adminAPIPathPrefix = "/api/v1/admin/"
+
+	bootstrapNamespace = "sso-server"
 )
 
 func main() {
@@ -83,8 +92,19 @@ type app struct {
 	recorder   *audit.Recorder
 	provider   permissions.Provider
 	registry   registry.Registry
-	netStore   netpolicy.Store     // nil when network disabled
+	netStore   netpolicy.Store       // nil when network disabled
 	classifier *netpolicy.Classifier // nil when network disabled
+
+	// Admin-plane dependencies. Held as concrete references so admin RPCs +
+	// bootstrap steps can mutate the same backing stores the SDK runtime
+	// reads from.
+	clientStore   sso.ClientStore
+	userProvider  sso.UserProvider
+	sessionMgr    sso.SessionManager
+	tempStore     authenticators.TempTokenStore // may be nil when temp_token disabled
+	tokenIssuers  map[string]sso.TokenIssuer
+
+	adminMW *sso.AdminMiddleware // nil when admin disabled
 
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
@@ -100,9 +120,23 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 		defer a.netStore.Close()
 	}
 
+	// Phase C: bootstrap runner — applies pending init steps (seed admin
+	// role, admin user, default netpolicy, admin client). Must complete
+	// before we accept admin RPCs, so we run synchronously here.
+	if !cfg.Bootstrap.Disabled {
+		if err := runBootstrap(cfg, a, logger); err != nil {
+			return fmt.Errorf("bootstrap: %w", err)
+		}
+	}
+
+	httpHandler, err := buildHTTPHandler(cfg, a, logger)
+	if err != nil {
+		return fmt.Errorf("http handler: %w", err)
+	}
+
 	httpSrv := &http.Server{
 		Addr:              cfg.Server.Listen,
-		Handler:           a.server.Handler(),
+		Handler:           httpHandler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -184,24 +218,119 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 
 // newGRPCServer registers every available service on a fresh grpc.Server.
 // Phase A: AuditWriter, Authorizer, Discovery (always). Phase B:
-// PolicyService when network is enabled.
+// PolicyService when network is enabled. Phase C: 4 admin services when
+// admin is enabled — gated by AdminMiddleware's UnaryServerInterceptor.
 func newGRPCServer(a *app) *grpc.Server {
-	s := grpc.NewServer()
+	var opts []grpc.ServerOption
+	if a.adminMW != nil {
+		opts = append(opts, grpc.UnaryInterceptor(a.adminMW.UnaryServerInterceptor()))
+	}
+	s := grpc.NewServer(opts...)
 	auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
 	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
 	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
 	if a.netStore != nil {
 		netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
 	}
+	if a.adminMW != nil {
+		adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder))
+		adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
+		adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
+			Sessions:  a.sessionMgr,
+			TempStore: a.tempStore,
+			Issuers:   a.tokenIssuers,
+			Recorder:  a.recorder,
+		}))
+		adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(a.provider, a.recorder))
+	}
 	return s
 }
+
+// buildHTTPHandler composes the SSO Server's runtime handler with the
+// optional grpc-gateway admin reverse proxy. The gateway is mounted under
+// /api/v1/admin/ and gated by AdminMiddleware (bearer + admin scope).
+func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handler, error) {
+	base := a.server.Handler()
+	if a.adminMW == nil || !cfg.Admin.APIRESTEnabled {
+		return base, nil
+	}
+	gw := runtime.NewServeMux()
+	ctx := context.Background()
+	if err := adminv1.RegisterClientAdminServiceHandlerServer(ctx, gw, grpcserver.NewClientAdminService(a.clientStore, a.recorder)); err != nil {
+		return nil, fmt.Errorf("gateway clients: %w", err)
+	}
+	if err := adminv1.RegisterUserAdminServiceHandlerServer(ctx, gw, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder)); err != nil {
+		return nil, fmt.Errorf("gateway users: %w", err)
+	}
+	if err := adminv1.RegisterTokenAdminServiceHandlerServer(ctx, gw, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
+		Sessions:  a.sessionMgr,
+		TempStore: a.tempStore,
+		Issuers:   a.tokenIssuers,
+		Recorder:  a.recorder,
+	})); err != nil {
+		return nil, fmt.Errorf("gateway tokens: %w", err)
+	}
+	if err := adminv1.RegisterPermissionAdminServiceHandlerServer(ctx, gw, grpcserver.NewPermissionAdminService(a.provider, a.recorder)); err != nil {
+		return nil, fmt.Errorf("gateway permissions: %w", err)
+	}
+	logger.Info("admin REST gateway mounted", "prefix", adminAPIPathPrefix)
+
+	// Outer mux: admin paths go through middleware → gateway; everything
+	// else falls through to the SSO runtime handler.
+	gated := a.adminMW.HTTPMiddleware(gw)
+	mux := http.NewServeMux()
+	mux.Handle(adminAPIPathPrefix, gated)
+	mux.Handle("/", base)
+	return mux, nil
+}
+
+// runBootstrap constructs the file-backed Tracker, the AdminSeed bundle,
+// and runs every built-in step that hasn't yet been applied. Errors are
+// fatal — the operator must succeed at first-boot init before we accept
+// any traffic.
+func runBootstrap(cfg *config.Config, a *app, logger sso.Logger) error {
+	statePath := cfg.Bootstrap.StatePath
+	if statePath == "" {
+		statePath = "bootstrap.json"
+	}
+	tracker, err := bootstrapfile.New(statePath)
+	if err != nil {
+		return fmt.Errorf("tracker: %w", err)
+	}
+	defer tracker.Close()
+
+	seed := &builtin.AdminSeed{
+		Permissions:    a.provider,
+		Users:          a.userProvider,
+		Clients:        a.clientStore,
+		Netpolicy:      a.netStore,
+		AdminUserID:    cfg.Bootstrap.AdminUserID,
+		AdminClientID:  cfg.Bootstrap.AdminClientID,
+		AdminRoleCode:  cfg.Bootstrap.AdminRoleCode,
+		AdminClientApp: cfg.Bootstrap.AdminClientApp,
+	}
+
+	runner := bootstrap.NewRunner(bootstrapNamespace, tracker,
+		bootstrap.WithRecorder(a.recorder),
+		bootstrap.WithLogger(bootstrapLogger{logger}),
+	)
+	runner.Register(builtin.Steps(seed)...)
+	logger.Info("bootstrap: applying pending steps", "namespace", bootstrapNamespace, "state_file", statePath)
+	return runner.Run(context.Background())
+}
+
+// bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
+type bootstrapLogger struct{ inner sso.Logger }
+
+func (b bootstrapLogger) Info(msg string, kv ...any)  { b.inner.Info(msg, kv...) }
+func (b bootstrapLogger) Error(msg string, kv ...any) { b.inner.Error(msg, kv...) }
 
 // buildApp wires every SDK component the config asks for and returns them
 // as a bundle so HTTP and gRPC entrypoints can share instances.
 func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	clientStore := defaultimpl.NewMemoryClientStore()
 	for _, c := range cfg.Clients {
-		clientStore.Add(&sso.Client{
+		clientStore.AddSeed(&sso.Client{
 			ID:                    c.ID,
 			Secret:                c.Secret,
 			Name:                  c.Name,
@@ -213,20 +342,29 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		})
 	}
 
+	userProvider := defaultimpl.NewMemoryUserProvider()
+	sessionMgr := defaultimpl.NewMemorySessionManager(cfg.Server.SessionTTL)
+	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
+		defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),
+	)
+	sessionIssuer := defaultimpl.NewSessionTokenIssuer(
+		defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
+	)
+	tokenIssuers := map[string]sso.TokenIssuer{
+		sso.TokenStrategyJWT:     jwtIssuer,
+		sso.TokenStrategySession: sessionIssuer,
+	}
+
 	opts := append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithLogger(logger),
 		sso.WithTracingMiddleware(),
-		sso.WithTokenIssuer(sso.TokenStrategyJWT, defaultimpl.NewEd25519JWTIssuer(
-			defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
-			defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),
-		)),
-		sso.WithTokenIssuer(sso.TokenStrategySession, defaultimpl.NewSessionTokenIssuer(
-			defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
-		)),
-		sso.WithUserProvider(newInMemoryUserProvider()),
+		sso.WithTokenIssuer(sso.TokenStrategyJWT, jwtIssuer),
+		sso.WithTokenIssuer(sso.TokenStrategySession, sessionIssuer),
+		sso.WithUserProvider(userProvider),
 		sso.WithClientStore(clientStore),
-		sso.WithSessionManager(defaultimpl.NewMemorySessionManager(cfg.Server.SessionTTL)),
+		sso.WithSessionManager(sessionMgr),
 	)
 
 	var recorder *audit.Recorder
@@ -249,6 +387,13 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			opts = append(opts, sso.WithEmbedPermissionsInLogin())
 		}
 	}
+	// Admin needs a non-nil permission provider for scope checks. Mint a
+	// memory provider so first-boot bootstrap can seed into something.
+	if cfg.Admin.Enabled && provider == nil {
+		mp := permissions.NewMemoryProvider()
+		provider = mp
+		opts = append(opts, sso.WithPermissionProvider(provider))
+	}
 
 	netStore, err := cfg.BuildNetworkStore()
 	if err != nil {
@@ -270,11 +415,17 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 
-	for _, a := range buildAuthenticators(cfg, logger) {
-		opts = append(opts, sso.WithAuthenticator(a))
+	auths, tempStore := buildAuthenticators(cfg, logger)
+	for _, ath := range auths {
+		opts = append(opts, sso.WithAuthenticator(ath))
 	}
 
 	srv := sso.NewServer(opts...)
+
+	var adminMW *sso.AdminMiddleware
+	if cfg.Admin.Enabled {
+		adminMW = sso.NewAdminMiddleware(srv, provider)
+	}
 
 	reg := memory.New()
 	addr := cfg.Server.Listen
@@ -292,18 +443,28 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}
 	return &app{
-		server:     srv,
-		recorder:   recorder,
-		provider:   provider,
-		registry:   reg,
-		netStore:   netStore,
-		classifier: classifier,
-		netStop:    netStop,
+		server:       srv,
+		recorder:     recorder,
+		provider:     provider,
+		registry:     reg,
+		netStore:     netStore,
+		classifier:   classifier,
+		clientStore:  clientStore,
+		userProvider: userProvider,
+		sessionMgr:   sessionMgr,
+		tempStore:    tempStore,
+		tokenIssuers: tokenIssuers,
+		adminMW:      adminMW,
+		netStop:      netStop,
 	}, nil
 }
 
-func buildAuthenticators(cfg *config.Config, logger sso.Logger) []sso.Authenticator {
+// buildAuthenticators returns the configured authenticators and the temp
+// token store, when one is wired. The store is returned separately so the
+// admin TokenAdminService can issue tokens against the same backing store.
+func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authenticator, authenticators.TempTokenStore) {
 	var auths []sso.Authenticator
+	var tempStore authenticators.TempTokenStore
 	codeStore := authenticators.NewMemoryCodeStore()
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
@@ -343,9 +504,8 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) []sso.Authentica
 	}
 
 	if a := cfg.Authenticators.TempToken; a != nil && a.Enabled {
-		auths = append(auths, authenticators.NewTempTokenAuthenticator(
-			authenticators.NewMemoryTempTokenStore(), a.TTL,
-		))
+		tempStore = authenticators.NewMemoryTempTokenStore()
+		auths = append(auths, authenticators.NewTempTokenAuthenticator(tempStore, a.TTL))
 	}
 
 	if a := cfg.Authenticators.KeyPair; a != nil && a.Enabled {
@@ -364,7 +524,7 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) []sso.Authentica
 	if a := cfg.Authenticators.Certificate; a != nil && a.Enabled {
 		auths = append(auths, authenticators.NewCertificateAuthenticator(x509.NewCertPool()))
 	}
-	return auths
+	return auths, tempStore
 }
 
 func logEndpoints(cfg *config.Config, grpcListen string) {
@@ -387,6 +547,35 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathNetPolicyClassify)
 		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathNetPolicyResolveMe)
 	}
+	if cfg.Admin.Enabled && cfg.Admin.APIRESTEnabled {
+		for _, p := range []string{
+			"GET    /api/v1/admin/clients",
+			"POST   /api/v1/admin/clients",
+			"GET    /api/v1/admin/clients/{id}",
+			"PATCH  /api/v1/admin/clients/{id}",
+			"DELETE /api/v1/admin/clients/{id}",
+			"POST   /api/v1/admin/clients/{id}:rotateSecret",
+			"GET    /api/v1/admin/users",
+			"POST   /api/v1/admin/users",
+			"GET    /api/v1/admin/users/{id}",
+			"PATCH  /api/v1/admin/users/{id}",
+			"DELETE /api/v1/admin/users/{id}",
+			"GET    /api/v1/admin/users/{user_id}/sessions",
+			"GET    /api/v1/admin/sessions",
+			"POST   /api/v1/admin/sessions:revoke",
+			"POST   /api/v1/admin/tokens:issueTemp",
+			"GET    /api/v1/admin/permissions/roles",
+			"POST   /api/v1/admin/permissions/roles",
+			"PATCH  /api/v1/admin/permissions/roles/{code}",
+			"DELETE /api/v1/admin/permissions/roles/{code}",
+			"GET    /api/v1/admin/permissions/assignments",
+			"POST   /api/v1/admin/permissions:assign",
+			"POST   /api/v1/admin/permissions:unassign",
+			"PUT    /api/v1/admin/permissions/menus",
+		} {
+			fmt.Printf("  %s\n", p)
+		}
+	}
 	if grpcListen != "" {
 		fmt.Printf("gRPC services on %s:\n", grpcListen)
 		fmt.Println("  snaplink.audit.v1.AuditWriter / Record + StreamEvents")
@@ -395,40 +584,16 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 		if cfg.Network.Enabled {
 			fmt.Println("  snaplink.netpolicy.v1.PolicyService / Get + List + Apply + Delete + Watch + Classify")
 		}
+		if cfg.Admin.Enabled {
+			fmt.Println("  snaplink.admin.v1.ClientAdminService / List + Get + Create + Update + Delete + RotateSecret")
+			fmt.Println("  snaplink.admin.v1.UserAdminService / List + Get + Create + Update + Delete + ListUserSessions")
+			fmt.Println("  snaplink.admin.v1.TokenAdminService / ListSessions + Revoke + IssueTempToken")
+			fmt.Println("  snaplink.admin.v1.PermissionAdminService / *")
+		}
 	}
 }
 
 // --- helpers ---
-
-type inMemoryUserProvider struct {
-	users map[string]*sso.User
-}
-
-func newInMemoryUserProvider() *inMemoryUserProvider {
-	return &inMemoryUserProvider{users: make(map[string]*sso.User)}
-}
-
-func (p *inMemoryUserProvider) GetByID(_ context.Context, id string) (*sso.User, error) {
-	u, ok := p.users[id]
-	if !ok {
-		return nil, errors.New("user not found")
-	}
-	return u, nil
-}
-
-func (p *inMemoryUserProvider) GetByExternalID(_ context.Context, provider, externalID string) (*sso.User, error) {
-	for _, u := range p.users {
-		if u.Provider == provider && u.ExternalID == externalID {
-			return u, nil
-		}
-	}
-	return nil, errors.New("user not found")
-}
-
-func (p *inMemoryUserProvider) CreateOrUpdate(_ context.Context, user *sso.User) error {
-	p.users[user.ID] = user
-	return nil
-}
 
 // slogLogger adapts log/slog to the sso.Logger interface so the SDK can hand
 // off to whatever sink the operator wants (stdout, journald, file...).

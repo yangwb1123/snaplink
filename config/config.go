@@ -32,6 +32,30 @@ type Config struct {
 	Permissions    PermissionsConfig     `yaml:"permissions"`
 	Network        NetworkConfig         `yaml:"network"`
 	Clients        []ClientConfig        `yaml:"clients"`
+	Admin          AdminConfig           `yaml:"admin"`
+	Bootstrap      BootstrapConfig       `yaml:"bootstrap"`
+}
+
+// AdminConfig toggles the admin control plane. When Enabled is true the
+// sso-server mounts the four admin gRPC services and the grpc-gateway
+// REST proxy under /api/v1/admin/. APIRESTEnabled defaults to true when
+// Enabled is true; set false to expose admin gRPC-only.
+type AdminConfig struct {
+	Enabled        bool `yaml:"enabled"`
+	APIRESTEnabled bool `yaml:"api_rest_enabled"`
+}
+
+// BootstrapConfig configures the first-run init Runner. StatePath is the
+// JSON file the file-backed Tracker writes to (defaults to "bootstrap.json"
+// when empty). Set Disabled=true to skip the runner entirely (useful in
+// tests or when an external orchestrator owns init).
+type BootstrapConfig struct {
+	Disabled       bool   `yaml:"disabled"`
+	StatePath      string `yaml:"state_path"`
+	AdminUserID    string `yaml:"admin_user_id"`
+	AdminClientID  string `yaml:"admin_client_id"`
+	AdminRoleCode  string `yaml:"admin_role_code"`
+	AdminClientApp string `yaml:"admin_client_app"`
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the
@@ -64,17 +88,18 @@ func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
 	if !c.Permissions.Enabled {
 		return nil
 	}
+	ctx := context.Background()
 	p := permissions.NewMemoryProvider()
 	for _, app := range c.Permissions.Apps {
 		for _, role := range app.Roles {
-			p.AddRole(app.ClientID, role)
+			_ = p.AddRole(ctx, app.ClientID, role)
 		}
 		if app.Menus != nil {
-			p.SetMenus(app.ClientID, app.Menus)
+			_ = p.SetMenus(ctx, app.ClientID, app.Menus)
 		}
 	}
 	for _, a := range c.Permissions.UserRoles {
-		p.AssignRoles(a.UserID, a.ClientID, a.Roles)
+		_ = p.AssignRoles(ctx, a.UserID, a.ClientID, a.Roles)
 	}
 	return p
 }
