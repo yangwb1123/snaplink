@@ -494,6 +494,22 @@ Layered SPI per the same plugin pattern as snapshot:
   that didn't actually flip). Forward Pin rejects schema regression
   with `ErrSchemaRegress` — operators must use Rollback for that
   direction explicitly.
+- **`releases.HealthProbe`** — optional post-Pin gate. When set on
+  the Registry, forward Pin runs the probe on a polling cadence
+  (`ProbePolls` × `ProbeBackoff`, defaults 6 × 5s). First nil result
+  wins. After every attempt fails the Registry auto-rollbacks to the
+  previous release (PinRollback + SetCurrent) and returns the
+  wrapped probe error. No probe runs on Rollback — recovering
+  shouldn't add risk. An http probe ships in `releases/probe/http`.
+- **`releases.SnapshotRestorer`** — optional Rollback-time hook.
+  Slim interface (`RestoreByID(ctx, id)`) so the releases package
+  stays free of any snapshot import; the cmd binary owns the
+  adapter that bridges releases → snapshot. When wired AND the
+  rollback target's `ConfigSnapshot` field is non-empty, Rollback
+  restores the paired admin-managed state (clients/users/roles)
+  BEFORE flipping the Pinner. Restorer errors abort before the
+  Pinner runs, so operators see a half-applied rollback as an
+  error rather than as success.
 
 **Operator surface:**
 
@@ -584,6 +600,9 @@ snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
 releases:      # enabled
                # store: { backend (file|memory), file.dir }
                # pinner: { backend (noop|static), static.bundle_dir }
+               # probe: { backend ("" | http), http.url, polls, backoff }
+               # snapshot_integration: bool — when true + snapshot.enabled,
+               #   Rollback restores target.ConfigSnapshot before Pinner
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens

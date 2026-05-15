@@ -134,11 +134,16 @@ type SnapshotEncryptionConfig struct {
 // ReleasesConfig configures the admin app version pin / rollback
 // subsystem (Phase D-3). When Enabled is false the admin
 // ReleaseService is not mounted. Store selects the persistence
-// backend; Pinner selects the deploy mechanism.
+// backend; Pinner selects the deploy mechanism. Probe (optional)
+// gates auto-rollback on Pin failure; SnapshotIntegration (boolean)
+// turns on ConfigSnapshot-aware Rollback when the snapshot subsystem
+// is also enabled.
 type ReleasesConfig struct {
-	Enabled bool                 `yaml:"enabled"`
-	Store   ReleaseStoreConfig   `yaml:"store"`
-	Pinner  ReleasePinnerConfig  `yaml:"pinner"`
+	Enabled             bool                `yaml:"enabled"`
+	Store               ReleaseStoreConfig  `yaml:"store"`
+	Pinner              ReleasePinnerConfig `yaml:"pinner"`
+	Probe               ReleaseProbeConfig  `yaml:"probe"`
+	SnapshotIntegration bool                `yaml:"snapshot_integration"`
 }
 
 // ReleaseStoreConfig picks where Releases are persisted. Backend is
@@ -168,6 +173,23 @@ type ReleasePinnerConfig struct {
 // symlink the Pinner swaps.
 type ReleasePinnerStaticConfig struct {
 	BundleDir string `yaml:"bundle_dir"`
+}
+
+// ReleaseProbeConfig configures the post-Pin health probe. When
+// Backend is empty no probe runs and forward Pin always succeeds
+// even if the new release is unhealthy. Backend "http" GETs URL
+// and treats 2xx as healthy. Polls / Backoff control the retry loop
+// (defaults: 6 attempts × 5s).
+type ReleaseProbeConfig struct {
+	Backend string             `yaml:"backend"` // "" | "http"
+	HTTP    ReleaseProbeHTTPConfig `yaml:"http"`
+	Polls   int                `yaml:"polls"`
+	Backoff time.Duration      `yaml:"backoff"`
+}
+
+// ReleaseProbeHTTPConfig configures the http probe.
+type ReleaseProbeHTTPConfig struct {
+	URL string `yaml:"url"`
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the

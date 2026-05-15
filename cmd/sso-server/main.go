@@ -48,6 +48,7 @@ import (
 	"github.com/snaplink/sso/releases"
 	releasenoop "github.com/snaplink/sso/releases/pinner/noop"
 	releasestatic "github.com/snaplink/sso/releases/pinner/static"
+	releasehttpprobe "github.com/snaplink/sso/releases/probe/http"
 	releasefile "github.com/snaplink/sso/releases/store/file"
 	releasememory "github.com/snaplink/sso/releases/store/memory"
 	"github.com/snaplink/sso/snapshot"
@@ -553,7 +554,55 @@ func buildReleaseSubsystem(cfg *config.Config, logger sso.Logger) (*releases.Reg
 		return nil, nil, fmt.Errorf("unknown releases.pinner.backend %q", cfg.Releases.Pinner.Backend)
 	}
 
-	return &releases.Registry{Store: store, Pinner: pinner}, store, nil
+	var probe releases.HealthProbe
+	switch strings.ToLower(cfg.Releases.Probe.Backend) {
+	case "":
+		// no probe; forward Pin always succeeds even if the new release is unhealthy
+	case "http":
+		url := cfg.Releases.Probe.HTTP.URL
+		if url == "" {
+			return nil, nil, errors.New("releases.probe.backend=http requires releases.probe.http.url")
+		}
+		probe = releasehttpprobe.New(url)
+		logger.Info("release probe: http", "url", url)
+	default:
+		return nil, nil, fmt.Errorf("unknown releases.probe.backend %q", cfg.Releases.Probe.Backend)
+	}
+
+	return &releases.Registry{
+		Store:        store,
+		Pinner:       pinner,
+		Probe:        probe,
+		ProbePolls:   cfg.Releases.Probe.Polls,
+		ProbeBackoff: cfg.Releases.Probe.Backoff,
+	}, store, nil
+}
+
+// snapshotRestorerAdapter bridges releases.SnapshotRestorer onto the
+// snapshot.Pipeline + snapshot.Storage + snapshot.Restorer trio.
+// Lives in the cmd binary so the releases package stays free of any
+// snapshot import — keeping the two SDKs independently evolvable.
+type snapshotRestorerAdapter struct {
+	pipeline *snapshot.Pipeline
+	storage  snapshot.Storage
+	restorer *snapshot.Restorer
+}
+
+func (a *snapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID string) error {
+	if a.pipeline == nil || a.storage == nil || a.restorer == nil {
+		return fmt.Errorf("snapshot subsystem not configured")
+	}
+	snap, err := a.pipeline.Load(ctx, a.storage, snapshotID)
+	if err != nil {
+		return fmt.Errorf("load snapshot %q: %w", snapshotID, err)
+	}
+	// AdvanceBootstrap=false because rollback shouldn't move the
+	// bootstrap high-water mark — that's a one-way ratchet for
+	// first-boot init, not a release-flip mechanism.
+	if _, err := a.restorer.Restore(ctx, snap, snapshot.RestoreOptions{Mode: snapshot.ModeOverwrite}); err != nil {
+		return fmt.Errorf("restore snapshot %q: %w", snapshotID, err)
+	}
+	return nil
 }
 
 // bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
@@ -668,10 +717,6 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("snapshot subsystem: %w", err)
 	}
-	releaseRegistry, releaseStore, err := buildReleaseSubsystem(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("release subsystem: %w", err)
-	}
 	var snapshotter *snapshot.Snapshotter
 	var restorer *snapshot.Restorer
 	if pipeline != nil {
@@ -689,6 +734,23 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			NetPolicy:   netStore,
 			Namespace:   bootstrapNamespace,
 		}
+	}
+
+	releaseRegistry, releaseStore, err := buildReleaseSubsystem(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("release subsystem: %w", err)
+	}
+	// Wire ConfigSnapshot-aware Rollback when both subsystems are
+	// enabled and the operator opted in. Done here (after both
+	// factories) so the Registry receives a fully-formed adapter
+	// with the runtime restorer/pipeline already in scope.
+	if releaseRegistry != nil && pipeline != nil && cfg.Releases.SnapshotIntegration {
+		releaseRegistry.SnapshotRestorer = &snapshotRestorerAdapter{
+			pipeline: pipeline,
+			storage:  snapStorage,
+			restorer: restorer,
+		}
+		logger.Info("release rollback wired with snapshot restore")
 	}
 
 	reg := memory.New()
