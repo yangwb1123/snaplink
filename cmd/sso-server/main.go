@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +29,10 @@ import (
 	"github.com/snaplink/sso/bootstrap"
 	"github.com/snaplink/sso/bootstrap/builtin"
 	bootstrapfile "github.com/snaplink/sso/bootstrap/file"
+	"github.com/snaplink/sso/bootstrap/lock"
+	lockEtcd "github.com/snaplink/sso/bootstrap/lock/etcd"
+	lockFile "github.com/snaplink/sso/bootstrap/lock/file"
+	lockNoop "github.com/snaplink/sso/bootstrap/lock/noop"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/defaultimpl"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
@@ -310,14 +315,75 @@ func runBootstrap(cfg *config.Config, a *app, logger sso.Logger) error {
 		AdminClientApp: cfg.Bootstrap.AdminClientApp,
 	}
 
-	runner := bootstrap.NewRunner(bootstrapNamespace, tracker,
+	bootLock, lockCloser, err := buildBootstrapLock(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("lock: %w", err)
+	}
+	if lockCloser != nil {
+		defer lockCloser()
+	}
+
+	opts := []bootstrap.Option{
 		bootstrap.WithRecorder(a.recorder),
 		bootstrap.WithLogger(bootstrapLogger{logger}),
-	)
+	}
+	if bootLock != nil {
+		key := cfg.Bootstrap.Lock.Key
+		if key == "" {
+			key = "/sso/bootstrap/" + bootstrapNamespace
+		}
+		opts = append(opts, bootstrap.WithLock(bootLock, key))
+		if cfg.Bootstrap.Lock.TTL > 0 {
+			opts = append(opts, bootstrap.WithLockTTL(cfg.Bootstrap.Lock.TTL))
+		}
+		if cfg.Bootstrap.Lock.Blocking {
+			opts = append(opts, bootstrap.WithLockBlocking(true, cfg.Bootstrap.Lock.Backoff))
+		}
+	}
+
+	runner := bootstrap.NewRunner(bootstrapNamespace, tracker, opts...)
 	runner.Register(builtin.Steps(seed)...)
 	logger.Info("bootstrap: applying pending steps", "namespace", bootstrapNamespace, "state_file", statePath)
 	return runner.Run(context.Background())
 }
+
+// buildBootstrapLock translates BootstrapLockConfig into a concrete
+// lock.Lock implementation. Returns (nil, nil, nil) when no
+// coordination is requested — Runner falls back to single-replica path.
+// The closer (when non-nil) MUST be called after the Runner exits to
+// release the etcd client / file handles.
+func buildBootstrapLock(cfg *config.Config, logger sso.Logger) (lock.Lock, func(), error) {
+	switch strings.ToLower(cfg.Bootstrap.Lock.Backend) {
+	case "", "noop":
+		return nil, nil, nil
+	case "file":
+		dir := cfg.Bootstrap.Lock.File.Dir
+		logger.Info("bootstrap lock: file backend", "dir", dir)
+		return lockFile.New(dir), nil, nil
+	case "etcd":
+		ec := cfg.Bootstrap.Lock.Etcd
+		if len(ec.Endpoints) == 0 {
+			return nil, nil, fmt.Errorf("bootstrap.lock.etcd.endpoints required when backend=etcd")
+		}
+		l, err := lockEtcd.New(lockEtcd.Config{
+			Endpoints:   ec.Endpoints,
+			DialTimeout: ec.DialTimeout,
+			Username:    ec.Username,
+			Password:    ec.Password,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		logger.Info("bootstrap lock: etcd backend", "endpoints", ec.Endpoints)
+		return l, func() { _ = l.Close() }, nil
+	default:
+		return nil, nil, fmt.Errorf("unknown bootstrap.lock.backend %q", cfg.Bootstrap.Lock.Backend)
+	}
+}
+
+// _ keeps the noop import live for documentation purposes; we don't
+// instantiate it explicitly because nil-Lock has the same effect.
+var _ = lockNoop.New
 
 // bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
 type bootstrapLogger struct{ inner sso.Logger }

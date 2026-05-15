@@ -50,12 +50,47 @@ type AdminConfig struct {
 // when empty). Set Disabled=true to skip the runner entirely (useful in
 // tests or when an external orchestrator owns init).
 type BootstrapConfig struct {
-	Disabled       bool   `yaml:"disabled"`
-	StatePath      string `yaml:"state_path"`
-	AdminUserID    string `yaml:"admin_user_id"`
-	AdminClientID  string `yaml:"admin_client_id"`
-	AdminRoleCode  string `yaml:"admin_role_code"`
-	AdminClientApp string `yaml:"admin_client_app"`
+	Disabled       bool                `yaml:"disabled"`
+	StatePath      string              `yaml:"state_path"`
+	AdminUserID    string              `yaml:"admin_user_id"`
+	AdminClientID  string              `yaml:"admin_client_id"`
+	AdminRoleCode  string              `yaml:"admin_role_code"`
+	AdminClientApp string              `yaml:"admin_client_app"`
+	Lock           BootstrapLockConfig `yaml:"lock"`
+}
+
+// BootstrapLockConfig configures the distributed lock the Runner takes
+// before applying steps. Backend selects which implementation:
+//
+//   - "" or "noop"  → no coordination (single-replica default)
+//   - "file"        → flock(2) on Lock.File.Path; single-host multi-process
+//   - "etcd"        → etcd lease + Txn; multi-replica HA
+//
+// Key namespaces the lock; defaults to "/sso/bootstrap/<namespace>".
+// TTL bounds how long the lease lives between heartbeats; the Runner
+// renews on TTL/3. Blocking switches contention behavior between
+// fail-fast (default) and retry-with-Backoff.
+type BootstrapLockConfig struct {
+	Backend  string             `yaml:"backend"`
+	Key      string             `yaml:"key"`
+	TTL      time.Duration      `yaml:"ttl"`
+	Blocking bool               `yaml:"blocking"`
+	Backoff  time.Duration      `yaml:"backoff"`
+	File     LockFileConfig     `yaml:"file"`
+	Etcd     LockEtcdConfig     `yaml:"etcd"`
+}
+
+// LockFileConfig configures the file (flock) lock backend.
+type LockFileConfig struct {
+	Dir string `yaml:"dir"` // directory the lock file lives in; "" = cwd
+}
+
+// LockEtcdConfig configures the etcd lock backend.
+type LockEtcdConfig struct {
+	Endpoints   []string      `yaml:"endpoints"`
+	DialTimeout time.Duration `yaml:"dial_timeout"`
+	Username    string        `yaml:"username"`
+	Password    string        `yaml:"password"`
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the
