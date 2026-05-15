@@ -35,6 +35,7 @@ type Config struct {
 	Admin          AdminConfig          `yaml:"admin"`
 	Bootstrap      BootstrapConfig      `yaml:"bootstrap"`
 	Snapshot       SnapshotConfig       `yaml:"snapshot"`
+	Releases       ReleasesConfig       `yaml:"releases"`
 }
 
 // AdminConfig toggles the admin control plane. When Enabled is true the
@@ -128,6 +129,45 @@ type SnapshotEncryptionConfig struct {
 	Backend        string `yaml:"backend"`
 	Passphrase     string `yaml:"passphrase"`
 	PassphraseFile string `yaml:"passphrase_file"`
+}
+
+// ReleasesConfig configures the admin app version pin / rollback
+// subsystem (Phase D-3). When Enabled is false the admin
+// ReleaseService is not mounted. Store selects the persistence
+// backend; Pinner selects the deploy mechanism.
+type ReleasesConfig struct {
+	Enabled bool                 `yaml:"enabled"`
+	Store   ReleaseStoreConfig   `yaml:"store"`
+	Pinner  ReleasePinnerConfig  `yaml:"pinner"`
+}
+
+// ReleaseStoreConfig picks where Releases are persisted. Backend is
+// "file" (default; one <id>.json per release + a CURRENT marker) or
+// "memory" (lost on restart; for tests/demos).
+type ReleaseStoreConfig struct {
+	Backend string                 `yaml:"backend"`
+	File    ReleaseStoreFileConfig `yaml:"file"`
+}
+
+// ReleaseStoreFileConfig configures the file-backed Store. Dir
+// defaults to "./releases" when empty.
+type ReleaseStoreFileConfig struct {
+	Dir string `yaml:"dir"`
+}
+
+// ReleasePinnerConfig picks the Pinner. Backend is "noop" (default;
+// records the call, no-op) or "static" (frontend bundle on-disk
+// symlink swap).
+type ReleasePinnerConfig struct {
+	Backend string                    `yaml:"backend"`
+	Static  ReleasePinnerStaticConfig `yaml:"static"`
+}
+
+// ReleasePinnerStaticConfig configures the static Pinner. BundleDir
+// is the directory containing per-release subdirs + the "current"
+// symlink the Pinner swaps.
+type ReleasePinnerStaticConfig struct {
+	BundleDir string `yaml:"bundle_dir"`
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the

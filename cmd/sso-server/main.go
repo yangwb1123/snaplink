@@ -45,6 +45,11 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
 	"github.com/snaplink/sso/registry/memory"
+	"github.com/snaplink/sso/releases"
+	releasenoop "github.com/snaplink/sso/releases/pinner/noop"
+	releasestatic "github.com/snaplink/sso/releases/pinner/static"
+	releasefile "github.com/snaplink/sso/releases/store/file"
+	releasememory "github.com/snaplink/sso/releases/store/memory"
 	"github.com/snaplink/sso/snapshot"
 	encryptionnone "github.com/snaplink/sso/snapshot/encryption/none"
 	encryptionpass "github.com/snaplink/sso/snapshot/encryption/passphrase"
@@ -125,6 +130,10 @@ type app struct {
 	snapshotStorage     snapshot.Storage
 	snapshotter         *snapshot.Snapshotter
 	snapshotRestorer    *snapshot.Restorer
+
+	// Releases subsystem (Phase D-3). Both nil when releases disabled.
+	releaseRegistry *releases.Registry
+	releaseStore    releases.ReleaseStore
 
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
@@ -266,6 +275,10 @@ func newGRPCServer(a *app) *grpc.Server {
 			adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
 				a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))
 		}
+		if a.releaseStore != nil {
+			adminv1.RegisterReleaseAdminServiceServer(s, grpcserver.NewReleaseAdminService(
+				a.releaseRegistry, a.releaseStore, a.recorder))
+		}
 	}
 	return s
 }
@@ -301,6 +314,12 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
 			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder)); err != nil {
 			return nil, fmt.Errorf("gateway snapshots: %w", err)
+		}
+	}
+	if a.releaseStore != nil {
+		if err := adminv1.RegisterReleaseAdminServiceHandlerServer(ctx, gw, grpcserver.NewReleaseAdminService(
+			a.releaseRegistry, a.releaseStore, a.recorder)); err != nil {
+			return nil, fmt.Errorf("gateway releases: %w", err)
 		}
 	}
 	logger.Info("admin REST gateway mounted", "prefix", adminAPIPathPrefix)
@@ -487,6 +506,56 @@ func buildSnapshotSubsystem(cfg *config.Config, logger sso.Logger) (*snapshot.Pi
 	return &snapshot.Pipeline{Sealer: sealer}, store, nil
 }
 
+// buildReleaseSubsystem materialises the releases.ReleaseStore +
+// Pinner + Registry from ReleasesConfig. Returns (nil, nil, nil)
+// when releases.enabled=false.
+func buildReleaseSubsystem(cfg *config.Config, logger sso.Logger) (*releases.Registry, releases.ReleaseStore, error) {
+	if !cfg.Releases.Enabled {
+		return nil, nil, nil
+	}
+	var store releases.ReleaseStore
+	switch strings.ToLower(cfg.Releases.Store.Backend) {
+	case "", "file":
+		dir := cfg.Releases.Store.File.Dir
+		if dir == "" {
+			dir = "./releases"
+		}
+		s, err := releasefile.New(dir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("release file store: %w", err)
+		}
+		logger.Info("release store: file", "dir", dir)
+		store = s
+	case "memory":
+		logger.Info("release store: memory (in-process)")
+		store = releasememory.New()
+	default:
+		return nil, nil, fmt.Errorf("unknown releases.store.backend %q", cfg.Releases.Store.Backend)
+	}
+
+	var pinner releases.Pinner
+	switch strings.ToLower(cfg.Releases.Pinner.Backend) {
+	case "", "noop":
+		pinner = releasenoop.Pinner{Logger: logger.Info}
+		logger.Info("release pinner: noop")
+	case "static":
+		dir := cfg.Releases.Pinner.Static.BundleDir
+		if dir == "" {
+			return nil, nil, errors.New("releases.pinner.backend=static requires releases.pinner.static.bundle_dir")
+		}
+		p, err := releasestatic.New(dir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("release static pinner: %w", err)
+		}
+		logger.Info("release pinner: static", "bundle_dir", dir)
+		pinner = p
+	default:
+		return nil, nil, fmt.Errorf("unknown releases.pinner.backend %q", cfg.Releases.Pinner.Backend)
+	}
+
+	return &releases.Registry{Store: store, Pinner: pinner}, store, nil
+}
+
 // bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
 type bootstrapLogger struct{ inner sso.Logger }
 
@@ -599,6 +668,10 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("snapshot subsystem: %w", err)
 	}
+	releaseRegistry, releaseStore, err := buildReleaseSubsystem(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("release subsystem: %w", err)
+	}
 	var snapshotter *snapshot.Snapshotter
 	var restorer *snapshot.Restorer
 	if pipeline != nil {
@@ -650,6 +723,8 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		snapshotStorage:  snapStorage,
 		snapshotter:      snapshotter,
 		snapshotRestorer: restorer,
+		releaseRegistry:  releaseRegistry,
+		releaseStore:     releaseStore,
 		netStop:          netStop,
 	}, nil
 }
@@ -781,6 +856,19 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 				fmt.Printf("  %s\n", p)
 			}
 		}
+		if cfg.Releases.Enabled {
+			for _, p := range []string{
+				"POST   /api/v1/admin/releases",
+				"GET    /api/v1/admin/releases",
+				"GET    /api/v1/admin/releases:current",
+				"GET    /api/v1/admin/releases/{id}",
+				"POST   /api/v1/admin/releases/{id}:pin",
+				"POST   /api/v1/admin/releases/{id}:rollback",
+				"DELETE /api/v1/admin/releases/{id}",
+			} {
+				fmt.Printf("  %s\n", p)
+			}
+		}
 	}
 	if grpcListen != "" {
 		fmt.Printf("gRPC services on %s:\n", grpcListen)
@@ -797,6 +885,9 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 			fmt.Println("  snaplink.admin.v1.PermissionAdminService / *")
 			if cfg.Snapshot.Enabled {
 				fmt.Println("  snaplink.admin.v1.SnapshotAdminService / Export + List + Get + Restore + Delete")
+			}
+			if cfg.Releases.Enabled {
+				fmt.Println("  snaplink.admin.v1.ReleaseAdminService / Register + List + Get + GetCurrent + Pin + Rollback + Delete")
 			}
 		}
 	}
