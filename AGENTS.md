@@ -452,6 +452,72 @@ Layered SPI per the same plugin pattern as the rest of the repo:
   admin password. Re-importing onto an already-bootstrapped node is the
   admin Restore RPC's job, not this hook's.
 
+### 6f. Releases (`releases/` — Phase D-3)
+
+Admin app version pin / rollback. A `Release` is the paired
+frontend+backend deployment artifact set CI/CD registers atomically;
+operators Pin one as "current" and Rollback to a previous one. The
+goal is to never end up with frontend v3 talking to backend v2.
+
+Layered SPI per the same plugin pattern as snapshot:
+
+- **`releases.Release`** — id + channel + Frontend/Backend
+  `Artifact` pair + schema_version + optional `ConfigSnapshot` (the
+  D-2 snapshot id this release was paired with). `Validate` refuses
+  one-sided releases — both halves must carry at least one
+  identifying field (GitRef or URI).
+- **`releases.ReleaseStore`** — Register / Get / List / Delete +
+  separate SetCurrent / Current / ClearCurrent. The "current"
+  pointer is tracked separately so pinning is one mutation, not a
+  re-register. Two backends:
+  - `releases/store/memory` — in-process map; tests + ephemeral
+    demos.
+  - `releases/store/file` — directory-backed; one `<id>.json` per
+    release + a `CURRENT` marker file. Both atomic via tempfile +
+    rename; sanitised filenames; `0o600` / `0o700` perms.
+- **`releases.Pinner`** — deploy SPI. Two methods (`PinForward` /
+  `PinRollback`) so each implementation encodes the asymmetric
+  ordering operators have to live with — backend-first on forward,
+  frontend-first on rollback — without operators having to remember.
+  Two backends:
+  - `releases/pinner/noop` — records the call, returns nil. Useful
+    for tests, dry-runs, and bootstrap setups that want the audit
+    trail + current-pointer management before a real Pinner is wired.
+  - `releases/pinner/static` — frontend-bundle-only Pinner. Expects
+    bundles staged at `<BundleDir>/<release-id>/` by CI; atomically
+    swaps a `<BundleDir>/current` symlink via `rename(2)`. Forward
+    and Rollback are symmetric here — no backend ordering to worry
+    about.
+- **`releases.Registry`** — composes Store + Pinner. Pinner runs
+  first; only on success does Store advance the current pointer (so
+  a half-failed deploy doesn't leave the system reporting a release
+  that didn't actually flip). Forward Pin rejects schema regression
+  with `ErrSchemaRegress` — operators must use Rollback for that
+  direction explicitly.
+
+**Operator surface:**
+
+- Admin RPCs at `snaplink.admin.v1.ReleaseAdminService` (gated by
+  `admin:*`). REST gateway:
+
+  | Method | Path |
+  | --- | --- |
+  | POST | `/api/v1/admin/releases`              |
+  | GET  | `/api/v1/admin/releases`              |
+  | GET  | `/api/v1/admin/releases:current`      |
+  | GET  | `/api/v1/admin/releases/{id}`         |
+  | POST | `/api/v1/admin/releases/{id}:pin`     |
+  | POST | `/api/v1/admin/releases/{id}:rollback` |
+  | DELETE | `/api/v1/admin/releases/{id}`       |
+
+  Sentinel mapping: `ErrReleaseNotFound` → `NotFound`,
+  `ErrReleaseExists` → `AlreadyExists`, `ErrInvalidPair` →
+  `InvalidArgument`, `ErrSchemaRegress` → `FailedPrecondition`.
+  `GetCurrent` returns an empty release (not an error) when nothing
+  is pinned, so fresh deployments can poll without erroring. Each
+  mutation emits one audit event (`release_registered|pinned|rolled_back|deleted`)
+  with the release id + (for pin/rollback) the previous current id.
+
 ### 7. ssoclient (the local/remote split)
 
 ```go
@@ -515,6 +581,9 @@ bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_rol
 snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
                # storage: { backend (file|inline), file.dir }
                # encryption: { backend (none|passphrase), passphrase, passphrase_file }
+releases:      # enabled
+               # store: { backend (file|memory), file.dir }
+               # pinner: { backend (noop|static), static.bundle_dir }
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens
