@@ -144,6 +144,17 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 
 	s.recordLoginSuccess(ctx, client.ID, req.Provider, strategy, result.UserID, session.ID)
 
+	// Geo enrichment: if the authenticator didn't supply a
+	// language hint, fall back to whatever the geo middleware
+	// stashed on the request. Authenticators with a stronger
+	// signal (SIM region, account default, explicit user pref)
+	// override the geo guess by setting it themselves.
+	if result.RecommendedLanguage == "" {
+		if info, ok := GeoFromHandlerContext(ctx); ok {
+			result.RecommendedLanguage = info.RecommendedLanguage
+		}
+	}
+
 	resp := map[string]any{
 		KeySessionID:     session.ID,
 		KeyAccessToken:   token.AccessToken,
@@ -152,6 +163,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		KeyExpiresIn:     token.ExpiresIn,
 		KeyScope:         token.Scope,
 		KeyTokenStrategy: strategy,
+	}
+	if result.RecommendedLanguage != "" {
+		resp[KeyRecommendedLang] = result.RecommendedLanguage
 	}
 	if s.embedPermissions {
 		roles, perms, menus := s.resolvePermissionsForLogin(ctx.Request().Context(), result.UserID, client.ID)

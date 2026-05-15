@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 )
@@ -30,6 +31,8 @@ type Server struct {
 	netStore             netpolicy.Store
 	netClassifier        *netpolicy.Classifier
 	netAPI               bool
+	geoProvider          geo.Provider
+	geoMiddlewareOpts    GeoMiddlewareOptions
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -180,6 +183,26 @@ func WithNetworkPolicyAPI() Option {
 	return func(s *Server) { s.netAPI = true }
 }
 
+// WithGeoProvider enables IP → geo enrichment on the auth path.
+// During Mount, the Server installs GeoMiddleware ahead of all
+// routes so handlers (and through them, AuthResult) can read the
+// recommended language + country code via GeoFromHandlerContext.
+//
+// A nil provider is a no-op so callers may pass the result of a
+// disabled-by-config factory unconditionally.
+func WithGeoProvider(p geo.Provider) Option {
+	return func(s *Server) { s.geoProvider = p }
+}
+
+// WithGeoMiddlewareOptions tunes how the geo middleware extracts
+// the client IP and bounds the lookup. Optional — the middleware
+// has sane defaults (XFF first hop → X-Real-IP → RemoteAddr,
+// 200ms timeout, no error reporter). Pass a custom Extractor when
+// the deployment doesn't trust forwarded headers (no edge proxy).
+func WithGeoMiddlewareOptions(opts GeoMiddlewareOptions) Option {
+	return func(s *Server) { s.geoMiddlewareOpts = opts }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -192,6 +215,9 @@ func (s *Server) Mount() {
 	}
 	if s.requestIDMW {
 		s.router.Use(TracingMiddleware())
+	}
+	if s.geoProvider != nil {
+		s.router.Use(GeoMiddleware(s.geoProvider, s.geoMiddlewareOpts))
 	}
 
 	s.router.GET(PathHealth, s.handleHealth)
