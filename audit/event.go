@@ -45,6 +45,15 @@ const (
 	EventBootstrapStepApplied EventType = "bootstrap_step_applied"
 	EventBootstrapStepSkipped EventType = "bootstrap_step_skipped"
 	EventBootstrapStepFailed  EventType = "bootstrap_step_failed"
+
+	// Bootstrap distributed-lock events — multi-replica coordination.
+	// Acquired/Released are the happy path; Lost fires when the lease
+	// renewal failed mid-run; Contended fires when TryAcquire returned
+	// ErrLocked (another replica already holds the slot).
+	EventBootstrapLockAcquired EventType = "bootstrap_lock_acquired"
+	EventBootstrapLockReleased EventType = "bootstrap_lock_released"
+	EventBootstrapLockLost     EventType = "bootstrap_lock_lost"
+	EventBootstrapLockContended EventType = "bootstrap_lock_contended"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
