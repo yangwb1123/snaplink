@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// ReleaseAdminService manages paired frontend+backend release
+// artifacts (Phase D-3). Pin marks one as current; Rollback flips to
+// a previous one with reversed Pinner ordering. Every mutation
+// requires the admin:* scope and writes one audit event.
+service ReleaseAdminService {
+  rpc Register(RegisterReleaseRequest) returns (RegisterReleaseResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/releases"
+      body: "*"
+    };
+  }
+  rpc List(ListReleasesRequest) returns (ListReleasesResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/releases" };
+  }
+  rpc Get(GetReleaseRequest) returns (GetReleaseResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/releases/{id}" };
+  }
+  rpc GetCurrent(GetCurrentReleaseRequest) returns (GetCurrentReleaseResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/releases:current" };
+  }
+  rpc Pin(PinReleaseRequest) returns (PinReleaseResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/releases/{id}:pin"
+      body: "*"
+    };
+  }
+  rpc Rollback(RollbackReleaseRequest) returns (RollbackReleaseResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/releases/{id}:rollback"
+      body: "*"
+    };
+  }
+  rpc Delete(DeleteReleaseRequest) returns (DeleteReleaseResponse) {
+    option (google.api.http) = { delete: "/api/v1/admin/releases/{id}" };
+  }
+}
+
+// Release mirrors releases.Release. released_at_unix is seconds since
+// epoch — proto3's Timestamp is heavier than this needs to be.
+message Release {
+  string id = 1;
+  string channel = 2;
+  Artifact frontend = 3;
+  Artifact backend = 4;
+  int32 schema_version = 5;
+  // Optional D-2 snapshot id this release was paired with at
+  // ConfigSnapshot time; consumed by Rollback to also restore the
+  // matching admin-managed state when set.
+  string config_snapshot = 6;
+  int64 released_at_unix = 7;
+  string released_by = 8;
+  string notes = 9;
+}
+
+// Artifact identifies one half (frontend or backend) of a Release.
+// At least one of git_ref / uri must be set.
+message Artifact {
+  string git_ref = 1;
+  string uri = 2;
+  string sha256 = 3;
+  string digest = 4;
+}
+
+message RegisterReleaseRequest { Release release = 1; }
+message RegisterReleaseResponse { Release release = 1; }
+
+message ListReleasesRequest {}
+message ListReleasesResponse { repeated Release items = 1; }
+
+message GetReleaseRequest { string id = 1; }
+message GetReleaseResponse { Release release = 1; }
+
+message GetCurrentReleaseRequest {}
+message GetCurrentReleaseResponse {
+  // release is unset when nothing is pinned yet (fresh deployments).
+  Release release = 1;
+}
+
+message PinReleaseRequest { string id = 1; }
+message PinReleaseResponse { PinReport report = 1; }
+
+message RollbackReleaseRequest { string id = 1; }
+message RollbackReleaseResponse { PinReport report = 1; }
+
+message DeleteReleaseRequest { string id = 1; }
+message DeleteReleaseResponse {}
+
+// PinReport is the per-call outcome — mirrors releases.PinReport.
+// mode is "forward" (Pin) or "rollback" (Rollback).
+message PinReport {
+  string release_id = 1;
+  string mode = 2;
+  // Previous current id at the time of the call. Empty when nothing
+  // was pinned beforehand.
+  string previous_id = 3;
+}
