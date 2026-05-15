@@ -260,6 +260,14 @@ func (s *Server) issuerForClient(c *Client) (string, TokenIssuer, error) {
 	return name, ti, nil
 }
 
+// ValidateToken is the public face of validateAnyToken — returns just the
+// claims for callers (e.g. the admin middleware) that don't care which
+// issuer accepted the token.
+func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
+	claims, _, err := s.validateAnyToken(ctx, token)
+	return claims, err
+}
+
 // validateAnyToken tries each registered issuer until one accepts the token.
 // Returned issuerName lets callers correlate revocations or audit logs.
 func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
