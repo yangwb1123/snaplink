@@ -54,6 +54,14 @@ const (
 	EventBootstrapLockReleased EventType = "bootstrap_lock_released"
 	EventBootstrapLockLost     EventType = "bootstrap_lock_lost"
 	EventBootstrapLockContended EventType = "bootstrap_lock_contended"
+
+	// Snapshot lifecycle — admin-plane export/restore/delete on the
+	// snapshot.Snapshotter / Restorer / Storage. Reason carries the
+	// snapshot id + restore mode + per-category counts so auditors can
+	// reconstruct the blast radius without replaying the snapshot.
+	EventSnapshotExported EventType = "snapshot_exported"
+	EventSnapshotRestored EventType = "snapshot_restored"
+	EventSnapshotDeleted  EventType = "snapshot_deleted"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
