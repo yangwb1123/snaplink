@@ -13,6 +13,19 @@ const (
 	defaultProbeBackoff = 5 * time.Second
 )
 
+// SnapshotRestorer is the slim subset of snapshot.Restorer that the
+// Registry needs for ConfigSnapshot-aware Rollback. The releases
+// package intentionally does NOT import snapshot — operators wire
+// the adapter at cmd time. See cmd/sso-server for the canonical
+// implementation.
+//
+// RestoreByID loads the snapshot at id through whatever pipeline +
+// storage the adapter holds, and applies it to the destination
+// stores. Any error aborts the Rollback before the Pinner runs.
+type SnapshotRestorer interface {
+	RestoreByID(ctx context.Context, snapshotID string) error
+}
+
 // Registry layers Pin / Rollback / Current on top of a ReleaseStore.
 // The Pinner is invoked first; only if it returns nil does the Store
 // advance the "current" pointer — that way a half-failed deploy
@@ -29,12 +42,19 @@ const (
 //     to the previous id) and returns the wrapped probe error. No
 //     probe runs on Rollback — we're trying to recover, not introduce
 //     new risk.
+//   - SnapshotRestorer: when set AND the rollback target's
+//     ConfigSnapshot field is non-empty, Rollback restores that
+//     snapshot before flipping the Pinner. Restorer errors abort the
+//     rollback (the Pinner does not run, current pointer does not
+//     move) so operators see the failure instead of a half-applied
+//     rollback.
 type Registry struct {
-	Store        ReleaseStore
-	Pinner       Pinner      // optional
-	Probe        HealthProbe // optional; when set, Pin auto-rollbacks on failure
-	ProbePolls   int         // attempts; defaults to 6
-	ProbeBackoff time.Duration // sleep between attempts; defaults to 5s
+	Store            ReleaseStore
+	Pinner           Pinner      // optional
+	Probe            HealthProbe // optional; when set, Pin auto-rollbacks on failure
+	ProbePolls       int         // attempts; defaults to 6
+	ProbeBackoff     time.Duration // sleep between attempts; defaults to 5s
+	SnapshotRestorer SnapshotRestorer // optional; consumed by Rollback when target.ConfigSnapshot != ""
 }
 
 // PinMode tells implementations + observers whether a Pin is moving
@@ -105,6 +125,17 @@ func (r *Registry) apply(ctx context.Context, id string, mode PinMode) (*PinRepo
 		prevID = prev.ID
 		if mode == PinForward && target.SchemaVersion < prev.SchemaVersion {
 			return nil, ErrSchemaRegress
+		}
+	}
+
+	// On Rollback with a ConfigSnapshot pointer, restore the paired
+	// admin-managed state BEFORE flipping the Pinner — the
+	// just-restored backend should come up with the matching
+	// clients/users/roles. Forward Pin intentionally skips this:
+	// rolling forward is for new state, not re-applying old state.
+	if mode == PinRollback && target.ConfigSnapshot != "" && r.SnapshotRestorer != nil {
+		if err := r.SnapshotRestorer.RestoreByID(ctx, target.ConfigSnapshot); err != nil {
+			return nil, fmt.Errorf("releases: rollback snapshot restore: %w", err)
 		}
 	}
 

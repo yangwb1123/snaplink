@@ -269,6 +269,113 @@ func TestPin_ProbeRetriesUntilSuccess(t *testing.T) {
 	}
 }
 
+// scriptedRestorer records each restore call so tests can assert
+// ConfigSnapshot wiring behavior. err is returned by every call.
+type scriptedRestorer struct {
+	mu    atomicSlice
+	err   error
+}
+
+type atomicSlice struct {
+	calls atomic.Int32
+	ids   []string
+	id0   atomic.Value // last id seen, for tests that only care about one
+}
+
+func (s *scriptedRestorer) RestoreByID(_ context.Context, id string) error {
+	s.mu.calls.Add(1)
+	s.mu.id0.Store(id)
+	return s.err
+}
+
+func TestRollback_RestoresConfigSnapshotBeforePinner(t *testing.T) {
+	p := &captureP{}
+	rest := &scriptedRestorer{}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, SnapshotRestorer: rest}
+	ctx := context.Background()
+	old := mkRel("rel-old", 1)
+	old.ConfigSnapshot = "snap-old"
+	_ = st.Register(ctx, old)
+	_ = st.Register(ctx, mkRel("rel-new", 2))
+	_, _ = r.Pin(ctx, "rel-new")
+
+	if _, err := r.Rollback(ctx, "rel-old"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if rest.mu.calls.Load() != 1 {
+		t.Errorf("RestoreByID calls = %d, want 1", rest.mu.calls.Load())
+	}
+	if got := rest.mu.id0.Load(); got != "snap-old" {
+		t.Errorf("RestoreByID called with %q want snap-old", got)
+	}
+	if p.rollback.Load() != 1 {
+		t.Errorf("Pinner.PinRollback calls = %d, want 1", p.rollback.Load())
+	}
+}
+
+func TestRollback_NoConfigSnapshotSkipsRestorer(t *testing.T) {
+	p := &captureP{}
+	rest := &scriptedRestorer{}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, SnapshotRestorer: rest}
+	ctx := context.Background()
+	_ = st.Register(ctx, mkRel("rel-old", 1)) // no ConfigSnapshot
+	_ = st.Register(ctx, mkRel("rel-new", 2))
+	_, _ = r.Pin(ctx, "rel-new")
+
+	if _, err := r.Rollback(ctx, "rel-old"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if rest.mu.calls.Load() != 0 {
+		t.Errorf("RestoreByID called %d times, want 0", rest.mu.calls.Load())
+	}
+}
+
+func TestRollback_RestorerErrorAbortsBeforePinner(t *testing.T) {
+	p := &captureP{}
+	wantErr := errors.New("snapshot missing")
+	rest := &scriptedRestorer{err: wantErr}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, SnapshotRestorer: rest}
+	ctx := context.Background()
+	old := mkRel("rel-old", 1)
+	old.ConfigSnapshot = "snap-old"
+	_ = st.Register(ctx, old)
+	_ = st.Register(ctx, mkRel("rel-new", 2))
+	_, _ = r.Pin(ctx, "rel-new")
+
+	_, err := r.Rollback(ctx, "rel-old")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want wraps wantErr", err)
+	}
+	if p.rollback.Load() != 0 {
+		t.Errorf("Pinner.PinRollback called despite restore failure")
+	}
+	cur, _ := r.Current(ctx)
+	if cur == nil || cur.ID != "rel-new" {
+		t.Errorf("Current after failed Rollback = %+v, want rel-new", cur)
+	}
+}
+
+func TestPin_ForwardSkipsRestorerEvenWithConfigSnapshot(t *testing.T) {
+	p := &captureP{}
+	rest := &scriptedRestorer{}
+	st := memory.New()
+	r := &releases.Registry{Store: st, Pinner: p, SnapshotRestorer: rest}
+	ctx := context.Background()
+	rel := mkRel("rel-1", 1)
+	rel.ConfigSnapshot = "snap-1"
+	_ = st.Register(ctx, rel)
+
+	if _, err := r.Pin(ctx, "rel-1"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if rest.mu.calls.Load() != 0 {
+		t.Errorf("RestoreByID called on forward Pin: %d", rest.mu.calls.Load())
+	}
+}
+
 func TestRollback_DoesNotProbe(t *testing.T) {
 	p := &captureP{}
 	probe := &scriptedProbe{results: []error{errors.New("would fail")}}
