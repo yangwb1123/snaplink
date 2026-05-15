@@ -365,6 +365,49 @@ _ = bs.Run(ctx)
 The reserved namespace `"sso-server"` is rejected — pick something else.
 Multiple apps can share one state file as long as their namespaces differ.
 
+### 6e. Snapshot (`snapshot/` — Phase D-2)
+
+Export / restore for the operator-managed state: clients, users, role
+definitions, role assignments, menus, network policies, plus the
+bootstrap Tracker's per-namespace high-water mark. Use cases: stand up a
+peer node from a known-good baseline, migrate config across air-gapped
+networks, DR drills, time-travel debugging.
+
+Layered SPI per the same plugin pattern as the rest of the repo:
+
+- **`snapshot.Snapshotter`** — pulls every wired backend's `List()` into a
+  versioned `Snapshot` envelope. Backends are independently optional —
+  unconfigured categories are silently skipped. Provider needs the
+  optional `permissions.MenuLister` extension to round-trip menus.
+- **`snapshot.Restorer`** — applies a Snapshot in dependency order
+  (clients → users → roles → menus → assignments → netpolicy → bootstrap
+  state). Three modes:
+  - `ModeMerge` — insert when missing, leave existing untouched.
+  - `ModeOverwrite` — insert when missing, update when present. No deletes.
+  - `ModeReplace` — wipe categories the snapshot covers, then re-seed.
+    Requires `Confirm == snap.SnapshotID` to guard against accidents.
+  `DryRun: true` returns a Report with the would-be counts but performs
+  no mutations. `AdvanceBootstrap: true` bumps the destination Tracker
+  to the snapshot's recorded version (only when newer).
+- **`snapshot.Codec`** — `JSONCodec` is the canonical encoding (indented,
+  HTML-escape off, `DisallowUnknownFields` on read). Schema version `"1"`;
+  unknown versions are rejected with `ErrUnknownSchemaVersion`.
+- **`snapshot.Sealer`** — encryption SPI with two backends:
+  - `snapshot/encryption/none` — typed no-op (Pipeline also picks this
+    up automatically when Sealer is nil).
+  - `snapshot/encryption/passphrase` — argon2id KDF + XChaCha20-Poly1305
+    AEAD; salt + nonce + KDF tunables travel inside `EncryptionParams`.
+    Defaults: time=1, memory=64 MiB, threads=4 (OWASP 2024 baseline).
+- **`snapshot.Storage`** — opaque-bytes persistence. Two backends:
+  - `snapshot/storage/file` — directory-backed; atomic tempfile + rename
+    writes; sanitised filenames; `0o600` files under a `0o700` dir.
+  - `snapshot/storage/inline` — in-memory map for tests + same-process
+    pipelines.
+- **`snapshot.Pipeline`** — composes Codec + Sealer + Storage. `Save`
+  marshals → seals → wraps in `SealedEnvelope` (header carries codec +
+  algorithm + sha256 + opaque encryption params) → stores. `Load`
+  reverses it and verifies the sha256 with `ErrChecksumMismatch` on drift.
+
 ### 7. ssoclient (the local/remote split)
 
 ```go
