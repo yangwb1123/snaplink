@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// PermissionAdminService manages roles, role assignments, and the menu tree
+// for each client (APP). All operations are scoped to a client_id so
+// multi-tenant deployments stay isolated.
+service PermissionAdminService {
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/permissions/{client_id}/roles" };
+  }
+  rpc AddRole(AddRoleRequest) returns (AddRoleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/permissions/{client_id}/roles"
+      body: "role"
+    };
+  }
+  rpc UpdateRole(UpdateRoleRequest) returns (UpdateRoleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/permissions/{client_id}/roles/{role.code}"
+      body: "role"
+    };
+  }
+  rpc RemoveRole(RemoveRoleRequest) returns (RemoveRoleResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/admin/permissions/{client_id}/roles/{role_code}"
+    };
+  }
+
+  rpc ListAssignments(ListAssignmentsRequest) returns (ListAssignmentsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/permissions/{client_id}/assignments" };
+  }
+  rpc AssignRoles(AssignRolesRequest) returns (AssignRolesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/permissions/{client_id}/assignments/{user_id}"
+      body: "*"
+    };
+  }
+  rpc UnassignRoles(UnassignRolesRequest) returns (UnassignRolesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/permissions/{client_id}/assignments/{user_id}/unassign"
+      body: "*"
+    };
+  }
+
+  rpc SetMenus(SetMenusRequest) returns (SetMenusResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/permissions/{client_id}/menus"
+      body: "*"
+    };
+  }
+}
+
+message Role {
+  string code        = 1;
+  string name        = 2;
+  string description = 3;
+  repeated string permissions = 4;
+}
+
+message Button {
+  string code       = 1;
+  string name       = 2;
+  string permission = 3;
+}
+
+message MenuItem {
+  string id         = 1;
+  string name       = 2;
+  string path       = 3;
+  string icon       = 4;
+  string permission = 5;
+  repeated Button   buttons  = 6;
+  repeated MenuItem children = 7;
+}
+
+message Assignment {
+  string user_id = 1;
+  repeated string roles = 2;
+}
+
+message ListRolesRequest    { string client_id = 1; }
+message ListRolesResponse   { repeated Role roles = 1; }
+
+message AddRoleRequest      { string client_id = 1; Role role = 2; }
+message AddRoleResponse     { Role role = 1; }
+
+message UpdateRoleRequest   { string client_id = 1; Role role = 2; }
+message UpdateRoleResponse  { Role role = 1; }
+
+message RemoveRoleRequest   { string client_id = 1; string role_code = 2; }
+message RemoveRoleResponse  {}
+
+message ListAssignmentsRequest  { string client_id = 1; }
+message ListAssignmentsResponse { repeated Assignment assignments = 1; }
+
+message AssignRolesRequest   {
+  string client_id = 1;
+  string user_id   = 2;
+  repeated string roles = 3;
+}
+message AssignRolesResponse  {}
+
+message UnassignRolesRequest  {
+  string client_id = 1;
+  string user_id   = 2;
+  repeated string roles = 3;
+}
+message UnassignRolesResponse {}
+
+message SetMenusRequest  {
+  string client_id = 1;
+  repeated MenuItem menus = 2;
+}
+message SetMenusResponse {}

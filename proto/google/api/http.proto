@@ -1,0 +1,45 @@
+// Vendored from googleapis/googleapis@master, Apache 2.0.
+// See proto/google/api/LICENSE for the full license text.
+//
+// `HttpRule` describes how a gRPC method projects onto an HTTP request:
+// method (get/post/put/patch/delete/custom), URL pattern, body field, and
+// optional response_body. protoc-gen-grpc-gateway consumes these to emit
+// the REST-to-gRPC reverse proxy.
+//
+// Trimmed to the fields snaplink/sso actually uses; the full upstream file
+// includes a richer pattern grammar that we don't need today.
+
+syntax = "proto3";
+
+package google.api;
+
+option cc_enable_arenas = true;
+option go_package = "google.golang.org/genproto/googleapis/api/annotations;annotations";
+
+message Http {
+  repeated HttpRule rules = 1;
+  bool fully_decode_reserved_expansion = 2;
+}
+
+message HttpRule {
+  string selector = 1;
+
+  oneof pattern {
+    string get    = 2;
+    string put    = 3;
+    string post   = 4;
+    string delete = 5;
+    string patch  = 6;
+    CustomHttpPattern custom = 8;
+  }
+
+  string body          = 7;
+  string response_body = 12;
+
+  repeated HttpRule additional_bindings = 11;
+}
+
+message CustomHttpPattern {
+  string kind = 1;
+  string path = 2;
+}

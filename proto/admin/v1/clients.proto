@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// ClientAdminService manages registered SSO client applications. Every
+// method requires the admin:* scope; mutations write audit events.
+service ClientAdminService {
+  rpc List(ListClientsRequest) returns (ListClientsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/clients" };
+  }
+  rpc Get(GetClientRequest) returns (GetClientResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/clients/{id}" };
+  }
+  rpc Create(CreateClientRequest) returns (CreateClientResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/clients"
+      body: "client"
+    };
+  }
+  rpc Update(UpdateClientRequest) returns (UpdateClientResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/clients/{client.id}"
+      body: "client"
+    };
+  }
+  rpc Delete(DeleteClientRequest) returns (DeleteClientResponse) {
+    option (google.api.http) = { delete: "/api/v1/admin/clients/{id}" };
+  }
+  rpc RotateSecret(RotateSecretRequest) returns (RotateSecretResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/clients/{id}/rotate-secret"
+      body: "*"
+    };
+  }
+}
+
+// Client mirrors sso.Client. Secret is write-only — the server never echoes
+// it back on Get/List responses (the field is cleared); RotateSecret is the
+// only RPC that returns a fresh secret.
+message Client {
+  string id     = 1;
+  string secret = 2;
+  string name   = 3;
+  repeated string redirect_uris          = 4;
+  repeated string allowed_scopes         = 5;
+  repeated string allowed_authenticators = 6;
+  string token_strategy = 7;
+  bool   active         = 8;
+}
+
+message ListClientsRequest  {}
+message ListClientsResponse { repeated Client clients = 1; }
+
+message GetClientRequest    { string id = 1; }
+message GetClientResponse   { Client client = 1; }
+
+message CreateClientRequest  { Client client = 1; }
+message CreateClientResponse { Client client = 1; }
+
+message UpdateClientRequest  { Client client = 1; }
+message UpdateClientResponse { Client client = 1; }
+
+message DeleteClientRequest  { string id = 1; }
+message DeleteClientResponse {}
+
+message RotateSecretRequest  { string id = 1; }
+message RotateSecretResponse { string secret = 1; }

@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// UserAdminService manages SSO user records. Reads need admin:read; writes
+// need admin:write. ListUserSessions is the operator's view into active
+// sessions backing a user (session-strategy only; JWT users have no
+// listable sessions).
+service UserAdminService {
+  rpc List(ListUsersRequest) returns (ListUsersResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/users" };
+  }
+  rpc Get(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/users/{id}" };
+  }
+  rpc Create(CreateUserRequest) returns (CreateUserResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/users"
+      body: "user"
+    };
+  }
+  rpc Update(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/admin/users/{user.id}"
+      body: "user"
+    };
+  }
+  rpc Delete(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (google.api.http) = { delete: "/api/v1/admin/users/{id}" };
+  }
+  rpc ListUserSessions(ListUserSessionsRequest) returns (ListUserSessionsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/users/{id}/sessions" };
+  }
+}
+
+message User {
+  string id          = 1;
+  string external_id = 2;
+  string provider    = 3;
+  map<string, string> attributes = 4;
+}
+
+message Session {
+  string id         = 1;
+  string user_id    = 2;
+  int64  created_at_unix = 3;
+  int64  expires_at_unix = 4;
+  bool   revoked    = 5;
+}
+
+message ListUsersRequest  {}
+message ListUsersResponse { repeated User users = 1; }
+
+message GetUserRequest  { string id = 1; }
+message GetUserResponse { User user = 1; }
+
+message CreateUserRequest  { User user = 1; }
+message CreateUserResponse { User user = 1; }
+
+message UpdateUserRequest  { User user = 1; }
+message UpdateUserResponse { User user = 1; }
+
+message DeleteUserRequest  { string id = 1; }
+message DeleteUserResponse {}
+
+message ListUserSessionsRequest  { string id = 1; }
+message ListUserSessionsResponse { repeated Session sessions = 1; }

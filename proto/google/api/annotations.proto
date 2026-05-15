@@ -1,0 +1,20 @@
+// Vendored from googleapis/googleapis@master, Apache 2.0.
+// See proto/google/api/LICENSE for the full license text.
+//
+// This file is the bare minimum required by protoc-gen-grpc-gateway: the
+// `(google.api.http)` field option that lets a gRPC RPC declare its REST
+// projection. Annotated services build for both transports from one .proto.
+
+syntax = "proto3";
+
+package google.api;
+
+import "google/api/http.proto";
+import "google/protobuf/descriptor.proto";
+
+option go_package = "google.golang.org/genproto/googleapis/api/annotations;annotations";
+
+extend google.protobuf.MethodOptions {
+  // See `HttpRule`.
+  HttpRule http = 72295728;
+}

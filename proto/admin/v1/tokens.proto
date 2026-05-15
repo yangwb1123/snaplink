@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// TokenAdminService is the admin surface for tokens. ListSessions enumerates
+// active session-backed tokens via the SessionManager. JWT issuers cannot
+// enumerate (stateless); for JWT-only deployments operators rely on the
+// audit log of issuance events.
+//
+// IssueTempToken hands an admin a one-time token bound to a user — useful
+// for password resets, magic-link distribution, or first-login flows. The
+// token TTL is configured server-side via authenticators.temp_token.ttl.
+service TokenAdminService {
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/tokens/sessions" };
+  }
+  rpc Revoke(RevokeRequest) returns (RevokeResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/tokens/revoke"
+      body: "*"
+    };
+  }
+  rpc IssueTempToken(IssueTempTokenRequest) returns (IssueTempTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/tokens/temp"
+      body: "*"
+    };
+  }
+}
+
+message SessionToken {
+  string id              = 1;
+  string user_id         = 2;
+  int64  created_at_unix = 3;
+  int64  expires_at_unix = 4;
+}
+
+message ListSessionsRequest {
+  // Filter to a single user; empty returns all active sessions.
+  string user_id = 1;
+}
+message ListSessionsResponse { repeated SessionToken sessions = 1; }
+
+message RevokeRequest {
+  // Provide either token (raw access token / session ID) OR session_id.
+  string token      = 1;
+  string session_id = 2;
+}
+message RevokeResponse {
+  // What was revoked: "token", "session", or "both".
+  repeated string revoked = 1;
+}
+
+message IssueTempTokenRequest {
+  string user_id   = 1;
+  string client_id = 2;
+  // Optional scope list applied to the temp token.
+  repeated string scopes = 3;
+}
+message IssueTempTokenResponse {
+  // The raw temp token. Display once; never echo back.
+  string token             = 1;
+  int64  expires_at_unix   = 2;
+}
