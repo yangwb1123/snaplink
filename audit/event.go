@@ -19,6 +19,32 @@ const (
 
 	EventNetPolicyApply  EventType = "netpolicy_apply"
 	EventNetPolicyDelete EventType = "netpolicy_delete"
+
+	// Admin control-plane mutations. Every mutating RPC on the
+	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
+	// one of these. ActorID is the admin who issued the call; Reason
+	// carries "target=<resource>" for easy auditing.
+	EventAdminClientCreated     EventType = "admin_client_created"
+	EventAdminClientUpdated     EventType = "admin_client_updated"
+	EventAdminClientDeleted     EventType = "admin_client_deleted"
+	EventAdminClientSecretRotated EventType = "admin_client_secret_rotated"
+	EventAdminUserCreated       EventType = "admin_user_created"
+	EventAdminUserUpdated       EventType = "admin_user_updated"
+	EventAdminUserDeleted       EventType = "admin_user_deleted"
+	EventAdminTokenRevoked      EventType = "admin_token_revoked"
+	EventAdminTempTokenIssued   EventType = "admin_temp_token_issued"
+	EventAdminRoleAdded         EventType = "admin_role_added"
+	EventAdminRoleUpdated       EventType = "admin_role_updated"
+	EventAdminRoleRemoved       EventType = "admin_role_removed"
+	EventAdminRoleAssigned      EventType = "admin_role_assigned"
+	EventAdminRoleUnassigned    EventType = "admin_role_unassigned"
+	EventAdminMenusUpdated      EventType = "admin_menus_updated"
+
+	// Bootstrap framework events — one per Step run/skip on first boot
+	// (or whenever a new Step is added later).
+	EventBootstrapStepApplied EventType = "bootstrap_step_applied"
+	EventBootstrapStepSkipped EventType = "bootstrap_step_skipped"
+	EventBootstrapStepFailed  EventType = "bootstrap_step_failed"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
