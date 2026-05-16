@@ -8,11 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/goccy/go-yaml"
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/netpolicy"
@@ -486,23 +484,33 @@ type CertificateConfig struct {
 }
 
 // Load reads and parses a YAML config file, then applies defaults.
+//
+// Implemented as a thin wrapper over the layered Source/Loader chain
+// — equivalent to LoadFromSources(NewFileSource(path)). Use
+// LoadFromSources directly when you need ENV / flag / etcd overlays.
 func Load(path string) (*Config, error) {
 	if path == "" {
 		path = DefaultFileName
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("config: read %s: %w", path, err)
-	}
-	c := &Config{}
-	if err := yaml.Unmarshal(data, c); err != nil {
-		return nil, fmt.Errorf("config: parse %s: %w", path, err)
-	}
-	c.applyDefaults()
-	if err := c.validate(); err != nil {
-		return nil, err
-	}
-	return c, nil
+	return LoadFromSources(context.Background(), NewFileSource(path))
+}
+
+// LoadFromSources builds a Loader from the given priority chain
+// (lowest → highest) and resolves it into a fully-defaulted +
+// validated *Config. Returns the first source / parse / validation
+// error encountered.
+//
+// Typical production wiring:
+//
+//	cfg, err := config.LoadFromSources(ctx,
+//	    config.NewFileSource("/etc/sso/config.yaml"),
+//	    &config.FileSource{Path: "/etc/sso/local.yaml", Optional: true},
+//	    config.NewEnvSource(),
+//	)
+//
+// CLI flags sit on top of this chain via a forthcoming FlagSource.
+func LoadFromSources(ctx context.Context, sources ...Source) (*Config, error) {
+	return NewLoader(sources...).Load(ctx)
 }
 
 func (c *Config) applyDefaults() {
