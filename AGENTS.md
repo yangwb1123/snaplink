@@ -600,6 +600,60 @@ do a presence check rather than a value check. Use
 `setMeta(e, key, val)` (not direct `e.Metadata = map{...}`) when
 adding new event metadata to avoid clobbering the geo enrichment.
 
+### 6h. Tenant (`tenant/` + sso/tenant_middleware.go)
+
+Multi-tenant + multi-domain routing layer. A `Tenant` is a
+business boundary (independent billing/audit/admin); a `Domain` is
+a hostname mapped to one Tenant. Same SSO server can host
+admin.acme.com + portal.acme.com (→ tenant `acme`) and
+admin.beta.io (→ tenant `beta`) without operators running
+separate binaries.
+
+- **`tenant.Tenant`** — id + slug + name + status (active|suspended)
+  + free-form Settings map. Slug is the URL-safe identifier
+  operators use in admin tooling; ID is the immutable primary key.
+- **`tenant.Domain`** — hostname (unique key) + tenant_id +
+  optional default_client_id + optional Branding map for
+  per-domain logo/theme/locale defaults. Hostname normalized to
+  lowercase + trailing-dot-stripped per RFC 1035.
+- **`tenant.Store`** — Tenant + Domain CRUD in one interface.
+  `tenant/memory` is the in-process backend (fine for tests +
+  small embedded deployments). Production SaaS will want a SQL
+  backend.
+- **`sso.TenantMiddleware`** — `MiddlewareFunc` factory; lives in
+  the sso package because the natural import direction is
+  sso → tenant. `sso.WithTenantStore` installs it on Mount;
+  `sso.WithTenantMiddlewareOptions` tunes the host extractor /
+  timeout / suspended-tenant visibility.
+- **`sso.TenantFromHandlerContext`** — typed read-back returning
+  `*ResolvedTenant{Tenant, Domain}`.
+- **`sso.DefaultHostExtractor`** — XFH first-hop → r.Host with
+  port stripped + IPv6 brackets handled.
+
+**Tenant ownership intentionally sits one level above `sso.Client`** —
+one tenant typically owns multiple clients (admin-portal,
+customer-portal, mobile-API) sharing one audit trail. The
+Client → Tenant link is a follow-up; the routing layer + audit
+enrichment land independently of the existing ClientStore
+migration.
+
+**Audit enrichment**: every `audit.Event` now carries
+`tenant.id` / `tenant.slug` / `tenant.domain` in `Metadata` when
+the middleware ran. Combined with the `geo.*` enrichment, every
+SIEM record carries (tenant, country) by default — filters like
+"failed logins for tenant X from outside the US" are a single
+two-key match.
+
+**Suspended tenants** resolve to "no tenant" by default so
+handlers naturally degrade. Set `IncludeSuspended=true` if you
+want to surface a maintenance page from a handler.
+
+**Security note on `X-Forwarded-Host`**: `DefaultHostExtractor`
+trusts XFH first-hop, which is correct ONLY when a known edge
+proxy strips and re-sets it. Internet-facing deployments without
+one should write a custom HostExtractor that returns r.Host
+unconditionally (and ignores XFH).
+
 ### 7. ssoclient (the local/remote split)
 
 ```go
@@ -674,6 +728,10 @@ releases:      # enabled
 geo:           # enabled, backend (static), lookup_timeout
                # static.entries[]: { cidr, country_code, region, city,
                #                     time_zone, recommended_language }
+tenant:        # enabled, backend (memory), lookup_timeout, include_suspended
+               # tenants[]: { id, slug, name, status, settings }
+               # domains[]: { hostname, tenant_id, default_client_id,
+               #              is_apex, branding }
 ```
 
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens

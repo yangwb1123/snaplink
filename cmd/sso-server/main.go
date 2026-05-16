@@ -59,6 +59,8 @@ import (
 	encryptionpass "github.com/snaplink/sso/snapshot/encryption/passphrase"
 	storagefile "github.com/snaplink/sso/snapshot/storage/file"
 	storageinline "github.com/snaplink/sso/snapshot/storage/inline"
+	"github.com/snaplink/sso/tenant"
+	tenantmemory "github.com/snaplink/sso/tenant/memory"
 	"google.golang.org/grpc"
 )
 
@@ -139,6 +141,10 @@ type app struct {
 	releaseRegistry *releases.Registry
 	releaseStore    releases.ReleaseStore
 
+	// Tenant store (multi-tenant routing). Nil when disabled. Closed
+	// during shutdown so SQL backends release their connections.
+	tenantStore tenant.Store
+
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
 }
@@ -151,6 +157,9 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 	defer a.registry.Close()
 	if a.netStore != nil {
 		defer a.netStore.Close()
+	}
+	if a.tenantStore != nil {
+		defer a.tenantStore.Close()
 	}
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
@@ -622,6 +631,58 @@ func (a *snapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID st
 	return nil
 }
 
+// buildTenantStore materialises the tenant.Store from TenantConfig
+// and seeds any declared tenants + domains. Returns (nil, nil)
+// when tenant.enabled=false so cmd can pass the result to
+// sso.WithTenantStore unconditionally (the option no-ops on nil).
+func buildTenantStore(cfg *config.Config, logger sso.Logger) (tenant.Store, error) {
+	if !cfg.Tenant.Enabled {
+		return nil, nil
+	}
+	var store tenant.Store
+	switch strings.ToLower(cfg.Tenant.Backend) {
+	case "", "memory":
+		store = tenantmemory.New()
+		logger.Info("tenant store: memory (in-process)")
+	default:
+		return nil, fmt.Errorf("unknown tenant.backend %q", cfg.Tenant.Backend)
+	}
+
+	ctx := context.Background()
+	for _, t := range cfg.Tenant.Tenants {
+		status := tenant.Status(t.Status)
+		if status == "" {
+			status = tenant.StatusActive
+		}
+		if err := store.PutTenant(ctx, &tenant.Tenant{
+			ID:       t.ID,
+			Slug:     t.Slug,
+			Name:     t.Name,
+			Status:   status,
+			Settings: t.Settings,
+		}); err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("seed tenant %q: %w", t.ID, err)
+		}
+	}
+	for _, d := range cfg.Tenant.Domains {
+		if err := store.PutDomain(ctx, &tenant.Domain{
+			Hostname:        d.Hostname,
+			TenantID:        d.TenantID,
+			DefaultClientID: d.DefaultClientID,
+			IsApex:          d.IsApex,
+			Branding:        d.Branding,
+		}); err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("seed domain %q: %w", d.Hostname, err)
+		}
+	}
+	logger.Info("tenant seed complete",
+		"tenants", len(cfg.Tenant.Tenants),
+		"domains", len(cfg.Tenant.Domains))
+	return store, nil
+}
+
 // buildGeoProvider materialises the geo.Provider from GeoConfig.
 // Returns nil when geo.enabled=false so cmd can pass the result to
 // sso.WithGeoProvider unconditionally (the option no-ops on nil).
@@ -764,6 +825,20 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 
+	tenantStore, err := buildTenantStore(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("tenant store: %w", err)
+	}
+	if tenantStore != nil {
+		opts = append(opts, sso.WithTenantStore(tenantStore))
+		if cfg.Tenant.LookupTimeout > 0 || cfg.Tenant.IncludeSuspended {
+			opts = append(opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
+				Timeout:          cfg.Tenant.LookupTimeout,
+				IncludeSuspended: cfg.Tenant.IncludeSuspended,
+			}))
+		}
+	}
+
 	srv := sso.NewServer(opts...)
 
 	var adminMW *sso.AdminMiddleware
@@ -845,6 +920,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		snapshotRestorer: restorer,
 		releaseRegistry:  releaseRegistry,
 		releaseStore:     releaseStore,
+		tenantStore:      tenantStore,
 		netStop:          netStop,
 	}, nil
 }

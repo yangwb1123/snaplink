@@ -37,6 +37,7 @@ type Config struct {
 	Snapshot       SnapshotConfig       `yaml:"snapshot"`
 	Releases       ReleasesConfig       `yaml:"releases"`
 	Geo            GeoConfig            `yaml:"geo"`
+	Tenant         TenantConfig         `yaml:"tenant"`
 }
 
 // AdminConfig toggles the admin control plane. When Enabled is true the
@@ -238,6 +239,44 @@ type GeoStaticEntry struct {
 	City                string `yaml:"city"`
 	TimeZone            string `yaml:"time_zone"`
 	RecommendedLanguage string `yaml:"recommended_language"` // BCP-47
+}
+
+// TenantConfig configures the multi-tenant + multi-domain
+// routing layer. When Enabled is false the SSO server skips
+// installing the tenant middleware entirely. Backend selects
+// which tenant.Store implementation to use; "memory" is the
+// only one wired today (production SaaS will want a SQL backend
+// — see tenant/ docs).
+//
+// Tenants + Domains can be seeded via TenantConfig.Tenants and
+// TenantConfig.Domains for embedded deployments. Operators
+// running an admin-managed setup can leave both empty and
+// populate via the (forthcoming) admin TenantService RPCs.
+type TenantConfig struct {
+	Enabled       bool                  `yaml:"enabled"`
+	Backend       string                `yaml:"backend"` // "memory" (default)
+	LookupTimeout time.Duration         `yaml:"lookup_timeout"`
+	IncludeSuspended bool               `yaml:"include_suspended"`
+	Tenants       []TenantSeedConfig    `yaml:"tenants"`
+	Domains       []TenantDomainConfig  `yaml:"domains"`
+}
+
+// TenantSeedConfig declares a tenant to PutTenant on boot.
+type TenantSeedConfig struct {
+	ID       string            `yaml:"id"`
+	Slug     string            `yaml:"slug"`
+	Name     string            `yaml:"name"`
+	Status   string            `yaml:"status"` // "active" (default) | "suspended"
+	Settings map[string]string `yaml:"settings"`
+}
+
+// TenantDomainConfig declares a hostname → tenant mapping.
+type TenantDomainConfig struct {
+	Hostname        string            `yaml:"hostname"`
+	TenantID        string            `yaml:"tenant_id"`
+	DefaultClientID string            `yaml:"default_client_id"`
+	IsApex          bool              `yaml:"is_apex"`
+	Branding        map[string]string `yaml:"branding"`
 }
 
 // PermissionsConfig configures role/menu authorization. When disabled, the
