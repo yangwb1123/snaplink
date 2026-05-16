@@ -144,4 +144,49 @@ func TestLogin_NilProviderOmitsLanguageKey(t *testing.T) {
 	if _, present := out[sso.KeyRecommendedLang]; present {
 		t.Errorf("recommended_language present despite nil provider")
 	}
+	if _, present := out[sso.KeyCountryCode]; present {
+		t.Errorf("country_code present despite nil provider")
+	}
+}
+
+func TestLogin_FillsCountryCodeFromGeo(t *testing.T) {
+	stub := &stubAuthenticator{
+		name:   "stub",
+		result: &sso.AuthResult{UserID: "user-alice", Provider: "stub"},
+	}
+	prov := static.New()
+	_ = prov.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", RecommendedLanguage: "en-US"})
+	ts := loginFixture(t, stub, prov)
+
+	out := postLogin(t, ts, "10.5.6.7")
+	if got := out[sso.KeyCountryCode]; got != "US" {
+		t.Errorf("country_code = %v, want US", got)
+	}
+	if got := out[sso.KeyRecommendedLang]; got != "en-US" {
+		t.Errorf("recommended_language = %v, want en-US", got)
+	}
+}
+
+func TestLogin_AuthenticatorOverridesGeoCountry(t *testing.T) {
+	stub := &stubAuthenticator{
+		name: "stub",
+		result: &sso.AuthResult{
+			UserID:      "user-alice",
+			Provider:    "stub",
+			CountryCode: "JP",
+		},
+	}
+	prov := static.New()
+	_ = prov.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", RecommendedLanguage: "en-US"})
+	ts := loginFixture(t, stub, prov)
+
+	out := postLogin(t, ts, "10.5.6.7")
+	if got := out[sso.KeyCountryCode]; got != "JP" {
+		t.Errorf("country_code = %v, want JP (authenticator wins)", got)
+	}
+	// Language should still get the geo fallback since the
+	// authenticator left it empty — fields are independent.
+	if got := out[sso.KeyRecommendedLang]; got != "en-US" {
+		t.Errorf("recommended_language = %v, want en-US (geo fallback)", got)
+	}
 }

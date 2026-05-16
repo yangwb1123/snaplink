@@ -547,10 +547,12 @@ IP → geo enrichment on the auth path. The middleware extracts the
 client IP from the request (XFF first hop → X-Real-IP →
 RemoteAddr by default), looks it up via a `geo.Provider`, and
 stashes the resulting `*GeoInfo` on `HandlerContext`. The login
-handler reads it back and fills `AuthResult.RecommendedLanguage`
-when the authenticator didn't supply a stronger signal — the
-response then carries `recommended_language` so the post-login UI
-can render in the user's most-likely BCP-47 language.
+handler reads it back and fills `AuthResult.CountryCode` (ISO
+3166-1 alpha-2) + `RecommendedLanguage` (BCP-47) when the
+authenticator didn't supply a stronger signal — the response
+carries `country_code` and `recommended_language` so the
+post-login UI can render in the user's most-likely region +
+language without an extra round trip.
 
 Geo is deliberately a UX hint, not a security signal:
 `ErrNotFound` is non-fatal, `Lookup` runs under a short timeout

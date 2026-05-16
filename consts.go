@@ -63,6 +63,7 @@ const (
 	KeyRevoked          = "revoked"
 	KeyTokenStrategy    = "token_strategy"
 	KeyRecommendedLang  = "recommended_language"
+	KeyCountryCode      = "country_code"
 )
 
 // Stable error code strings returned to API callers.

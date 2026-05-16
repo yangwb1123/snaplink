@@ -105,19 +105,23 @@ type AuthRequest struct {
 
 // AuthResult holds the result of a successful authentication.
 //
-// RecommendedLanguage is a BCP-47 tag the SSO server forwards to
-// the login client (web SPA, mobile app) so the post-login UI can
-// render in the user's most-likely language. Authenticators with a
-// stronger signal (e.g. a phone authenticator that knows the SIM
-// region) populate this directly; otherwise the geo middleware
-// fills it from the request IP. Empty means "no hint, use the
-// client's own preference".
+// CountryCode (ISO 3166-1 alpha-2, e.g. "US", "CN") and
+// RecommendedLanguage (BCP-47, e.g. "en-US") are forwarded to the
+// login client so the post-login UI can render in the user's
+// most-likely region + language without an extra round trip.
+// Authenticators with a stronger signal (a phone authenticator
+// that knows the SIM region; a saved user preference) populate
+// these directly; otherwise the geo middleware fills them from
+// the request IP. Empty values mean "no hint, use the client's
+// own preference" — the response key is omitted entirely so
+// clients can rely on its absence.
 type AuthResult struct {
 	UserID              string
 	ExternalID          string
 	Provider            string
 	Attributes          map[string]string
 	AuthMethods         []string // how the user was authenticated
+	CountryCode         string   // ISO 3166-1 alpha-2, optional
 	RecommendedLanguage string   // BCP-47, optional
 }
 
