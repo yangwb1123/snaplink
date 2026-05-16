@@ -23,9 +23,9 @@ func (l *Lock) TryAcquire(_ context.Context, _ string, _ time.Duration) (lock.Ha
 
 type handle struct{}
 
-func (h *handle) Renew(context.Context) error    { return nil }
-func (h *handle) Release(context.Context) error  { return nil }
-func (h *handle) FencingToken() uint64           { return 0 }
+func (h *handle) Renew(context.Context) error   { return nil }
+func (h *handle) Release(context.Context) error { return nil }
+func (h *handle) FencingToken() uint64          { return 0 }
 
 // Compile-time interface assertions.
 var (

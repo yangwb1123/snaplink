@@ -14,8 +14,8 @@ type ResourceType string
 
 const (
 	// Frontend resources
-	ResourceTypePage      ResourceType = "page"        // a routed page (gate render)
-	ResourceTypeUIElement ResourceType = "ui_element"  // a button / column / field / section inside a page
+	ResourceTypePage      ResourceType = "page"       // a routed page (gate render)
+	ResourceTypeUIElement ResourceType = "ui_element" // a button / column / field / section inside a page
 
 	// Backend resources
 	ResourceTypeHTTPAPI    ResourceType = "http_api"

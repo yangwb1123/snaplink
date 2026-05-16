@@ -18,12 +18,12 @@ import (
 // includes categories whose backend was wired (and not Excluded). A
 // nil Snapshotter field means "skip this category", NOT "fail".
 type Snapshotter struct {
-	Clients     sso.ClientStore       // optional
-	Users       sso.UserProvider      // optional
-	Permissions permissions.Provider  // optional; needs MenuLister for menus
-	NetPolicy   netpolicy.Store       // optional
-	Tracker     bootstrap.Tracker     // optional, for BootstrapState
-	Namespace   string                // bootstrap namespace; defaults to "sso-server"
+	Clients     sso.ClientStore      // optional
+	Users       sso.UserProvider     // optional
+	Permissions permissions.Provider // optional; needs MenuLister for menus
+	NetPolicy   netpolicy.Store      // optional
+	Tracker     bootstrap.Tracker    // optional, for BootstrapState
+	Namespace   string               // bootstrap namespace; defaults to "sso-server"
 }
 
 // ExportOptions tunes a single Export call.

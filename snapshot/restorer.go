@@ -34,12 +34,12 @@ const (
 // optional in the same shape as Snapshotter — categories whose backend is
 // nil are silently skipped on restore.
 type Restorer struct {
-	Clients     sso.ClientStore       // optional
-	Users       sso.UserProvider      // optional
-	Permissions permissions.Provider  // optional
-	NetPolicy   netpolicy.Store       // optional
-	Tracker     bootstrap.Tracker     // optional, for AdvanceBootstrap
-	Namespace   string                // bootstrap namespace; defaults to snapshot's
+	Clients     sso.ClientStore      // optional
+	Users       sso.UserProvider     // optional
+	Permissions permissions.Provider // optional
+	NetPolicy   netpolicy.Store      // optional
+	Tracker     bootstrap.Tracker    // optional, for AdvanceBootstrap
+	Namespace   string               // bootstrap namespace; defaults to snapshot's
 }
 
 // RestoreOptions tunes a single Restore call.
@@ -61,11 +61,11 @@ type RestoreOptions struct {
 // per-item failures only when nothing destructive has happened yet, see
 // per-category code below).
 type Report struct {
-	Mode    RestoreMode
-	DryRun  bool
-	Items   map[ResourceCategory]CategoryCounts
+	Mode      RestoreMode
+	DryRun    bool
+	Items     map[ResourceCategory]CategoryCounts
 	Bootstrap BootstrapAdvance
-	Errors  []string
+	Errors    []string
 }
 
 // CategoryCounts is the per-resource bookkeeping the Report carries.

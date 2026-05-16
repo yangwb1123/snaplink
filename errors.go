@@ -7,11 +7,11 @@ import "errors"
 // appropriate gRPC status codes (NotFound, AlreadyExists, Unimplemented),
 // which the gRPC-Gateway then maps to HTTP 404 / 409 / 501.
 var (
-	ErrClientExists  = errors.New("sso: client already exists")
-	ErrNoSuchClient  = errors.New("sso: client not found")
+	ErrClientExists = errors.New("sso: client already exists")
+	ErrNoSuchClient = errors.New("sso: client not found")
 
-	ErrUserExists  = errors.New("sso: user already exists")
-	ErrNoSuchUser  = errors.New("sso: user not found")
+	ErrUserExists = errors.New("sso: user already exists")
+	ErrNoSuchUser = errors.New("sso: user not found")
 
 	ErrSessionNotFound = errors.New("sso: session not found")
 

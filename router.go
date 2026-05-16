@@ -52,10 +52,10 @@ func NewContext(w http.ResponseWriter, r *http.Request) *Context {
 	}
 }
 
-func (c *Context) Request() *http.Request         { return c.r }
+func (c *Context) Request() *http.Request              { return c.r }
 func (c *Context) ResponseWriter() http.ResponseWriter { return c.w }
-func (c *Context) Param(name string) string        { return c.params[name] }
-func (c *Context) Query(name string) string        { return c.r.URL.Query().Get(name) }
+func (c *Context) Param(name string) string            { return c.params[name] }
+func (c *Context) Query(name string) string            { return c.r.URL.Query().Get(name) }
 
 func (c *Context) Bind(v any) error {
 	return json.NewDecoder(c.r.Body).Decode(v)

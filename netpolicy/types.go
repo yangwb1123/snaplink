@@ -10,10 +10,10 @@ import (
 // at least one of CIDRs or Hostnames must be non-empty for a policy to be
 // addressable by Classify.
 type Policy struct {
-	Name      string            `json:"name"`
-	CIDRs     []string          `json:"cidrs,omitempty"`
-	Hostnames []string          `json:"hostnames,omitempty"`
-	Priority  int32             `json:"priority,omitempty"`
+	Name      string   `json:"name"`
+	CIDRs     []string `json:"cidrs,omitempty"`
+	Hostnames []string `json:"hostnames,omitempty"`
+	Priority  int32    `json:"priority,omitempty"`
 
 	AdvertisedBaseURL   string `json:"advertised_base_url,omitempty"`
 	AdvertisedJWKSURL   string `json:"advertised_jwks_url,omitempty"`

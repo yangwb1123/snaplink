@@ -18,11 +18,11 @@ import (
 
 // Ed25519 JWT constants.
 const (
-	jwtAlgEdDSA = "EdDSA"
-	jwtTyp      = "JWT"
-	jwkKtyOKP   = "OKP"
+	jwtAlgEdDSA   = "EdDSA"
+	jwtTyp        = "JWT"
+	jwkKtyOKP     = "OKP"
 	jwkCrvEd25519 = "Ed25519"
-	jwkUseSig   = "sig"
+	jwkUseSig     = "sig"
 )
 
 // Ed25519JWTIssuer signs 3-segment JWTs (header.payload.signature) with an

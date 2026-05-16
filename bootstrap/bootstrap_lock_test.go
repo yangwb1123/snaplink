@@ -22,9 +22,9 @@ import (
 // etcd or relying on flock timing.
 type fakeLock struct {
 	mu          sync.Mutex
-	heldBy      *fakeHandle    // currently held by this handle (nil = free)
-	queue       chan struct{}  // signal when lock frees; nil disables blocking notifications
-	acquireErrs []error        // pop one per TryAcquire (nil = real attempt)
+	heldBy      *fakeHandle   // currently held by this handle (nil = free)
+	queue       chan struct{} // signal when lock frees; nil disables blocking notifications
+	acquireErrs []error       // pop one per TryAcquire (nil = real attempt)
 	tokens      atomic.Uint64
 }
 

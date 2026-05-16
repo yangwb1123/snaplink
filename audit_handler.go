@@ -33,7 +33,7 @@ const (
 
 // Error codes for /audit/events.
 const (
-	ErrAuditNotEnabled = "audit_not_enabled"
+	ErrAuditNotEnabled    = "audit_not_enabled"
 	ErrAuditEventNotFound = "audit_event_not_found"
 )
 

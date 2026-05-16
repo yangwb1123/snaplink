@@ -4,8 +4,8 @@ import "strings"
 
 // Wildcard tokens used in permission codes.
 const (
-	WildcardAll     = "*"
-	WildcardSuffix  = ":*"
+	WildcardAll    = "*"
+	WildcardSuffix = ":*"
 )
 
 // Matches reports whether want is granted by the given permission set.

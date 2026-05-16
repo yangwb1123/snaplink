@@ -62,9 +62,9 @@ func (s *stubTenantStore) ListDomains(context.Context) ([]*tenant.Domain, error)
 func (s *stubTenantStore) ListDomainsByTenant(context.Context, string) ([]*tenant.Domain, error) {
 	return nil, nil
 }
-func (s *stubTenantStore) PutDomain(context.Context, *tenant.Domain) error  { return nil }
-func (s *stubTenantStore) DeleteDomain(context.Context, string) error       { return nil }
-func (s *stubTenantStore) Close() error                                     { return nil }
+func (s *stubTenantStore) PutDomain(context.Context, *tenant.Domain) error { return nil }
+func (s *stubTenantStore) DeleteDomain(context.Context, string) error      { return nil }
+func (s *stubTenantStore) Close() error                                    { return nil }
 
 func newTenantCtx(t *testing.T, host string) sso.HandlerContext {
 	t.Helper()

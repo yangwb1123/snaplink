@@ -139,8 +139,8 @@ func (s *TokenAdminService) IssueTempToken(ctx context.Context, in *adminv1.Issu
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminTempTokenIssued, in.UserId)
 	return &adminv1.IssueTempTokenResponse{
-		Token:          token,
-		ExpiresAtUnix:  time.Now().Add(s.tempTokenTTL).Unix(),
+		Token:         token,
+		ExpiresAtUnix: time.Now().Add(s.tempTokenTTL).Unix(),
 	}, nil
 }
 
@@ -151,4 +151,3 @@ func generateTempToken(n int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
-

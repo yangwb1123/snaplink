@@ -13,8 +13,8 @@ import (
 // stubSink is a Sink double whose behavior tests configure. Only Record is
 // exercised by the recorder tests; Get/Query are unused here.
 type stubSink struct {
-	mu       sync.Mutex
-	recorded []*audit.Event
+	mu        sync.Mutex
+	recorded  []*audit.Event
 	recordErr error
 }
 

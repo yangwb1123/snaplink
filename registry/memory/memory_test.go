@@ -94,8 +94,8 @@ func TestRegister_UpdatesEmitUpdatedEvent(t *testing.T) {
 
 	watch, _ := r.Watch(ctx, "sso")
 
-	_ = r.Register(ctx, newSvc("sso-1", "sso"))           // → Added
-	_ = r.Register(ctx, newSvc("sso-1", "sso"))           // → Updated (same ID)
+	_ = r.Register(ctx, newSvc("sso-1", "sso")) // → Added
+	_ = r.Register(ctx, newSvc("sso-1", "sso")) // → Updated (same ID)
 
 	gotAdded := waitEvent(t, watch)
 	gotUpdated := waitEvent(t, watch)

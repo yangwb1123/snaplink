@@ -42,9 +42,9 @@ type funcStep struct {
 	run     func(ctx context.Context) error
 }
 
-func (f *funcStep) Name() string                    { return f.name }
-func (f *funcStep) Version() int                    { return f.version }
-func (f *funcStep) Run(ctx context.Context) error   { return f.run(ctx) }
+func (f *funcStep) Name() string                  { return f.name }
+func (f *funcStep) Version() int                  { return f.version }
+func (f *funcStep) Run(ctx context.Context) error { return f.run(ctx) }
 
 // Tracker persists "highest applied version" per namespace. Implementations
 // must be safe for concurrent Runners with different namespaces (the same
@@ -236,8 +236,8 @@ func (r *Runner) runLocked(ctx context.Context) error {
 	go r.heartbeat(stepCtx, handle, ttl/3, cancel, heartbeatDone, heartbeatExit)
 
 	runErr := r.runUnlocked(stepCtx)
-	cancel()           // stop the heartbeat
-	<-heartbeatDone    // wait for it to drain
+	cancel()        // stop the heartbeat
+	<-heartbeatDone // wait for it to drain
 
 	// Release with a fresh ctx — the parent may already be cancelled
 	// (lock loss path), but we still want to attempt graceful release.

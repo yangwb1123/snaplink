@@ -12,7 +12,7 @@ type stubSource struct {
 	err  error
 }
 
-func (s *stubSource) Name() string                                    { return s.name }
+func (s *stubSource) Name() string                                   { return s.name }
 func (s *stubSource) Load(_ context.Context) (map[string]any, error) { return s.data, s.err }
 
 func TestDeepMerge_ScalarOverride(t *testing.T) {

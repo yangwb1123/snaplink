@@ -50,10 +50,10 @@ type SnapshotRestorer interface {
 //     rollback.
 type Registry struct {
 	Store            ReleaseStore
-	Pinner           Pinner      // optional
-	Probe            HealthProbe // optional; when set, Pin auto-rollbacks on failure
-	ProbePolls       int         // attempts; defaults to 6
-	ProbeBackoff     time.Duration // sleep between attempts; defaults to 5s
+	Pinner           Pinner           // optional
+	Probe            HealthProbe      // optional; when set, Pin auto-rollbacks on failure
+	ProbePolls       int              // attempts; defaults to 6
+	ProbeBackoff     time.Duration    // sleep between attempts; defaults to 5s
 	SnapshotRestorer SnapshotRestorer // optional; consumed by Rollback when target.ConfigSnapshot != ""
 }
 

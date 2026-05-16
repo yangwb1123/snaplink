@@ -36,7 +36,7 @@ type PhoneAuthenticator struct {
 
 type PhoneOption func(*PhoneAuthenticator)
 
-func WithPhoneCodeLength(n int) PhoneOption  { return func(p *PhoneAuthenticator) { p.codeLength = n } }
+func WithPhoneCodeLength(n int) PhoneOption        { return func(p *PhoneAuthenticator) { p.codeLength = n } }
 func WithPhoneCodeTTL(d time.Duration) PhoneOption { return func(p *PhoneAuthenticator) { p.ttl = d } }
 
 func NewPhoneAuthenticator(store CodeStore, sender SMSSender, opts ...PhoneOption) *PhoneAuthenticator {

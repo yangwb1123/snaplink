@@ -3,9 +3,9 @@ package file_test
 import (
 	"context"
 	"errors"
-	"slices"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 

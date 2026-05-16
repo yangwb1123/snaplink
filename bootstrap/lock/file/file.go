@@ -102,10 +102,10 @@ func sanitizeKey(k string) string {
 }
 
 type handle struct {
-	f       *os.File
-	path    string
-	token   uint64
-	closed  atomic.Bool
+	f      *os.File
+	path   string
+	token  uint64
+	closed atomic.Bool
 }
 
 // Renew is a no-op — flock leases don't expire.

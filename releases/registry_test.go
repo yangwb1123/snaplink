@@ -272,8 +272,8 @@ func TestPin_ProbeRetriesUntilSuccess(t *testing.T) {
 // scriptedRestorer records each restore call so tests can assert
 // ConfigSnapshot wiring behavior. err is returned by every call.
 type scriptedRestorer struct {
-	mu    atomicSlice
-	err   error
+	mu  atomicSlice
+	err error
 }
 
 type atomicSlice struct {

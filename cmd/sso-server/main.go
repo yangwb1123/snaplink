@@ -132,19 +132,19 @@ type app struct {
 	// Admin-plane dependencies. Held as concrete references so admin RPCs +
 	// bootstrap steps can mutate the same backing stores the SDK runtime
 	// reads from.
-	clientStore   sso.ClientStore
-	userProvider  sso.UserProvider
-	sessionMgr    sso.SessionManager
-	tempStore     authenticators.TempTokenStore // may be nil when temp_token disabled
-	tokenIssuers  map[string]sso.TokenIssuer
+	clientStore  sso.ClientStore
+	userProvider sso.UserProvider
+	sessionMgr   sso.SessionManager
+	tempStore    authenticators.TempTokenStore // may be nil when temp_token disabled
+	tokenIssuers map[string]sso.TokenIssuer
 
 	adminMW *sso.AdminMiddleware // nil when admin disabled
 
 	// Snapshot subsystem (Phase D-2). All four nil when snapshot disabled.
-	snapshotPipeline    *snapshot.Pipeline
-	snapshotStorage     snapshot.Storage
-	snapshotter         *snapshot.Snapshotter
-	snapshotRestorer    *snapshot.Restorer
+	snapshotPipeline *snapshot.Pipeline
+	snapshotStorage  snapshot.Storage
+	snapshotter      *snapshot.Snapshotter
+	snapshotRestorer *snapshot.Restorer
 
 	// Releases subsystem (Phase D-3). Both nil when releases disabled.
 	releaseRegistry *releases.Registry

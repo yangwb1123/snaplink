@@ -21,7 +21,7 @@ const defaultTimeout = 5 * time.Second
 
 // Probe is a releases.HealthProbe backed by an HTTP GET.
 type Probe struct {
-	URL    string         // the URL to GET; required
+	URL    string          // the URL to GET; required
 	Client *nethttp.Client // optional; when nil a fresh client with defaultTimeout is used
 }
 

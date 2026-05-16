@@ -25,10 +25,10 @@ import (
 )
 
 const (
-	demoUser     = "alice"
-	demoPassword = "secret"
-	demoKeyID    = "svc-001"
-	demoAPIKeyID = "ak_demo"
+	demoUser      = "alice"
+	demoPassword  = "secret"
+	demoKeyID     = "svc-001"
+	demoAPIKeyID  = "ak_demo"
 	demoAPISecret = "sk_demo_secret_value"
 )
 
@@ -208,4 +208,3 @@ func buildAuthenticators(cfg *config.Config) []sso.Authenticator {
 
 	return auths
 }
-

@@ -73,13 +73,13 @@ type BootstrapConfig struct {
 // renews on TTL/3. Blocking switches contention behavior between
 // fail-fast (default) and retry-with-Backoff.
 type BootstrapLockConfig struct {
-	Backend  string             `yaml:"backend"`
-	Key      string             `yaml:"key"`
-	TTL      time.Duration      `yaml:"ttl"`
-	Blocking bool               `yaml:"blocking"`
-	Backoff  time.Duration      `yaml:"backoff"`
-	File     LockFileConfig     `yaml:"file"`
-	Etcd     LockEtcdConfig     `yaml:"etcd"`
+	Backend  string         `yaml:"backend"`
+	Key      string         `yaml:"key"`
+	TTL      time.Duration  `yaml:"ttl"`
+	Blocking bool           `yaml:"blocking"`
+	Backoff  time.Duration  `yaml:"backoff"`
+	File     LockFileConfig `yaml:"file"`
+	Etcd     LockEtcdConfig `yaml:"etcd"`
 }
 
 // LockFileConfig configures the file (flock) lock backend.
@@ -193,10 +193,10 @@ type ReleasePinnerDockerConfig struct {
 // and treats 2xx as healthy. Polls / Backoff control the retry loop
 // (defaults: 6 attempts × 5s).
 type ReleaseProbeConfig struct {
-	Backend string             `yaml:"backend"` // "" | "http"
+	Backend string                 `yaml:"backend"` // "" | "http"
 	HTTP    ReleaseProbeHTTPConfig `yaml:"http"`
-	Polls   int                `yaml:"polls"`
-	Backoff time.Duration      `yaml:"backoff"`
+	Polls   int                    `yaml:"polls"`
+	Backoff time.Duration          `yaml:"backoff"`
 }
 
 // ReleaseProbeHTTPConfig configures the http probe.
@@ -214,9 +214,9 @@ type ReleaseProbeHTTPConfig struct {
 // blocks). Real geo coverage typically wants a future maxmind
 // backend stacked behind static — see geo/ docs.
 type GeoConfig struct {
-	Enabled bool             `yaml:"enabled"`
-	Backend string           `yaml:"backend"` // "static" (default)
-	Static  GeoStaticConfig  `yaml:"static"`
+	Enabled bool            `yaml:"enabled"`
+	Backend string          `yaml:"backend"` // "static" (default)
+	Static  GeoStaticConfig `yaml:"static"`
 	// LookupTimeout caps a single Lookup in the request hot path.
 	// Defaults to sso.DefaultGeoLookupTimeout (200ms) when zero.
 	LookupTimeout time.Duration `yaml:"lookup_timeout"`
@@ -251,12 +251,12 @@ type GeoStaticEntry struct {
 // running an admin-managed setup can leave both empty and
 // populate via the (forthcoming) admin TenantService RPCs.
 type TenantConfig struct {
-	Enabled       bool                  `yaml:"enabled"`
-	Backend       string                `yaml:"backend"` // "memory" (default)
-	LookupTimeout time.Duration         `yaml:"lookup_timeout"`
-	IncludeSuspended bool               `yaml:"include_suspended"`
-	Tenants       []TenantSeedConfig    `yaml:"tenants"`
-	Domains       []TenantDomainConfig  `yaml:"domains"`
+	Enabled          bool                 `yaml:"enabled"`
+	Backend          string               `yaml:"backend"` // "memory" (default)
+	LookupTimeout    time.Duration        `yaml:"lookup_timeout"`
+	IncludeSuspended bool                 `yaml:"include_suspended"`
+	Tenants          []TenantSeedConfig   `yaml:"tenants"`
+	Domains          []TenantDomainConfig `yaml:"domains"`
 }
 
 // TenantSeedConfig declares a tenant to PutTenant on boot.
@@ -280,10 +280,10 @@ type TenantDomainConfig struct {
 // PermissionsConfig configures role/menu authorization. When disabled, the
 // /permissions/me, /menus/me, /roles/me endpoints reply 501.
 type PermissionsConfig struct {
-	Enabled      bool                     `yaml:"enabled"`
-	EmbedInLogin bool                     `yaml:"embed_in_login"`
-	Apps         []AppPermissionsConfig   `yaml:"apps"`
-	UserRoles    []UserRoleAssignment     `yaml:"user_roles"`
+	Enabled      bool                   `yaml:"enabled"`
+	EmbedInLogin bool                   `yaml:"embed_in_login"`
+	Apps         []AppPermissionsConfig `yaml:"apps"`
+	UserRoles    []UserRoleAssignment   `yaml:"user_roles"`
 }
 
 // AppPermissionsConfig declares the roles and menu tree for one APP. Roles
@@ -341,12 +341,12 @@ type AuditConfig struct {
 //   - Policies is the seed list applied at startup. Operators can also add /
 //     update / delete policies live via the API.
 type NetworkConfig struct {
-	Enabled       bool                  `yaml:"enabled"`
-	APIEnabled    bool                  `yaml:"api_enabled"`
-	Store         string                `yaml:"store"` // "memory" | "etcd"
-	EtcdEndpoints []string              `yaml:"etcd_endpoints"`
-	EtcdPrefix    string                `yaml:"etcd_prefix"`
-	Policies      []NetworkPolicySeed   `yaml:"policies"`
+	Enabled       bool                `yaml:"enabled"`
+	APIEnabled    bool                `yaml:"api_enabled"`
+	Store         string              `yaml:"store"` // "memory" | "etcd"
+	EtcdEndpoints []string            `yaml:"etcd_endpoints"`
+	EtcdPrefix    string              `yaml:"etcd_prefix"`
+	Policies      []NetworkPolicySeed `yaml:"policies"`
 }
 
 // NetworkPolicySeed is the YAML projection of netpolicy.Policy with only the
@@ -478,8 +478,8 @@ type APIKeyConfig struct {
 
 // CertificateConfig configures X.509 certificate authentication.
 type CertificateConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	TrustedCAFiles  []string `yaml:"trusted_ca_files"`
+	Enabled           bool     `yaml:"enabled"`
+	TrustedCAFiles    []string `yaml:"trusted_ca_files"`
 	IntermediateFiles []string `yaml:"intermediate_files"`
 }
 

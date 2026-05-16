@@ -19,10 +19,10 @@ const (
 
 // JWTIssuer is a simple in-memory JWT-like token issuer.
 type JWTIssuer struct {
-	secret     []byte
-	issuer     string
-	tokenTTL   time.Duration
-	tokens     sync.Map // token -> *sso.TokenClaims
+	secret   []byte
+	issuer   string
+	tokenTTL time.Duration
+	tokens   sync.Map // token -> *sso.TokenClaims
 }
 
 type JWTIssuerOption func(*JWTIssuer)

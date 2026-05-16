@@ -48,10 +48,10 @@ func defaultIdentityFromCert(cert *x509.Certificate) *sso.Subject {
 // in the body lets non-TLS callers (CLI tools, IoT gateways behind a TLS
 // terminator) authenticate too.
 type CertificateAuthenticator struct {
-	roots     *x509.CertPool
+	roots         *x509.CertPool
 	intermediates *x509.CertPool
-	keyUsages []x509.ExtKeyUsage
-	identity  IdentityFromCert
+	keyUsages     []x509.ExtKeyUsage
+	identity      IdentityFromCert
 }
 
 type CertOption func(*CertificateAuthenticator)

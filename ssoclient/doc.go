@@ -12,9 +12,11 @@
 //     deployment.
 //
 // Each capability is selected independently: an App can have
-//   AuthClient  = remote (central token issuance + JWKS verify)
-//   AuthzClient = local  (business-specific permission rules in-process)
-//   AuditClient = remote (events shipped to a central stream)
+//
+//	AuthClient  = remote (central token issuance + JWKS verify)
+//	AuthzClient = local  (business-specific permission rules in-process)
+//	AuditClient = remote (events shipped to a central stream)
+//
 // or any other combination. The point is the App's business code only sees
 // the interface; deployment mode is a wiring choice.
 package ssoclient

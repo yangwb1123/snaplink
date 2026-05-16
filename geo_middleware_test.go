@@ -154,9 +154,9 @@ func TestGeoMiddleware_E2EWithStaticProvider(t *testing.T) {
 
 func TestDefaultGeoIPExtractor_PriorityOrder(t *testing.T) {
 	cases := []struct {
-		name string
+		name  string
 		setup func(*http.Request)
-		want string
+		want  string
 	}{
 		{
 			name: "xff first hop wins",
@@ -205,9 +205,9 @@ func TestDefaultGeoIPExtractor_PriorityOrder(t *testing.T) {
 			want: "192.168.1.1",
 		},
 		{
-			name: "no headers no remote returns nil",
+			name:  "no headers no remote returns nil",
 			setup: func(r *http.Request) { r.RemoteAddr = "" },
-			want: "",
+			want:  "",
 		},
 	}
 	for _, tc := range cases {

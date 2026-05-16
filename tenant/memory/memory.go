@@ -17,10 +17,10 @@ import (
 // Store holds Tenants + Domains in process-local maps. Safe for
 // concurrent use.
 type Store struct {
-	mu        sync.RWMutex
-	tenants   map[string]*tenant.Tenant
-	domains   map[string]*tenant.Domain // keyed by hostname (lowercased)
-	now       func() time.Time
+	mu      sync.RWMutex
+	tenants map[string]*tenant.Tenant
+	domains map[string]*tenant.Domain // keyed by hostname (lowercased)
+	now     func() time.Time
 }
 
 // New constructs an empty Store.

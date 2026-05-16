@@ -102,4 +102,3 @@ func (s *SessionTokenIssuer) Revoke(_ context.Context, token string) error {
 	}
 	return nil
 }
-

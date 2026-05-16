@@ -63,7 +63,7 @@ type AuditOption func(*auditConfig)
 // warning. Intended for tests of this package + CI runs that
 // intentionally use dev clients. Production wiring should leave
 // the warning on so accidental dev-in-prod is noisy.
-func WithSilent() Option      { return func(c *authConfig) { c.silent = true } }
+func WithSilent() Option           { return func(c *authConfig) { c.silent = true } }
 func WithSilentAuthz() AuthzOption { return func(c *authzConfig) { c.silent = true } }
 func WithSilentAudit() AuditOption { return func(c *auditConfig) { c.silent = true } }
 

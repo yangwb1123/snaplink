@@ -33,7 +33,7 @@ type EmailAuthenticator struct {
 
 type EmailOption func(*EmailAuthenticator)
 
-func WithEmailCodeLength(n int) EmailOption  { return func(e *EmailAuthenticator) { e.codeLength = n } }
+func WithEmailCodeLength(n int) EmailOption        { return func(e *EmailAuthenticator) { e.codeLength = n } }
 func WithEmailCodeTTL(d time.Duration) EmailOption { return func(e *EmailAuthenticator) { e.ttl = d } }
 
 func NewEmailAuthenticator(store CodeStore, sender EmailSender, opts ...EmailOption) *EmailAuthenticator {

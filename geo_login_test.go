@@ -25,7 +25,7 @@ type stubAuthenticator struct {
 	result *sso.AuthResult
 }
 
-func (s *stubAuthenticator) Name() string { return s.name }
+func (s *stubAuthenticator) Name() string             { return s.name }
 func (s *stubAuthenticator) LoginURL(_ string) string { return "" }
 func (s *stubAuthenticator) Authenticate(_ context.Context, _ *sso.AuthRequest) (*sso.AuthResult, error) {
 	cp := *s.result
@@ -200,8 +200,8 @@ func loginFixtureWithAudit(t *testing.T, auth sso.Authenticator, geoProv geo.Pro
 // login_failure audit path.
 type failingAuthenticator struct{ name string }
 
-func (f *failingAuthenticator) Name() string                 { return f.name }
-func (f *failingAuthenticator) LoginURL(_ string) string     { return "" }
+func (f *failingAuthenticator) Name() string             { return f.name }
+func (f *failingAuthenticator) LoginURL(_ string) string { return "" }
 func (f *failingAuthenticator) Authenticate(_ context.Context, _ *sso.AuthRequest) (*sso.AuthResult, error) {
 	return nil, errors.New("bad creds")
 }

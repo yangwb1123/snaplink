@@ -65,7 +65,7 @@ func (s *MemoryPublicKeyStore) Resolve(_ context.Context, keyID string) (ed25519
 // public key. Replay protection is the caller's responsibility (compare nonce
 // against a recent-nonce cache, reject stale timestamps).
 type KeyPairAuthenticator struct {
-	resolver  PublicKeyResolver
+	resolver     PublicKeyResolver
 	maxClockSkew time.Duration
 }
 

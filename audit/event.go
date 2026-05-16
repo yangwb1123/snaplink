@@ -24,21 +24,21 @@ const (
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason
 	// carries "target=<resource>" for easy auditing.
-	EventAdminClientCreated     EventType = "admin_client_created"
-	EventAdminClientUpdated     EventType = "admin_client_updated"
-	EventAdminClientDeleted     EventType = "admin_client_deleted"
+	EventAdminClientCreated       EventType = "admin_client_created"
+	EventAdminClientUpdated       EventType = "admin_client_updated"
+	EventAdminClientDeleted       EventType = "admin_client_deleted"
 	EventAdminClientSecretRotated EventType = "admin_client_secret_rotated"
-	EventAdminUserCreated       EventType = "admin_user_created"
-	EventAdminUserUpdated       EventType = "admin_user_updated"
-	EventAdminUserDeleted       EventType = "admin_user_deleted"
-	EventAdminTokenRevoked      EventType = "admin_token_revoked"
-	EventAdminTempTokenIssued   EventType = "admin_temp_token_issued"
-	EventAdminRoleAdded         EventType = "admin_role_added"
-	EventAdminRoleUpdated       EventType = "admin_role_updated"
-	EventAdminRoleRemoved       EventType = "admin_role_removed"
-	EventAdminRoleAssigned      EventType = "admin_role_assigned"
-	EventAdminRoleUnassigned    EventType = "admin_role_unassigned"
-	EventAdminMenusUpdated      EventType = "admin_menus_updated"
+	EventAdminUserCreated         EventType = "admin_user_created"
+	EventAdminUserUpdated         EventType = "admin_user_updated"
+	EventAdminUserDeleted         EventType = "admin_user_deleted"
+	EventAdminTokenRevoked        EventType = "admin_token_revoked"
+	EventAdminTempTokenIssued     EventType = "admin_temp_token_issued"
+	EventAdminRoleAdded           EventType = "admin_role_added"
+	EventAdminRoleUpdated         EventType = "admin_role_updated"
+	EventAdminRoleRemoved         EventType = "admin_role_removed"
+	EventAdminRoleAssigned        EventType = "admin_role_assigned"
+	EventAdminRoleUnassigned      EventType = "admin_role_unassigned"
+	EventAdminMenusUpdated        EventType = "admin_menus_updated"
 
 	// Bootstrap framework events — one per Step run/skip on first boot
 	// (or whenever a new Step is added later).
@@ -50,9 +50,9 @@ const (
 	// Acquired/Released are the happy path; Lost fires when the lease
 	// renewal failed mid-run; Contended fires when TryAcquire returned
 	// ErrLocked (another replica already holds the slot).
-	EventBootstrapLockAcquired EventType = "bootstrap_lock_acquired"
-	EventBootstrapLockReleased EventType = "bootstrap_lock_released"
-	EventBootstrapLockLost     EventType = "bootstrap_lock_lost"
+	EventBootstrapLockAcquired  EventType = "bootstrap_lock_acquired"
+	EventBootstrapLockReleased  EventType = "bootstrap_lock_released"
+	EventBootstrapLockLost      EventType = "bootstrap_lock_lost"
 	EventBootstrapLockContended EventType = "bootstrap_lock_contended"
 
 	// Snapshot lifecycle — admin-plane export/restore/delete on the
