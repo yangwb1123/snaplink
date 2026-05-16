@@ -141,11 +141,15 @@ func parseAuditTime(v string) (time.Time, error) {
 	return time.Time{}, errors.New("expected RFC3339 timestamp or unix seconds")
 }
 
-// auditEventFromRequest pre-fills an Event with caller-side metadata
-// (IP, user-agent, request ID, trace context). Handlers fill the rest.
-// TracingMiddleware populates the headers this function reads; without that
-// middleware installed, RequestID/TraceID/SpanID stay empty.
-func auditEventFromRequest(r *http.Request) *audit.Event {
+// auditEventFromRequest pre-fills an Event with caller-side
+// metadata (IP, user-agent, request ID, trace context, plus geo
+// when the geo middleware is wired). Handlers fill the rest.
+// TracingMiddleware populates the headers this function reads;
+// without that middleware installed, RequestID/TraceID/SpanID
+// stay empty. GeoMiddleware similarly populates the geo metadata
+// keys; without it, no geo.* metadata appears.
+func auditEventFromRequest(ctx HandlerContext) *audit.Event {
+	r := ctx.Request()
 	e := &audit.Event{
 		RequestID:    r.Header.Get(HeaderRequestID),
 		ParentSpanID: r.Header.Get(HeaderParentSpanID),
@@ -158,7 +162,38 @@ func auditEventFromRequest(r *http.Request) *audit.Event {
 			e.SpanID = tc.SpanID
 		}
 	}
+	enrichEventGeo(ctx, e)
 	return e
+}
+
+// enrichEventGeo lifts geo lookup results from HandlerContext onto
+// Event.Metadata under the geo.* prefix. No-op when the geo
+// middleware didn't run (no Lookup, ErrNotFound, nil Provider).
+// Only non-empty fields are projected so audit consumers can do a
+// presence check rather than a value check.
+func enrichEventGeo(ctx HandlerContext, e *audit.Event) {
+	info, ok := GeoFromHandlerContext(ctx)
+	if !ok {
+		return
+	}
+	setMeta(e, "geo.country_code", info.CountryCode)
+	setMeta(e, "geo.region", info.Region)
+	setMeta(e, "geo.city", info.City)
+	setMeta(e, "geo.recommended_language", info.RecommendedLanguage)
+}
+
+// setMeta writes key=val into e.Metadata, lazily allocating the map
+// and skipping empty values. Use this instead of `e.Metadata = map[...]{...}`
+// — direct assignment would clobber whatever auditEventFromRequest
+// already populated (geo enrichment, future fields).
+func setMeta(e *audit.Event, key, val string) {
+	if val == "" {
+		return
+	}
+	if e.Metadata == nil {
+		e.Metadata = make(map[string]string, 4)
+	}
+	e.Metadata[key] = val
 }
 
 // recordLoginFailure emits a login-failure audit event. Reason is one of the
@@ -167,7 +202,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventLoginFailure
 	e.Outcome = audit.OutcomeFailure
 	e.ClientID = clientID
@@ -181,7 +216,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventLogin
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
@@ -197,12 +232,12 @@ func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []st
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventLogout
 	e.Outcome = audit.OutcomeSuccess
 	e.SessionID = sessionID
 	if len(revoked) > 0 {
-		e.Metadata = map[string]string{"revoked": strings.Join(revoked, ",")}
+		setMeta(e, "revoked", strings.Join(revoked, ","))
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -214,7 +249,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventCodeSent
 	e.Provider = provider
 	if ok {
@@ -223,7 +258,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 		e.Outcome = audit.OutcomeFailure
 	}
 	if target != "" {
-		e.Metadata = map[string]string{"target": maskTarget(target)}
+		setMeta(e, "target", maskTarget(target))
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -233,7 +268,7 @@ func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subje
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventTokenIssued
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
@@ -247,7 +282,7 @@ func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason stri
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventCallbackFailure
 	e.Outcome = audit.OutcomeFailure
 	e.Provider = provider

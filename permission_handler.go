@@ -153,7 +153,7 @@ func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kin
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx.Request())
+	e := auditEventFromRequest(ctx)
 	e.Type = audit.EventPermissionQuery
 	e.ActorID = userID
 	e.ClientID = clientID
@@ -162,6 +162,6 @@ func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kin
 	} else {
 		e.Outcome = audit.OutcomeFailure
 	}
-	e.Metadata = map[string]string{"kind": kind}
+	setMeta(e, "kind", kind)
 	s.auditor.Record(ctx.Request().Context(), e)
 }

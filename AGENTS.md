@@ -590,6 +590,16 @@ edge proxy strips and re-sets them. Internet-facing deployments
 without an edge proxy should write a custom `GeoIPExtractor` that
 ignores forwarded headers and uses `RemoteAddr` only.
 
+**Audit enrichment**: every `audit.Event` produced by the SSO
+server (login, login_failure, code_sent, token_issued, logout,
+permission_query, callback_failure) automatically carries
+`geo.country_code` / `geo.region` / `geo.city` /
+`geo.recommended_language` keys in `Event.Metadata` when the geo
+middleware ran. Only non-empty fields are projected so SIEMs can
+do a presence check rather than a value check. Use
+`setMeta(e, key, val)` (not direct `e.Metadata = map{...}`) when
+adding new event metadata to avoid clobbering the geo enrichment.
+
 ### 7. ssoclient (the local/remote split)
 
 ```go
