@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/tenant"
 )
 
 // Server is the core SSO orchestrator.
@@ -33,6 +34,8 @@ type Server struct {
 	netAPI               bool
 	geoProvider          geo.Provider
 	geoMiddlewareOpts    GeoMiddlewareOptions
+	tenantStore          tenant.Store
+	tenantMiddlewareOpts TenantMiddlewareOptions
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -203,6 +206,26 @@ func WithGeoMiddlewareOptions(opts GeoMiddlewareOptions) Option {
 	return func(s *Server) { s.geoMiddlewareOpts = opts }
 }
 
+// WithTenantStore enables multi-tenant + multi-domain routing.
+// During Mount, the Server installs TenantMiddleware ahead of all
+// routes so handlers (and audit enrichment) can read the resolved
+// *Tenant + *Domain via TenantFromHandlerContext. A nil store is
+// a no-op so callers may pass the result of a disabled-by-config
+// factory unconditionally.
+func WithTenantStore(s tenant.Store) Option {
+	return func(srv *Server) { srv.tenantStore = s }
+}
+
+// WithTenantMiddlewareOptions tunes how the tenant middleware
+// extracts the request hostname and bounds the lookup. Optional
+// — defaults are XFH first-hop → r.Host (port stripped),
+// 100ms timeout, suspended tenants resolve to "no tenant" so
+// handlers naturally degrade. Pass a custom HostExtractor when
+// the deployment doesn't trust X-Forwarded-Host.
+func WithTenantMiddlewareOptions(opts TenantMiddlewareOptions) Option {
+	return func(s *Server) { s.tenantMiddlewareOpts = opts }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -215,6 +238,15 @@ func (s *Server) Mount() {
 	}
 	if s.requestIDMW {
 		s.router.Use(TracingMiddleware())
+	}
+	if s.tenantStore != nil {
+		// Tenant resolves before geo so the audit enrichment
+		// pipeline sees both — geo enrichment doesn't need
+		// tenant, but tenant enrichment doesn't need geo either,
+		// and putting tenant first matches the conceptual
+		// "which tenant am I serving" → "where is the user
+		// coming from" reading order.
+		s.router.Use(TenantMiddleware(s.tenantStore, s.tenantMiddlewareOpts))
 	}
 	if s.geoProvider != nil {
 		s.router.Use(GeoMiddleware(s.geoProvider, s.geoMiddlewareOpts))

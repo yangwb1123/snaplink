@@ -162,8 +162,27 @@ func auditEventFromRequest(ctx HandlerContext) *audit.Event {
 			e.SpanID = tc.SpanID
 		}
 	}
+	enrichEventTenant(ctx, e)
 	enrichEventGeo(ctx, e)
 	return e
+}
+
+// enrichEventTenant lifts tenant routing results onto
+// Event.Metadata under the tenant.* prefix. No-op when the
+// tenant middleware didn't run (no store wired, unknown host,
+// suspended tenant). Tenant goes onto every audit event so
+// SIEM filters like "show me failed logins for tenant X" become
+// a single Metadata key check.
+func enrichEventTenant(ctx HandlerContext, e *audit.Event) {
+	r, ok := TenantFromHandlerContext(ctx)
+	if !ok || r.Tenant == nil {
+		return
+	}
+	setMeta(e, "tenant.id", r.Tenant.ID)
+	setMeta(e, "tenant.slug", r.Tenant.Slug)
+	if r.Domain != nil {
+		setMeta(e, "tenant.domain", r.Domain.Hostname)
+	}
 }
 
 // enrichEventGeo lifts geo lookup results from HandlerContext onto
