@@ -16,11 +16,17 @@ import (
 //	rolesByClient[clientID][roleCode]              = Role
 //	menusByClient[clientID]                        = MenuTree (unfiltered)
 //	assignmentsByUser[userID][clientID]            = []roleCode
+//	resources[id]                                  = *Resource
+//	resourceIndex[tenant|client|type|name]         = id   (uniqueness)
+//
+// Resource catalog methods + matching logic live in memory_resources.go.
 type MemoryProvider struct {
 	mu                sync.RWMutex
 	rolesByClient     map[string]map[string]Role
 	menusByClient     map[string]MenuTree
 	assignmentsByUser map[string]map[string][]string
+	resources         map[string]*Resource
+	resourceIndex     map[string]string
 }
 
 func NewMemoryProvider() *MemoryProvider {
@@ -28,6 +34,8 @@ func NewMemoryProvider() *MemoryProvider {
 		rolesByClient:     make(map[string]map[string]Role),
 		menusByClient:     make(map[string]MenuTree),
 		assignmentsByUser: make(map[string]map[string][]string),
+		resources:         make(map[string]*Resource),
+		resourceIndex:     make(map[string]string),
 	}
 }
 
