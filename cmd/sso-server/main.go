@@ -79,27 +79,36 @@ const (
 )
 
 func main() {
+	// Bound to Config fields via FlagSource below. The values themselves
+	// aren't read directly — Loader resolves them when building *Config,
+	// so a flag without --foo on argv leaves the file / env value alone.
 	cfgPath := flag.String("config", "config.yaml", "path to YAML config")
-	listenOverride := flag.String("listen", "", "override server.listen from config (e.g. :9090)")
+	_ = flag.String("listen", "", "override server.listen from config (e.g. :9090)")
+	_ = flag.String("log-level", "", "override logging.level (debug|info|error)")
+	_ = flag.String("bootstrap-restore-from", "", "snapshot URI for first-boot restore (overrides snapshot.restore_from); e.g. file:///var/snapshots/snap.snap")
+
+	// Runtime-only flags: not in Config (yet) — passed directly to run().
 	grpcListen := flag.String("grpc-listen", ":8081", "gRPC listen address ('' to disable)")
 	tlsCert := flag.String("tls-cert", "", "TLS cert file (omit for HTTP)")
 	tlsKey := flag.String("tls-key", "", "TLS key file (omit for HTTP)")
-	logLevel := flag.String("log-level", "", "override logging.level (debug|info|error)")
-	restoreFrom := flag.String("bootstrap-restore-from", "", "snapshot URI for first-boot restore (overrides snapshot.restore_from); e.g. file:///var/snapshots/snap.snap")
 	flag.Parse()
 
-	cfg, err := config.Load(*cfgPath)
+	// Loader chain — priority low → high: file < env < flag. Operators
+	// drop a YAML file for the bulk of config, sprinkle ENV in container
+	// orchestrators (12-factor), and use CLI flags for ad-hoc overrides
+	// (debugging, one-shot reruns).
+	flagSrc := config.NewFlagSource(flag.CommandLine).
+		Bind("listen", "server.listen").
+		Bind("log-level", "logging.level").
+		Bind("bootstrap-restore-from", "snapshot.restore_from")
+
+	cfg, err := config.LoadFromSources(context.Background(),
+		config.NewFileSource(*cfgPath),
+		config.NewEnvSource(),
+		flagSrc,
+	)
 	if err != nil {
 		fail("config: %v", err)
-	}
-	if *listenOverride != "" {
-		cfg.Server.Listen = *listenOverride
-	}
-	if *logLevel != "" {
-		cfg.Logging.Level = *logLevel
-	}
-	if *restoreFrom != "" {
-		cfg.Snapshot.RestoreFrom = *restoreFrom
 	}
 
 	logger := newSlogLogger(cfg.Logging.Level)
