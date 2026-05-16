@@ -34,6 +34,16 @@ type Client struct {
 	AllowedAuthenticators []string `json:"allowed_authenticators,omitempty"`
 	TokenStrategy         string   `json:"token_strategy,omitempty"`
 	Active                bool     `json:"active"`
+
+	// TenantID binds this client to one tenant in multi-tenant
+	// deployments. When set, request handlers reject login /
+	// callback flows whose resolved tenant doesn't match (the
+	// tenant middleware populates the resolved tenant on
+	// HandlerContext). Empty TenantID means "no tenant
+	// affinity" — handlers serve the client from any tenant
+	// context, which is the backward-compatible behavior for
+	// single-tenant deployments.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

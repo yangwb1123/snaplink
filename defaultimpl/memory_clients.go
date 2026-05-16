@@ -66,6 +66,23 @@ func (m *MemoryClientStore) List(_ context.Context) ([]*sso.Client, error) {
 	return out, nil
 }
 
+// ListByTenant satisfies sso.TenantScopedClientStore: returns
+// every client whose TenantID matches. Empty tenantID returns
+// every client whose TenantID is also empty (the "no-tenant"
+// bucket — useful for single-tenant deployments and the
+// platform-admin client).
+func (m *MemoryClientStore) ListByTenant(_ context.Context, tenantID string) ([]*sso.Client, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*sso.Client
+	for _, c := range m.clients {
+		if c.TenantID == tenantID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 func (m *MemoryClientStore) Add(_ context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return fmt.Errorf("defaultimpl: client.ID required")
@@ -113,6 +130,12 @@ func (m *MemoryClientStore) RotateSecret(_ context.Context, clientID string) (st
 	c.Secret = secret
 	return secret, nil
 }
+
+// Compile-time interface checks.
+var (
+	_ sso.ClientStore             = (*MemoryClientStore)(nil)
+	_ sso.TenantScopedClientStore = (*MemoryClientStore)(nil)
+)
 
 // generateSecret returns a base64url-encoded random string. 32 bytes ≈ 256
 // bits of entropy — comfortable for client secrets that may be long-lived.

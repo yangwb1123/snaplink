@@ -30,3 +30,16 @@ type ClientStore interface {
 	// callers MUST treat the returned string as opaque.
 	RotateSecret(ctx context.Context, clientID string) (string, error)
 }
+
+// TenantScopedClientStore is an optional extension a ClientStore
+// MAY implement to expose efficient tenant-scoped listing. Admin
+// UIs that show "all clients owned by tenant acme" want this
+// path; backends without an index can fall back to filtering
+// List() in the caller.
+//
+// The pattern mirrors permissions.MenuLister: callers type-assert
+// before using, so adding this interface doesn't break existing
+// ClientStore implementations.
+type TenantScopedClientStore interface {
+	ListByTenant(ctx context.Context, tenantID string) ([]*Client, error)
+}
