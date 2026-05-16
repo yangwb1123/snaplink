@@ -1,0 +1,30 @@
+# Minimal in-cluster config. Mounted into the sso-server pod at
+# /etc/sso/config.yaml by the configMapGenerator in kustomization.yaml
+# (Kustomize hashes the file, suffixing the ConfigMap name, so updates
+# trigger pod rollouts automatically).
+#
+# Override individual keys at deploy time via env vars on the
+# Deployment — see deployment.yaml's commented examples. The full
+# config tree is the same shape as cmd/sso-server/config.yaml.
+
+server:
+  issuer: snaplink-sso
+  base_url: http://sso-server.snaplink-sso.svc.cluster.local:8080
+  listen: ":8080"
+  session_ttl: 24h
+  token_ttl: 1h
+  default_token_strategy: jwt
+
+logging:
+  level: info
+
+audit:
+  enabled: true
+  api_enabled: false      # admin REST off by default; flip when admin mw is wired
+  memory_capacity: 10000
+
+# Clients, users, permissions, network policies, authenticators — all the
+# operator-specific configuration — belong here. Keep them in a
+# kustomize OVERLAY rather than baking them into this base ConfigMap,
+# so the same base can be applied across staging / prod with different
+# tenants and seed data.
