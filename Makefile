@@ -1,0 +1,43 @@
+# Common dev tasks. Mirrors what CI runs so "make ci" locally catches
+# regressions before pushing. Pinned to the Go version in go.mod via
+# `go` from PATH — keep the toolchain in sync via `go mod download`.
+
+GO        ?= go
+BIN_DIR   ?= bin
+IMAGE     ?= snaplink/sso-server
+IMAGE_TAG ?= dev
+
+.PHONY: help test race vet fmt build docker ci clean
+
+help: ## Show this help.
+	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
+		/^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+test: ## Run unit tests.
+	$(GO) test ./...
+
+race: ## Run tests with the race detector + no test cache.
+	$(GO) test -race -count=1 ./...
+
+vet: ## Static analysis (go vet).
+	$(GO) vet ./...
+
+fmt: ## Check gofmt; fails if any file needs formatting.
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "Unformatted files:" >&2; \
+		echo "$$unformatted" >&2; \
+		exit 1; \
+	fi
+
+build: ## Compile cmd/sso-server to $(BIN_DIR)/sso-server.
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -trimpath -o $(BIN_DIR)/sso-server ./cmd/sso-server
+
+docker: ## Build the sso-server container image.
+	docker build -t $(IMAGE):$(IMAGE_TAG) .
+
+ci: fmt vet race build ## Run the same checks CI runs.
+
+clean: ## Remove build artifacts.
+	rm -rf $(BIN_DIR)

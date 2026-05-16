@@ -1,0 +1,60 @@
+# Minimum-viable CI. Runs on every push to main and every PR. Three stages:
+# format/vet (cheap, fails fast), race-tagged tests (catches concurrency
+# regressions the unit suite alone misses), and a build smoke (every
+# main package compiles).
+#
+# Intentionally NOT in scope for v1: container image build/push, proto
+# breaking-change check, multi-arch matrix, release tag handling. Each
+# of those needs a host (ghcr.io? a private registry?) and a signing
+# story; layer them on once the repo has a remote.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run when a new commit lands on the same ref —
+# wastes minutes to keep racing yourself.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: vet + race + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        # Fail loudly on unformatted files. `gofmt -l` prints offenders
+        # and exits 0 regardless, so we test the output length ourselves.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test (race)
+        # -race catches the concurrency bugs single-threaded runs hide.
+        # -count=1 disables the test cache so flaky tests can't masquerade
+        # as passing.
+        run: go test -race -count=1 ./...

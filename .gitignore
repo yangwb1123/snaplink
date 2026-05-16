@@ -1,6 +1,8 @@
-# Built binaries (Go produces these at module root and cmd/*).
+# Built binaries (Go produces these at module root and cmd/*; the
+# Makefile builds into /bin).
 /sso-server
 /cmd/sso-server/sso-server
+/bin/
 
 # Editor / OS noise
 .DS_Store
