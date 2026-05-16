@@ -1,0 +1,199 @@
+package memory_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+
+	"github.com/snaplink/sso/tenant"
+	"github.com/snaplink/sso/tenant/memory"
+)
+
+func mkTenant(id, slug string) *tenant.Tenant {
+	return &tenant.Tenant{ID: id, Slug: slug, Name: slug}
+}
+
+func mkDomain(host, tenantID string) *tenant.Domain {
+	return &tenant.Domain{Hostname: host, TenantID: tenantID}
+}
+
+func TestPutGetTenant_Roundtrip(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	if err := s.PutTenant(ctx, mkTenant("t1", "acme")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Slug != "acme" {
+		t.Errorf("slug=%q", got.Slug)
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("CreatedAt not stamped")
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt not stamped")
+	}
+	if got.Status != tenant.StatusActive {
+		t.Errorf("default status=%q", got.Status)
+	}
+}
+
+func TestGetTenant_MissingIsErrTenantNotFound(t *testing.T) {
+	s := memory.New()
+	if _, err := s.GetTenant(context.Background(), "ghost"); !errors.Is(err, tenant.ErrTenantNotFound) {
+		t.Errorf("err=%v", err)
+	}
+}
+
+func TestPutTenant_RejectsInvalid(t *testing.T) {
+	s := memory.New()
+	if err := s.PutTenant(context.Background(), &tenant.Tenant{Slug: "x"}); !errors.Is(err, tenant.ErrInvalidTenant) {
+		t.Errorf("err=%v", err)
+	}
+}
+
+func TestPutTenant_PreservesCreatedAt(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	first, _ := s.GetTenant(ctx, "t1")
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme-renamed"))
+	second, _ := s.GetTenant(ctx, "t1")
+	if !second.CreatedAt.Equal(first.CreatedAt) {
+		t.Errorf("CreatedAt drifted on update: %v vs %v", first.CreatedAt, second.CreatedAt)
+	}
+	if !second.UpdatedAt.After(first.UpdatedAt) && !second.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Errorf("UpdatedAt regressed")
+	}
+}
+
+func TestListTenants_SortedByID(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	for _, id := range []string{"t-c", "t-a", "t-b"} {
+		_ = s.PutTenant(ctx, mkTenant(id, id))
+	}
+	out, _ := s.ListTenants(ctx)
+	if len(out) != 3 || out[0].ID != "t-a" || out[2].ID != "t-c" {
+		t.Errorf("List=%+v", out)
+	}
+}
+
+func TestDeleteTenant_CascadesDomains(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutDomain(ctx, mkDomain("acme.com", "t1"))
+	_ = s.DeleteTenant(ctx, "t1")
+	if _, err := s.GetDomain(ctx, "acme.com"); !errors.Is(err, tenant.ErrDomainNotFound) {
+		t.Errorf("orphan domain survived: %v", err)
+	}
+}
+
+func TestPutDomain_RoundtripWithCaseInsensitiveLookup(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutDomain(ctx, mkDomain("Acme.COM", "t1"))
+	got, err := s.GetDomain(ctx, "acme.com")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Hostname != "acme.com" {
+		t.Errorf("hostname not normalized: %q", got.Hostname)
+	}
+}
+
+func TestGetDomain_TrailingDotNormalised(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutDomain(ctx, mkDomain("acme.com.", "t1"))
+	if _, err := s.GetDomain(ctx, "acme.com"); err != nil {
+		t.Errorf("trailing-dot normalization failed: %v", err)
+	}
+}
+
+func TestPutDomain_RejectsUnknownTenant(t *testing.T) {
+	s := memory.New()
+	if err := s.PutDomain(context.Background(), mkDomain("acme.com", "ghost")); !errors.Is(err, tenant.ErrTenantNotFound) {
+		t.Errorf("err=%v", err)
+	}
+}
+
+func TestPutDomain_HostnameConflictRejected(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutTenant(ctx, mkTenant("t2", "beta"))
+	_ = s.PutDomain(ctx, mkDomain("shared.com", "t1"))
+	if err := s.PutDomain(ctx, mkDomain("shared.com", "t2")); !errors.Is(err, tenant.ErrDomainExists) {
+		t.Errorf("err=%v, want ErrDomainExists", err)
+	}
+}
+
+func TestPutDomain_SameTenantUpdateAllowed(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutDomain(ctx, mkDomain("acme.com", "t1"))
+	d := mkDomain("acme.com", "t1")
+	d.IsApex = true
+	if err := s.PutDomain(ctx, d); err != nil {
+		t.Errorf("re-put: %v", err)
+	}
+	got, _ := s.GetDomain(ctx, "acme.com")
+	if !got.IsApex {
+		t.Error("update did not take effect")
+	}
+}
+
+func TestListDomainsByTenant(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutTenant(ctx, mkTenant("t2", "beta"))
+	_ = s.PutDomain(ctx, mkDomain("acme.com", "t1"))
+	_ = s.PutDomain(ctx, mkDomain("portal.acme.com", "t1"))
+	_ = s.PutDomain(ctx, mkDomain("beta.io", "t2"))
+
+	out, _ := s.ListDomainsByTenant(ctx, "t1")
+	if len(out) != 2 {
+		t.Errorf("len=%d, want 2: %+v", len(out), out)
+	}
+}
+
+func TestDeleteDomain_Idempotent(t *testing.T) {
+	s := memory.New()
+	if err := s.DeleteDomain(context.Background(), "ghost.com"); err != nil {
+		t.Errorf("delete on empty: %v", err)
+	}
+}
+
+func TestConcurrentAccess_NoRace(t *testing.T) {
+	// Race detector catches mutation-during-read; this just exercises
+	// the path concurrently.
+	s := memory.New()
+	ctx := context.Background()
+	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
+	_ = s.PutDomain(ctx, mkDomain("acme.com", "t1"))
+
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = s.GetDomain(ctx, "acme.com")
+		}()
+		go func(i int) {
+			defer wg.Done()
+			host := "h" + string(rune('a'+(i%10))) + ".com"
+			_ = s.PutDomain(ctx, mkDomain(host, "t1"))
+		}(i)
+	}
+	wg.Wait()
+}
