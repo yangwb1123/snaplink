@@ -3,6 +3,7 @@ package sso_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -408,6 +409,143 @@ func TestAudit_TenantEnrichment_UnknownHostOmitsKeys(t *testing.T) {
 				t.Errorf("unknown host enriched: %v", e.Metadata)
 			}
 		}
+	}
+}
+
+// --- Tenant ↔ Client mismatch enforcement ---
+
+// tenantClientFixture is like tenantAuditFixture but lets the
+// caller customize the seeded Client (specifically Client.TenantID).
+func tenantClientFixture(t *testing.T, store tenant.Store, client *sso.Client) (*httptest.Server, *audit.MemorySink) {
+	t.Helper()
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(client)
+	sink := audit.NewMemorySink(20)
+	rec := audit.New(sink)
+	srv := sso.NewServer(
+		sso.WithRouter(sso.NewStdRouter()),
+		sso.WithAuthenticator(&stubTenantAuthenticator{
+			name:   "stub",
+			result: &sso.AuthResult{UserID: "user-alice", Provider: "stub"},
+		}),
+		sso.WithClientStore(clients),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager(0)),
+		sso.WithTokenIssuer(sso.TokenStrategySession, defaultimpl.NewSessionTokenIssuer()),
+		sso.WithAuditRecorder(rec),
+		sso.WithTenantStore(store),
+	)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, sink
+}
+
+func loginWithHost(t *testing.T, ts *httptest.Server, host, clientID string) *http.Response {
+	t.Helper()
+	body := `{"provider":"stub","client_id":"` + clientID + `","credential":{"u":"alice"}}`
+	req, _ := http.NewRequest("POST", ts.URL+"/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = host
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	return resp
+}
+
+func TestLogin_TenantMatchSucceeds(t *testing.T) {
+	store := makeTenantStore(t, "acme.com", "t-acme")
+	client := &sso.Client{
+		ID: "acme-portal", TenantID: "t-acme", Active: true,
+		AllowedAuthenticators: []string{"stub"},
+		TokenStrategy:         sso.TokenStrategySession,
+	}
+	ts, _ := tenantClientFixture(t, store, client)
+
+	resp := loginWithHost(t, ts, "acme.com", "acme-portal")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("status=%d, want 200", resp.StatusCode)
+	}
+}
+
+func TestLogin_TenantMismatchRejected(t *testing.T) {
+	// Two tenants registered; client belongs to t-acme; request
+	// arrives via beta.io (resolves to t-beta). Should 403.
+	store := tenantmemory.New()
+	ctx := context.Background()
+	for _, id := range []string{"t-acme", "t-beta"} {
+		_ = store.PutTenant(ctx, &tenant.Tenant{ID: id, Slug: id, Name: id})
+	}
+	_ = store.PutDomain(ctx, &tenant.Domain{Hostname: "acme.com", TenantID: "t-acme"})
+	_ = store.PutDomain(ctx, &tenant.Domain{Hostname: "beta.io", TenantID: "t-beta"})
+
+	client := &sso.Client{
+		ID: "acme-portal", TenantID: "t-acme", Active: true,
+		AllowedAuthenticators: []string{"stub"},
+		TokenStrategy:         sso.TokenStrategySession,
+	}
+	ts, sink := tenantClientFixture(t, store, client)
+
+	resp := loginWithHost(t, ts, "beta.io", "acme-portal")
+	defer resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Errorf("status=%d, want 403", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), sso.ErrTenantMismatch) {
+		t.Errorf("body missing %q: %s", sso.ErrTenantMismatch, body)
+	}
+	// Should produce a login_failure audit event with reason
+	// = ErrTenantMismatch.
+	events, _ := sink.Query(ctx, audit.Query{Limit: 10})
+	var found bool
+	for _, e := range events {
+		if e.Type == audit.EventLoginFailure && e.Reason == sso.ErrTenantMismatch {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no tenant_mismatch login_failure event recorded; events=%+v", events)
+	}
+}
+
+func TestLogin_EmptyClientTenantIDAllowsAnyHost(t *testing.T) {
+	// "Platform admin" client with no TenantID — backward-compat
+	// shape for single-tenant deployments. Should serve from any
+	// resolved tenant context.
+	store := makeTenantStore(t, "acme.com", "t-acme")
+	client := &sso.Client{
+		ID: "platform", TenantID: "", Active: true,
+		AllowedAuthenticators: []string{"stub"},
+		TokenStrategy:         sso.TokenStrategySession,
+	}
+	ts, _ := tenantClientFixture(t, store, client)
+
+	resp := loginWithHost(t, ts, "acme.com", "platform")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("empty-TenantID client rejected from acme.com: status=%d", resp.StatusCode)
+	}
+}
+
+func TestLogin_NoTenantContextAllowsClientWithTenantID(t *testing.T) {
+	// Tenant store wired but request comes via ghost.example
+	// (no resolved tenant). Don't 403 — pre-multi-tenant
+	// deployments enabling a tenant store shouldn't suddenly
+	// break every existing client.
+	store := makeTenantStore(t, "acme.com", "t-acme")
+	client := &sso.Client{
+		ID: "acme-portal", TenantID: "t-acme", Active: true,
+		AllowedAuthenticators: []string{"stub"},
+		TokenStrategy:         sso.TokenStrategySession,
+	}
+	ts, _ := tenantClientFixture(t, store, client)
+
+	resp := loginWithHost(t, ts, "ghost.example", "acme-portal")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("no-resolved-tenant rejected: status=%d", resp.StatusCode)
 	}
 }
 

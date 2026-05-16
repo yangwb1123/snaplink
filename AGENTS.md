@@ -632,10 +632,23 @@ separate binaries.
 
 **Tenant ownership intentionally sits one level above `sso.Client`** —
 one tenant typically owns multiple clients (admin-portal,
-customer-portal, mobile-API) sharing one audit trail. The
-Client → Tenant link is a follow-up; the routing layer + audit
-enrichment land independently of the existing ClientStore
-migration.
+customer-portal, mobile-API) sharing one audit trail.
+
+**Client ↔ Tenant linkage**: `sso.Client` carries an optional
+`TenantID` field (YAML key `tenant_id`). When set, login + token
+endpoints reject requests whose resolved tenant doesn't match
+(returns 403 with error code `tenant_mismatch`, recorded as a
+`login_failure` audit event). When empty (the backward-compatible
+default), the client is served from any tenant context — keeping
+single-tenant deployments and the platform-admin client (which
+belongs to no operator tenant) working unchanged. The check is
+also skipped when no tenant resolved on the request, so enabling
+the tenant store doesn't suddenly break every existing client.
+
+The optional `sso.TenantScopedClientStore` extension interface
+exposes efficient `ListByTenant(ctx, tenantID)` for backends with
+an index — admin UIs that show "all clients owned by tenant X"
+should type-assert before using.
 
 **Audit enrichment**: every `audit.Event` now carries
 `tenant.id` / `tenant.slug` / `tenant.domain` in `Metadata` when

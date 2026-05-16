@@ -24,6 +24,31 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimPrefix(h, BearerPrefix)
 }
 
+// clientTenantOK reports whether the given client may be served
+// from the request's resolved tenant context. Returns true when:
+//   - the client has no TenantID (single-tenant deployment or
+//     platform-admin client that belongs to no operator tenant), OR
+//   - no tenant resolved on this request (tenant middleware not
+//     wired, or unknown host) — pre-multi-tenant deployments
+//     never resolved a tenant, and we don't want to suddenly
+//     reject every request when the operator first enables a
+//     tenant store, OR
+//   - the resolved tenant matches the client's TenantID.
+//
+// Returns false ONLY when both sides are set AND disagree —
+// the genuine "client X belongs to tenant Y but is being
+// requested under tenant Z" case.
+func clientTenantOK(ctx HandlerContext, client *Client) bool {
+	if client == nil || client.TenantID == "" {
+		return true
+	}
+	r, ok := TenantFromHandlerContext(ctx)
+	if !ok || r == nil || r.Tenant == nil {
+		return true
+	}
+	return r.Tenant.ID == client.TenantID
+}
+
 func (s *Server) handleHealth(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]string{
 		KeyStatus: StatusOK,
@@ -66,6 +91,11 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if !client.Active {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInactiveClient)
 		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
+		return
+	}
+	if !clientTenantOK(ctx, client) {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrTenantMismatch)
+		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
 		return
 	}
 	if !client.IsAuthenticatorAllowed(req.Provider) {
@@ -293,6 +323,10 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return
+	}
+	if !clientTenantOK(ctx, client) {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
 		return
 	}
 	if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {

@@ -93,6 +93,7 @@ const (
 	ErrUnauthorized               = "unauthorized"
 	ErrAuthenticatorNotAllowed    = "authenticator_not_allowed_for_client"
 	ErrInactiveClient             = "inactive_client"
+	ErrTenantMismatch             = "tenant_mismatch"
 	ErrNoTokenStrategy            = "no_token_strategy"
 	ErrNetPolicyNotConfigured     = "netpolicy_not_configured"
 	ErrNetPolicyNotFound          = "netpolicy_not_found"

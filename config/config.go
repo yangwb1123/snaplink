@@ -430,6 +430,11 @@ type ClientConfig struct {
 	AllowedAuthenticators []string `yaml:"allowed_authenticators"`
 	TokenStrategy         string   `yaml:"token_strategy"`
 	Active                bool     `yaml:"active"`
+	// TenantID binds this client to one tenant; empty = no tenant
+	// affinity (single-tenant deployments + the platform-admin
+	// client). When set, login + token endpoints reject requests
+	// whose resolved tenant doesn't match this id.
+	TenantID string `yaml:"tenant_id"`
 }
 
 // AuthenticatorsConfig toggles and tunes each available authenticator.

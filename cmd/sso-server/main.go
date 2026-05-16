@@ -731,6 +731,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			AllowedAuthenticators: c.AllowedAuthenticators,
 			TokenStrategy:         c.TokenStrategy,
 			Active:                c.Active,
+			TenantID:              c.TenantID,
 		})
 	}
 
