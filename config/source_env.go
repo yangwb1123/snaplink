@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/goccy/go-yaml"
+	"github.com/snaplink/sso/config/internal/parse"
 )
 
 // Default conventions used by NewEnvSource. ENV vars matching
@@ -86,46 +86,10 @@ func (s *EnvSource) Load(_ context.Context) (map[string]any, error) {
 		if len(path) == 0 || path[0] == "" {
 			continue
 		}
-		setPath(out, path, parseEnvValue(v))
+		parse.SetPath(out, path, parse.Value(v))
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
 	return out, nil
-}
-
-// parseEnvValue runs the raw ENV string through yaml.Unmarshal so
-// "true" / "42" / "3.14" / "null" / "[a, b]" become their native
-// typed equivalents. Anything yaml can't parse falls back to the
-// raw string (which is the safe default — string is the OS-native
-// shape of an ENV value anyway).
-func parseEnvValue(raw string) any {
-	if raw == "" {
-		return ""
-	}
-	var v any
-	if err := yaml.Unmarshal([]byte(raw), &v); err != nil {
-		return raw
-	}
-	return v
-}
-
-// setPath walks the keys creating intermediate maps as needed and
-// writes val at the leaf. If an intermediate key already holds a
-// non-map value, it's overwritten with a fresh map — the trailing
-// ENV var wins (matches Loader merge semantics).
-func setPath(root map[string]any, path []string, val any) {
-	m := root
-	for i, k := range path {
-		if i == len(path)-1 {
-			m[k] = val
-			return
-		}
-		sub, ok := m[k].(map[string]any)
-		if !ok {
-			sub = map[string]any{}
-			m[k] = sub
-		}
-		m = sub
-	}
 }

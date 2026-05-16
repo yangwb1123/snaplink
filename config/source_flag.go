@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"strings"
+
+	"github.com/snaplink/sso/config/internal/parse"
 )
 
 // FlagSource lets CLI flags override config values. Operators don't
@@ -60,7 +62,7 @@ func (s *FlagSource) Name() string {
 }
 
 // Load emits one entry per *set* bound flag. Values are pushed
-// through parseEnvValue so "true" / "42" become typed leaves the
+// through parse.Value so "true" / "42" become typed leaves the
 // downstream YAML pass can land in bool / int fields.
 func (s *FlagSource) Load(_ context.Context) (map[string]any, error) {
 	if s.flags == nil || len(s.bindings) == 0 {
@@ -72,7 +74,7 @@ func (s *FlagSource) Load(_ context.Context) (map[string]any, error) {
 		if !ok {
 			return
 		}
-		setPath(out, strings.Split(path, "."), parseEnvValue(f.Value.String()))
+		parse.SetPath(out, strings.Split(path, "."), parse.Value(f.Value.String()))
 	})
 	if len(out) == 0 {
 		return nil, nil
