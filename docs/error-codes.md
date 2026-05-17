@@ -1,0 +1,135 @@
+# Error Code Catalog
+
+Every error response from the SSO server's HTTP REST surface carries a
+stable `error` code in the JSON body. SPAs and downstream services
+should branch on the code, **never** on the human-readable
+`error_description` (which may change between versions).
+
+```json
+{ "error": "invalid_credentials" }
+```
+
+When the server has extra detail it includes `error_description`:
+
+```json
+{ "error": "invalid_request", "error_description": "json: cannot unmarshal" }
+```
+
+Defined as Go constants in `consts.go` (and in the per-handler files
+for the audit / permission code subsets) — grep there if you need the
+exact emission site.
+
+---
+
+## Authentication (`/auth/*`, `/userinfo`, `/logout`)
+
+| Code                                  | HTTP | Emitted when                                                       | Client should                              |
+|---------------------------------------|------|--------------------------------------------------------------------|--------------------------------------------|
+| `invalid_request`                     | 400  | Request body fails to parse, or required field absent              | Fix the request payload                    |
+| `missing_client_id`                   | 400  | `client_id` omitted from a request that requires it                | Include `client_id`                        |
+| `invalid_credentials`                 | 401  | Username/password mismatch, code mismatch, or other auth failure   | Re-prompt for credentials                  |
+| `invalid_client`                      | 401  | `client_id` does not resolve in the client store                   | Check the configured client                |
+| `invalid_client_secret`               | 401  | Token endpoint received a bad client secret                        | Rotate or correct the secret               |
+| `inactive_client`                     | 403  | Client exists but `Active: false` in config                        | Operator re-enables the client             |
+| `tenant_mismatch`                     | 403  | Client is bound to a tenant the request didn't resolve to          | Use the right hostname / tenant context    |
+| `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
+| `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
+| `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
+| `unknown_provider`                    | 400  | OAuth/OIDC callback received an unknown provider in `state`        | Restart the auth flow                      |
+| `unsupported_grant_type`              | 400  | `/token` received an unrecognized `grant_type`                     | Use a supported grant type                 |
+| `invalid_callback`                    | 400  | OAuth callback body malformed                                      | Restart the auth flow                      |
+| `callback_failed`                     | 401  | OAuth provider rejected the exchange                               | Restart the auth flow                      |
+
+### Code delivery (`/auth/send-code`)
+
+| Code                            | HTTP | Emitted when                                            |
+|---------------------------------|------|---------------------------------------------------------|
+| `provider_and_target_required`  | 400  | Either `provider` or `target` missing from request body |
+| `provider_does_not_send_codes`  | 400  | Named provider doesn't implement `CodeSender`           |
+| `send_failed`                   | 500  | Downstream SMS / email delivery error                   |
+
+### Logout
+
+| Code                            | HTTP | Emitted when                                                 |
+|---------------------------------|------|--------------------------------------------------------------|
+| `session_id_or_bearer_required` | 400  | Logout call has neither a `session_id` body nor a bearer hdr |
+
+---
+
+## Tokens (`/userinfo`, `/permissions/me`, `/roles/me`, `/menus/me`)
+
+| Code             | HTTP | Emitted when                                          | Client should                       |
+|------------------|------|-------------------------------------------------------|-------------------------------------|
+| `missing_token`  | 401  | `Authorization: Bearer ...` header absent             | Send the bearer                     |
+| `invalid_token`  | 401  | Token signature invalid / expired / revoked           | Re-authenticate                     |
+| `user_not_found` | 404  | Token is valid but the subject id has no User record  | Recreate the user (admin) or rebind |
+| `unauthorized`   | 401  | Generic auth check failure (admin middleware)         | Re-authenticate                     |
+
+---
+
+## Permissions
+
+| Code                                | HTTP | Emitted when                                          |
+|-------------------------------------|------|-------------------------------------------------------|
+| `permission_provider_not_configured`| 501  | `/permissions/me`/`/roles/me`/`/menus/me` hit when no `permissions.Provider` is wired |
+| `permission_lookup_failed`          | 500  | Provider returned an error during lookup              |
+
+---
+
+## Audit (`/api/v1/audit/events*`)
+
+| Code                     | HTTP | Emitted when                                                       |
+|--------------------------|------|--------------------------------------------------------------------|
+| `audit_not_enabled`      | 500  | API hit but `audit.api_enabled: false` (or no recorder configured) |
+| `audit_event_not_found`  | 404  | Specific event id queried but absent / evicted from the sink       |
+
+---
+
+## Network policy (`/api/v1/netpolicy/*`)
+
+| Code                       | HTTP | Emitted when                                                       |
+|----------------------------|------|--------------------------------------------------------------------|
+| `netpolicy_not_configured` | 500  | API hit but `network.api_enabled: false` (or no store configured)  |
+| `netpolicy_not_found`      | 404  | Policy name queried but absent from store                          |
+
+---
+
+## Server / configuration
+
+These indicate operator misconfiguration; clients shouldn't try to
+recover from them, just surface to operations.
+
+| Code                              | HTTP | Emitted when                                                 |
+|-----------------------------------|------|--------------------------------------------------------------|
+| `internal_error`                  | 500  | Unrecoverable bug or downstream failure                      |
+| `server_misconfigured`            | 500  | A handler reached a state requiring a dep that isn't wired   |
+| `session_manager_not_configured`  | 500  | Login succeeded auth but no SessionManager exists            |
+| `client_store_not_configured`     | 500  | Login attempted but no ClientStore exists                    |
+| `no_token_strategy`               | 500  | Client's `token_strategy` doesn't match any registered issuer |
+
+---
+
+## Rate limiting + payload
+
+| Code                | HTTP | Emitted when                                          | Headers                  |
+|---------------------|------|-------------------------------------------------------|--------------------------|
+| `rate_limited`      | 429  | `ratelimit.Middleware` blocked the request            | `Retry-After: <seconds>` |
+| `payload_too_large` | 413  | `sso.WithBodyLimit(N)` exceeded by Content-Length or stream |                          |
+
+---
+
+## Conventions
+
+- **Stability:** codes here are stable wire contract — adding new codes
+  is fine, renaming / removing existing ones is a major-version break.
+- **HTTP status mapping:** the table shows the typical status emitted
+  by today's handlers. New codes follow standard semantics (4xx =
+  client error, 5xx = server error). Don't rely on the exact status
+  for branching — branch on the `error` code.
+- **`error_description`:** human-readable, may include unstable detail
+  (raw parser errors, downstream messages). Do NOT parse it
+  programmatically.
+- **Adding a new code:** declare in `consts.go` (or the per-handler
+  file if it's handler-local), update this catalog in the same commit.
+  CI's `make ci` doesn't (yet) enforce the catalog-vs-consts.go
+  symmetry, but a future check can.

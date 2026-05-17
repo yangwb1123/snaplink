@@ -1041,6 +1041,11 @@ When you change a documented HTTP endpoint, update `docs/openapi.yaml` in
 the same commit. CI runs `make docs-validate` so a mismatched schema fails
 the PR.
 
+`docs/error-codes.md` is the stable wire-contract catalog of every
+`error` value the server can emit. SPAs / downstream services branch
+on the `error` code, never on `error_description`. When you add a new
+`Err*` constant in `consts.go`, update the catalog in the same commit.
+
 ---
 
 ## Conventions
