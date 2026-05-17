@@ -761,6 +761,24 @@ kubectl apply -k deploy/k8s/
 HPA, NetworkPolicy, PDB, ServiceMonitor, ServiceAccount) — each is one
 config decision that varies per environment.
 
+### 8c0. Grafana / Prometheus operator pack (`deploy/grafana/`)
+
+Companion to §8c — a Grafana dashboard + Prometheus alerts ready to
+import without further authoring:
+
+* `sso-overview.json` — 12-panel dashboard across 4 rows (overview,
+  HTTP, auth flow, Go runtime). `$instance` template variable for
+  per-replica drilldown.
+* `alerts.yaml` — 6 alerting rules: 5xx rate, login failure rate
+  (creds-stuffing signal), rate-limit saturation, p95 latency, risk
+  scorer silent (fail-open safety net), instance down.
+* `deploy/grafana/README.md` covers the kube-prometheus-stack
+  `PrometheusRule` wrapper + plain-Prometheus `rule_files` paths.
+
+All thresholds are starting points — operators tune for their
+traffic baseline before promoting to paging severity. The dashboard
+is vendor-neutral (Grafana 10+ schemaVersion 39).
+
 ### 8c. Metrics (`metrics/`)
 
 Prometheus instrumentation. Wire `sso.WithMetrics(metrics.New())` and

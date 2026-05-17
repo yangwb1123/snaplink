@@ -1,0 +1,122 @@
+# Prometheus alerting rules for snaplink/sso. Apply to a Prometheus or
+# kube-prometheus-stack `PrometheusRule` CRD (the file is shaped for
+# direct copy into the spec.groups field).
+#
+# Tune thresholds against your traffic baseline before promoting to
+# paging severity — the values here are sensible starting points but
+# every deployment's "high" looks different.
+
+groups:
+  - name: sso-server
+    interval: 30s
+    rules:
+
+      - alert: SSOHighHTTPErrorRate
+        # 5xx rate exceeds 5% of total requests sustained for 5 minutes.
+        # Catches: server-side bugs, downstream outages, misconfig.
+        expr: |
+          sum(rate(sso_http_requests_total{status_class="5xx"}[5m]))
+            / sum(rate(sso_http_requests_total[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "SSO server returning >5% 5xx errors"
+          description: |
+            5xx rate is {{ $value | humanizePercentage }} over the last 5m.
+            Check sso-server logs for "internal_error" / "server_misconfigured"
+            entries — typical causes: a Provider implementation panicked,
+            a downstream dep is unreachable, or a misconfigured ClientStore.
+
+      - alert: SSOHighLoginFailureRate
+        # Login failures exceed 20% of attempts sustained for 10 minutes.
+        # Differentiates from a few mistyped passwords (normal) vs a
+        # coordinated credential-stuffing attack (alert).
+        expr: |
+          sum(rate(sso_login_attempts_total{outcome="failure"}[10m]))
+            / sum(rate(sso_login_attempts_total[10m]))
+            > 0.20
+        for: 10m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "SSO login failure rate >20% sustained"
+          description: |
+            {{ $value | humanizePercentage }} of login attempts failing.
+            Possible credential-stuffing attack. Check the RiskScorer
+            backend (if any) and the rate-limit logs; consider
+            tightening the per-IP /auth/login bucket.
+
+      - alert: SSORateLimitSaturated
+        # 429 rate from /auth/login exceeds 0.5/sec sustained 5 minutes —
+        # the rate limiter is doing real work (and legit users may be
+        # caught in the blast radius if this is internal traffic).
+        expr: |
+          sum(rate(sso_http_requests_total{status_class="4xx"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: info
+          component: sso-server
+        annotations:
+          summary: "SSO rate-limit blocking >0.5 req/s"
+          description: |
+            429s firing at {{ $value | humanize }}/s. Review whether the
+            blocked traffic is malicious (good — defense working) or
+            legitimate (raise per-IP limits / add internal-network allowlist).
+
+      - alert: SSOLatencyP95High
+        # p95 request latency > 1s sustained 10 minutes. Tunable; raise
+        # if your auth backends are inherently slow (e.g. expensive
+        # password verification).
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(sso_http_request_duration_seconds_bucket[5m]))
+          ) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "SSO p95 latency > 1s sustained"
+          description: |
+            p95 latency is {{ $value | humanizeDuration }}. Check whether
+            an authenticator (password hashing, OAuth round-trip) or
+            backend (PermissionProvider, ClientStore) is slow.
+
+      - alert: SSORiskScorerSilent
+        # When a RiskScorer is configured, decisions should track login
+        # attempts. If attempts continue but decisions stop incrementing,
+        # the scorer is silently failing (errors are intentionally
+        # fail-open per the SPI contract — alert is the safety net).
+        expr: |
+          sum(rate(sso_login_attempts_total[10m])) > 0
+            and
+          sum(rate(sso_risk_decisions_total[10m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "RiskScorer producing no decisions despite login traffic"
+          description: |
+            Login traffic continues but the configured RiskScorer hasn't
+            registered any decisions in 15m. Likely fail-open behavior
+            triggered by scorer errors. Check sso-server logs for
+            "risk scorer failed" lines.
+
+      - alert: SSOInstanceDown
+        # The bare-minimum "is the service up" alert.
+        expr: up{job=~".*sso.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: sso-server
+        annotations:
+          summary: "SSO instance {{ $labels.instance }} down"
+          description: |
+            Prometheus has been unable to scrape {{ $labels.instance }}
+            for at least 2 minutes. Check /readyz manually (it bypasses
+            the rate limiter so it should respond even under attack).
