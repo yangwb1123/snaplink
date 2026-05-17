@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -42,6 +43,8 @@ type Server struct {
 	riskScorer           RiskScorer
 	metrics              *metrics.Metrics
 	rateLimitPolicy      *ratelimit.Policy
+	bodyLimit            int64
+	readyChecks          []namedReadyCheck
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -248,6 +251,45 @@ func WithMetrics(m *metrics.Metrics) Option {
 	return func(s *Server) { s.metrics = m }
 }
 
+// ReadyCheck reports whether a dependency / subsystem is ready to
+// serve traffic. Implementations return nil when healthy, an error
+// describing the problem when not. Run from /readyz on every probe.
+type ReadyCheck func(ctx context.Context) error
+
+type namedReadyCheck struct {
+	Name  string
+	Check ReadyCheck
+}
+
+// WithReadyCheck adds a named check to /readyz. Any check returning
+// an error marks the server unready (503). Multiple checks aggregate.
+// Empty check list = always ready (default).
+//
+// Example: ping the database, verify etcd reachable, confirm bootstrap
+// completed. Cheap checks only — the readiness probe fires every few
+// seconds in Kubernetes.
+func WithReadyCheck(name string, check ReadyCheck) Option {
+	return func(s *Server) {
+		if check == nil || name == "" {
+			return
+		}
+		s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Check: check})
+	}
+}
+
+// WithBodyLimit caps request body size at max bytes. Larger requests
+// are rejected with 413 + ErrPayloadTooLarge before the handler runs.
+// 0 (default) disables the limit. Typical value: 1 << 20 (1 MiB) —
+// generous for any auth-flow payload but blocks gigabyte-class DoS.
+//
+// Defends against two failure modes the SSO server otherwise has no
+// protection from: pathological JSON bombs that swallow process
+// memory, and slow-loris reads where an attacker dribbles bytes
+// forever.
+func WithBodyLimit(maxBytes int64) Option {
+	return func(s *Server) { s.bodyLimit = maxBytes }
+}
+
 // WithRateLimit installs the ratelimit middleware in the server's
 // Handler() chain. The middleware sits BETWEEN /metrics (which is
 // never rate-limited so scrapers don't get 429s) and the metrics
@@ -328,30 +370,110 @@ func (s *Server) Mount() {
 //
 //	metrics      record count + duration on every request (incl 429s)
 //	  ratelimit    reject brute-force traffic before hitting the router
-//	    router       the SSO handler stack registered by Mount()
+//	    bodylimit    cap request size before allocating buffers
+//	      router       the SSO handler stack registered by Mount()
 //
-// /metrics is served OUTSIDE both middlewares so:
+// Operational endpoints served OUTSIDE the entire middleware stack
+// (never rate-limited, never counted in HTTP metrics, never body-
+// capped):
 //
-//   - Scrapes don't self-inflate sso_http_requests_total.
-//   - Prometheus can still scrape when the rate limiter is exhausted.
+//	/livez     process is alive — always 200 when the handler runs
+//	/readyz    composite readiness — aggregates [WithReadyCheck]
+//	/metrics   Prometheus scrape (when [WithMetrics] is set)
 //
-// Omitting WithMetrics + WithRateLimit returns the bare router — zero
-// overhead.
+// Kubelet probes MUST hit /livez and /readyz, not /health. The
+// /health route stays registered inside the router for backward
+// compatibility but goes through middleware (including rate limiting),
+// which is the wrong shape for cluster probes.
+//
+// Omitting all four optional middlewares + checks returns the bare
+// router behind the mux — zero overhead inside, mux only routes
+// /livez, /readyz, and `/` (so the mux cost is negligible).
 func (s *Server) Handler() http.Handler {
 	s.Mount()
 
-	var handler http.Handler = s.router
-	if s.rateLimitPolicy != nil {
-		handler = ratelimit.Middleware(*s.rateLimitPolicy)(handler)
+	var inner http.Handler = s.router
+	if s.bodyLimit > 0 {
+		inner = bodyLimitMiddleware(s.bodyLimit)(inner)
 	}
-	if s.metrics == nil {
-		return handler
+	if s.rateLimitPolicy != nil {
+		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
+	}
+	if s.metrics != nil {
+		inner = metrics.Middleware(s.metrics)(inner)
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
-	mux.Handle("/", metrics.Middleware(s.metrics)(handler))
+	mux.HandleFunc(PathLivez, s.handleLivez)
+	mux.HandleFunc(PathReadyz, s.handleReadyz)
+	if s.metrics != nil {
+		mux.Handle("/metrics", promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
+	}
+	mux.Handle("/", inner)
 	return mux
+}
+
+// handleLivez returns 200 unconditionally — the handler running at
+// all is itself the liveness signal. Cheap; no allocations beyond
+// the response.
+func (s *Server) handleLivez(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set(HeaderContentType, ContentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"alive"}`))
+}
+
+// handleReadyz runs every registered [ReadyCheck] in parallel,
+// aggregates results into `{name: "ok" | err.Error()}`, returns 200
+// when all pass / 503 when any fail. Bounded by a 3-second context
+// deadline so a hung check can't wedge the probe.
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	results := make(map[string]string, len(s.readyChecks))
+	allOK := true
+	for _, c := range s.readyChecks {
+		if err := c.Check(ctx); err != nil {
+			results[c.Name] = err.Error()
+			allOK = false
+		} else {
+			results[c.Name] = "ok"
+		}
+	}
+
+	status := "ready"
+	code := http.StatusOK
+	if !allOK {
+		status = "unready"
+		code = http.StatusServiceUnavailable
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"status": status,
+		"checks": results,
+	})
+	w.Header().Set(HeaderContentType, ContentTypeJSON)
+	w.WriteHeader(code)
+	_, _ = w.Write(body)
+}
+
+// bodyLimitMiddleware wraps r.Body with MaxBytesReader and pre-checks
+// Content-Length when set so over-sized requests fail before allocating
+// any buffers. Chunked requests fall back to MaxBytesReader's
+// streaming guard.
+func bodyLimitMiddleware(max int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > max {
+				w.Header().Set(HeaderContentType, ContentTypeJSON)
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = w.Write([]byte(`{"error":"` + ErrPayloadTooLarge + `"}`))
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, max)
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func (s *Server) getAuthenticator(name string) (Authenticator, error) {

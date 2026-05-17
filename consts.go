@@ -5,6 +5,8 @@ import "time"
 // Endpoint paths registered by Server.Mount.
 const (
 	PathHealth         = "/health"
+	PathLivez          = "/livez"
+	PathReadyz         = "/readyz"
 	PathLogin          = "/auth/login"
 	PathSendCode       = "/auth/send-code"
 	PathCallback       = "/auth/callback"
@@ -98,6 +100,7 @@ const (
 	ErrNetPolicyNotConfigured    = "netpolicy_not_configured"
 	ErrNetPolicyNotFound         = "netpolicy_not_found"
 	ErrRiskDenied                = "risk_denied"
+	ErrPayloadTooLarge           = "payload_too_large"
 )
 
 // Status strings returned in successful responses.

@@ -71,16 +71,22 @@ spec:
             # - name: SSO_AUDIT__MEMORY_CAPACITY
             #   value: "50000"
 
+          # /livez and /readyz are served OUTSIDE the rate-limit +
+          # metrics middleware stack — kubelet probes hit them every
+          # few seconds and would otherwise consume the rate-limit
+          # bucket. /readyz aggregates any sso.WithReadyCheck(...)
+          # entries (db ping, etcd reachable, etc.). /livez is always
+          # 200 when the process is running.
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: http
             initialDelaySeconds: 1
             periodSeconds: 5

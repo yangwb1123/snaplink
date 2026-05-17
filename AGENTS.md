@@ -791,6 +791,37 @@ embedding the SSO server in a larger app.
 Zero overhead when [WithMetrics] is omitted — the Handler returns the
 bare router and no instrumentation runs.
 
+### 8e. Operational endpoints (`/livez`, `/readyz`)
+
+Probe endpoints served OUTSIDE the entire middleware stack — never
+rate-limited (kubelet probes can't be throttled), never counted in
+HTTP metrics (probe traffic is noise), never body-capped. Both always
+respond as long as the handler runs at all.
+
+| Endpoint  | Status | Purpose                                                  |
+|-----------|--------|----------------------------------------------------------|
+| `/livez`  | 200    | Process is alive — the handler running IS the signal     |
+| `/readyz` | 200/503 | Composite readiness — aggregates `sso.WithReadyCheck`   |
+
+`ReadyCheck` is a pluggable SPI:
+
+```go
+sso.NewServer(
+    sso.WithReadyCheck("db", pingDB),
+    sso.WithReadyCheck("etcd", checkEtcdReachable),
+    sso.WithReadyCheck("bootstrap", bootstrapComplete),
+)
+```
+
+Any check returning an error marks the server unready (503). Bounded
+by a 3s context deadline so a hung check can't wedge the probe.
+Empty check list = always ready (default).
+
+`/health` stays registered inside the router for backward compat —
+operators with existing dashboards / monitors hitting it still work.
+Cluster probes MUST migrate to `/livez` + `/readyz` (the
+`deploy/k8s/` manifest is already pointed at the new endpoints).
+
 ### 8d. Rate limiting (`ratelimit/`)
 
 Token-bucket rate limiter — the missing brute-force defense on
@@ -828,6 +859,23 @@ ceiling-rounded so clients never retry early) and a JSON body
 Composes with `RiskScorer` (§9): rate limiter rejects bot traffic
 BEFORE risk scoring runs, so the scorer only sees attempts that
 passed the volume gate. Two complementary defenses, no overlap.
+
+### 8f. Body size limit (`sso.WithBodyLimit`)
+
+`sso.WithBodyLimit(1 << 20)` caps request body size at 1 MiB (or
+whatever value you pass). Defends against pathological JSON bombs
+that swallow memory and slow-loris reads that dribble bytes forever.
+
+Fast path: when `Content-Length` is set and exceeds the limit, reject
+with 413 + `{"error":"payload_too_large"}` before reading any bytes.
+Chunked uploads fall back to the streaming `http.MaxBytesReader`
+guard.
+
+Layer position: inside rate-limit + metrics so 413s show up in
+`sso_http_requests_total{status_class="4xx"}` and so over-sized
+requests still count against the rate-limit bucket (a malicious
+client can't drain the bucket faster by spamming oversized payloads
+than by spamming small ones).
 
 ### 9. Risk scoring (`risk.go`)
 
