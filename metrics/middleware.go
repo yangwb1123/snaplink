@@ -61,14 +61,14 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 func statusClass(code int) string {
 	switch {
 	case code < 200:
-		return "1xx"
+		return StatusClass1xx
 	case code < 300:
-		return "2xx"
+		return StatusClass2xx
 	case code < 400:
-		return "3xx"
+		return StatusClass3xx
 	case code < 500:
-		return "4xx"
+		return StatusClass4xx
 	default:
-		return "5xx"
+		return StatusClass5xx
 	}
 }

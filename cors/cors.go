@@ -67,13 +67,10 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 	// Cache joined strings + lookups so per-request work is just a
 	// few map / slice probes.
 	if len(p.AllowedMethods) == 0 {
-		p.AllowedMethods = []string{
-			http.MethodGet, http.MethodPost, http.MethodPut,
-			http.MethodDelete, http.MethodOptions,
-		}
+		p.AllowedMethods = DefaultAllowedMethods
 	}
 	if len(p.AllowedHeaders) == 0 {
-		p.AllowedHeaders = []string{"Authorization", "Content-Type"}
+		p.AllowedHeaders = DefaultAllowedHeaders
 	}
 	methodsHdr := strings.Join(p.AllowedMethods, ", ")
 	headersHdr := strings.Join(p.AllowedHeaders, ", ")
@@ -86,7 +83,7 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 	allowsWildcard := false
 	exactOrigins := make(map[string]struct{}, len(p.AllowedOrigins))
 	for _, o := range p.AllowedOrigins {
-		if o == "*" {
+		if o == OriginWildcard {
 			allowsWildcard = true
 			continue
 		}
@@ -95,7 +92,7 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
+			origin := r.Header.Get(HeaderOrigin)
 			if origin == "" {
 				next.ServeHTTP(w, r)
 				return
@@ -116,28 +113,28 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 			allowOrigin := origin
 			if allowsWildcard && !p.AllowCredentials {
 				if _, exact := exactOrigins[origin]; !exact {
-					allowOrigin = "*"
+					allowOrigin = OriginWildcard
 				}
 			}
-			w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			w.Header().Set(HeaderAccessControlAllowOrigin, allowOrigin)
 			// Vary on Origin so caches don't serve a per-origin
 			// response to the wrong origin.
-			w.Header().Add("Vary", "Origin")
+			w.Header().Add(HeaderVary, HeaderOrigin)
 			if p.AllowCredentials {
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set(HeaderAccessControlAllowCreds, TrueLiteral)
 			}
 			if exposeHdr != "" {
-				w.Header().Set("Access-Control-Expose-Headers", exposeHdr)
+				w.Header().Set(HeaderAccessControlExposeHeaders, exposeHdr)
 			}
 
-			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			if r.Method == http.MethodOptions && r.Header.Get(HeaderAccessControlRequestMethod) != "" {
 				// CORS preflight. Echo methods + headers + max-age,
 				// short-circuit with 204 — the actual request comes
 				// in a follow-up.
-				w.Header().Set("Access-Control-Allow-Methods", methodsHdr)
-				w.Header().Set("Access-Control-Allow-Headers", headersHdr)
+				w.Header().Set(HeaderAccessControlAllowMethods, methodsHdr)
+				w.Header().Set(HeaderAccessControlAllowHeaders, headersHdr)
 				if maxAgeHdr != "" {
-					w.Header().Set("Access-Control-Max-Age", maxAgeHdr)
+					w.Header().Set(HeaderAccessControlMaxAge, maxAgeHdr)
 				}
 				w.WriteHeader(http.StatusNoContent)
 				return

@@ -79,44 +79,44 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 
 		HTTPRequestsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "sso_http_requests_total",
+				Name: NameHTTPRequestsTotal,
 				Help: "Total HTTP requests served by the SSO router, by method and status class (2xx/3xx/4xx/5xx).",
 			},
-			[]string{"method", "status_class"},
+			[]string{LabelMethod, LabelStatusClass},
 		),
 
 		HTTPRequestDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name: "sso_http_request_duration_seconds",
+				Name: NameHTTPRequestDuration,
 				Help: "HTTP request latency in seconds, by method. Default buckets cover the typical auth-flow latency range (millis to seconds).",
 				// DefBuckets cover .005s through 10s — appropriate for auth flows.
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"method"},
+			[]string{LabelMethod},
 		),
 
 		LoginAttemptsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "sso_login_attempts_total",
+				Name: NameLoginAttemptsTotal,
 				Help: "Login attempts at /auth/login, by authenticator provider and outcome (success/failure).",
 			},
-			[]string{"provider", "outcome"},
+			[]string{LabelProvider, LabelOutcome},
 		),
 
 		TokensIssuedTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "sso_tokens_issued_total",
+				Name: NameTokensIssuedTotal,
 				Help: "Tokens issued on successful login, by token strategy (jwt/session).",
 			},
-			[]string{"strategy"},
+			[]string{LabelStrategy},
 		),
 
 		RiskDecisionsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: "sso_risk_decisions_total",
+				Name: NameRiskDecisionsTotal,
 				Help: "RiskScorer decisions, by decision value (allow/deny/require_mfa). Zero traffic when no scorer is configured.",
 			},
-			[]string{"decision"},
+			[]string{LabelDecision},
 		),
 	}
 }

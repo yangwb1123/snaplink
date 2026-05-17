@@ -44,13 +44,13 @@ type KeyFunc func(*http.Request) string
 // edge should layer a TrustedProxies check upstream — keying on a
 // forge-able header would let a malicious client trivially evade.
 func KeyByClientIP(r *http.Request) string {
-	if h := r.Header.Get("X-Forwarded-For"); h != "" {
+	if h := r.Header.Get(HeaderXForwardedFor); h != "" {
 		if i := strings.IndexByte(h, ','); i > 0 {
 			return strings.TrimSpace(h[:i])
 		}
 		return strings.TrimSpace(h)
 	}
-	if h := r.Header.Get("X-Real-IP"); h != "" {
+	if h := r.Header.Get(HeaderXRealIP); h != "" {
 		return h
 	}
 	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
@@ -105,9 +105,9 @@ func writeTooManyRequests(w http.ResponseWriter, retry time.Duration) {
 		if seconds < 1 {
 			seconds = 1
 		}
-		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		w.Header().Set(HeaderRetryAfter, strconv.Itoa(seconds))
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(HeaderContentType, ContentTypeJSON)
 	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
+	_, _ = w.Write(rateLimitedBody)
 }
