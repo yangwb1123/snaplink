@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
@@ -47,6 +48,7 @@ type Server struct {
 	bodyLimit            int64
 	readyChecks          []namedReadyCheck
 	tracingOperation     string
+	corsPolicy           *cors.Policy
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -279,6 +281,20 @@ func WithReadyCheck(name string, check ReadyCheck) Option {
 	}
 }
 
+// WithCORS installs a CORS middleware sitting between bodyLimit and
+// the router, so preflight 204s short-circuit before routing but
+// still get counted in metrics + traced + rate-limited. Composes
+// with [ratelimit.Middleware] / [metrics.Middleware] / [tracing] —
+// each handles its own concern.
+//
+// Empty AllowedOrigins disables CORS (zero overhead). Use the
+// modern [cors] package shape rather than the legacy router-level
+// [CORS] MiddlewareFunc when you want credentials / exposed headers
+// / preflight caching.
+func WithCORS(policy cors.Policy) Option {
+	return func(s *Server) { s.corsPolicy = &policy }
+}
+
 // WithTracing wraps every request in an OpenTelemetry HTTP span,
 // honoring incoming W3C traceparent headers as the parent. operation
 // is the root span name (defaults to "sso-server" when empty).
@@ -418,6 +434,13 @@ func (s *Server) Handler() http.Handler {
 	s.Mount()
 
 	var inner http.Handler = s.router
+	if s.corsPolicy != nil {
+		// CORS sits innermost (just outside the router) so preflight
+		// 204s don't traverse routing, but still get counted by metrics
+		// and rate-limited like any other request — defensive against
+		// preflight floods.
+		inner = cors.Middleware(*s.corsPolicy)(inner)
+	}
 	if s.bodyLimit > 0 {
 		inner = bodyLimitMiddleware(s.bodyLimit)(inner)
 	}

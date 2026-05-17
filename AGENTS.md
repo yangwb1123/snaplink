@@ -212,6 +212,45 @@ dependency.
 To embed audit without the SSO server: import `audit` directly. To stream
 audit from another service: dial the gRPC `AuditWriter` service.
 
+### 2b. Persistence — SQLite (`defaultimpl/sqlite/`)
+
+First SQL-backed Provider implementation: `sqlite.NewUserProvider(dsn)`
+satisfies `sso.UserProvider` over a SQLite database. Pure-Go driver
+(`modernc.org/sqlite`) so no CGO, stays compatible with the
+distroless/static runtime image, cross-compiles freely.
+
+Wire as a drop-in replacement for `defaultimpl.MemoryUserProvider`:
+
+```go
+users, _ := sqlite.NewUserProvider("file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000")
+defer users.Close()
+sso.NewServer(sso.WithUserProvider(users), /* ... */)
+```
+
+DSN cookbook:
+
+| DSN                                          | Use                                                     |
+|----------------------------------------------|---------------------------------------------------------|
+| `file:/var/lib/sso/sso.db?_journal=WAL`      | Production single-node, journal-mode WAL for write perf |
+| `:memory:`                                   | Per-connection in-memory; each conn = isolated DB        |
+| `file::memory:?cache=shared`                 | Shared in-memory across the pool; right for tests        |
+| `file::memory:?cache=shared&_busy_timeout=5000` | Tests with concurrent writers                         |
+
+Schema migration: `CREATE TABLE IF NOT EXISTS users ...` runs at
+NewUserProvider. Single table for v1; when ClientStore / SessionManager
+SQLite backends land, they'll bring their own table + a real migration
+runner (golang-migrate or goose) to coordinate cross-table changes.
+
+Pattern established by this package — every future SQL-backed Provider
+should follow:
+
+* `New<Provider>(dsn)` opens + migrates + returns; `Close()` releases.
+* `New<Provider>WithDB(db)` for shared-pool deployments + tests.
+* `sql.ErrNoRows` maps to the SDK's typed `ErrNoSuchX` sentinel.
+* Timestamps as `INTEGER` Unix seconds (SQLite has no native ts).
+* Nullable string columns via `nullable("") → NullString{}` so NULL
+  reaches the DB (cleaner partial indexes).
+
 ### 3b. Audit hash chain (`audit/chainer.go`)
 
 Opt-in tamper-evidence over the audit stream. `audit.New(sink,
@@ -886,6 +925,40 @@ embedding the SSO server in a larger app.
 
 Zero overhead when [WithMetrics] is omitted — the Handler returns the
 bare router and no instrumentation runs.
+
+### 8g. CORS (`cors/`)
+
+Modern `http.Handler`-shape CORS that composes with the metrics /
+ratelimit / tracing / bodyLimit middleware stack. Wire with
+`sso.WithCORS(cors.Policy{...})`; the middleware slots between
+bodyLimit and the router so preflight 204s short-circuit before
+routing while still getting counted in metrics, traced, and
+rate-limited (defense against preflight floods).
+
+Supersedes the legacy `sso.CORS` router-level MiddlewareFunc for new
+SPA integrations that need credentials, exposed headers, or preflight
+caching — the legacy one stays for backward compat.
+
+```go
+sso.WithCORS(cors.Policy{
+    AllowedOrigins:   []string{"https://app.example.com"},
+    AllowedMethods:   []string{"GET", "POST", "DELETE"},
+    AllowedHeaders:   []string{"Authorization", "Content-Type"},
+    ExposedHeaders:   []string{"X-Request-ID"},
+    AllowCredentials: true,
+    MaxAge:           time.Hour,
+})
+```
+
+Spec compliance details handled by the middleware:
+
+* `Vary: Origin` always set when origin matches — prevents caches
+  from serving a per-origin response to the wrong origin.
+* `"*"` + `AllowCredentials: true` is forbidden by spec — middleware
+  degrades by echoing the request `Origin` instead.
+* Preflight detection: OPTIONS + `Access-Control-Request-Method`
+  header (plain OPTIONS without it passes to the inner handler).
+* Empty `AllowedOrigins` = middleware is identity (zero overhead).
 
 ### 8e. Operational endpoints (`/livez`, `/readyz`)
 
