@@ -97,6 +97,7 @@ const (
 	ErrNoTokenStrategy           = "no_token_strategy"
 	ErrNetPolicyNotConfigured    = "netpolicy_not_configured"
 	ErrNetPolicyNotFound         = "netpolicy_not_found"
+	ErrRiskDenied                = "risk_denied"
 )
 
 // Status strings returned in successful responses.

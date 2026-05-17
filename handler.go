@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/snaplink/sso/geo"
 )
 
 // errorBody returns the standard error envelope { "error": code }.
@@ -128,6 +131,41 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidCredentials)
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidCredentials))
 		return
+	}
+
+	// Risk evaluation. Skipped entirely (zero overhead) when no scorer
+	// configured. Scorer errors fail OPEN by contract — failing closed
+	// on a misbehaving scorer locks every user out. Operators worried
+	// about silent bypass should alert on "risk scorer failed".
+	if s.riskScorer != nil {
+		var geoInfo *geo.GeoInfo
+		if g, ok := GeoFromHandlerContext(ctx); ok {
+			geoInfo = g
+		}
+		assessment, riskErr := s.riskScorer.Score(ctx.Request().Context(), &RiskRequest{
+			SubjectID: result.UserID,
+			ClientID:  req.ClientID,
+			Provider:  req.Provider,
+			RemoteIP:  clientIP(ctx.Request()),
+			UserAgent: ctx.Request().UserAgent(),
+			Geo:       geoInfo,
+			Timestamp: time.Now(),
+		})
+		switch {
+		case riskErr != nil:
+			s.logger.Error("risk scorer failed", "error", riskErr, "user", result.UserID, "client", req.ClientID)
+		case assessment == nil:
+			// Defensive: a scorer that returns (nil, nil) is misbehaving.
+			s.logger.Error("risk scorer returned nil assessment", "user", result.UserID, "client", req.ClientID)
+		case assessment.Decision == DecisionDeny:
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrRiskDenied)
+			ctx.JSON(http.StatusForbidden, errorBody(ErrRiskDenied))
+			return
+			// DecisionRequireMFA: documented in risk.go as future-reserved.
+			// Today we treat it as Allow (so a forward-looking scorer can
+			// emit it without breaking flows). When MFA orchestration lands,
+			// this branch returns a challenge response.
+		}
 	}
 
 	if s.userProvider != nil {

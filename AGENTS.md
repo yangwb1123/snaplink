@@ -756,6 +756,44 @@ kubectl apply -k deploy/k8s/
 HPA, NetworkPolicy, PDB, ServiceMonitor, ServiceAccount) — each is one
 config decision that varies per environment.
 
+### 9. Risk scoring (`risk.go`)
+
+`sso.RiskScorer` is an optional SPI that runs on every `/auth/login`
+attempt AFTER credential validation but BEFORE token issuance. The
+scorer returns a `Decision` — `Allow`, `RequireMFA` (reserved; treated
+as Allow today), or `Deny` (HTTP 403 + audit `login_failure` with
+reason=`risk_denied`). This is the canonical hook for AI / ML risk
+backends, IP-allowlist enforcers, geo gates, off-hours blocks, or any
+"is this attempt legitimate" evaluator.
+
+```go
+sso.NewServer(
+    /* ... usual options ... */
+    sso.WithRiskScorer(myScorer),  // optional; omit for zero overhead
+)
+```
+
+Two contract guarantees that matter:
+
+- **Fail-open**: scorer errors are logged but do not block the login.
+  Failing closed on a misbehaving scorer would lock every user out —
+  worse than skipping one risk check. Alert on the `risk scorer failed`
+  log line if silent-bypass concerns you.
+- **Zero overhead when unset**: a nil-check in `handleLogin` skips
+  the scorer entirely. No risk policy = no risk evaluation, no
+  latency.
+
+`defaultimpl.NoopRiskScorer` is provided as an explicit "no scoring"
+stand-in for tests and downstream wiring that wants a typed value
+rather than nil.
+
+The input (`sso.RiskRequest`) is what the server can observe at the
+login moment: subject id, client id, authenticator name, remote IP,
+user agent, geo info (when geo middleware ran), timestamp. Scorers
+that need richer signals (device fingerprint, recent failure history,
+network reputation) should query their own data store from inside
+`Score`, not pad the input struct.
+
 ---
 
 ## Configuration

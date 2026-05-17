@@ -36,6 +36,7 @@ type Server struct {
 	geoMiddlewareOpts    GeoMiddlewareOptions
 	tenantStore          tenant.Store
 	tenantMiddlewareOpts TenantMiddlewareOptions
+	riskScorer           RiskScorer
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -224,6 +225,14 @@ func WithTenantStore(s tenant.Store) Option {
 // the deployment doesn't trust X-Forwarded-Host.
 func WithTenantMiddlewareOptions(opts TenantMiddlewareOptions) Option {
 	return func(s *Server) { s.tenantMiddlewareOpts = opts }
+}
+
+// WithRiskScorer plugs in a fraud / abuse evaluator that runs on every
+// /auth/login attempt after credential validation but before token
+// issuance. See [RiskScorer] for the contract — fail-open on scorer
+// errors, default [DecisionAllow] when this option is not set.
+func WithRiskScorer(r RiskScorer) Option {
+	return func(s *Server) { s.riskScorer = r }
 }
 
 // RegisterAuthenticator adds an authenticator at runtime.
