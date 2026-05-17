@@ -791,6 +791,44 @@ embedding the SSO server in a larger app.
 Zero overhead when [WithMetrics] is omitted — the Handler returns the
 bare router and no instrumentation runs.
 
+### 8d. Rate limiting (`ratelimit/`)
+
+Token-bucket rate limiter — the missing brute-force defense on
+`/auth/login`. Wire `sso.WithRateLimit(policy)` and the middleware
+slots into the Server's Handler() chain between `/metrics` (never
+limited so Prometheus scrapers can't get throttled) and the metrics
+recorder (so 429 responses still appear in `sso_http_requests_total`
+with `status_class="4xx"`).
+
+`ratelimit.Limiter` is a pluggable SPI; `ratelimit.MemoryLimiter` is
+the in-process default (wraps `golang.org/x/time/rate`). Operators
+running multiple replicas should swap for a Redis-backed Limiter when
+cross-replica enforcement matters.
+
+Policy shape: a `Default` limiter for all paths + ordered `Prefixes`
+for path-specific overrides. Keying is pluggable (default
+`KeyByClientIP`, respects XFF / X-Real-IP / RemoteAddr — operators
+behind an untrusted edge should layer a TrustedProxies check
+upstream).
+
+```go
+sso.WithRateLimit(ratelimit.Policy{
+    Default: ratelimit.NewMemoryLimiter(1, 60),        // 1/s sustained, 60 burst
+    Prefixes: []ratelimit.PrefixRule{
+        {Prefix: "/auth/login",     Limiter: ratelimit.NewMemoryLimiter(10.0/60, 10)},
+        {Prefix: "/auth/send-code", Limiter: ratelimit.NewMemoryLimiter(10.0/60, 10)},
+    },
+})
+```
+
+429 responses include the standard `Retry-After` header (seconds,
+ceiling-rounded so clients never retry early) and a JSON body
+`{"error":"rate_limited"}` so SPAs can branch on the code.
+
+Composes with `RiskScorer` (§9): rate limiter rejects bot traffic
+BEFORE risk scoring runs, so the scorer only sees attempts that
+passed the volume gate. Two complementary defenses, no overlap.
+
 ### 9. Risk scoring (`risk.go`)
 
 `sso.RiskScorer` is an optional SPI that runs on every `/auth/login`

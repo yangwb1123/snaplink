@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/tenant"
 )
 
@@ -40,6 +41,7 @@ type Server struct {
 	tenantMiddlewareOpts TenantMiddlewareOptions
 	riskScorer           RiskScorer
 	metrics              *metrics.Metrics
+	rateLimitPolicy      *ratelimit.Policy
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -246,6 +248,26 @@ func WithMetrics(m *metrics.Metrics) Option {
 	return func(s *Server) { s.metrics = m }
 }
 
+// WithRateLimit installs the ratelimit middleware in the server's
+// Handler() chain. The middleware sits BETWEEN /metrics (which is
+// never rate-limited so scrapers don't get 429s) and the metrics
+// recorder (so 429 responses still show up in sso_http_requests_total
+// with status_class="4xx"). When the option is omitted, no rate
+// limiting is enforced.
+//
+// Common policy shape (10 logins/min/IP, 60 req/min/IP otherwise):
+//
+//	sso.WithRateLimit(ratelimit.Policy{
+//	    Default: ratelimit.NewMemoryLimiter(1, 60),       // ~60/min, burst 60
+//	    Prefixes: []ratelimit.PrefixRule{
+//	        {Prefix: "/auth/login",     Limiter: ratelimit.NewMemoryLimiter(10.0/60, 10)},
+//	        {Prefix: "/auth/send-code", Limiter: ratelimit.NewMemoryLimiter(10.0/60, 10)},
+//	    },
+//	})
+func WithRateLimit(p ratelimit.Policy) Option {
+	return func(s *Server) { s.rateLimitPolicy = &p }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -302,22 +324,33 @@ func (s *Server) Mount() {
 
 // Handler returns the http.Handler for the server.
 //
-// When [WithMetrics] is set, the returned handler additionally:
+// Middleware wiring (outermost → innermost):
 //
-//   - Serves /metrics from the supplied Prometheus registry (outside
-//     the SSO router so scrapes do not self-inflate the counters).
-//   - Wraps every other request in middleware that records the HTTP
-//     request count + duration. The /metrics endpoint is NOT wrapped.
+//	metrics      record count + duration on every request (incl 429s)
+//	  ratelimit    reject brute-force traffic before hitting the router
+//	    router       the SSO handler stack registered by Mount()
 //
-// Without metrics the handler is just the router, no overhead.
+// /metrics is served OUTSIDE both middlewares so:
+//
+//   - Scrapes don't self-inflate sso_http_requests_total.
+//   - Prometheus can still scrape when the rate limiter is exhausted.
+//
+// Omitting WithMetrics + WithRateLimit returns the bare router — zero
+// overhead.
 func (s *Server) Handler() http.Handler {
 	s.Mount()
-	if s.metrics == nil {
-		return s.router
+
+	var handler http.Handler = s.router
+	if s.rateLimitPolicy != nil {
+		handler = ratelimit.Middleware(*s.rateLimitPolicy)(handler)
 	}
+	if s.metrics == nil {
+		return handler
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
-	mux.Handle("/", metrics.Middleware(s.metrics)(s.router))
+	mux.Handle("/", metrics.Middleware(s.metrics)(handler))
 	return mux
 }
 
