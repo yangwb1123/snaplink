@@ -780,6 +780,34 @@ kubectl apply -k deploy/k8s/
 HPA, NetworkPolicy, PDB, ServiceMonitor, ServiceAccount) — each is one
 config decision that varies per environment.
 
+### 8c1. Tracing (`tracing/` + OTLP exporter)
+
+Completes the observability trifecta — metrics aggregate, traces
+explain per-request causal chains. `sso.WithTracing("sso-server")`
+wraps every request in an `otelhttp` span (honoring incoming W3C
+traceparent headers as the parent); `tracing.Init(ctx, ...)` boots
+the OTLP gRPC exporter when an endpoint is configured.
+
+Operator flips it on with standard OTel env vars — no sso-server
+config edit needed:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+OTEL_EXPORTER_OTLP_INSECURE=true                  # for local / dev
+```
+
+`cmd/sso-server/main.go` already calls `tracing.Init(...)` and wires
+the middleware unconditionally. When the env var is unset, Init is a
+no-op (returns a no-op shutdown) and the middleware spans flow into
+the SDK's default no-op TracerProvider — zero exporter overhead.
+
+`/metrics`, `/livez`, `/readyz` are served OUTSIDE the trace
+middleware so scrape / probe traffic doesn't fill traces with noise.
+
+Tests live in `tracing/tracing_test.go` using
+`tracetest.InMemoryExporter` — `WithExporter` injection bypasses
+OTLP construction so unit tests don't need a real collector.
+
 ### 8c0. Grafana / Prometheus operator pack (`deploy/grafana/`)
 
 Companion to §8c — a Grafana dashboard + Prometheus alerts ready to

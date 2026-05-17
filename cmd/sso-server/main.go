@@ -62,6 +62,7 @@ import (
 	storageinline "github.com/snaplink/sso/snapshot/storage/inline"
 	"github.com/snaplink/sso/tenant"
 	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	"github.com/snaplink/sso/tracing"
 	"google.golang.org/grpc"
 )
 
@@ -138,6 +139,22 @@ func main() {
 	}
 
 	logger := newSlogLogger(cfg.Logging.Level)
+
+	// OTLP tracing — no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset,
+	// so this call is safe to leave unconditional. Shutdown flushes
+	// pending spans on process exit.
+	tracingShutdown, err := tracing.Init(context.Background(),
+		tracing.WithServiceName(cfg.Server.Issuer),
+	)
+	if err != nil {
+		logger.Error("tracing init failed; continuing without traces", "error", err)
+		tracingShutdown = func(context.Context) error { return nil }
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tracingShutdown(ctx)
+	}()
 
 	if err := run(cfg, logger, *tlsCert, *tlsKey, *grpcListen); err != nil {
 		logger.Error("server exited with error", "error", err)
@@ -787,7 +804,8 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	opts := append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithLogger(logger),
-		sso.WithTracingMiddleware(),
+		sso.WithTracingMiddleware(),   // legacy request-id middleware (not OTel)
+		sso.WithTracing("sso-server"), // OTel HTTP-span middleware; no-op until tracing.Init activates
 		sso.WithTokenIssuer(sso.TokenStrategyJWT, jwtIssuer),
 		sso.WithTokenIssuer(sso.TokenStrategySession, sessionIssuer),
 		sso.WithUserProvider(userProvider),

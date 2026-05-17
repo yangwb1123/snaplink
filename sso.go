@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/tenant"
+	"github.com/snaplink/sso/tracing"
 )
 
 // Server is the core SSO orchestrator.
@@ -45,6 +46,7 @@ type Server struct {
 	rateLimitPolicy      *ratelimit.Policy
 	bodyLimit            int64
 	readyChecks          []namedReadyCheck
+	tracingOperation     string
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -277,6 +279,29 @@ func WithReadyCheck(name string, check ReadyCheck) Option {
 	}
 }
 
+// WithTracing wraps every request in an OpenTelemetry HTTP span,
+// honoring incoming W3C traceparent headers as the parent. operation
+// is the root span name (defaults to "sso-server" when empty).
+//
+// Calling this option DOES NOT initialize the OTLP exporter — that's
+// a separate call to [tracing.Init] (typically in cmd/sso-server/main.go
+// at startup). The middleware uses the global TracerProvider, so a
+// no-op provider (the SDK default when Init isn't called or its
+// endpoint is unset) means zero overhead beyond the otelhttp wrap
+// itself.
+//
+// /metrics, /livez, and /readyz are served OUTSIDE this middleware
+// (alongside the metrics + rate-limit middlewares) so scrape /probe
+// traffic doesn't fill traces with noise.
+func WithTracing(operation string) Option {
+	return func(s *Server) {
+		if operation == "" {
+			operation = "sso-server"
+		}
+		s.tracingOperation = operation
+	}
+}
+
 // WithBodyLimit caps request body size at max bytes. Larger requests
 // are rejected with 413 + ErrPayloadTooLarge before the handler runs.
 // 0 (default) disables the limit. Typical value: 1 << 20 (1 MiB) —
@@ -401,6 +426,13 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.metrics != nil {
 		inner = metrics.Middleware(s.metrics)(inner)
+	}
+	if s.tracingOperation != "" {
+		// Tracing wraps outermost so the span covers the full request
+		// lifecycle including time spent in metrics / ratelimit /
+		// bodyLimit middlewares — useful when debugging "where did the
+		// 200ms go" on a slow request.
+		inner = tracing.Middleware(s.tracingOperation)(inner)
 	}
 
 	mux := http.NewServeMux()
