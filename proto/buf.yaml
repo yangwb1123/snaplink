@@ -1,0 +1,43 @@
+# buf v2 module config for the /proto tree.
+#
+# Lint policy: MINIMAL rather than DEFAULT. The DEFAULT category enforces
+# Google's full proto style guide — directory layout (proto/snaplink/...
+# instead of proto/...), per-RPC request/response type names matching the
+# RPC name, mandatory Service suffix on every service. The protos here
+# pre-date buf and use different conventions throughout; flipping them
+# all is a wire-breaking change worth its own batch, not a CI bootstrap.
+#
+# MINIMAL still catches the things that actually corrupt downstream code:
+# missing package declarations, files in the wrong package, conflicting
+# enum values, syntax errors that protoc would also reject.
+#
+# Breaking-change policy: FILE — flag any change that would force
+# downstream regen (removed/renumbered fields, type changes, removed
+# RPCs). Wire-level safety, not style.
+
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    - MINIMAL
+  except:
+    # The repo lays protos out as proto/<service>/v1/ rather than the
+    # buf-default proto/snaplink/<service>/v1/. Fixing it means renaming
+    # every generated Go import and is a wire-breaking change worth its
+    # own batch — out of scope for the CI bootstrap.
+    - PACKAGE_DIRECTORY_MATCH
+  ignore:
+    # Vendored googleapis transcoding annotations. They follow Google's
+    # own conventions (no version suffix etc.) and must remain importable
+    # by the admin services, so we ignore them here rather than excluding
+    # them from the module entirely.
+    - google
+
+breaking:
+  use:
+    - FILE
+  ignore:
+    - google

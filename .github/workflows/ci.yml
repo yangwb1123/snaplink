@@ -1,12 +1,13 @@
-# Minimum-viable CI. Runs on every push to main and every PR. Three stages:
-# format/vet (cheap, fails fast), race-tagged tests (catches concurrency
-# regressions the unit suite alone misses), and a build smoke (every
-# main package compiles).
+# Minimum-viable CI. Runs on every push to main and every PR.
 #
-# Intentionally NOT in scope for v1: container image build/push, proto
-# breaking-change check, multi-arch matrix, release tag handling. Each
-# of those needs a host (ghcr.io? a private registry?) and a signing
-# story; layer them on once the repo has a remote.
+# Jobs:
+#   * test  — gofmt, go vet, go build, go test -race -count=1
+#   * proto — buf lint (always) + buf breaking (PR only, vs base branch)
+#
+# Intentionally NOT in scope for v1: container image build/push,
+# multi-arch matrix, release-tag automation. Each needs a host
+# (ghcr.io? a private registry?) and a signing story; layer them on
+# once the repo has a remote.
 
 name: ci
 
@@ -58,3 +59,32 @@ jobs:
         # -count=1 disables the test cache so flaky tests can't masquerade
         # as passing.
         run: go test -race -count=1 ./...
+
+  proto:
+    name: buf lint + breaking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # buf breaking compares against the merge-base; we need full
+          # history on PRs so the comparison has something to diff against.
+          # 0 = unshallow.
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          # Pin buf to keep CI signal stable across the buf release
+          # cadence. Bump deliberately when buf adds a useful rule.
+          version: 1.69.0
+
+      - name: buf lint
+        run: buf lint
+        working-directory: proto
+
+      - name: buf breaking (PRs only)
+        # Skip on push-to-main — nothing to diff against. The base ref
+        # for a PR is github.base_ref; resolve via the .git directory.
+        if: github.event_name == 'pull_request'
+        run: |
+          buf breaking --against "../.git#branch=origin/${{ github.base_ref }},subdir=proto"
+        working-directory: proto

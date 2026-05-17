@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race vet fmt build docker ci clean
+.PHONY: help test race vet fmt build docker ci clean proto-lint proto-breaking
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -37,7 +37,14 @@ build: ## Compile cmd/sso-server to $(BIN_DIR)/sso-server.
 docker: ## Build the sso-server container image.
 	docker build -t $(IMAGE):$(IMAGE_TAG) .
 
-ci: fmt vet race build ## Run the same checks CI runs.
+proto-lint: ## Lint .proto files (MINIMAL ruleset, see proto/buf.yaml).
+	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest lint
+
+proto-breaking: ## Check protos for wire-breaking changes vs main.
+	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
+		--against "../.git#branch=main,subdir=proto"
+
+ci: fmt vet race build proto-lint ## Run the same checks CI runs.
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)
