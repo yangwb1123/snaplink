@@ -1,0 +1,44 @@
+# Cross-editor formatting defaults. Loaded by VS Code, GoLand, Sublime,
+# Vim (with editorconfig.vim), and most other editors automatically —
+# keeps a fresh contributor's whitespace matching what gofmt / yamllint
+# expect before they even run `make ci`.
+
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+
+# Go uses tabs (gofmt enforces this; .editorconfig just stops editors
+# fighting gofmt). Indent size is informational for tab — editors render
+# at whatever width the viewer prefers.
+[*.go]
+indent_style = tab
+
+# YAML / JSON / TOML are 2-space by community convention. Matches the
+# style in cmd/sso-server/config.yaml, deploy/k8s/, .github/workflows/.
+[*.{yaml,yml,json,toml}]
+indent_style = space
+indent_size = 2
+
+# Protocol Buffers — Google's style guide says 2 spaces.
+[*.proto]
+indent_style = space
+indent_size = 2
+
+# Makefiles MUST use tabs — make is fussy about recipe indentation.
+[Makefile]
+indent_style = tab
+
+# Markdown often relies on TRAILING TWO SPACES to force <br>. Don't
+# strip those.
+[*.md]
+trim_trailing_whitespace = false
+
+# Shell scripts — 4-space is the common posix convention; matches what
+# shfmt -i 4 produces.
+[*.{sh,bash}]
+indent_style = space
+indent_size = 4
