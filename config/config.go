@@ -13,9 +13,11 @@ import (
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
+	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/netpolicy/memory"
 	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/ratelimit"
 )
 
 // Default config file name searched if no path is given.
@@ -36,6 +38,59 @@ type Config struct {
 	Releases       ReleasesConfig       `yaml:"releases"`
 	Geo            GeoConfig            `yaml:"geo"`
 	Tenant         TenantConfig         `yaml:"tenant"`
+	Security       SecurityConfig       `yaml:"security"`
+}
+
+// SecurityConfig groups operator-facing security tunables that hook
+// into the Server's middleware stack (body limit + rate limit + CORS).
+// Each sub-block is opt-in — leaving the block out (or setting
+// Enabled=false) skips the corresponding middleware with zero
+// overhead. See AGENTS.md §8d / §8f / §8g for the runtime behavior
+// of each.
+type SecurityConfig struct {
+	BodyLimit BodyLimitConfig `yaml:"body_limit"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	CORS      CORSConfig      `yaml:"cors"`
+}
+
+// BodyLimitConfig caps request body size. MaxBytes=0 disables the
+// limit (sso.WithBodyLimit is not wired). Typical production value:
+// 1048576 (1 MiB) — generous for any auth-flow payload, blocks
+// gigabyte-class DoS.
+type BodyLimitConfig struct {
+	MaxBytes int64 `yaml:"max_bytes"`
+}
+
+// RateLimitConfig configures the token-bucket middleware. Default
+// values apply to every path not matched by a Prefixes entry; per-
+// prefix overrides tighten the bucket for hot endpoints like
+// /auth/login.
+type RateLimitConfig struct {
+	Enabled       bool                    `yaml:"enabled"`
+	DefaultPerSec float64                 `yaml:"default_per_sec"`
+	DefaultBurst  int                     `yaml:"default_burst"`
+	Prefixes      []RateLimitPrefixConfig `yaml:"prefixes"`
+}
+
+// RateLimitPrefixConfig is one path-prefix rule inside RateLimitConfig.
+// Order matters — first match wins, evaluated in declaration order.
+type RateLimitPrefixConfig struct {
+	Prefix string  `yaml:"prefix"`
+	PerSec float64 `yaml:"per_sec"`
+	Burst  int     `yaml:"burst"`
+}
+
+// CORSConfig configures the CORS middleware. AllowedOrigins is the
+// only required field; leaving it empty disables CORS even when
+// Enabled=true (the middleware reduces to identity).
+type CORSConfig struct {
+	Enabled          bool          `yaml:"enabled"`
+	AllowedOrigins   []string      `yaml:"allowed_origins"`
+	AllowedMethods   []string      `yaml:"allowed_methods"`
+	AllowedHeaders   []string      `yaml:"allowed_headers"`
+	ExposedHeaders   []string      `yaml:"exposed_headers"`
+	AllowCredentials bool          `yaml:"allow_credentials"`
+	MaxAge           time.Duration `yaml:"max_age"`
 }
 
 // AdminConfig toggles the admin control plane. When Enabled is true the
@@ -577,5 +632,52 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.Server.DefaultTokenStrategy != "" {
 		opts = append(opts, sso.WithDefaultTokenStrategy(c.Server.DefaultTokenStrategy))
 	}
+
+	// Security middleware — body limit + rate limit + CORS. Each
+	// opt-in via its own block; absent / disabled blocks omit the
+	// corresponding sso.WithX call so the middleware is not wired.
+	if c.Security.BodyLimit.MaxBytes > 0 {
+		opts = append(opts, sso.WithBodyLimit(c.Security.BodyLimit.MaxBytes))
+	}
+	if c.Security.RateLimit.Enabled {
+		opts = append(opts, sso.WithRateLimit(c.Security.RateLimit.toPolicy()))
+	}
+	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
+		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
+	}
 	return opts
+}
+
+// toPolicy builds the ratelimit.Policy implied by the YAML block.
+// Default rate / burst applies to unmatched paths; Prefixes layer
+// per-endpoint overrides.
+func (r *RateLimitConfig) toPolicy() ratelimit.Policy {
+	policy := ratelimit.Policy{}
+	if r.DefaultPerSec > 0 && r.DefaultBurst > 0 {
+		policy.Default = ratelimit.NewMemoryLimiter(r.DefaultPerSec, r.DefaultBurst)
+	}
+	for _, p := range r.Prefixes {
+		if p.Prefix == "" || p.PerSec <= 0 || p.Burst <= 0 {
+			continue
+		}
+		policy.Prefixes = append(policy.Prefixes, ratelimit.PrefixRule{
+			Prefix:  p.Prefix,
+			Limiter: ratelimit.NewMemoryLimiter(p.PerSec, p.Burst),
+		})
+	}
+	return policy
+}
+
+// toPolicy builds the cors.Policy implied by the YAML block. Empty
+// AllowedMethods / AllowedHeaders fall back to the cors package's
+// defaults (GET/POST/PUT/DELETE/OPTIONS, Authorization/Content-Type).
+func (c *CORSConfig) toPolicy() cors.Policy {
+	return cors.Policy{
+		AllowedOrigins:   c.AllowedOrigins,
+		AllowedMethods:   c.AllowedMethods,
+		AllowedHeaders:   c.AllowedHeaders,
+		ExposedHeaders:   c.ExposedHeaders,
+		AllowCredentials: c.AllowCredentials,
+		MaxAge:           c.MaxAge,
+	}
 }

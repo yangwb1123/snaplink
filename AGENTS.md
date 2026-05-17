@@ -247,7 +247,9 @@ should follow:
 * `New<Provider>(dsn)` opens + migrates + returns; `Close()` releases.
 * `New<Provider>WithDB(db)` for shared-pool deployments + tests.
 * `sql.ErrNoRows` maps to the SDK's typed `ErrNoSuchX` sentinel.
-* Timestamps as `INTEGER` Unix seconds (SQLite has no native ts).
+* Timestamps as `INTEGER` Unix NANOSECONDS (SQLite has no native ts;
+  nanos preserve Go's time.Time precision so CreatedAt vs UpdatedAt
+  stay distinguishable on fast writes).
 * Nullable string columns via `nullable("") → NullString{}` so NULL
   reaches the DB (cleaner partial indexes).
 
@@ -1115,6 +1117,12 @@ releases:      # enabled
 geo:           # enabled, backend (static), lookup_timeout
                # static.entries[]: { cidr, country_code, region, city,
                #                     time_zone, recommended_language }
+security:      # body_limit.max_bytes (0=off)
+               # rate_limit: { enabled, default_per_sec, default_burst,
+               #               prefixes[]: { prefix, per_sec, burst } }
+               # cors: { enabled, allowed_origins[], allowed_methods[],
+               #         allowed_headers[], exposed_headers[],
+               #         allow_credentials, max_age }
 tenant:        # enabled, backend (memory), lookup_timeout, include_suspended
                # tenants[]: { id, slug, name, status, settings }
                # domains[]: { hostname, tenant_id, default_client_id,
