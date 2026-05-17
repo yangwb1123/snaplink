@@ -1,8 +1,9 @@
 # Built binaries (Go produces these at module root and cmd/*; the
-# Makefile builds into /bin).
+# Makefile builds into /bin; goreleaser snapshot output lands in /dist).
 /sso-server
 /cmd/sso-server/sso-server
 /bin/
+/dist/
 
 # Editor / OS noise
 .DS_Store

@@ -1,0 +1,49 @@
+# Release workflow. Fires when a `vX.Y.Z` tag is pushed to main.
+# Today release.disable=true in .goreleaser.yaml short-circuits the
+# upload step — the workflow runs end-to-end, verifies the build matrix
+# + SBOM generation succeed, then exits without publishing. Flip when
+# a remote (GitHub Releases / ghcr.io / private registry) is chosen.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write     # needed when release.disable flips to false (creates GH Release)
+  id-token: write     # OIDC token for keyless cosign signing (future)
+  packages: write     # needed when container push is wired
+
+jobs:
+  release:
+    name: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser's changelog needs full history to diff tags.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # syft is required for the sboms step in .goreleaser.yaml.
+      - uses: anchore/sbom-action/download-syft@v0
+
+      # cosign is required when the future signs: block in
+      # .goreleaser.yaml is uncommented. Cheap to install up front.
+      - uses: sigstore/cosign-installer@v3
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          # Pin to the major; minor bumps within v2 are non-breaking.
+          version: "~> v2"
+          args: release --clean
+        env:
+          # GITHUB_TOKEN is the default; explicit for clarity. When
+          # release.disable flips to false, this is the credential
+          # goreleaser uses to create the Release + upload assets.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

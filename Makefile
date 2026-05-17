@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race vet fmt build docker ci clean proto-lint proto-breaking docs-validate docs-serve
+.PHONY: help test race vet fmt build docker ci clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -46,6 +46,12 @@ proto-breaking: ## Check protos for wire-breaking changes vs main.
 
 docs-validate: ## Validate docs/openapi.yaml against the OpenAPI 3 schema.
 	@$(GO) run github.com/getkin/kin-openapi/cmd/validate@latest docs/openapi.yaml
+
+release-check: ## Lint .goreleaser.yaml without building anything.
+	$(GO) run github.com/goreleaser/goreleaser/v2@latest check
+
+release-snapshot: ## Local goreleaser dry-run (no tag, no publish, full matrix).
+	$(GO) run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=publish
 
 docs-serve: ## Serve docs/openapi.yaml in swagger-ui on localhost:8088.
 	@echo "swagger-ui at http://localhost:8088 (ctrl-c to stop)"
