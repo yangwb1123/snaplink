@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race vet fmt build docker ci clean proto-lint proto-breaking
+.PHONY: help test race vet fmt build docker ci clean proto-lint proto-breaking docs-validate docs-serve
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -43,6 +43,16 @@ proto-lint: ## Lint .proto files (MINIMAL ruleset, see proto/buf.yaml).
 proto-breaking: ## Check protos for wire-breaking changes vs main.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
 		--against "../.git#branch=main,subdir=proto"
+
+docs-validate: ## Validate docs/openapi.yaml against the OpenAPI 3 schema.
+	@$(GO) run github.com/getkin/kin-openapi/cmd/validate@latest docs/openapi.yaml
+
+docs-serve: ## Serve docs/openapi.yaml in swagger-ui on localhost:8088.
+	@echo "swagger-ui at http://localhost:8088 (ctrl-c to stop)"
+	@docker run --rm -p 8088:8080 \
+		-e SWAGGER_JSON=/spec/openapi.yaml \
+		-v $(PWD)/docs:/spec \
+		swaggerapi/swagger-ui
 
 ci: fmt vet race build proto-lint ## Run the same checks CI runs.
 

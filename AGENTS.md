@@ -88,6 +88,10 @@ make docker     # snaplink/sso-server:dev image (multi-stage distroless)
 
 # In-cluster deploy:
 kubectl apply -k deploy/k8s/   # see deploy/k8s/README.md for overlays
+
+# API specs:
+make docs-validate    # lint docs/openapi.yaml against OpenAPI 3.0 schema
+make docs-serve       # serve swagger-ui locally on :8088 (needs Docker)
 ```
 
 Re-generating protobuf code (rarely needed; checked-in stubs cover all imports):
@@ -826,6 +830,27 @@ go run ./cmd/sso-server --config cmd/sso-server/config.yaml \
 `config.Load(path)` is the legacy single-source entry point and remains
 a thin wrapper over `LoadFromSources(NewFileSource(path))` so zero call
 sites had to change when the Loader landed.
+
+---
+
+## API specifications
+
+Two schemas, two consumption surfaces:
+
+| Surface | Source of truth          | Consumers                             |
+|---------|--------------------------|---------------------------------------|
+| HTTP    | `docs/openapi.yaml` (OpenAPI 3.0) | swagger-ui, Postman/Insomnia/Bruno, ReadMe.io, Mintlify, Stoplight, OpenAPI Generator (client SDKs in 20+ languages) |
+| gRPC    | `proto/*.proto`          | `protoc` / `buf generate`, buf.build BSR, grpc-gateway, every grpc-* client lib |
+
+`docs/openapi.yaml` covers the core auth flow + self-service endpoints
+(login, send-code, logout, userinfo, /me/{permissions,roles,menus}, JWKS,
+health). The admin REST surface (`/api/v1/admin/*`), audit query API, and
+netpolicy CRUD are not in the spec yet — additive layering only when added,
+no schema rewrites needed.
+
+When you change a documented HTTP endpoint, update `docs/openapi.yaml` in
+the same commit. CI runs `make docs-validate` so a mismatched schema fails
+the PR.
 
 ---
 

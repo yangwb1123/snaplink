@@ -1,0 +1,587 @@
+# OpenAPI 3.0.3 specification for the snaplink/sso HTTP REST surface.
+#
+# Source of truth for Postman / Insomnia / ReadMe.io / Mintlify /
+# Stoplight / swagger-ui — every mainstream third-party API doc platform
+# accepts this file directly.
+#
+# Coverage scope (v1): core auth flow + self-service endpoints. Admin
+# REST surface (/api/v1/admin/*), audit query API, netpolicy CRUD, and
+# the OAuth callback / token endpoints are deferred to v2 — additive
+# layering only, no schema rewrites needed.
+#
+# Validate locally:    make docs-validate
+# Serve swagger-ui:    make docs-serve   (then open http://localhost:8088)
+
+openapi: 3.0.3
+
+info:
+  title: snaplink/sso HTTP API
+  version: 0.1.0
+  description: |
+    HTTP REST surface for the snaplink/sso server. Companion to the
+    gRPC services in `proto/` (Authorizer, AuditWriter, Discovery,
+    SnapshotAdminService, etc.) — operators typically expose this
+    HTTP surface to browsers/SPAs and the gRPC surface to in-cluster
+    apps.
+
+    JWTs returned by `/auth/login` are signed with Ed25519; verify
+    them locally using the JWKS at `/.well-known/jwks.json` (see
+    `ssoclient/remote/JWKSCache` for a Go reference implementation).
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  contact:
+    name: snaplink/sso maintainers
+    url: https://github.com/snaplink/sso
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev (cmd/sso-server default listen).
+  - url: https://{host}
+    description: Production deployment behind your TLS terminator.
+    variables:
+      host:
+        default: sso.example.com
+
+tags:
+  - name: auth
+    description: Login, token issuance, logout, code-based 2FA delivery.
+  - name: discovery
+    description: Health probe + JWKS for offline token verification.
+  - name: me
+    description: Self-service endpoints scoped to the bearer token's subject.
+  - name: userinfo
+    description: OpenID-style user profile fetch.
+
+paths:
+
+  /health:
+    get:
+      tags: [discovery]
+      summary: Liveness + identity probe.
+      description: |
+        Returns 200 with the issuer name as long as the process is
+        running. Used by Kubernetes liveness / readiness probes and by
+        load balancers as a cheap "is this instance alive" check.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Server is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /.well-known/jwks.json:
+    get:
+      tags: [discovery]
+      summary: JSON Web Key Set for local JWT verification.
+      description: |
+        Public keys for every registered `TokenIssuer` that implements
+        `JWKSProvider`. Cache for at most `Cache-Control: max-age`
+        seconds; refresh sooner when a token carries an unknown `kid`
+        (see `remote.JWKSCache` for the single-flight refetch pattern).
+      operationId: getJWKS
+      responses:
+        "200":
+          description: Active signing keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JWKS"
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Authenticate and receive a token.
+      description: |
+        Two-mode endpoint:
+
+        * **Discovery** (omit `provider`): returns the list of
+          authenticator names this client may use. Useful for SPAs
+          rendering a "Log in with…" picker.
+
+        * **Authenticate** (set `provider`): runs the named
+          authenticator's `Authenticate` step. Success returns an
+          access token + session id. The token's strategy
+          (`jwt` / `session`) is determined by the client's
+          `token_strategy` field in config.
+      operationId: postLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            examples:
+              passwordLogin:
+                summary: Password login for client "web-app".
+                value:
+                  provider: password
+                  client_id: web-app
+                  credential:
+                    username: alice
+                    password: "s3cret!"
+              discovery:
+                summary: Discover available providers for "web-app".
+                value:
+                  client_id: web-app
+      responses:
+        "200":
+          description: |
+            Either an authentication success (when `provider` was set)
+            or a discovery response (when omitted).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LoginResponse"
+                  - $ref: "#/components/schemas/LoginDiscoveryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Credentials rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Client inactive / tenant mismatch / authenticator not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/send-code:
+    post:
+      tags: [auth]
+      summary: Send a one-time code for the named authenticator.
+      description: |
+        Triggers code delivery for authenticators that implement
+        `CodeSender` (phone, email). The follow-up call to
+        `/auth/login` carries the delivered code as
+        `credential.code`.
+      operationId: postSendCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendCodeRequest"
+            examples:
+              phoneCode:
+                value: { provider: phone, target: "+15551234567" }
+              emailCode:
+                value: { provider: email, target: "user@example.com" }
+      responses:
+        "200":
+          description: Code sent. Body is empty / minimal.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          description: Delivery failed (downstream SMS / email error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /logout:
+    post:
+      tags: [auth]
+      summary: Revoke the current bearer token and / or named session.
+      description: |
+        Body is optional; bearer-only logouts are allowed. When both
+        a session id and a bearer are supplied, both are revoked
+        (covers the "log me out everywhere" case where the SPA holds
+        a JWT but the device that started the session is gone).
+      operationId: postLogout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: Logged out.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Neither session id nor bearer supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /userinfo:
+    get:
+      tags: [userinfo]
+      summary: Fetch the user record for the bearer's subject.
+      description: |
+        OpenID-style `/userinfo` endpoint — validates the bearer,
+        resolves the subject id, and returns the `User` record from
+        the configured `UserProvider`. The shape mirrors the User
+        struct in `types.go`.
+      operationId: getUserInfo
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Token valid but subject id has no User record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /permissions/me:
+    get:
+      tags: [me]
+      summary: Permissions of the bearer's subject for the inferred client.
+      description: |
+        Returns the flat permission list (no wildcards expanded) the
+        configured `permissions.Provider` resolves for the bearer.
+        Client id is taken from the JWT `aud` claim (first element)
+        when present.
+      operationId: getMyPermissions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Permission codes assigned to this subject.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Permission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /roles/me:
+    get:
+      tags: [me]
+      summary: Roles of the bearer's subject for the inferred client.
+      operationId: getMyRoles
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Role list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /menus/me:
+    get:
+      tags: [me]
+      summary: Menu tree the bearer's subject is authorized to see.
+      description: |
+        Tree shape (nested children + per-node buttons) matches the
+        `permissions.MenuTree` Go type. SPAs render this directly as
+        the navigation sidebar.
+      operationId: getMyMenus
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Authorized menu tree.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuTree"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Ed25519-signed JWT issued by `/auth/login`. Verify locally
+        against `/.well-known/jwks.json` rather than round-tripping
+        the server.
+
+  responses:
+    BadRequest:
+      description: Malformed request body or missing required field.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        issuer:
+          type: string
+          example: snaplink-sso
+
+    LoginRequest:
+      type: object
+      required: [client_id]
+      properties:
+        provider:
+          type: string
+          description: Authenticator name; omit for discovery.
+          example: password
+        client_id:
+          type: string
+          description: Registered Client.ID (per cmd/sso-server/config.yaml `clients[]`).
+          example: web-app
+        credential:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Provider-specific credential map. Standard keys:
+            `username` + `password` (password), `target` + `code`
+            (phone / email), `assertion` (keypair).
+        scope:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          description: Opaque value echoed back to redirect-based flows.
+
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_in, session_id]
+      properties:
+        access_token:
+          type: string
+          description: "Ed25519 JWT (when client uses `token_strategy: jwt`) or opaque session token (when `session`)."
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Token lifetime in seconds.
+        refresh_token:
+          type: string
+        scope:
+          type: string
+          description: Space-delimited scope list.
+        session_id:
+          type: string
+          description: Server-side session handle for logout calls.
+        token_strategy:
+          type: string
+          enum: [jwt, session]
+        country_code:
+          type: string
+          description: ISO 3166-1 alpha-2; populated when geo middleware is wired.
+        recommended_language:
+          type: string
+          description: BCP-47 tag; populated when geo middleware is wired.
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: "Present when `permissions.embed_in_login: true`."
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+          description: "Present when `permissions.embed_in_login: true`."
+        menus:
+          description: "Present when `permissions.embed_in_login: true`."
+          allOf:
+            - $ref: "#/components/schemas/MenuTree"
+
+    LoginDiscoveryResponse:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items:
+            type: string
+          description: Authenticator names this client may use.
+
+    SendCodeRequest:
+      type: object
+      required: [provider, target]
+      properties:
+        provider:
+          type: string
+          enum: [phone, email]
+        target:
+          type: string
+          description: Phone number (E.164) or email address.
+
+    LogoutRequest:
+      type: object
+      properties:
+        session_id:
+          type: string
+
+    User:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        external_id:
+          type: string
+        provider:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Permission:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          example: order:read
+        name:
+          type: string
+        description:
+          type: string
+
+    Role:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          example: admin
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+    Button:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        permission:
+          type: string
+
+    MenuItem:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        icon:
+          type: string
+        permission:
+          type: string
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItem"
+        buttons:
+          type: array
+          items:
+            $ref: "#/components/schemas/Button"
+
+    MenuTree:
+      type: array
+      items:
+        $ref: "#/components/schemas/MenuItem"
+
+    JWKS:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/JWK"
+
+    JWK:
+      type: object
+      required: [kty, use, kid]
+      properties:
+        kty:
+          type: string
+          example: OKP
+        crv:
+          type: string
+          example: Ed25519
+        x:
+          type: string
+          description: Base64url-encoded public key bytes.
+        use:
+          type: string
+          example: sig
+        alg:
+          type: string
+          example: EdDSA
+        kid:
+          type: string
+          description: First 8 bytes of sha256(pubkey), base64url-encoded.
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Stable error code (catalog in consts.go).
+          example: invalid_credentials
+        error_description:
+          type: string
+          description: Optional human-readable detail.

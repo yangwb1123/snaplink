@@ -1,11 +1,13 @@
 # Minimum-viable CI. Runs on every push to main and every PR.
 #
 # Jobs:
-#   * test   — gofmt, go vet, go build, go test -race -count=1
-#   * proto  — buf lint (always) + buf breaking (PR only, vs base branch)
-#   * docker — `docker build .` smoke (single-arch, no push) so a broken
-#              Dockerfile fails CI rather than being discovered when
-#              someone runs `make docker` locally
+#   * test    — gofmt, go vet, go build, go test -race -count=1
+#   * proto   — buf lint (always) + buf breaking (PR only, vs base branch)
+#   * docker  — `docker build .` smoke (single-arch, no push) so a broken
+#               Dockerfile fails CI rather than being discovered when
+#               someone runs `make docker` locally
+#   * openapi — kin-openapi validate on docs/openapi.yaml so schema
+#               typos / orphan refs fail the PR
 #
 # Intentionally NOT in scope for v1: container image push, multi-arch
 # matrix, release-tag automation. Each needs a registry choice and a
@@ -90,6 +92,20 @@ jobs:
         run: |
           buf breaking --against "../.git#branch=origin/${{ github.base_ref }},subdir=proto"
         working-directory: proto
+
+  openapi:
+    name: openapi schema validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: validate docs/openapi.yaml
+        run: make docs-validate
 
   docker:
     name: docker build (smoke)
