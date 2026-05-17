@@ -1,0 +1,12 @@
+# Provision the compose prometheus instance as the default datasource.
+# Grafana reads this file at startup; no admin click-through needed.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

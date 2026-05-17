@@ -1,0 +1,23 @@
+# Minimal sso-server config for the compose dev stack. Real deployments
+# layer overrides via:
+#
+#   * Environment variables on the container (SSO_<UPPER>__<UPPER>...)
+#   * Keys under /snaplink/config/* in etcd
+#
+# See README.md for the etcdctl recipes that demonstrate the override.
+
+server:
+  issuer: snaplink-sso
+  base_url: http://localhost:8080
+  listen: ":8080"
+  session_ttl: 24h
+  token_ttl: 1h
+  default_token_strategy: jwt
+
+logging:
+  level: info
+
+audit:
+  enabled: true
+  api_enabled: false
+  memory_capacity: 1000

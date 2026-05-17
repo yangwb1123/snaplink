@@ -1,0 +1,101 @@
+# Local-dev compose stack. Run from this directory:
+#
+#   docker compose up                              # sso-server + etcd
+#   docker compose --profile observability up      # adds prometheus + grafana
+#
+# Mirrors deploy/k8s/ for symmetry: the same image, the same config
+# shape, plus the etcd config source the in-cluster path leaves as
+# operator-add. New contributors should be able to clone the repo,
+# `docker compose up`, and have a working SSO server + observability
+# stack on localhost in under a minute.
+
+services:
+
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.6.4
+    container_name: snaplink-etcd
+    command:
+      - etcd
+      - --name=etcd0
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --data-dir=/etcd-data
+    ports:
+      - "2379:2379"
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  sso-server:
+    build:
+      # Build context is the repo root so the Dockerfile can COPY the
+      # whole module. The Dockerfile lives at repo-root, hence the
+      # explicit dockerfile path.
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: snaplink-sso
+    command:
+      - "--config=/etc/sso/config.yaml"
+      - "--etcd-endpoints=etcd:2379"
+      - "--etcd-prefix=/snaplink/config"
+    ports:
+      # Browser-facing HTTP (REST + JWKS + /livez + /readyz + /metrics).
+      - "8080:8080"
+      # gRPC back-channel (Authorizer + AuditWriter + Discovery).
+      - "8081:8081"
+    # 12-factor env overrides via the SSO_ source. Add entries like:
+    #   environment:
+    #     SSO_LOGGING__LEVEL: debug
+    #     SSO_AUDIT__MEMORY_CAPACITY: "50000"
+    # Block omitted by default so the file source is the only override
+    # path until you opt in.
+    volumes:
+      - ./config.yaml:/etc/sso/config.yaml:ro
+    depends_on:
+      etcd:
+        condition: service_healthy
+    # NO container healthcheck — the distroless/static base has no
+    # shell or HTTP client to exec. The host can curl :8080/livez
+    # directly to verify readiness.
+
+  # ---- observability stack — opt-in via `--profile observability` ----
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: snaplink-prom
+    profiles: ["observability"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../grafana/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+    depends_on:
+      - sso-server
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: snaplink-grafana
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "3000:3000"
+    volumes:
+      # Provision Prometheus as default datasource + auto-load the
+      # snaplink/sso dashboard so the operator can open Grafana and
+      # see graphs immediately.
+      - ./grafana-provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana-provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../grafana/sso-overview.json:/var/lib/grafana/dashboards/sso-overview.json:ro
+    depends_on:
+      - prometheus

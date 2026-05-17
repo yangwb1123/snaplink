@@ -1,0 +1,15 @@
+# Auto-load any dashboards under /var/lib/grafana/dashboards/ at
+# Grafana startup. The compose file bind-mounts
+# deploy/grafana/sso-overview.json there, so the SSO dashboard appears
+# under the "SSO" folder without manual import.
+
+apiVersion: 1
+
+providers:
+  - name: snaplink
+    folder: SSO
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

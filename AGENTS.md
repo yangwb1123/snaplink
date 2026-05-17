@@ -743,6 +743,25 @@ Pushes cheap concerns to the gateway:
 The Go server still re-checks tokens; the edge is fast-reject, not a trust
 boundary.
 
+### 8a. Local-dev compose stack (`deploy/compose/`)
+
+`docker compose up` for sso-server + etcd, or `docker compose
+--profile observability up` adds a Prometheus + Grafana stack with
+the snaplink dashboard auto-provisioned. Mirrors `deploy/k8s/` for
+symmetry: same Dockerfile, same config shape, just wired for a
+single host instead of a cluster.
+
+Used for: new-contributor onboarding (clone → up → working SSO),
+manual smoke tests of the etcd config source (the in-cluster path
+leaves etcd as operator-add; compose wires it by default), and
+end-to-end observability verification (real metrics flowing into
+real Grafana panels).
+
+NOT production-grade — single-node etcd, ephemeral volumes,
+admin/admin Grafana, anonymous viewer access. See
+`deploy/compose/README.md` for details on what's deliberately
+weak vs the K8s manifests.
+
 ### 8b. Kubernetes (`deploy/k8s/`)
 
 Kustomize-based base manifests for in-cluster deployment. Namespace +
