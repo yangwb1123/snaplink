@@ -1,13 +1,15 @@
 # Minimum-viable CI. Runs on every push to main and every PR.
 #
 # Jobs:
-#   * test  — gofmt, go vet, go build, go test -race -count=1
-#   * proto — buf lint (always) + buf breaking (PR only, vs base branch)
+#   * test   — gofmt, go vet, go build, go test -race -count=1
+#   * proto  — buf lint (always) + buf breaking (PR only, vs base branch)
+#   * docker — `docker build .` smoke (single-arch, no push) so a broken
+#              Dockerfile fails CI rather than being discovered when
+#              someone runs `make docker` locally
 #
-# Intentionally NOT in scope for v1: container image build/push,
-# multi-arch matrix, release-tag automation. Each needs a host
-# (ghcr.io? a private registry?) and a signing story; layer them on
-# once the repo has a remote.
+# Intentionally NOT in scope for v1: container image push, multi-arch
+# matrix, release-tag automation. Each needs a registry choice and a
+# signing story; layer them on once the repo has a remote.
 
 name: ci
 
@@ -88,3 +90,29 @@ jobs:
         run: |
           buf breaking --against "../.git#branch=origin/${{ github.base_ref }},subdir=proto"
         working-directory: proto
+
+  docker:
+    name: docker build (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # buildx (with the docker driver, not docker-container) enables the
+      # build-push-action's cache + future multi-arch story without a
+      # registry login. Single-platform here keeps the run fast.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          # GitHub Actions cache backend — survives across runs on the
+          # same ref without external infra.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Single-arch smoke is enough to catch Dockerfile breakage
+          # (missing files, syntax errors, broken go build). Multi-arch
+          # matrix lives in a follow-up once we have a push target.
+          platforms: linux/amd64
+          tags: snaplink/sso-server:ci
