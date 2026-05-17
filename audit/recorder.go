@@ -32,6 +32,7 @@ type Recorder struct {
 	sink    Sink
 	onError ErrorHandler
 	now     func() time.Time
+	chain   *chainer
 }
 
 type Option func(*Recorder)
@@ -46,6 +47,23 @@ func WithClock(now func() time.Time) Option {
 	return func(r *Recorder) { r.now = now }
 }
 
+// WithHashChain enables tamper-evident hash chaining over recorded
+// events. Each event's [Event.PrevHash] and [Event.Hash] fields are
+// stamped before the sink sees it, so a tampered event breaks the
+// chain at every subsequent event's recomputed hash.
+//
+// Verify offline with [VerifyChain] against a slice of events read
+// from the sink (in chain order, oldest first — MemorySink returns
+// newest-first by default).
+//
+// Scope: in-process. A process restart resets the chain to a fresh
+// genesis. Cross-restart continuity needs a persistent prev-hash
+// store, which is deployment-specific and left for the operator to
+// wire — see chainer.go for the hook point.
+func WithHashChain() Option {
+	return func(r *Recorder) { r.chain = &chainer{} }
+}
+
 func New(sink Sink, opts ...Option) *Recorder {
 	r := &Recorder{sink: sink, now: time.Now}
 	for _, opt := range opts {
@@ -58,13 +76,18 @@ func New(sink Sink, opts ...Option) *Recorder {
 func (r *Recorder) Sink() Sink { return r.sink }
 
 // Record persists e. Safe to call on a nil Recorder (no-op) so handlers can
-// always invoke it without guard. Timestamp is filled in if zero.
+// always invoke it without guard. Timestamp is filled in if zero. When the
+// Recorder was constructed with [WithHashChain], the event's PrevHash + Hash
+// fields are stamped before the sink sees it.
 func (r *Recorder) Record(ctx context.Context, e *Event) {
 	if r == nil || r.sink == nil || e == nil {
 		return
 	}
 	if e.Timestamp.IsZero() {
 		e.Timestamp = r.now()
+	}
+	if r.chain != nil {
+		r.chain.stamp(e)
 	}
 	if err := r.sink.Record(ctx, e); err != nil && r.onError != nil {
 		r.onError(err)

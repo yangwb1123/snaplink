@@ -212,6 +212,37 @@ dependency.
 To embed audit without the SSO server: import `audit` directly. To stream
 audit from another service: dial the gRPC `AuditWriter` service.
 
+### 3b. Audit hash chain (`audit/chainer.go`)
+
+Opt-in tamper-evidence over the audit stream. `audit.New(sink,
+audit.WithHashChain())` stamps each event with `PrevHash` + `Hash`
+(sha256 over canonical JSON) before the sink sees it. Tampering
+with any past event breaks `audit.VerifyChain(events)` at every
+subsequent event's recomputed hash.
+
+Scope and limitations explicit in the code:
+
+* In-process. A process restart starts a fresh chain (genesis
+  PrevHash = ""). Cross-restart continuity needs a persistent
+  prev-hash store, which is deployment-specific.
+* The hash covers content, not storage assignment (Sink-assigned
+  `ID` is excluded from the hash input). An attacker rewriting an
+  event's reason/outcome/actor breaks the chain; rewriting the
+  storage id alone doesn't, but also doesn't change what the event
+  *means*.
+* Tampering with the LAST event isn't detectable from the chain
+  alone — needs periodic external attestation (publish head hash
+  to a separate channel) or a cryptographic signature on the head
+  hash. Both out of scope for v1.
+* Stability caveat: reordering fields in `audit.Event` changes every
+  stored event's Hash. Treat field order as wire contract once a
+  deployment is recording chains.
+
+`VerifyChain` expects events in CHAIN ORDER (oldest first); the
+MemorySink returns query results newest-first by default — the
+error message nudges debuggers toward this with "events must be
+in chain order, oldest first".
+
 ### 4. Permissions (`permissions/`)
 
 `permissions.Provider` is the storage interface. `MemoryProvider` implements

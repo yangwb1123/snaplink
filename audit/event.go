@@ -104,4 +104,12 @@ type Event struct {
 	TokenID       string            `json:"token_id,omitempty"`
 	Reason        string            `json:"reason,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
+
+	// PrevHash + Hash form a tamper-evident chain when a Recorder
+	// is constructed with [WithHashChain]. PrevHash is the previous
+	// event's Hash; Hash is sha256(canonical-JSON of this event with
+	// Hash cleared). VerifyChain walks a sequence and reports any
+	// break. Empty for both = chain disabled.
+	PrevHash string `json:"prev_hash,omitempty"`
+	Hash     string `json:"hash,omitempty"`
 }
