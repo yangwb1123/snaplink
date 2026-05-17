@@ -34,6 +34,7 @@ import (
 	lockFile "github.com/snaplink/sso/bootstrap/lock/file"
 	lockNoop "github.com/snaplink/sso/bootstrap/lock/noop"
 	"github.com/snaplink/sso/config"
+	configetcd "github.com/snaplink/sso/config/etcd"
 	"github.com/snaplink/sso/defaultimpl"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
@@ -91,22 +92,47 @@ func main() {
 	grpcListen := flag.String("grpc-listen", ":8081", "gRPC listen address ('' to disable)")
 	tlsCert := flag.String("tls-cert", "", "TLS cert file (omit for HTTP)")
 	tlsKey := flag.String("tls-key", "", "TLS key file (omit for HTTP)")
+
+	// Optional centralized config: when --etcd-endpoints is set, an etcd
+	// Source slots into the Loader chain between env and flag, so a
+	// cluster-wide value beats the local file + env but a one-shot CLI
+	// override still wins. Endpoints empty = skip (etcd is an optional
+	// operator-side dep, not a runtime requirement).
+	etcdEndpoints := flag.String("etcd-endpoints", "", "comma-separated etcd endpoints for live config; empty disables (e.g. localhost:2379)")
+	etcdPrefix := flag.String("etcd-prefix", configetcd.DefaultPrefix, "etcd key prefix when --etcd-endpoints is set")
 	flag.Parse()
 
-	// Loader chain — priority low → high: file < env < flag. Operators
-	// drop a YAML file for the bulk of config, sprinkle ENV in container
-	// orchestrators (12-factor), and use CLI flags for ad-hoc overrides
-	// (debugging, one-shot reruns).
+	// Loader chain — priority low → high: file < env < etcd? < flag.
+	// Operators drop a YAML file for the bulk of config, sprinkle ENV in
+	// container orchestrators (12-factor), opt into etcd for cluster-wide
+	// live values, and use CLI flags for ad-hoc overrides (debugging,
+	// one-shot reruns).
 	flagSrc := config.NewFlagSource(flag.CommandLine).
 		Bind("listen", "server.listen").
 		Bind("log-level", "logging.level").
 		Bind("bootstrap-restore-from", "snapshot.restore_from")
 
-	cfg, err := config.LoadFromSources(context.Background(),
+	sources := []config.Source{
 		config.NewFileSource(*cfgPath),
 		config.NewEnvSource(),
-		flagSrc,
-	)
+	}
+	if *etcdEndpoints != "" {
+		etcdSrc, err := configetcd.New(configetcd.Config{
+			Endpoints: strings.Split(*etcdEndpoints, ","),
+			Prefix:    *etcdPrefix,
+		})
+		if err != nil {
+			fail("config/etcd: %v", err)
+		}
+		// Keep the connection open for the process lifetime. The Source
+		// only does one Get on Load and doesn't watch — cheap to hold
+		// open and avoids the close-on-error edge case if Load fails.
+		defer func() { _ = etcdSrc.Close() }()
+		sources = append(sources, etcdSrc)
+	}
+	sources = append(sources, flagSrc)
+
+	cfg, err := config.LoadFromSources(context.Background(), sources...)
 	if err != nil {
 		fail("config: %v", err)
 	}

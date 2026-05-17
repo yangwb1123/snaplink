@@ -808,10 +808,20 @@ implementations (lowest priority first; last source wins per key):
 Maps deep-merge, scalars + slices overwrite. Leaf string values from
 env/etcd run through `yaml.Unmarshal` so `"true"`→bool, `"42"`→int, and
 `"5s"` falls through as the string that downstream `time.Duration`
-parsing expects. `cmd/sso-server` already wires file + env + flag in
-that order; add `etcd.New` to the chain in `main.go` when you want
-remote config (out of the box not enabled — etcd is an optional dep
-on the operator's side).
+parsing expects. `cmd/sso-server` wires all four: file + env are
+always on; etcd activates when `--etcd-endpoints` is non-empty (slots
+between env and flag in the chain so cluster-wide values beat the
+local file but a CLI override still wins); flag is always last.
+
+```bash
+# File + env + flag only (default):
+go run ./cmd/sso-server --config cmd/sso-server/config.yaml
+
+# Layer etcd over the file:
+go run ./cmd/sso-server --config cmd/sso-server/config.yaml \
+    --etcd-endpoints localhost:2379 \
+    --etcd-prefix /snaplink/config
+```
 
 `config.Load(path)` is the legacy single-source entry point and remains
 a thin wrapper over `LoadFromSources(NewFileSource(path))` so zero call
