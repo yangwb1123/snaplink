@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/tenant"
@@ -37,6 +39,7 @@ type Server struct {
 	tenantStore          tenant.Store
 	tenantMiddlewareOpts TenantMiddlewareOptions
 	riskScorer           RiskScorer
+	metrics              *metrics.Metrics
 	issuer               string
 	sessionTTL           time.Duration
 	tokenTTL             time.Duration
@@ -235,6 +238,14 @@ func WithRiskScorer(r RiskScorer) Option {
 	return func(s *Server) { s.riskScorer = r }
 }
 
+// WithMetrics enables Prometheus instrumentation on the HTTP layer +
+// login / token / risk-scoring counters. The Server's Handler() will
+// also expose /metrics for scraping the supplied registry. Omit the
+// option for zero overhead (no middleware, no counters).
+func WithMetrics(m *metrics.Metrics) Option {
+	return func(s *Server) { s.metrics = m }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -290,9 +301,24 @@ func (s *Server) Mount() {
 }
 
 // Handler returns the http.Handler for the server.
+//
+// When [WithMetrics] is set, the returned handler additionally:
+//
+//   - Serves /metrics from the supplied Prometheus registry (outside
+//     the SSO router so scrapes do not self-inflate the counters).
+//   - Wraps every other request in middleware that records the HTTP
+//     request count + duration. The /metrics endpoint is NOT wrapped.
+//
+// Without metrics the handler is just the router, no overhead.
 func (s *Server) Handler() http.Handler {
 	s.Mount()
-	return s.router
+	if s.metrics == nil {
+		return s.router
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
+	mux.Handle("/", metrics.Middleware(s.metrics)(s.router))
+	return mux
 }
 
 func (s *Server) getAuthenticator(name string) (Authenticator, error) {

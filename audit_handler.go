@@ -215,9 +215,13 @@ func setMeta(e *audit.Event, key, val string) {
 	e.Metadata[key] = val
 }
 
-// recordLoginFailure emits a login-failure audit event. Reason is one of the
-// Err* constants describing why authentication was refused.
+// recordLoginFailure emits a login-failure audit event AND bumps the
+// failure counter on the metrics registry (nil-safe). Reason is one of
+// the Err* constants describing why authentication was refused.
 func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reason string) {
+	if s.metrics != nil {
+		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "failure").Inc()
+	}
 	if s.auditor == nil {
 		return
 	}
@@ -230,8 +234,14 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
-// recordLoginSuccess emits a login event after a fully successful login flow.
+// recordLoginSuccess emits a login event after a fully successful login flow
+// AND bumps the success counter + tokens_issued counter on the metrics
+// registry (nil-safe).
 func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+	if s.metrics != nil {
+		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "success").Inc()
+		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
+	}
 	if s.auditor == nil {
 		return
 	}

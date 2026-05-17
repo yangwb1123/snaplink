@@ -157,10 +157,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		case assessment == nil:
 			// Defensive: a scorer that returns (nil, nil) is misbehaving.
 			s.logger.Error("risk scorer returned nil assessment", "user", result.UserID, "client", req.ClientID)
-		case assessment.Decision == DecisionDeny:
-			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrRiskDenied)
-			ctx.JSON(http.StatusForbidden, errorBody(ErrRiskDenied))
-			return
+		default:
+			if s.metrics != nil {
+				s.metrics.RiskDecisionsTotal.WithLabelValues(string(assessment.Decision)).Inc()
+			}
+			if assessment.Decision == DecisionDeny {
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrRiskDenied)
+				ctx.JSON(http.StatusForbidden, errorBody(ErrRiskDenied))
+				return
+			}
 			// DecisionRequireMFA: documented in risk.go as future-reserved.
 			// Today we treat it as Allow (so a forward-looking scorer can
 			// emit it without breaking flows). When MFA orchestration lands,

@@ -761,6 +761,36 @@ kubectl apply -k deploy/k8s/
 HPA, NetworkPolicy, PDB, ServiceMonitor, ServiceAccount) — each is one
 config decision that varies per environment.
 
+### 8c. Metrics (`metrics/`)
+
+Prometheus instrumentation. Wire `sso.WithMetrics(metrics.New())` and
+the Server's `Handler()` additionally serves `/metrics` (outside the
+router so scrapes don't self-inflate) and wraps every other request
+in an HTTP middleware that records count + duration.
+
+Five bounded-cardinality collectors:
+
+| Metric                              | Type      | Labels                       |
+|-------------------------------------|-----------|------------------------------|
+| `sso_http_requests_total`           | Counter   | method, status_class         |
+| `sso_http_request_duration_seconds` | Histogram | method                       |
+| `sso_login_attempts_total`          | Counter   | provider, outcome            |
+| `sso_tokens_issued_total`           | Counter   | strategy                     |
+| `sso_risk_decisions_total`          | Counter   | decision                     |
+
+Plus the standard Go runtime + process collectors (`go_*`, `process_*`).
+All bounded by design: `status_class` (2xx / 4xx / 5xx) not raw code,
+`method` not path, `provider` not user id. Per-endpoint breakdowns
+should be derived from traces, not from labels.
+
+Construct once at boot, reuse across the process. `metrics.New()`
+returns a fresh isolated registry suitable for `cmd/sso-server`;
+`metrics.NewWithRegistry(reg)` binds to an existing registerer when
+embedding the SSO server in a larger app.
+
+Zero overhead when [WithMetrics] is omitted — the Handler returns the
+bare router and no instrumentation runs.
+
 ### 9. Risk scoring (`risk.go`)
 
 `sso.RiskScorer` is an optional SPI that runs on every `/auth/login`
