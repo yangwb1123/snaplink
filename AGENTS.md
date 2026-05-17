@@ -80,6 +80,14 @@ go run ./cmd/sso-server --config cmd/sso-server/config.yaml \
 
 # Disable gRPC (HTTP-only)
 go run ./cmd/sso-server --config cmd/sso-server/config.yaml --grpc-listen ""
+
+# Or via Makefile (mirrors what CI runs):
+make build      # bin/sso-server
+make ci         # gofmt + vet + race + build + proto-lint
+make docker     # snaplink/sso-server:dev image (multi-stage distroless)
+
+# In-cluster deploy:
+kubectl apply -k deploy/k8s/   # see deploy/k8s/README.md for overlays
 ```
 
 Re-generating protobuf code (rarely needed; checked-in stubs cover all imports):
@@ -107,7 +115,15 @@ go test -v ./ssoclient/remote/
 
 # Single test, repeated (good for flake hunts)
 go test -run TestDiscovery_Watch_StreamsAddedAndRemoved -count=10 ./grpcserver/
+
+# Cross-wire E2E (login → JWKS-verified token → bufconn-gRPC authz/audit):
+go test -run TestE2E -v .
 ```
+
+The E2E suite (`e2e_test.go`, package `sso_test`) stands up a real
+sso.Server on httptest + bufconn and drives `examples/appcore.Handler`
+through it with the REMOTE ssoclient implementations. If you change
+anything that crosses the gRPC or JWKS wire, run those tests.
 
 Current coverage (informational, not a gate):
 
@@ -692,6 +708,14 @@ in-process) while delegating authz to a central server.
 unknown `kid`, so key rotation lands within one extra HTTP round trip rather
 than a full refresh interval.
 
+`ssoclient/dev` is the third option: drop-in `Auth`/`Authz`/`Audit` stubs
+that bypass real verification for local UI iteration. `ValidateToken`
+returns a configurable fake Subject, `Check` defaults to AllowAll,
+`Record` is a no-op (or mirrors to a sink). Every constructor emits a
+one-time stderr `AUTH BYPASS ACTIVE` warning on first non-silent call
+so accidental production use is loud. Suppress in tests of the dev
+package itself via `WithSilent` / `WithSilentAuthz` / `WithSilentAudit`.
+
 ### 8. OpenResty edge (`deploy/openresty/`)
 
 Pushes cheap concerns to the gateway:
@@ -709,6 +733,24 @@ Pushes cheap concerns to the gateway:
 
 The Go server still re-checks tokens; the edge is fast-reject, not a trust
 boundary.
+
+### 8b. Kubernetes (`deploy/k8s/`)
+
+Kustomize-based base manifests for in-cluster deployment. Namespace +
+Deployment (distroless-friendly pod security: `runAsNonRoot`,
+`readOnlyRootFilesystem`, drop ALL caps, `seccompProfile: RuntimeDefault`)
++ Service (named `http`/8080 + `grpc`/8081 ports) + ConfigMap via
+`configMapGenerator` so file edits hash the name and trigger rolling
+restarts on the next apply.
+
+```bash
+kubectl apply -k deploy/k8s/
+```
+
+`deploy/k8s/README.md` covers the three-layer config story (file → env
+→ etcd) and explicitly enumerates what's deferred to overlays (ingress,
+HPA, NetworkPolicy, PDB, ServiceMonitor, ServiceAccount) — each is one
+config decision that varies per environment.
 
 ---
 
@@ -750,6 +792,30 @@ tenant:        # enabled, backend (memory), lookup_timeout, include_suspended
 `client_id: ""` (empty string) is a valid bucket — used by the demo so tokens
 without an `aud` claim still resolve to a role. Production code should issue
 tokens with an explicit audience and key permissions under the real client_id.
+
+### Multi-source loader
+
+`config.Loader` composes a prioritized chain of `config.Source`
+implementations (lowest priority first; last source wins per key):
+
+| Source                       | Where it lives          | When to use                              |
+|------------------------------|-------------------------|------------------------------------------|
+| `config.NewFileSource(path)` | `config/source_file.go` | Baseline YAML at `--config`              |
+| `config.NewEnvSource()`      | `config/source_env.go`  | 12-factor overrides (`SSO_<UPPER>__...`) |
+| `etcd.New(cfg)`              | `config/etcd/`          | Centralized live config in K8s clusters  |
+| `config.NewFlagSource(fs)`   | `config/source_flag.go` | Explicit CLI overrides via `Bind()`      |
+
+Maps deep-merge, scalars + slices overwrite. Leaf string values from
+env/etcd run through `yaml.Unmarshal` so `"true"`→bool, `"42"`→int, and
+`"5s"` falls through as the string that downstream `time.Duration`
+parsing expects. `cmd/sso-server` already wires file + env + flag in
+that order; add `etcd.New` to the chain in `main.go` when you want
+remote config (out of the box not enabled — etcd is an optional dep
+on the operator's side).
+
+`config.Load(path)` is the legacy single-source entry point and remains
+a thin wrapper over `LoadFromSources(NewFileSource(path))` so zero call
+sites had to change when the Loader landed.
 
 ---
 
