@@ -148,6 +148,7 @@ Current coverage (informational, not a gate):
 | bootstrap/file | 84.2% |
 | bootstrap/memory | 100% |
 | cors | 100% |
+| config | 88.2% |
 | defaultimpl | 79.1% |
 | defaultimpl/sqlite | 80.6% |
 | geo | 100% |
@@ -163,9 +164,9 @@ Current coverage (informational, not a gate):
 | registry/memory | 85.7% |
 | registry/etcd | 16.7% (logic-only; no etcd server) |
 | releases | 88.2% |
-| snapshot | 69.9% |
+| snapshot | 71.5% |
 | ssoclient/dev | 87.7% |
-| ssoclient/local | 69.6% |
+| ssoclient/local | 92.9% |
 | ssoclient/remote | 77.5% |
 | tenant | 100% |
 | tenant/memory | 85.3% |
