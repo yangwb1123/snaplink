@@ -110,6 +110,8 @@ const (
 	ErrUnsupportedResponseType   = "unsupported_response_type"
 	ErrRefreshTokenNotConfigured = "refresh_token_not_configured"
 	ErrInvalidScope              = "invalid_scope"
+	ErrInvalidPKCEMethod         = "invalid_pkce_method"
+	ErrPKCERequired              = "pkce_required"
 )
 
 // Status strings returned in successful responses.
@@ -137,6 +139,18 @@ const (
 const (
 	TokenStrategyJWT     = "jwt"
 	TokenStrategySession = "session"
+)
+
+// PKCE (RFC 7636) method names + verifier length bounds. The RFC mandates
+// support for "S256" and tolerates "plain" only for legacy clients —
+// production deployments should reject "plain" via deployment policy
+// (Client.RequirePKCE only enforces presence, not method choice; a
+// future tightening can add a per-client AllowedPKCEMethods filter).
+const (
+	PKCEMethodPlain    = "plain"
+	PKCEMethodS256     = "S256"
+	PKCEVerifierMinLen = 43  // per RFC 7636 §4.1
+	PKCEVerifierMaxLen = 128 // per RFC 7636 §4.1
 )
 
 // Dependency names referenced by Server.requireDeps.

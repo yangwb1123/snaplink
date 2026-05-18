@@ -44,6 +44,15 @@ type Client struct {
 	// context, which is the backward-compatible behavior for
 	// single-tenant deployments.
 	TenantID string `json:"tenant_id,omitempty"`
+
+	// RequirePKCE forces authorization_code requests against this
+	// client to carry a code_challenge — the standard tightening
+	// for public clients (SPAs, mobile apps) that can't safely hold
+	// a client_secret. When true, /auth/login with response_type=code
+	// without a code_challenge returns 400 pkce_required. When false
+	// (the default), PKCE is opt-in per-request — the exchange
+	// verifies the challenge only when one was presented at login.
+	RequirePKCE bool `json:"require_pkce,omitempty" yaml:"require_pkce,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

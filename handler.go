@@ -3,6 +3,8 @@ package sso
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -64,14 +66,16 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 
 func (s *Server) handleLogin(ctx HandlerContext) {
 	var req struct {
-		Provider     string            `json:"provider"`
-		Credential   map[string]string `json:"credential"`
-		ClientID     string            `json:"client_id"`
-		Scope        []string          `json:"scope"`
-		State        string            `json:"state"`
-		ResponseType string            `json:"response_type"` // "code" → return auth code instead of token
-		RedirectURI  string            `json:"redirect_uri"`  // required when response_type=code
-		Nonce        string            `json:"nonce"`         // OIDC nonce (passed through to AuthCode)
+		Provider            string            `json:"provider"`
+		Credential          map[string]string `json:"credential"`
+		ClientID            string            `json:"client_id"`
+		Scope               []string          `json:"scope"`
+		State               string            `json:"state"`
+		ResponseType        string            `json:"response_type"`         // "code" → return auth code instead of token
+		RedirectURI         string            `json:"redirect_uri"`          // required when response_type=code
+		Nonce               string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
+		CodeChallenge       string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
+		CodeChallengeMethod string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
@@ -206,6 +210,32 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
 			return
 		}
+		// PKCE validation per RFC 7636 §4.3:
+		// * If client policy requires PKCE, code_challenge MUST be set.
+		// * If code_challenge IS set, length and method MUST be valid.
+		// * Empty method defaults to "plain" per §4.3 (callers should
+		//   prefer S256; "plain" stays for legacy interop).
+		if req.CodeChallenge == "" {
+			if client.RequirePKCE {
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrPKCERequired)
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrPKCERequired))
+				return
+			}
+		} else {
+			if l := len(req.CodeChallenge); l < PKCEVerifierMinLen || l > PKCEVerifierMaxLen {
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+				return
+			}
+			if !isValidPKCEMethod(req.CodeChallengeMethod) {
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidPKCEMethod)
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidPKCEMethod))
+				return
+			}
+			if req.CodeChallengeMethod == "" {
+				req.CodeChallengeMethod = PKCEMethodPlain
+			}
+		}
 		code, err := s.issueAuthCode(ctx.Request().Context(), result, &req, client)
 		if err != nil {
 			s.logger.Error("failed to issue auth code", "error", err)
@@ -321,14 +351,16 @@ func (s *Server) issueAuthCode(
 	ctx context.Context,
 	result *AuthResult,
 	req *struct {
-		Provider     string            `json:"provider"`
-		Credential   map[string]string `json:"credential"`
-		ClientID     string            `json:"client_id"`
-		Scope        []string          `json:"scope"`
-		State        string            `json:"state"`
-		ResponseType string            `json:"response_type"`
-		RedirectURI  string            `json:"redirect_uri"`
-		Nonce        string            `json:"nonce"`
+		Provider            string            `json:"provider"`
+		Credential          map[string]string `json:"credential"`
+		ClientID            string            `json:"client_id"`
+		Scope               []string          `json:"scope"`
+		State               string            `json:"state"`
+		ResponseType        string            `json:"response_type"`
+		RedirectURI         string            `json:"redirect_uri"`
+		Nonce               string            `json:"nonce"`
+		CodeChallenge       string            `json:"code_challenge"`
+		CodeChallengeMethod string            `json:"code_challenge_method"`
 	},
 	client *Client,
 ) (string, error) {
@@ -341,19 +373,50 @@ func (s *Server) issueAuthCode(
 		ttl = DefaultAuthCodeTTL
 	}
 	entry := &AuthCode{
-		UserID:      result.UserID,
-		ClientID:    client.ID,
-		RedirectURI: req.RedirectURI,
-		Scopes:      append([]string(nil), req.Scope...),
-		Nonce:       req.Nonce,
-		Provider:    result.Provider,
-		Attributes:  result.Attributes,
-		ExpiresAt:   time.Now().Add(ttl),
+		UserID:              result.UserID,
+		ClientID:            client.ID,
+		RedirectURI:         req.RedirectURI,
+		Scopes:              append([]string(nil), req.Scope...),
+		Nonce:               req.Nonce,
+		Provider:            result.Provider,
+		Attributes:          result.Attributes,
+		CodeChallenge:       req.CodeChallenge,
+		CodeChallengeMethod: req.CodeChallengeMethod,
+		ExpiresAt:           time.Now().Add(ttl),
 	}
 	if err := s.authCodeStore.Issue(ctx, code, entry); err != nil {
 		return "", fmt.Errorf("store auth code: %w", err)
 	}
 	return code, nil
+}
+
+// isValidPKCEMethod reports whether the named PKCE challenge method is
+// one we support. Empty defaults to "plain" per RFC 7636 §4.3 (the
+// caller stamps the default after this check); "S256" is the strongly
+// recommended method for production.
+func isValidPKCEMethod(method string) bool {
+	return method == "" || method == PKCEMethodPlain || method == PKCEMethodS256
+}
+
+// verifyPKCE returns true when the supplied verifier derives to the
+// stored challenge under the named method. Constant-time comparison
+// closes off timing-oracle attacks on the challenge value.
+//
+// An empty challenge means no PKCE binding was set at issue; callers
+// MUST NOT invoke this helper in that case (the exchange skips PKCE
+// entirely when info.CodeChallenge is empty — backwards compatible
+// with confidential clients).
+func verifyPKCE(method, challenge, verifier string) bool {
+	switch method {
+	case PKCEMethodS256:
+		sum := sha256.Sum256([]byte(verifier))
+		derived := base64.RawURLEncoding.EncodeToString(sum[:])
+		return subtle.ConstantTimeCompare([]byte(derived), []byte(challenge)) == 1
+	case PKCEMethodPlain, "":
+		return subtle.ConstantTimeCompare([]byte(verifier), []byte(challenge)) == 1
+	default:
+		return false
+	}
 }
 
 // generateAuthCodeBytes mints a cryptographically random base64url code.
@@ -523,6 +586,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		RefreshToken string `json:"refresh_token"`
 		Scope        string `json:"scope"`
 		RedirectURI  string `json:"redirect_uri"`
+		CodeVerifier string `json:"code_verifier"` // PKCE RFC 7636 §4.5
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -574,6 +638,22 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		if info.RedirectURI != "" && req.RedirectURI != info.RedirectURI {
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
 			return
+		}
+		// PKCE verification per RFC 7636 §4.6: if a challenge was
+		// captured at issue, the exchange MUST present a verifier
+		// that derives to it under the original method. All failure
+		// cases (missing verifier, malformed verifier, wrong verifier)
+		// map to invalid_grant — RFC-mandated, and the oracle-leak
+		// hardening matches the rest of the code exchange.
+		if info.CodeChallenge != "" {
+			if l := len(req.CodeVerifier); l < PKCEVerifierMinLen || l > PKCEVerifierMaxLen {
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+				return
+			}
+			if !verifyPKCE(info.CodeChallengeMethod, info.CodeChallenge, req.CodeVerifier) {
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+				return
+			}
 		}
 		strategy, ti, err := s.issuerForClient(client)
 		if err != nil {

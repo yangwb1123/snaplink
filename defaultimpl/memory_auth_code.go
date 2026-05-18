@@ -41,14 +41,16 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *sso.Au
 	scopes := append([]string(nil), info.Scopes...)
 	attrs := copyMap(info.Attributes)
 	m.entries[code] = &sso.AuthCode{
-		UserID:      info.UserID,
-		ClientID:    info.ClientID,
-		RedirectURI: info.RedirectURI,
-		Scopes:      scopes,
-		Nonce:       info.Nonce,
-		Provider:    info.Provider,
-		Attributes:  attrs,
-		ExpiresAt:   info.ExpiresAt,
+		UserID:              info.UserID,
+		ClientID:            info.ClientID,
+		RedirectURI:         info.RedirectURI,
+		Scopes:              scopes,
+		Nonce:               info.Nonce,
+		Provider:            info.Provider,
+		Attributes:          attrs,
+		CodeChallenge:       info.CodeChallenge,
+		CodeChallengeMethod: info.CodeChallengeMethod,
+		ExpiresAt:           info.ExpiresAt,
 	}
 	return nil
 }

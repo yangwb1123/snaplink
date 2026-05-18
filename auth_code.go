@@ -14,15 +14,24 @@ import (
 // the exchange request supplies the same value (RFC 6749 §4.1.3). Nonce
 // is stored for the OIDC ID Token nonce-binding requirement; the server
 // passes it back unchanged to the issuer (future OIDC work).
+//
+// CodeChallenge + CodeChallengeMethod capture the PKCE (RFC 7636) binding
+// when a public client opts in. When CodeChallenge is empty, PKCE is
+// skipped at exchange entirely — backwards compatible with confidential
+// clients that don't use PKCE. When non-empty, the exchange MUST present
+// a code_verifier that derives to this challenge under the named method;
+// failure maps to invalid_grant per RFC 7636 §4.6.
 type AuthCode struct {
-	UserID      string
-	ClientID    string
-	RedirectURI string
-	Scopes      []string
-	Nonce       string
-	Provider    string            // authentication method used at issue time
-	Attributes  map[string]string // forwarded into the token subject's Claims
-	ExpiresAt   time.Time
+	UserID              string
+	ClientID            string
+	RedirectURI         string
+	Scopes              []string
+	Nonce               string
+	Provider            string            // authentication method used at issue time
+	Attributes          map[string]string // forwarded into the token subject's Claims
+	CodeChallenge       string            // PKCE challenge captured at issue (empty = no PKCE)
+	CodeChallengeMethod string            // PKCE method: "S256" | "plain"
+	ExpiresAt           time.Time
 }
 
 // IsExpired reports whether the code's lifetime has elapsed. Callers that
