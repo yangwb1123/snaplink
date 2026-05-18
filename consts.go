@@ -83,6 +83,13 @@ const (
 	KeyNbf       = "nbf"
 	KeyClientID  = "client_id"
 	KeyStrategy  = "token_strategy_used"
+
+	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
+	KeyIDToken = "id_token"
+
+	// ScopeOpenID triggers OIDC ID Token issuance when an IDTokenIssuer
+	// is wired (OIDC Core §3.1.2.1).
+	ScopeOpenID = "openid"
 )
 
 // Stable error code strings returned to API callers.

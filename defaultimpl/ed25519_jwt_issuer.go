@@ -116,6 +116,24 @@ type ed25519Payload struct {
 	Extra map[string]string `json:"ext,omitempty"`
 }
 
+// ed25519IDPayload is the ID-Token-specific claim set, distinct from
+// access tokens because OIDC names some fields differently (aud is a
+// scalar string when single-valued in many real deployments; auth_time
+// is a first-class claim; nonce/amr/acr/azp are OIDC-specific).
+type ed25519IDPayload struct {
+	Iss      string            `json:"iss,omitempty"`
+	Sub      string            `json:"sub,omitempty"`
+	Aud      string            `json:"aud,omitempty"`
+	Exp      int64             `json:"exp,omitempty"`
+	Iat      int64             `json:"iat,omitempty"`
+	Nonce    string            `json:"nonce,omitempty"`
+	AuthTime int64             `json:"auth_time,omitempty"`
+	AMR      []string          `json:"amr,omitempty"`
+	ACR      string            `json:"acr,omitempty"`
+	AZP      string            `json:"azp,omitempty"`
+	Extra    map[string]string `json:"ext,omitempty"`
+}
+
 func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes []string) (*sso.Token, error) {
 	if subject == nil || subject.ID == "" {
 		return nil, errors.New("ed25519: subject required")
@@ -217,6 +235,64 @@ func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
 	return nil
 }
 
+// IssueIDToken signs an OIDC ID Token using the same Ed25519 key as the
+// access token issuer — by design, downstream relying parties verify
+// both with one JWKS entry. ttl falls back to the issuer's tokenTTL
+// when req.TTL is zero (matching access-token lifetime keeps
+// expiration semantics consistent across the pair).
+//
+// All OIDC-mandated fields are stamped automatically (iss, sub, aud,
+// exp, iat). Nonce / AuthTime / AMR / ACR / AZP / extra Claims are
+// projected only when non-zero so the wire stays minimal — relying
+// parties branch on field presence per OIDC Core §2.
+func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *sso.IDTokenRequest) (string, error) {
+	if req == nil || req.Subject == "" || req.Audience == "" {
+		return "", errors.New("ed25519: id token requires subject + audience")
+	}
+	ttl := req.TTL
+	if ttl <= 0 {
+		ttl = j.tokenTTL
+	}
+	now := time.Now()
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	payload := ed25519IDPayload{
+		Iss:   j.issuer,
+		Sub:   req.Subject,
+		Aud:   req.Audience,
+		Exp:   now.Add(ttl).Unix(),
+		Iat:   now.Unix(),
+		Nonce: req.Nonce,
+		AMR:   req.AMR,
+		ACR:   req.ACR,
+		AZP:   req.AZP,
+		Extra: req.Claims,
+	}
+	if !req.AuthTime.IsZero() {
+		payload.AuthTime = req.AuthTime.Unix()
+	}
+	signingInput, err := idTokenSigningInput(header, payload)
+	if err != nil {
+		return "", err
+	}
+	sig := ed25519.Sign(j.privateKey, signingInput)
+	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// idTokenSigningInput is the ID-token mirror of jwtSigningInput — same
+// JOSE encoding, but parametrized on the ID payload shape.
+func idTokenSigningInput(header ed25519Header, payload ed25519IDPayload) ([]byte, error) {
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return nil, err
+	}
+	pb, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
+	return []byte(encoded), nil
+}
+
 // JWKS returns the issuer's public key as a single JWK suitable for inclusion
 // in the /.well-known/jwks.json document. The sso package's JWKS handler
 // calls this when an issuer implements sso.JWKSProvider.
@@ -250,3 +326,7 @@ func fingerprintKid(pub ed25519.PublicKey) string {
 	sum := sha256.Sum256(pub)
 	return base64.RawURLEncoding.EncodeToString(sum[:8])
 }
+
+// Compile-time check: the same issuer can mint OIDC ID Tokens, so
+// operators don't need a second key + JWKS entry.
+var _ sso.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)

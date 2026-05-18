@@ -54,6 +54,7 @@ type Server struct {
 	authCodeTTL          time.Duration
 	refreshTokenStore    RefreshTokenStore
 	refreshTokenTTL      time.Duration
+	idTokenIssuer        IDTokenIssuer
 }
 
 // Option configures the Server.
@@ -135,6 +136,19 @@ func WithAuthCodeStore(store AuthCodeStore, ttl time.Duration) Option {
 			s.authCodeTTL = ttl
 		}
 	}
+}
+
+// WithIDTokenIssuer enables OpenID Connect ID Token emission alongside
+// the access token whenever a login or token-exchange request carries
+// the "openid" scope. Without it, the `id_token` field is omitted from
+// every response — relying parties built against the access-token-only
+// flows keep working unchanged.
+//
+// Pass the same Ed25519JWTIssuer as both WithTokenIssuer and
+// WithIDTokenIssuer to share one signing key + one JWKS entry —
+// that's the canonical wiring for a single-key OIDC deployment.
+func WithIDTokenIssuer(issuer IDTokenIssuer) Option {
+	return func(s *Server) { s.idTokenIssuer = issuer }
 }
 
 // WithRefreshTokenStore enables the OAuth 2.0 refresh_token grant on the

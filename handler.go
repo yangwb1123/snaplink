@@ -329,6 +329,26 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		KeyScope:         token.Scope,
 		KeyTokenStrategy: strategy,
 	}
+	// OIDC ID Token: emit alongside the access token whenever the
+	// caller requested "openid" scope AND an issuer is wired. Errors
+	// fail open — a misconfigured ID-token issuer shouldn't block the
+	// underlying authentication, the relying party just won't get
+	// id_token in the response.
+	if hasOpenIDScope(req.Scope) && s.idTokenIssuer != nil {
+		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+			Subject:  result.UserID,
+			Audience: client.ID,
+			Nonce:    req.Nonce,
+			AuthTime: time.Now(),
+			AMR:      []string{result.Provider},
+			Claims:   result.Attributes,
+		})
+		if err != nil {
+			s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
+		} else {
+			resp[KeyIDToken] = idToken
+		}
+	}
 	if result.CountryCode != "" {
 		resp[KeyCountryCode] = result.CountryCode
 	}
@@ -690,6 +710,24 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
 				resp[KeyRefreshToken] = rt
+			}
+		}
+		// OIDC ID Token on the authorization_code path: same gate as
+		// the direct-mint login flow, but the scope + nonce come from
+		// what we captured at issue time, not from the exchange body.
+		if hasOpenIDScope(info.Scopes) && s.idTokenIssuer != nil {
+			idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+				Subject:  info.UserID,
+				Audience: client.ID,
+				Nonce:    info.Nonce,
+				AuthTime: time.Now(),
+				AMR:      []string{info.Provider},
+				Claims:   info.Attributes,
+			})
+			if err != nil {
+				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
+			} else {
+				resp[KeyIDToken] = idToken
 			}
 		}
 		ctx.JSON(http.StatusOK, resp)
