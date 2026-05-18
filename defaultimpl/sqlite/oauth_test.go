@@ -1,0 +1,299 @@
+package sqlite_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/defaultimpl/sqlite"
+)
+
+// freshSharedDSN returns a per-test in-memory DB shared across all
+// connections in this process. cache=shared lets the connection pool
+// keep open across goroutines without losing the table.
+func freshSharedDSN(t *testing.T) string {
+	t.Helper()
+	// Unique name per-test so parallel tests don't share schema state.
+	return "file:" + t.Name() + ".db?mode=memory&cache=shared&_busy_timeout=5000"
+}
+
+// ---------- AuthCodeStore ----------
+
+func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
+	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	in := &sso.AuthCode{
+		UserID:              "u-1",
+		ClientID:            "web",
+		RedirectURI:         "https://app/cb",
+		Scopes:              []string{"openid", "profile"},
+		Nonce:               "n1",
+		Provider:            "password",
+		Attributes:          map[string]string{"role": "admin"},
+		CodeChallenge:       "challenge-xyz",
+		CodeChallengeMethod: "S256",
+		ExpiresAt:           time.Now().Add(time.Minute),
+	}
+	if err := st.Issue(context.Background(), "code-1", in); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	out, err := st.Consume(context.Background(), "code-1")
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if out.UserID != "u-1" || out.ClientID != "web" || out.RedirectURI != "https://app/cb" {
+		t.Errorf("payload mismatch: %+v", out)
+	}
+	if len(out.Scopes) != 2 || out.Attributes["role"] != "admin" {
+		t.Errorf("slice/map lost: %+v", out)
+	}
+	if out.CodeChallenge != "challenge-xyz" || out.CodeChallengeMethod != "S256" {
+		t.Errorf("PKCE fields lost: %+v", out)
+	}
+}
+
+func TestSQLiteAuthCode_SingleUse(t *testing.T) {
+	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), "c", &sso.AuthCode{
+		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if _, err := st.Consume(context.Background(), "c"); err != nil {
+		t.Fatalf("first Consume: %v", err)
+	}
+	if _, err := st.Consume(context.Background(), "c"); !errors.Is(err, sso.ErrAuthCodeNotFound) {
+		t.Errorf("second Consume err = %v want ErrAuthCodeNotFound", err)
+	}
+}
+
+func TestSQLiteAuthCode_ExpiredIndistinguishable(t *testing.T) {
+	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), "stale", &sso.AuthCode{
+		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(-time.Hour),
+	})
+	if _, err := st.Consume(context.Background(), "stale"); !errors.Is(err, sso.ErrAuthCodeNotFound) {
+		t.Errorf("err = %v want ErrAuthCodeNotFound", err)
+	}
+}
+
+func TestSQLiteAuthCode_UnknownReturnsSentinel(t *testing.T) {
+	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	if _, err := st.Consume(context.Background(), "ghost"); !errors.Is(err, sso.ErrAuthCodeNotFound) {
+		t.Errorf("err = %v want ErrAuthCodeNotFound", err)
+	}
+}
+
+// ---------- RefreshTokenStore ----------
+
+func TestSQLiteRefresh_RoundTripAndRotation(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now()
+	in := &sso.RefreshToken{
+		UserID: "u-1", ClientID: "web", Provider: "password",
+		Scopes:     []string{"openid", "profile"},
+		Attributes: map[string]string{"role": "admin"},
+		IssuedAt:   now, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := st.Issue(context.Background(), "tok", in); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	out, err := st.Consume(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if out.UserID != "u-1" || out.Provider != "password" {
+		t.Errorf("payload mismatch: %+v", out)
+	}
+	// Rotation: second Consume must fail.
+	if _, err := st.Consume(context.Background(), "tok"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		t.Errorf("replay err = %v want ErrRefreshTokenNotFound", err)
+	}
+}
+
+func TestSQLiteRefresh_InspectAndDelete(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), "tok", &sso.RefreshToken{
+		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	// Inspect is non-destructive.
+	if out, err := st.Inspect(context.Background(), "tok"); err != nil || out.UserID != "u" {
+		t.Errorf("Inspect err=%v out=%v", err, out)
+	}
+	if out, err := st.Inspect(context.Background(), "tok"); err != nil || out.UserID != "u" {
+		t.Errorf("second Inspect err=%v — Inspect must not consume", err)
+	}
+	// Delete is idempotent.
+	if err := st.Delete(context.Background(), "tok"); err != nil {
+		t.Errorf("Delete: %v", err)
+	}
+	if err := st.Delete(context.Background(), "tok"); err != nil {
+		t.Errorf("second Delete err = %v want nil (idempotent)", err)
+	}
+	if _, err := st.Inspect(context.Background(), "tok"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		t.Errorf("after Delete err = %v", err)
+	}
+}
+
+func TestSQLiteRefresh_ExpiredIndistinguishable(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), "stale", &sso.RefreshToken{
+		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(-time.Hour),
+	})
+	if _, err := st.Consume(context.Background(), "stale"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		t.Errorf("Consume err = %v", err)
+	}
+	// Inspect also opportunistically deletes expired entries.
+	if _, err := st.Inspect(context.Background(), "stale-2"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		t.Errorf("Inspect on unknown err = %v", err)
+	}
+}
+
+// ---------- DeviceCodeStore ----------
+
+func TestSQLiteDevice_FullStateMachine(t *testing.T) {
+	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	dc := &sso.DeviceCode{
+		DeviceCode: "DC", UserCode: "UC", ClientID: "c",
+		Scopes: []string{"a"}, Interval: 5 * time.Second,
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	if err := st.Issue(context.Background(), dc); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	// Lookup by both keys.
+	if out, err := st.GetByDeviceCode(context.Background(), "DC"); err != nil || out.UserCode != "UC" {
+		t.Errorf("GetByDeviceCode err=%v out=%v", err, out)
+	}
+	if out, err := st.GetByUserCode(context.Background(), "UC"); err != nil || out.DeviceCode != "DC" {
+		t.Errorf("GetByUserCode err=%v out=%v", err, out)
+	}
+	// Approve flips state.
+	if err := st.Approve(context.Background(), "UC", "u-1", "pw", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	out, _ := st.GetByDeviceCode(context.Background(), "DC")
+	if !out.Approved || out.UserID != "u-1" || out.Provider != "pw" {
+		t.Errorf("Approve not reflected: %+v", out)
+	}
+	if out.Attributes["k"] != "v" {
+		t.Errorf("attributes not stored: %+v", out.Attributes)
+	}
+	// LastPoll round-trip.
+	when := time.Unix(1234567890, 0).UTC()
+	if err := st.UpdateLastPoll(context.Background(), "DC", when); err != nil {
+		t.Fatalf("UpdateLastPoll: %v", err)
+	}
+	out, _ = st.GetByDeviceCode(context.Background(), "DC")
+	if !out.LastPoll.Equal(when) {
+		t.Errorf("LastPoll = %v want %v", out.LastPoll, when)
+	}
+	// Interval preserved.
+	if out.Interval != 5*time.Second {
+		t.Errorf("Interval lost: %v", out.Interval)
+	}
+	// Delete + Get after = not found.
+	if err := st.Delete(context.Background(), "DC"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := st.GetByDeviceCode(context.Background(), "DC"); !errors.Is(err, sso.ErrDeviceCodeNotFound) {
+		t.Errorf("after Delete err = %v", err)
+	}
+}
+
+func TestSQLiteDevice_Deny(t *testing.T) {
+	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), &sso.DeviceCode{
+		DeviceCode: "D", UserCode: "U", ClientID: "c",
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err := st.Deny(context.Background(), "U"); err != nil {
+		t.Fatalf("Deny: %v", err)
+	}
+	out, _ := st.GetByDeviceCode(context.Background(), "D")
+	if !out.Denied {
+		t.Errorf("Denied flag not set: %+v", out)
+	}
+}
+
+func TestSQLiteDevice_ApproveDenyOnUnknownReturnsSentinel(t *testing.T) {
+	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	if err := st.Approve(context.Background(), "ghost", "u", "p", nil); !errors.Is(err, sso.ErrDeviceCodeNotFound) {
+		t.Errorf("Approve err = %v", err)
+	}
+	if err := st.Deny(context.Background(), "ghost"); !errors.Is(err, sso.ErrDeviceCodeNotFound) {
+		t.Errorf("Deny err = %v", err)
+	}
+}
+
+func TestSQLiteDevice_UniqueUserCodeRejectsCollision(t *testing.T) {
+	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	first := &sso.DeviceCode{
+		DeviceCode: "D1", UserCode: "SAME", ClientID: "c",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	if err := st.Issue(context.Background(), first); err != nil {
+		t.Fatalf("first Issue: %v", err)
+	}
+	second := &sso.DeviceCode{
+		DeviceCode: "D2", UserCode: "SAME", ClientID: "c",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	if err := st.Issue(context.Background(), second); err == nil {
+		t.Error("duplicate user_code accepted — UNIQUE constraint missing")
+	}
+}

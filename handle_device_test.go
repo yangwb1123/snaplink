@@ -153,7 +153,10 @@ func TestDevice_CodeEndpointShape(t *testing.T) {
 func TestDevice_CodeEndpointRejectsMissingClient(t *testing.T) {
 	srv := newDeviceServer(t, time.Minute, time.Millisecond)
 	body, _ := json.Marshal(map[string]any{})
-	resp, _ := http.Post(srv.URL+"/device/code", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/device/code", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d want 400 missing_client_id", resp.StatusCode)
@@ -163,7 +166,10 @@ func TestDevice_CodeEndpointRejectsMissingClient(t *testing.T) {
 func TestDevice_CodeEndpointRejectsUnknownClient(t *testing.T) {
 	srv := newDeviceServer(t, time.Minute, time.Millisecond)
 	body, _ := json.Marshal(map[string]any{"client_id": "nobody"})
-	resp, _ := http.Post(srv.URL+"/device/code", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/device/code", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d want 401", resp.StatusCode)
@@ -269,7 +275,10 @@ func TestDevice_WrongClientCannotPoll(t *testing.T) {
 		"client_id":     "different-client",
 		"client_secret": "different-secret",
 	})
-	resp, _ := http.Post(srv.URL+"/token", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
 	defer resp.Body.Close()
 	// Goes through requireDeps → invalid_client (different client doesn't
 	// exist), which proves the binding check runs before token issuance.
@@ -294,7 +303,10 @@ func TestDevice_PollEndpointRequiresStore(t *testing.T) {
 		"client_id":     devClient,
 		"client_secret": devSecret,
 	})
-	resp, _ := http.Post(httpSrv.URL+"/token", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(httpSrv.URL+"/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d want 501", resp.StatusCode)
@@ -310,7 +322,10 @@ func TestDevice_VerifyRequiresBearer(t *testing.T) {
 	srv := newDeviceServer(t, time.Minute, time.Millisecond)
 	_, uc, _ := requestDeviceCode(t, srv)
 	body, _ := json.Marshal(map[string]any{"user_code": uc, "approve": true})
-	resp, _ := http.Post(srv.URL+"/device/verify", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/device/verify", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d want 401", resp.StatusCode)
