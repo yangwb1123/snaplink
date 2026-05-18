@@ -138,7 +138,7 @@ Current coverage (informational, not a gate):
 
 | Package | Coverage |
 |---|---|
-| sso (root) | 82.1% |
+| sso (root) | 81.0% |
 | adapters/echo | 100% |
 | adapters/gin | 100% |
 | audit | 95.6% |
@@ -149,8 +149,8 @@ Current coverage (informational, not a gate):
 | bootstrap/memory | 100% |
 | cors | 100% |
 | config | 88.2% |
-| defaultimpl | 79.1% |
-| defaultimpl/sqlite | 80.6% |
+| defaultimpl | 62.1% |
+| defaultimpl/sqlite | 75.4% |
 | geo | 100% |
 | geo/static | 97.6% |
 | grpcserver | 81.3% |
@@ -374,6 +374,112 @@ expiry rather than being locked out by a transient store outage.
 The refresh path itself fails closed (a rotation that can't
 issue the new token returns 500).
 
+### 2e. Token introspection — RFC 7662 (`handle_introspect.go`)
+
+`POST /token/introspect` lets resource servers query token state
+without verifying signatures themselves. Always wired; auth via
+client_id + client_secret (HTTP Basic OR form body — Basic wins
+when both present per RFC 6749 §2.3.1).
+
+Successful introspection of a valid token returns:
+
+```json
+{"active":true,"sub":"u-1","iss":"https://sso.test","aud":["web"],
+ "client_id":"web","exp":1747234567,"iat":1747230967,"nbf":1747230967,
+ "scope":"openid profile","token_type":"Bearer",
+ "token_type_hint":"access_token","token_strategy_used":"jwt"}
+```
+
+Inactive (unknown / expired / revoked) returns `{"active":false}`
+ONLY — RFC 7662 §2.2 mandates no metadata leak on the inactive
+path. Tested via key enumeration to catch regressions.
+
+Refresh tokens introspectable when the configured
+[`RefreshTokenStore`] implements the optional
+[`RefreshTokenInspector`] extension (memory + sqlite backends
+both do). `token_type_hint` is a fast-path optimization — wrong
+hint still finds the token via fallback to the other tier.
+
+### 2f. Token revocation — RFC 7009 (`handle_revoke.go`)
+
+`POST /token/revoke` for per-token kill (vs `/logout` which is
+session-scoped). Same client auth as `/token/introspect`. Best-
+effort across both tiers (access + refresh); response is always
+200 OK on valid credentials regardless of whether the token
+existed — §2.2 indistinguishability prevents enumeration via
+unknown-token probing.
+
+Refresh deletion routes through the optional
+`RefreshTokenInspector.Delete` extension; stores that don't
+implement it must rely on TTL expiry.
+
+### 2g. OpenID Connect (`oidc.go` + `oidc_discovery.go`)
+
+**ID Token issuance.** Opt in via `sso.WithIDTokenIssuer(issuer)`.
+When wired AND the request carries the `openid` scope, an
+`id_token` field appears alongside the access token in:
+
+* `/auth/login` direct mint
+* `/token grant_type=authorization_code` exchange (nonce echoed
+  from what was captured at login per OIDC Core §3.1.3.7)
+* `/token grant_type=urn:...:device_code` exchange
+* `client_credentials` NOT included (no end-user, no ID Token)
+
+The default issuer `defaultimpl.Ed25519JWTIssuer` implements
+both `TokenIssuer` AND `IDTokenIssuer` — pass the SAME instance
+to both options so one signing key + one JWKS entry verifies
+both token types.
+
+Fail-open: ID Token issue failure logs an error and the response
+just omits `id_token`. Zero overhead when the option is omitted.
+
+**Discovery document** at `/.well-known/openid-configuration`.
+Always wired (no opt-in). Doc derived dynamically from server
+state — endpoint URLs from the request base, issuer from
+`WithIssuer`, grant_types from `SupportedGrants`, scopes from
+the union of openid + every client's `AllowedScopes`, signing
+algs from the wired ID token issuer. RFC 8414 OAuth metadata
+served from the same endpoint per de-facto convention.
+
+`requestBaseURL` honors `X-Forwarded-Proto` / `X-Forwarded-Host`
+first-hop. Internet-facing deployments without a known edge
+proxy MUST install a stricter middleware — XFF spoofing on a
+public endpoint can serve the wrong scheme to OIDC RPs.
+
+### 2h. Device authorization grant — RFC 8628 (`handle_device.go`)
+
+For CLIs / TVs / IoT / embedded shells that can't open a
+browser locally. Opt in via `sso.WithDeviceCodeStore(store, ttl,
+pollInterval, verifyBaseURL)`. Without it, the new endpoints
+(and the device_code grant on `/token`) return 501.
+
+Three endpoints + one grant:
+
+* `POST /device/code` — device-initiated. Returns `device_code`
+  (32-byte base64url) + `user_code` (8-char XXXX-XXXX from a
+  base32-no-ambiguous alphabet) + `verification_uri[_complete]`
+  + `expires_in` + `interval`.
+* `POST /device/verify` — user-facing approval. Bearer-
+  authenticated; takes `user_code` + `approve` bool. User_code
+  lookup is normalized (dashless + uppercase) so dashed /
+  dashless / mixed-case inputs all resolve.
+* `POST /token grant_type=urn:ietf:params:oauth:grant-type:device_code`
+  — device polls. Returns RFC 8628 §3.5 sentinels:
+  `authorization_pending` / `slow_down` / `access_denied` /
+  `expired_token` / standard token envelope on success.
+
+`slow_down` enforces the per-code `interval` — devices polling
+faster get throttled. Client_id binding check on the poll path
+prevents a leaked `device_code` from being polled by a different
+client.
+
+Composes with `RefreshTokenStore` (device tokens get refresh
+capability) and `IDTokenIssuer` (device flows that requested
+`openid` get an ID Token alongside the access token).
+
+Default settings: `DefaultDeviceCodeTTL = 10 min`,
+`DefaultDevicePollMin = 5s`.
+
 ### 3. Audit (`audit/`)
 
 `audit.Recorder` fans Events out to one or more Sinks. Built-in sinks:
@@ -392,10 +498,21 @@ audit from another service: dial the gRPC `AuditWriter` service.
 
 ### 2b. Persistence — SQLite (`defaultimpl/sqlite/`)
 
-First SQL-backed Provider implementation: `sqlite.NewUserProvider(dsn)`
-satisfies `sso.UserProvider` over a SQLite database. Pure-Go driver
-(`modernc.org/sqlite`) so no CGO, stays compatible with the
-distroless/static runtime image, cross-compiles freely.
+SQL-backed Provider implementations using a pure-Go driver
+(`modernc.org/sqlite`) — no CGO, distroless/static-image
+compatible, cross-compiles freely. Four backends today:
+
+| Backend                       | Satisfies                                          |
+|-------------------------------|----------------------------------------------------|
+| `sqlite.NewUserProvider`      | `sso.UserProvider`                                 |
+| `sqlite.NewAuthCodeStore`     | `sso.AuthCodeStore` (authorization_code grant)     |
+| `sqlite.NewRefreshTokenStore` | `sso.RefreshTokenStore` + `RefreshTokenInspector`  |
+| `sqlite.NewDeviceCodeStore`   | `sso.DeviceCodeStore` (device authorization grant) |
+
+The three OAuth-flow stores use `DELETE ... RETURNING` (SQLite
+3.35+) for true single-use atomicity — the standard
+SELECT-then-DELETE pattern has a race where two concurrent
+consumers could each see the row before either delete fires.
 
 Wire as a drop-in replacement for `defaultimpl.MemoryUserProvider`:
 
