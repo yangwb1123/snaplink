@@ -183,6 +183,58 @@ func TestSQLiteRefresh_ExpiredIndistinguishable(t *testing.T) {
 	}
 }
 
+// ---------- RefreshTokenSubjectIndex ----------
+
+func TestSQLiteRefresh_DeleteAllForSubject(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	for _, tok := range []struct{ token, userID, clientID string }{
+		{"a-1", "alice", "web"}, {"a-2", "alice", "web"},
+		{"a-mob", "alice", "mobile"},
+		{"b-1", "bob", "web"},
+	} {
+		_ = st.Issue(context.Background(), tok.token, &sso.RefreshToken{
+			UserID: tok.userID, ClientID: tok.clientID,
+			ExpiresAt: time.Now().Add(time.Hour),
+		})
+	}
+
+	// Filter by (alice, web) → 2 deletions.
+	n, err := st.DeleteAllForSubject(context.Background(), "alice", "web")
+	if err != nil {
+		t.Fatalf("DeleteAllForSubject: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("deleted = %d want 2", n)
+	}
+	// alice's mobile token + bob's web token survive.
+	if _, err := st.Inspect(context.Background(), "a-mob"); err != nil {
+		t.Errorf("alice/mobile lost: %v", err)
+	}
+	if _, err := st.Inspect(context.Background(), "b-1"); err != nil {
+		t.Errorf("bob/web lost: %v", err)
+	}
+}
+
+func TestSQLiteRefresh_DeleteAllForSubject_EmptyClient(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), "u-1", &sso.RefreshToken{UserID: "u", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour)})
+	_ = st.Issue(context.Background(), "u-2", &sso.RefreshToken{UserID: "u", ClientID: "b", ExpiresAt: time.Now().Add(time.Hour)})
+	n, _ := st.DeleteAllForSubject(context.Background(), "u", "")
+	if n != 2 {
+		t.Errorf("empty client wipe = %d want 2", n)
+	}
+}
+
 // ---------- DeviceCodeStore ----------
 
 func TestSQLiteDevice_FullStateMachine(t *testing.T) {

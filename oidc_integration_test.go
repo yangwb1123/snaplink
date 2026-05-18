@@ -22,12 +22,12 @@ import (
 // bootstrap dance against a real httptest server. Proves the three
 // pieces are wired correctly to each other:
 //
-//   discovery → publishes jwks_uri + id_token_signing_alg_values_supported
-//        ↓
-//   JWKS endpoint → publishes the EdDSA public key under its kid
-//        ↓
-//   ID Token from /auth/login → signed by EdDSA, kid matches, signature
-//        verifies under the JWKS public key
+//	discovery → publishes jwks_uri + id_token_signing_alg_values_supported
+//	     ↓
+//	JWKS endpoint → publishes the EdDSA public key under its kid
+//	     ↓
+//	ID Token from /auth/login → signed by EdDSA, kid matches, signature
+//	     verifies under the JWKS public key
 //
 // A failure at any link breaks the test, which is the point — this is
 // the canonical "did I wire OIDC correctly" smoke test for downstream

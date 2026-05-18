@@ -104,6 +104,33 @@ func (m *MemoryRefreshTokenStore) Delete(_ context.Context, token string) error 
 	return nil
 }
 
+// DeleteAllForSubject removes every refresh token whose UserID +
+// ClientID match. Implements [sso.RefreshTokenSubjectIndex] so the
+// "logout everywhere" endpoint can kill all refresh tokens for a
+// (user, client) pair in one call. Returns the count of deletions.
+func (m *MemoryRefreshTokenStore) DeleteAllForSubject(_ context.Context, userID, clientID string) (int, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int
+	for tok, entry := range m.entries {
+		if entry.UserID != userID {
+			continue
+		}
+		// Empty clientID = no client filter (revoke across every client
+		// the user has tokens for). Useful for admin "kill all sessions
+		// for this user" actions.
+		if clientID != "" && entry.ClientID != clientID {
+			continue
+		}
+		delete(m.entries, tok)
+		n++
+	}
+	return n, nil
+}
+
 // GenerateRefreshToken mints a cryptographically random base64url-encoded
 // token suitable for the OAuth 2.0 refresh_token grant. Exposed so
 // custom RefreshTokenStore implementations can reuse it.
@@ -117,6 +144,7 @@ func GenerateRefreshToken() (string, error) {
 
 // Compile-time interface checks.
 var (
-	_ sso.RefreshTokenStore     = (*MemoryRefreshTokenStore)(nil)
-	_ sso.RefreshTokenInspector = (*MemoryRefreshTokenStore)(nil)
+	_ sso.RefreshTokenStore        = (*MemoryRefreshTokenStore)(nil)
+	_ sso.RefreshTokenInspector    = (*MemoryRefreshTokenStore)(nil)
+	_ sso.RefreshTokenSubjectIndex = (*MemoryRefreshTokenStore)(nil)
 )

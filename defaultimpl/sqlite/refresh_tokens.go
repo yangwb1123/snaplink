@@ -148,6 +148,31 @@ func (s *RefreshTokenStore) Delete(ctx context.Context, token string) error {
 	return nil
 }
 
+// DeleteAllForSubject implements [sso.RefreshTokenSubjectIndex]. Empty
+// clientID = revoke across every client the user has tokens for —
+// useful for admin "kill all sessions" actions. Returns the count of
+// deleted rows.
+func (s *RefreshTokenStore) DeleteAllForSubject(ctx context.Context, userID, clientID string) (int, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	var res sql.Result
+	var err error
+	if clientID == "" {
+		res, err = s.db.ExecContext(ctx,
+			`DELETE FROM refresh_tokens WHERE user_id = ?`, userID)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`DELETE FROM refresh_tokens WHERE user_id = ? AND client_id = ?`,
+			userID, clientID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete by subject: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 	var (
 		out                             sso.RefreshToken
@@ -178,6 +203,7 @@ func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 }
 
 var (
-	_ sso.RefreshTokenStore     = (*RefreshTokenStore)(nil)
-	_ sso.RefreshTokenInspector = (*RefreshTokenStore)(nil)
+	_ sso.RefreshTokenStore        = (*RefreshTokenStore)(nil)
+	_ sso.RefreshTokenInspector    = (*RefreshTokenStore)(nil)
+	_ sso.RefreshTokenSubjectIndex = (*RefreshTokenStore)(nil)
 )

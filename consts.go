@@ -13,6 +13,7 @@ const (
 	PathToken          = "/token"
 	PathIntrospect     = "/token/introspect"
 	PathRevoke         = "/token/revoke"
+	PathRevokeAll      = "/token/revoke-all"
 	PathDeviceCode     = "/device/code"
 	PathDeviceVerify   = "/device/verify"
 	PathUserInfo       = "/userinfo"

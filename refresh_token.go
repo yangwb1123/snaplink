@@ -90,3 +90,17 @@ type RefreshTokenInspector interface {
 	// been revoked even if it wasn't recognized).
 	Delete(ctx context.Context, token string) error
 }
+
+// RefreshTokenSubjectIndex is an OPTIONAL extension for backends that
+// can enumerate tokens by (subject, client). Used by the "logout
+// everywhere" endpoint /token/revoke-all to kill every refresh token
+// a user holds for a given client without the user having to present
+// each one.
+//
+// Returns the count of deleted entries (useful for audit). Backends
+// that can't enumerate efficiently should NOT implement this — the
+// fallback is per-token revocation via /token/revoke, and operators
+// who need bulk revocation can layer a custom store on top.
+type RefreshTokenSubjectIndex interface {
+	DeleteAllForSubject(ctx context.Context, userID, clientID string) (int, error)
+}

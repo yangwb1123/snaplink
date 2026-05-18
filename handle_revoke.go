@@ -77,3 +77,65 @@ func (s *Server) revokeRefresh(ctx HandlerContext, token string) {
 	}
 	_ = insp.Delete(ctx.Request().Context(), token)
 }
+
+// handleRevokeAll implements the "logout everywhere" endpoint. The
+// user presents a bearer token; the server reads sub + aud from its
+// claims, then kills every refresh token bound to that
+// (subject, client) pair via the optional RefreshTokenSubjectIndex
+// extension. The presented access token is also revoked via the
+// normal per-issuer path so it stops working immediately.
+//
+// Useful for a "sign out of all devices" button — one round trip
+// instead of per-device per-token revocation.
+//
+// Requires the RefreshTokenStore to implement
+// RefreshTokenSubjectIndex; without it, the response is 501.
+//
+// Authentication: bearer token only (not client credentials). The
+// user is the actor — they're authorizing the revocation of their
+// own tokens.
+func (s *Server) handleRevokeAll(ctx HandlerContext) {
+	if err := s.requireDeps(depTokenIssuer); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+	idx, ok := s.refreshTokenStore.(RefreshTokenSubjectIndex)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRefreshTokenNotConfigured))
+		return
+	}
+
+	bearer := bearerToken(ctx.Request())
+	if bearer == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
+	if err != nil || claims == nil || claims.Subject == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+
+	clientID := ""
+	if len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+
+	deleted, err := idx.DeleteAllForSubject(ctx.Request().Context(), claims.Subject, clientID)
+	if err != nil {
+		s.logger.Error("revoke-all failed", "error", err, "subject", claims.Subject)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	// Also revoke the presented access token across all issuers so it
+	// stops working immediately — without this, the bearer the caller
+	// just used would keep working until expiry, which is surprising
+	// for a "logout everywhere" semantic.
+	_ = s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
+
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus:                StatusOK,
+		"refresh_tokens_revoked": deleted,
+	})
+}
