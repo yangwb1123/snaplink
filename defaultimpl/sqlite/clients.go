@@ -225,10 +225,10 @@ func clientSelectByCol(col string) string {
 
 func scanClient(s scanner) (*sso.Client, error) {
 	var (
-		c                                                  sso.Client
-		redirects, scopes, auths                           string
-		activeInt, requirePKCEInt                          int64
-		secret, name, tokenStrategy, tenantID              string
+		c                                     sso.Client
+		redirects, scopes, auths              string
+		activeInt, requirePKCEInt             int64
+		secret, name, tokenStrategy, tenantID string
 	)
 	if err := s.Scan(
 		&c.ID, &secret, &name,
