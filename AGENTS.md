@@ -138,7 +138,7 @@ Current coverage (informational, not a gate):
 
 | Package | Coverage |
 |---|---|
-| sso (root) | 61.9% |
+| sso (root) | 72.3% |
 | adapters/echo | 100% |
 | adapters/gin | 100% |
 | audit | 95.6% |
@@ -159,6 +159,7 @@ Current coverage (informational, not a gate):
 | netpolicy/etcd | 22.2% (logic-only; no etcd server) |
 | permissions | 75.6% |
 | ratelimit | 83.6% |
+| registry | 100% |
 | registry/memory | 85.7% |
 | registry/etcd | 16.7% (logic-only; no etcd server) |
 | releases | 88.2% |
