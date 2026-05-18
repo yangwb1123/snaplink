@@ -138,11 +138,13 @@ Current coverage (informational, not a gate):
 
 | Package | Coverage |
 |---|---|
+| sso (root) | 61.9% |
 | adapters/echo | 100% |
 | adapters/gin | 100% |
 | audit | 95.6% |
 | authenticators | 93.8% |
 | bootstrap | 87.2% |
+| bootstrap/builtin | 79.2% |
 | bootstrap/file | 84.2% |
 | bootstrap/memory | 100% |
 | cors | 100% |
