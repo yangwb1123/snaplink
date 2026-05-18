@@ -264,6 +264,79 @@ deployments with multi-replica fleets should swap a
 Redis / SQL-backed store so codes issued on one replica are
 consumable on any other.
 
+### 2d. OAuth 2.0 refresh_token grant (`refresh_token.go`)
+
+Opt-in via `sso.WithRefreshTokenStore(store, ttl)`. Without it,
+POST `/token grant_type=refresh_token` returns 501 and the
+`refresh_token` field in login / authorization_code responses
+passes through whatever the underlying `TokenIssuer` returned
+(typically empty for stateless JWT issuers).
+
+When the store IS wired, two things flip on together:
+
+1. **Issuance**: every successful access-token mint also issues a
+   server-managed refresh token. Three injection points:
+   * `/auth/login` direct-mint flow (response_type=token or
+     omitted) — overrides whatever the underlying TokenIssuer
+     put in `token.RefreshToken`.
+   * `/token grant_type=authorization_code` exchange — adds the
+     `refresh_token` field to the response envelope.
+   * `/token grant_type=refresh_token` exchange — rotation
+     (see below).
+   * `client_credentials` is deliberately NOT included per RFC
+     6749 §4.4.3 (no end-user, no need for offline refresh).
+
+2. **Rotation grant**: POST `/token grant_type=refresh_token` +
+   `refresh_token` + `client_id` + `client_secret`:
+   * Consumes (single-use deletes) the presented token.
+   * Verifies the client_id binding captured at issue time.
+   * Optionally narrows scope per `scope` request param
+     (omitted = keep original; supplied MUST be a subset of
+     original per RFC 6749 §6 — expansion → 400 invalid_scope).
+   * Mints a new access token via the client's TokenIssuer.
+   * Issues a NEW refresh token (rotation pattern).
+   * Returns `{access_token, refresh_token, token_type,
+     expires_in, scope, token_strategy}` — the new pair.
+
+Sentinel mapping:
+
+* Unknown / expired / already-consumed refresh token →
+  `400 invalid_grant` (RFC 6749 §5.2 + oracle-leak hardening
+  identical to authorization_code).
+* refresh_token bound to client A but redeemed by client B →
+  `400 invalid_grant`.
+* Empty `refresh_token` field → `400 invalid_request`.
+* Scope expansion attempt → `400 invalid_scope`.
+* Store not configured → `501 refresh_token_not_configured`.
+
+`defaultimpl.MemoryRefreshTokenStore` is the in-process backend.
+Caller-supplied `Scopes` / `Attributes` are copied at Issue time
+(no aliasing) and the store is concurrent-safe under `-race`.
+`defaultimpl.GenerateRefreshToken` exposes the 32-byte base64url
+generator for custom store implementations.
+
+TTL default: `DefaultRefreshTokenTTL = 30 * 24 * time.Hour`
+(30 days). Mobile clients often want longer; pass an explicit
+ttl. Production deployments with multi-replica fleets should
+swap a Redis / SQL-backed store so tokens issued on one replica
+are consumable on any other AND persist across restarts (a
+server restart shouldn't log every user out).
+
+**Rotation reuse detection (v1).** A presented-twice refresh
+token always fails as `invalid_grant` because Consume deleted it
+on the first presentation — the safe default for any reuse
+attempt, benign retry or active replay attack alike. Token-family
+revocation (an active token issued to the attacker after a
+detected reuse must also be invalidated) is a future hardening
+item; v1 relies on the short access-token TTL to bound damage.
+
+**Fail-open issuance.** Refresh-token issuance failures during a
+login or authorization_code exchange are logged but do NOT block
+the parent operation — the user gets a usable access_token until
+expiry rather than being locked out by a transient store outage.
+The refresh path itself fails closed (a rotation that can't
+issue the new token returns 500).
+
 ### 3. Audit (`audit/`)
 
 `audit.Recorder` fans Events out to one or more Sinks. Built-in sinks:
