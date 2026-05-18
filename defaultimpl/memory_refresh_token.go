@@ -72,6 +72,38 @@ func (m *MemoryRefreshTokenStore) Consume(_ context.Context, token string) (*sso
 	return entry, nil
 }
 
+// Inspect returns the token's payload without consuming it. Required
+// by /token/introspect to answer non-destructive queries. Returns
+// ErrRefreshTokenNotFound for unknown / expired tokens (same oracle-
+// resistant indistinguishability as Consume).
+func (m *MemoryRefreshTokenStore) Inspect(_ context.Context, token string) (*sso.RefreshToken, error) {
+	m.mu.Lock()
+	entry, ok := m.entries[token]
+	m.mu.Unlock()
+	if !ok {
+		return nil, sso.ErrRefreshTokenNotFound
+	}
+	if entry.IsExpired() {
+		// Lazy GC of expired entries — keeps the map from
+		// accumulating stale keys without a sweeper goroutine.
+		m.mu.Lock()
+		delete(m.entries, token)
+		m.mu.Unlock()
+		return nil, sso.ErrRefreshTokenNotFound
+	}
+	return entry, nil
+}
+
+// Delete removes a token without going through Consume's rotation
+// path. Idempotent per RFC 7009 §2.2 — deleting an unknown token
+// returns nil.
+func (m *MemoryRefreshTokenStore) Delete(_ context.Context, token string) error {
+	m.mu.Lock()
+	delete(m.entries, token)
+	m.mu.Unlock()
+	return nil
+}
+
 // GenerateRefreshToken mints a cryptographically random base64url-encoded
 // token suitable for the OAuth 2.0 refresh_token grant. Exposed so
 // custom RefreshTokenStore implementations can reuse it.
@@ -83,5 +115,8 @@ func GenerateRefreshToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// Compile-time interface check.
-var _ sso.RefreshTokenStore = (*MemoryRefreshTokenStore)(nil)
+// Compile-time interface checks.
+var (
+	_ sso.RefreshTokenStore     = (*MemoryRefreshTokenStore)(nil)
+	_ sso.RefreshTokenInspector = (*MemoryRefreshTokenStore)(nil)
+)

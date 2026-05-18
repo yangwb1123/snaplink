@@ -436,6 +436,8 @@ func (s *Server) Mount() {
 	s.router.POST(PathSendCode, s.handleSendCode)
 	s.router.GET(PathCallback, s.handleCallback)
 	s.router.POST(PathToken, s.handleToken)
+	s.router.POST(PathIntrospect, s.handleIntrospect)
+	s.router.POST(PathRevoke, s.handleRevoke)
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)

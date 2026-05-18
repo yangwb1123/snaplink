@@ -70,3 +70,23 @@ type RefreshTokenStore interface {
 // maps it to OAuth 2.0's `invalid_grant` error so all three failure
 // cases look identical from the wire.
 var ErrRefreshTokenNotFound = errors.New("sso: refresh token not found or expired")
+
+// RefreshTokenInspector is an OPTIONAL extension to RefreshTokenStore
+// that lets the introspection (RFC 7662) and revocation (RFC 7009)
+// endpoints peek / delete refresh tokens without going through the
+// single-use rotation contract of Consume.
+//
+// Implement it on the concrete store type when the backend can answer
+// non-destructive queries. Without it, /token/introspect and
+// /token/revoke fall back to access-token-only behavior.
+type RefreshTokenInspector interface {
+	// Inspect returns the stored RefreshToken without consuming it.
+	// Returns ErrRefreshTokenNotFound for unknown / expired tokens.
+	Inspect(ctx context.Context, token string) (*RefreshToken, error)
+
+	// Delete removes the token without going through Consume's rotation
+	// path. Idempotent: deleting an unknown token returns nil (matches
+	// RFC 7009 §2.2 which says servers MUST respond as if the token had
+	// been revoked even if it wasn't recognized).
+	Delete(ctx context.Context, token string) error
+}

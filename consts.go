@@ -11,6 +11,8 @@ const (
 	PathSendCode       = "/auth/send-code"
 	PathCallback       = "/auth/callback"
 	PathToken          = "/token"
+	PathIntrospect     = "/token/introspect"
+	PathRevoke         = "/token/revoke"
 	PathUserInfo       = "/userinfo"
 	PathLogout         = "/logout"
 	PathAPIPrefix      = "/api/v1"
@@ -69,6 +71,18 @@ const (
 	KeyCode             = "code"
 	KeyState            = "state"
 	KeyRedirectURI      = "redirect_uri"
+
+	// RFC 7662 introspection response keys.
+	KeyActive    = "active"
+	KeyTokenHint = "token_type_hint"
+	KeySub       = "sub"
+	KeyIss       = "iss"
+	KeyAud       = "aud"
+	KeyExp       = "exp"
+	KeyIat       = "iat"
+	KeyNbf       = "nbf"
+	KeyClientID  = "client_id"
+	KeyStrategy  = "token_strategy_used"
 )
 
 // Stable error code strings returned to API callers.
