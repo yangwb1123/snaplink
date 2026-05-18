@@ -138,7 +138,7 @@ Current coverage (informational, not a gate):
 
 | Package | Coverage |
 |---|---|
-| sso (root) | 72.3% |
+| sso (root) | 82.1% |
 | adapters/echo | 100% |
 | adapters/gin | 100% |
 | audit | 95.6% |
@@ -169,6 +169,7 @@ Current coverage (informational, not a gate):
 | ssoclient/remote | 77.5% |
 | tenant | 100% |
 | tenant/memory | 85.3% |
+| tracing | 95.3% |
 
 When you add behavior, add tests in the same package. When you fix a race or
 ordering bug, use `-count=10` (or higher) to prove the fix.
