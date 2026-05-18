@@ -2,7 +2,12 @@ package sso
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 // PathJWKS is the standard discovery endpoint for the issuer's signing keys.
@@ -34,6 +39,15 @@ type JWKSProvider interface {
 	JWKS(ctx context.Context) ([]JWK, error)
 }
 
+// jwksCacheMaxAge is the freshness window advertised in Cache-Control
+// for the JWKS response. 5 minutes balances key-rotation responsiveness
+// against avoiding per-request hits from heavily-deployed RPs.
+//
+// Operators who rotate keys faster MUST lower this AND set
+// `kid` rotation expectations on RPs — JWKS caches stick around in
+// libraries past this timeout in some cases.
+const jwksCacheMaxAge = 5 * time.Minute
+
 func (s *Server) handleJWKS(ctx HandlerContext) {
 	keys := make([]JWK, 0)
 	for _, ti := range s.tokenIssuers {
@@ -48,5 +62,33 @@ func (s *Server) handleJWKS(ctx HandlerContext) {
 		}
 		keys = append(keys, ks...)
 	}
-	ctx.JSON(http.StatusOK, map[string]any{"keys": keys})
+
+	body, err := json.Marshal(map[string]any{"keys": keys})
+	if err != nil {
+		s.logger.Error("jwks marshal failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	// ETag = strong validator. RP libraries can send If-None-Match on
+	// poll-style fetches to short-circuit when keys haven't rotated.
+	// Weak validator semantics ("W/") would be wrong here — the JSON
+	// is byte-exact (json.Marshal is deterministic for the same input
+	// modulo map iteration; the keys slice ordering is stable across
+	// one process lifetime, so any change means real key rotation).
+	sum := sha256.Sum256(body)
+	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:8]) + `"`
+
+	w := ctx.ResponseWriter()
+	r := ctx.Request()
+	w.Header().Set(HeaderContentType, ContentTypeJSON)
+	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(jwksCacheMaxAge.Seconds())))
+	w.Header().Set("ETag", etag)
+
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
