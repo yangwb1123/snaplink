@@ -1,7 +1,16 @@
 server:
   issuer: snaplink-sso
+  # base_url is currently informational only — the SDK derives absolute
+  # URLs (callback redirects, JWKS) from incoming request headers and
+  # reverse-proxy hints, not from this constant. Keeping it for future
+  # use + visibility in the rendered config.
   base_url: http://localhost:8080
   listen: ":8080"
+  # session_ttl + token_ttl are read by cmd/sso-server when constructing
+  # the default SessionManager / TokenIssuer. They are NOT wired through
+  # sso.With{Session,Token}TTL (those options are deprecated no-ops);
+  # custom embedders should pass the TTL to their own provider
+  # constructors directly.
   session_ttl: 24h
   token_ttl: 1h
   default_token_strategy: jwt

@@ -623,11 +623,13 @@ func (c *Config) validate() error {
 // Wire dependency-injected providers (TokenIssuer, UserProvider, ...) and
 // authenticators separately.
 func (c *Config) ServerOptions() []sso.Option {
+	// Server.{BaseURL,SessionTTL,TokenTTL} are NOT wired here — the
+	// matching sso.WithX options are deprecated no-ops. The real
+	// session / token lifetimes live on the SessionManager and
+	// TokenIssuer constructors; cmd/sso-server reads SessionTTL +
+	// TokenTTL directly to feed those constructors.
 	opts := []sso.Option{
 		sso.WithIssuer(c.Server.Issuer),
-		sso.WithBaseURL(c.Server.BaseURL),
-		sso.WithSessionTTL(c.Server.SessionTTL),
-		sso.WithTokenTTL(c.Server.TokenTTL),
 	}
 	if c.Server.DefaultTokenStrategy != "" {
 		opts = append(opts, sso.WithDefaultTokenStrategy(c.Server.DefaultTokenStrategy))

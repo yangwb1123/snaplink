@@ -78,10 +78,12 @@ func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
 		t.Fatalf("LoadFromSources: %v", err)
 	}
 	opts := cfg.ServerOptions()
-	// Baseline (issuer / base_url / session_ttl / token_ttl) is 4
-	// — plus the 3 security options = 7. Just a sanity floor.
-	if len(opts) < 7 {
-		t.Errorf("ServerOptions returned %d opts, want >= 7 (baseline + 3 security)", len(opts))
+	// Baseline is just WithIssuer (the three legacy TTL/base-url
+	// options were dropped — they were deprecated no-ops). With
+	// SecurityConfig populated we add WithBodyLimit + WithRateLimit
+	// + WithCORS, so the total should be exactly 4.
+	if len(opts) != 4 {
+		t.Errorf("ServerOptions returned %d opts, want 4 (issuer + 3 security)", len(opts))
 	}
 }
 
@@ -90,7 +92,9 @@ func TestSecurityConfig_EmptyBlockSkipsAllThree(t *testing.T) {
 	p := writeTemp(t, "no-sec.yaml", "server: {issuer: t, listen: :8080}\n")
 	cfg, _ := LoadFromSources(context.Background(), NewFileSource(p))
 	opts := cfg.ServerOptions()
-	if len(opts) > 5 {
-		t.Errorf("got %d opts; expected baseline-only (no security middleware)", len(opts))
+	// Only WithIssuer survives — the three deprecated TTL/base-url
+	// options no longer emit.
+	if len(opts) != 1 {
+		t.Errorf("got %d opts; expected exactly 1 (just WithIssuer)", len(opts))
 	}
 }

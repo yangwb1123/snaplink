@@ -50,9 +50,6 @@ type Server struct {
 	tracingOperation     string
 	corsPolicy           *cors.Policy
 	issuer               string
-	sessionTTL           time.Duration
-	tokenTTL             time.Duration
-	baseURL              string
 }
 
 // Option configures the Server.
@@ -64,8 +61,6 @@ func NewServer(opts ...Option) *Server {
 		authenticators: make(map[string]Authenticator),
 		tokenIssuers:   make(map[string]TokenIssuer),
 		issuer:         DefaultIssuer,
-		sessionTTL:     DefaultSessionDuration,
-		tokenTTL:       DefaultTokenTTL,
 		logger:         NopLogger{},
 	}
 	for _, opt := range opts {
@@ -122,19 +117,33 @@ func WithIssuer(issuer string) Option {
 	return func(s *Server) { s.issuer = issuer }
 }
 
-// WithSessionTTL sets the session lifetime.
-func WithSessionTTL(ttl time.Duration) Option {
-	return func(s *Server) { s.sessionTTL = ttl }
+// WithSessionTTL is retained for source compatibility but has no effect.
+// The Server delegates session lifetime to the configured [SessionManager];
+// pass the desired TTL to that constructor instead, e.g.
+// defaultimpl.NewMemorySessionManager(24*time.Hour).
+//
+// Deprecated: configure session lifetime on the SessionManager directly.
+func WithSessionTTL(_ time.Duration) Option {
+	return func(*Server) {}
 }
 
-// WithTokenTTL sets the token lifetime.
-func WithTokenTTL(ttl time.Duration) Option {
-	return func(s *Server) { s.tokenTTL = ttl }
+// WithTokenTTL is retained for source compatibility but has no effect.
+// The Server delegates token lifetime to the configured [TokenIssuer];
+// pass the desired TTL to that constructor instead, e.g.
+// defaultimpl.WithEd25519TokenTTL(time.Hour) when building the issuer.
+//
+// Deprecated: configure token lifetime on the TokenIssuer directly.
+func WithTokenTTL(_ time.Duration) Option {
+	return func(*Server) {}
 }
 
-// WithBaseURL sets the base URL of this SSO server.
-func WithBaseURL(url string) Option {
-	return func(s *Server) { s.baseURL = url }
+// WithBaseURL is retained for source compatibility but has no effect.
+// Absolute URLs (callback redirects, JWKS) are derived from incoming
+// request headers + reverse-proxy hints, not from a configured constant.
+//
+// Deprecated: the value is no longer threaded through any handler.
+func WithBaseURL(_ string) Option {
+	return func(*Server) {}
 }
 
 // WithAuditRecorder enables audit-event recording. The Server will emit
@@ -623,16 +632,4 @@ func (s *Server) requireDeps(deps ...string) error {
 		}
 	}
 	return nil
-}
-
-func (s *Server) validateSession(sessionID string) (*Session, error) {
-	ctx := context.Background()
-	session, err := s.sessionMgr.Get(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	if session.IsExpired() || session.Revoked {
-		return nil, fmt.Errorf("session expired or revoked")
-	}
-	return session, nil
 }
