@@ -138,17 +138,34 @@ Current coverage (informational, not a gate):
 
 | Package | Coverage |
 |---|---|
-| audit | 95.5% |
-| permissions | 100% |
-| defaultimpl | 38.2% |
+| adapters/echo | 100% |
+| adapters/gin | 100% |
+| audit | 95.6% |
+| authenticators | 93.8% |
+| bootstrap | 87.2% |
+| bootstrap/file | 84.2% |
+| bootstrap/memory | 100% |
+| cors | 100% |
+| defaultimpl | 79.1% |
+| defaultimpl/sqlite | 80.6% |
+| geo | 100% |
+| geo/static | 97.6% |
+| grpcserver | 68.0% |
+| metrics | 92.9% |
+| netpolicy | 90.6% |
+| netpolicy/memory | 92.3% |
+| netpolicy/etcd | 22.2% (logic-only; no etcd server) |
+| permissions | 75.6% |
+| ratelimit | 83.6% |
 | registry/memory | 85.7% |
-| registry/etcd | 16.7% |
-| grpcserver | 68.7% |
+| registry/etcd | 16.7% (logic-only; no etcd server) |
+| releases | 88.2% |
+| snapshot | 69.9% |
+| ssoclient/dev | 87.7% |
 | ssoclient/local | 69.6% |
 | ssoclient/remote | 77.5% |
-| netpolicy | 89%+ |
-| netpolicy/memory | 90%+ |
-| netpolicy/etcd | 70%+ (logic-only; no etcd server) |
+| tenant | 100% |
+| tenant/memory | 85.3% |
 
 When you add behavior, add tests in the same package. When you fix a race or
 ordering bug, use `-count=10` (or higher) to prove the fix.
