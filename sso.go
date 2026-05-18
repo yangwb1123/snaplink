@@ -446,6 +446,7 @@ func (s *Server) Mount() {
 
 	s.router.GET(PathHealth, s.handleHealth)
 	s.router.GET(PathJWKS, s.handleJWKS)
+	s.router.GET(PathOIDCDiscovery, s.handleOIDCDiscovery)
 	s.router.POST(PathLogin, s.handleLogin)
 	s.router.POST(PathSendCode, s.handleSendCode)
 	s.router.GET(PathCallback, s.handleCallback)
