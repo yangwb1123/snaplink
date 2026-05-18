@@ -264,6 +264,43 @@ deployments with multi-replica fleets should swap a
 Redis / SQL-backed store so codes issued on one replica are
 consumable on any other.
 
+**PKCE binding (RFC 7636).** Public clients (SPAs, mobile, CLIs)
+can't safely hold a client_secret, so the OAuth WG mandates PKCE
+on the authorization_code flow for those clients. The SDK
+supports it as an opt-in per-request with optional per-client
+enforcement:
+
+* `/auth/login` accepts `code_challenge` + `code_challenge_method`
+  ("S256" recommended, "plain" tolerated per §4.3 for legacy).
+* `/token grant_type=authorization_code` accepts `code_verifier`.
+* The challenge + method are stamped into the AuthCode at issue;
+  the exchange verifies the verifier against the stored challenge
+  using `crypto/subtle.ConstantTimeCompare` so a wrong verifier
+  fails in constant time.
+* `Client.RequirePKCE: true` (YAML `require_pkce`) forces every
+  authorization request against that client to include
+  `code_challenge` — the standard tightening for public clients.
+  Defaults to false (PKCE opt-in per-request).
+* Length bounds: 43–128 chars per §4.1 for both fields.
+
+Sentinel mapping (PKCE-specific additions):
+
+* `code_challenge` length out of bounds → `400 invalid_request`.
+* Unknown `code_challenge_method` → `400 invalid_pkce_method`.
+* Missing `code_challenge` when `Client.RequirePKCE=true` → `400
+  pkce_required`.
+* Missing / malformed / wrong `code_verifier` at exchange when a
+  challenge was captured → `400 invalid_grant` (per RFC 7636 §4.6
+  + oracle-leak hardening — all three cases indistinguishable).
+* `code_verifier` sent for a code that was issued WITHOUT a
+  challenge → silently ignored (the confidential-client
+  backwards-compat path).
+
+PKCE binds the FIRST exchange only. Subsequent `refresh_token`
+grants don't carry a `code_verifier`; the refresh chain is
+independently bound by the `client_id` check on the refresh
+token.
+
 ### 2d. OAuth 2.0 refresh_token grant (`refresh_token.go`)
 
 Opt-in via `sso.WithRefreshTokenStore(store, ttl)`. Without it,
