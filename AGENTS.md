@@ -153,7 +153,7 @@ Current coverage (informational, not a gate):
 | defaultimpl/sqlite | 80.6% |
 | geo | 100% |
 | geo/static | 97.6% |
-| grpcserver | 68.0% |
+| grpcserver | 81.3% |
 | metrics | 92.9% |
 | netpolicy | 90.6% |
 | netpolicy/memory | 92.3% |
