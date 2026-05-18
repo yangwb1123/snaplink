@@ -164,7 +164,8 @@ Current coverage (informational, not a gate):
 | registry/memory | 85.7% |
 | registry/etcd | 16.7% (logic-only; no etcd server) |
 | releases | 88.2% |
-| snapshot | 71.5% |
+| snapshot | 72.8% |
+| ssoclient/bootstrap | 96.2% |
 | ssoclient/dev | 87.7% |
 | ssoclient/local | 92.9% |
 | ssoclient/remote | 77.5% |
