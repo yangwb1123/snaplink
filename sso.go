@@ -55,6 +55,10 @@ type Server struct {
 	refreshTokenStore    RefreshTokenStore
 	refreshTokenTTL      time.Duration
 	idTokenIssuer        IDTokenIssuer
+	deviceCodeStore      DeviceCodeStore
+	deviceCodeTTL        time.Duration
+	deviceCodeInterval   time.Duration
+	deviceVerifyBaseURL  string
 }
 
 // Option configures the Server.
@@ -135,6 +139,34 @@ func WithAuthCodeStore(store AuthCodeStore, ttl time.Duration) Option {
 		if ttl > 0 {
 			s.authCodeTTL = ttl
 		}
+	}
+}
+
+// WithDeviceCodeStore enables the OAuth 2.0 device authorization
+// grant (RFC 8628) for clients on devices that can't open a browser
+// — CLIs, TVs, IoT, embedded shells. The new endpoints are
+// /device/code (device-initiated) and /device/verify (user-facing
+// approval) plus the grant_type=urn:ietf:params:oauth:grant-type:device_code
+// branch on /token. Without this option, all three return 501.
+//
+// ttl is the device_code lifetime (RFC §3.2 typically 5-15 minutes).
+// pollInterval is the minimum allowed poll interval — devices polling
+// faster than this get slow_down. Pass <=0 for the defaults
+// (DefaultDeviceCodeTTL = 10 min; DefaultDevicePollMin = 5s).
+//
+// verificationBaseURL is what the server tells devices to display
+// (e.g. "https://sso.example.com/device"). Empty = derive from the
+// request, same fallback as the discovery endpoint.
+func WithDeviceCodeStore(store DeviceCodeStore, ttl, pollInterval time.Duration, verificationBaseURL string) Option {
+	return func(s *Server) {
+		s.deviceCodeStore = store
+		if ttl > 0 {
+			s.deviceCodeTTL = ttl
+		}
+		if pollInterval > 0 {
+			s.deviceCodeInterval = pollInterval
+		}
+		s.deviceVerifyBaseURL = verificationBaseURL
 	}
 }
 
@@ -453,6 +485,8 @@ func (s *Server) Mount() {
 	s.router.POST(PathToken, s.handleToken)
 	s.router.POST(PathIntrospect, s.handleIntrospect)
 	s.router.POST(PathRevoke, s.handleRevoke)
+	s.router.POST(PathDeviceCode, s.handleDeviceCode)
+	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)

@@ -13,6 +13,8 @@ const (
 	PathToken          = "/token"
 	PathIntrospect     = "/token/introspect"
 	PathRevoke         = "/token/revoke"
+	PathDeviceCode     = "/device/code"
+	PathDeviceVerify   = "/device/verify"
 	PathUserInfo       = "/userinfo"
 	PathLogout         = "/logout"
 	PathAPIPrefix      = "/api/v1"
@@ -133,6 +135,13 @@ const (
 	ErrInvalidScope              = "invalid_scope"
 	ErrInvalidPKCEMethod         = "invalid_pkce_method"
 	ErrPKCERequired              = "pkce_required"
+
+	// RFC 8628 device authorization grant errors.
+	ErrDeviceCodeNotConfigured = "device_code_not_configured"
+	ErrAuthorizationPending    = "authorization_pending"
+	ErrSlowDown                = "slow_down"
+	ErrAccessDenied            = "access_denied"
+	ErrExpiredToken            = "expired_token"
 )
 
 // Status strings returned in successful responses.
@@ -148,6 +157,7 @@ const (
 	GrantAuthorizationCode = "authorization_code"
 	GrantRefreshToken      = "refresh_token"
 	GrantClientCredentials = "client_credentials"
+	GrantDeviceCode        = "urn:ietf:params:oauth:grant-type:device_code"
 )
 
 // Revocation tags returned by /logout.
@@ -188,6 +198,8 @@ const (
 	DefaultTokenTTL        = time.Hour
 	DefaultAuthCodeTTL     = 10 * time.Minute
 	DefaultRefreshTokenTTL = 30 * 24 * time.Hour
+	DefaultDeviceCodeTTL   = 10 * time.Minute
+	DefaultDevicePollMin   = 5 * time.Second
 	DefaultIssuer          = "snaplink-sso"
 )
 
@@ -196,4 +208,5 @@ var SupportedGrants = []string{
 	GrantAuthorizationCode,
 	GrantRefreshToken,
 	GrantClientCredentials,
+	GrantDeviceCode,
 }

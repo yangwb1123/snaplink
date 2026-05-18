@@ -607,6 +607,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		Scope        string `json:"scope"`
 		RedirectURI  string `json:"redirect_uri"`
 		CodeVerifier string `json:"code_verifier"` // PKCE RFC 7636 §4.5
+		DeviceCode   string `json:"device_code"`   // RFC 8628 §3.4 device grant
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -797,6 +798,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			KeyScope:         token.Scope,
 			KeyTokenStrategy: strategy,
 		})
+	case GrantDeviceCode:
+		s.handleDeviceTokenGrant(ctx, client, req.DeviceCode)
 	case GrantClientCredentials:
 		strategy, ti, err := s.issuerForClient(client)
 		if err != nil {
