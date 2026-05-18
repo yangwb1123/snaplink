@@ -52,6 +52,8 @@ type Server struct {
 	issuer               string
 	authCodeStore        AuthCodeStore
 	authCodeTTL          time.Duration
+	refreshTokenStore    RefreshTokenStore
+	refreshTokenTTL      time.Duration
 }
 
 // Option configures the Server.
@@ -131,6 +133,30 @@ func WithAuthCodeStore(store AuthCodeStore, ttl time.Duration) Option {
 		s.authCodeStore = store
 		if ttl > 0 {
 			s.authCodeTTL = ttl
+		}
+	}
+}
+
+// WithRefreshTokenStore enables the OAuth 2.0 refresh_token grant on the
+// /token endpoint and turns on server-managed refresh token issuance on
+// every successful access-token mint (login direct flow + authorization_code
+// exchange). Without it, POST /token grant_type=refresh_token returns
+// 501 and the response_token field passes through whatever the underlying
+// TokenIssuer returned (typically empty for stateless JWT).
+//
+// Rotation: tokens are single-use. Each successful refresh consumes the
+// presented token and issues a new one. A presented-twice token always
+// fails as invalid_grant (the second presentation can't tell whether
+// the first was legitimate or a replay; rejection is the safe default).
+//
+// ttl is the lifetime of issued tokens (per RFC 6749 §6 typically days
+// to weeks; mobile clients often keep them for months). Pass <=0 to use
+// [DefaultRefreshTokenTTL] (30 days).
+func WithRefreshTokenStore(store RefreshTokenStore, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.refreshTokenStore = store
+		if ttl > 0 {
+			s.refreshTokenTTL = ttl
 		}
 	}
 }

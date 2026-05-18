@@ -108,6 +108,8 @@ const (
 	ErrInvalidRedirectURI        = "invalid_redirect_uri"
 	ErrAuthCodeNotConfigured     = "authorization_code_not_configured"
 	ErrUnsupportedResponseType   = "unsupported_response_type"
+	ErrRefreshTokenNotConfigured = "refresh_token_not_configured"
+	ErrInvalidScope              = "invalid_scope"
 )
 
 // Status strings returned in successful responses.
@@ -150,6 +152,7 @@ const (
 	DefaultSessionDuration = 24 * time.Hour
 	DefaultTokenTTL        = time.Hour
 	DefaultAuthCodeTTL     = 10 * time.Minute
+	DefaultRefreshTokenTTL = 30 * 24 * time.Hour
 	DefaultIssuer          = "snaplink-sso"
 )
 

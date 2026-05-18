@@ -272,11 +272,29 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 	}
 
+	// When a RefreshTokenStore is wired, server-managed refresh tokens
+	// override whatever the underlying TokenIssuer returned — that way
+	// the OAuth refresh_token grant works uniformly regardless of which
+	// issuer minted the access token. Fail-open: a refresh-token store
+	// outage doesn't block the login (user gets an access_token they
+	// can use until expiry), but it does surface as a server-side
+	// logger.Error so operators see the degradation.
+	refreshTokenOut := token.RefreshToken
+	if s.refreshTokenStore != nil {
+		rt, err := s.issueRefreshToken(ctx.Request().Context(),
+			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes)
+		if err != nil {
+			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
+		} else {
+			refreshTokenOut = rt
+		}
+	}
+
 	resp := map[string]any{
 		KeySessionID:     session.ID,
 		KeyAccessToken:   token.AccessToken,
 		KeyTokenType:     token.TokenType,
-		KeyRefreshToken:  token.RefreshToken,
+		KeyRefreshToken:  refreshTokenOut,
 		KeyExpiresIn:     token.ExpiresIn,
 		KeyScope:         token.Scope,
 		KeyTokenStrategy: strategy,
@@ -346,6 +364,63 @@ func generateAuthCodeBytes() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// issueRefreshToken generates a refresh token, persists it against the
+// store, and returns the opaque token string. The TTL is taken from the
+// Server's refreshTokenTTL with a fallback to DefaultRefreshTokenTTL.
+//
+// Callers MUST pre-check s.refreshTokenStore != nil — this helper
+// dereferences it unconditionally so a misuse fails loudly during
+// testing rather than silently no-op'ing in production.
+func (s *Server) issueRefreshToken(
+	ctx context.Context,
+	userID, clientID, provider string,
+	scopes []string,
+	attributes map[string]string,
+) (string, error) {
+	token, err := generateAuthCodeBytes() // same 32-byte base64url generator
+	if err != nil {
+		return "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	ttl := s.refreshTokenTTL
+	if ttl <= 0 {
+		ttl = DefaultRefreshTokenTTL
+	}
+	now := time.Now()
+	entry := &RefreshToken{
+		UserID:     userID,
+		ClientID:   clientID,
+		Provider:   provider,
+		Scopes:     append([]string(nil), scopes...),
+		Attributes: attributes,
+		IssuedAt:   now,
+		ExpiresAt:  now.Add(ttl),
+	}
+	if err := s.refreshTokenStore.Issue(ctx, token, entry); err != nil {
+		return "", fmt.Errorf("store refresh token: %w", err)
+	}
+	return token, nil
+}
+
+// isScopeSubset reports whether every scope in want is also in have.
+// Used by the refresh_token grant to enforce RFC 6749 §6's "MUST NOT
+// expand scope" rule — a refresh request may downscope or keep the
+// original grant but never widen it.
+func isScopeSubset(want, have []string) bool {
+	if len(want) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(have))
+	for _, s := range have {
+		set[s] = struct{}{}
+	}
+	for _, w := range want {
+		if _, ok := set[w]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // providersForClient returns the list of authenticator names this client may
@@ -521,17 +596,88 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			return
 		}
 		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
-		ctx.JSON(http.StatusOK, map[string]any{
+		resp := map[string]any{
 			KeyAccessToken:   token.AccessToken,
 			KeyTokenType:     token.TokenType,
 			KeyExpiresIn:     token.ExpiresIn,
 			KeyScope:         token.Scope,
 			KeyTokenStrategy: strategy,
-		})
+		}
+		if s.refreshTokenStore != nil {
+			rt, err := s.issueRefreshToken(ctx.Request().Context(),
+				info.UserID, client.ID, info.Provider, scopes, info.Attributes)
+			if err != nil {
+				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
+			} else {
+				resp[KeyRefreshToken] = rt
+			}
+		}
+		ctx.JSON(http.StatusOK, resp)
 	case GrantRefreshToken:
-		ctx.JSON(http.StatusOK, map[string]string{
-			KeyAccessToken: "TODO:implement_refresh",
-			KeyTokenType:   TokenTypeBearer,
+		if s.refreshTokenStore == nil {
+			ctx.JSON(http.StatusNotImplemented, errorBody(ErrRefreshTokenNotConfigured))
+			return
+		}
+		if req.RefreshToken == "" {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		info, err := s.refreshTokenStore.Consume(ctx.Request().Context(), req.RefreshToken)
+		if err != nil {
+			// Unknown / expired / already-consumed all map to invalid_grant
+			// per RFC 6749 §5.2 — clients can't distinguish, by design.
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+		// Bind the token to the client that's exchanging it (RFC 6749 §6).
+		if info.ClientID != client.ID {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+		// Scope rules per RFC 6749 §6: omitted scope = keep original;
+		// supplied scope MUST be a subset of the original (narrowing
+		// allowed, expansion forbidden).
+		grantScopes := info.Scopes
+		if req.Scope != "" {
+			requested := strings.Split(req.Scope, " ")
+			if !isScopeSubset(requested, info.Scopes) {
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+				return
+			}
+			grantScopes = requested
+		}
+		strategy, ti, err := s.issuerForClient(client)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+			return
+		}
+		token, err := ti.Issue(ctx.Request().Context(), &Subject{
+			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
+		}, grantScopes)
+		if err != nil {
+			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		// Rotation: issue a NEW refresh token (the old one was deleted by
+		// Consume above). A presented-twice old token now fails as
+		// invalid_grant — the safe default for any reuse attempt, whether
+		// it's a benign client retry or an actual replay attack.
+		newRefresh, err := s.issueRefreshToken(ctx.Request().Context(),
+			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes)
+		if err != nil {
+			s.logger.Error("refresh token rotation failed", "error", err)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
+		ctx.JSON(http.StatusOK, map[string]any{
+			KeyAccessToken:   token.AccessToken,
+			KeyTokenType:     token.TokenType,
+			KeyRefreshToken:  newRefresh,
+			KeyExpiresIn:     token.ExpiresIn,
+			KeyScope:         token.Scope,
+			KeyTokenStrategy: strategy,
 		})
 	case GrantClientCredentials:
 		strategy, ti, err := s.issuerForClient(client)

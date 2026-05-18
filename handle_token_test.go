@@ -177,7 +177,10 @@ func TestToken_AuthorizationCode_NotImplementedWithoutStore(t *testing.T) {
 	}
 }
 
-func TestToken_RefreshToken_TODO(t *testing.T) {
+func TestToken_RefreshToken_NotImplementedWithoutStore(t *testing.T) {
+	// The token harness wires a client but no RefreshTokenStore; the
+	// refresh_token branch should return 501 with the dedicated error
+	// code.
 	srv, _ := newTokenHarness(t, true)
 	code, body := postToken(t, srv, map[string]any{
 		"grant_type":    "refresh_token",
@@ -185,11 +188,11 @@ func TestToken_RefreshToken_TODO(t *testing.T) {
 		"client_secret": tokenSecret,
 		"refresh_token": "x",
 	})
-	if code != http.StatusOK {
-		t.Fatalf("status = %d body=%v", code, body)
+	if code != http.StatusNotImplemented {
+		t.Fatalf("status = %d body=%v, want 501", code, body)
 	}
-	if body["token_type"] != "Bearer" {
-		t.Errorf("token_type = %v", body["token_type"])
+	if body["error"] != "refresh_token_not_configured" {
+		t.Errorf("error = %v", body["error"])
 	}
 }
 
