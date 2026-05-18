@@ -2,6 +2,9 @@ package sso
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -61,11 +64,14 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 
 func (s *Server) handleLogin(ctx HandlerContext) {
 	var req struct {
-		Provider   string            `json:"provider"`
-		Credential map[string]string `json:"credential"`
-		ClientID   string            `json:"client_id"`
-		Scope      []string          `json:"scope"`
-		State      string            `json:"state"`
+		Provider     string            `json:"provider"`
+		Credential   map[string]string `json:"credential"`
+		ClientID     string            `json:"client_id"`
+		Scope        []string          `json:"scope"`
+		State        string            `json:"state"`
+		ResponseType string            `json:"response_type"` // "code" → return auth code instead of token
+		RedirectURI  string            `json:"redirect_uri"`  // required when response_type=code
+		Nonce        string            `json:"nonce"`         // OIDC nonce (passed through to AuthCode)
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
@@ -187,6 +193,38 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 	}
 
+	// OAuth 2.0 authorization_code branch: instead of minting a token
+	// here, persist a short-lived code bound to (user, client, redirect_uri)
+	// and return it so the relying party can exchange it via /token.
+	if req.ResponseType == "code" {
+		if s.authCodeStore == nil {
+			ctx.JSON(http.StatusNotImplemented, errorBody(ErrAuthCodeNotConfigured))
+			return
+		}
+		if req.RedirectURI == "" || !client.IsRedirectURIValid(req.RedirectURI) {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRedirectURI)
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
+			return
+		}
+		code, err := s.issueAuthCode(ctx.Request().Context(), result, &req, client)
+		if err != nil {
+			s.logger.Error("failed to issue auth code", "error", err)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "")
+		resp := map[string]any{KeyCode: code}
+		if req.State != "" {
+			resp[KeyState] = req.State
+		}
+		ctx.JSON(http.StatusOK, resp)
+		return
+	}
+	if req.ResponseType != "" && req.ResponseType != "token" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnsupportedResponseType))
+		return
+	}
+
 	if s.sessionMgr == nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrSessionMgrNotConfigured))
 		return
@@ -256,6 +294,58 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		resp[KeyMenus] = menus
 	}
 	ctx.JSON(http.StatusOK, resp)
+}
+
+// issueAuthCode generates an authorization code, persists it against the
+// store, and returns the opaque code string. The TTL is taken from the
+// Server's authCodeTTL with a fallback to DefaultAuthCodeTTL.
+func (s *Server) issueAuthCode(
+	ctx context.Context,
+	result *AuthResult,
+	req *struct {
+		Provider     string            `json:"provider"`
+		Credential   map[string]string `json:"credential"`
+		ClientID     string            `json:"client_id"`
+		Scope        []string          `json:"scope"`
+		State        string            `json:"state"`
+		ResponseType string            `json:"response_type"`
+		RedirectURI  string            `json:"redirect_uri"`
+		Nonce        string            `json:"nonce"`
+	},
+	client *Client,
+) (string, error) {
+	code, err := generateAuthCodeBytes()
+	if err != nil {
+		return "", fmt.Errorf("generate auth code: %w", err)
+	}
+	ttl := s.authCodeTTL
+	if ttl <= 0 {
+		ttl = DefaultAuthCodeTTL
+	}
+	entry := &AuthCode{
+		UserID:      result.UserID,
+		ClientID:    client.ID,
+		RedirectURI: req.RedirectURI,
+		Scopes:      append([]string(nil), req.Scope...),
+		Nonce:       req.Nonce,
+		Provider:    result.Provider,
+		Attributes:  result.Attributes,
+		ExpiresAt:   time.Now().Add(ttl),
+	}
+	if err := s.authCodeStore.Issue(ctx, code, entry); err != nil {
+		return "", fmt.Errorf("store auth code: %w", err)
+	}
+	return code, nil
+}
+
+// generateAuthCodeBytes mints a cryptographically random base64url code.
+// Local copy so handler.go doesn't depend on defaultimpl.
+func generateAuthCodeBytes() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // providersForClient returns the list of authenticator names this client may
@@ -357,6 +447,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		ClientSecret string `json:"client_secret"`
 		RefreshToken string `json:"refresh_token"`
 		Scope        string `json:"scope"`
+		RedirectURI  string `json:"redirect_uri"`
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -384,9 +475,58 @@ func (s *Server) handleToken(ctx HandlerContext) {
 
 	switch req.GrantType {
 	case GrantAuthorizationCode:
-		ctx.JSON(http.StatusOK, map[string]string{
-			KeyAccessToken: "TODO:implement_code_exchange",
-			KeyTokenType:   TokenTypeBearer,
+		if s.authCodeStore == nil {
+			ctx.JSON(http.StatusNotImplemented, errorBody(ErrAuthCodeNotConfigured))
+			return
+		}
+		if req.Code == "" {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		info, err := s.authCodeStore.Consume(ctx.Request().Context(), req.Code)
+		if err != nil {
+			// Unknown / expired / already-consumed all map to invalid_grant
+			// per RFC 6749 §5.2 — clients can't distinguish, by design.
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+		// Bind the code to the client that's exchanging it.
+		if info.ClientID != client.ID {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+		// Bind to the redirect_uri that was registered at issue time.
+		if info.RedirectURI != "" && req.RedirectURI != info.RedirectURI {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
+			return
+		}
+		strategy, ti, err := s.issuerForClient(client)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+			return
+		}
+		// Prefer the scopes captured at issue time; fall back to whatever
+		// the caller supplied so older clients that don't echo the scope
+		// param still get a sensible token.
+		scopes := info.Scopes
+		if len(scopes) == 0 {
+			scopes = strings.Split(req.Scope, " ")
+		}
+		token, err := ti.Issue(ctx.Request().Context(), &Subject{
+			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
+		}, scopes)
+		if err != nil {
+			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
+		ctx.JSON(http.StatusOK, map[string]any{
+			KeyAccessToken:   token.AccessToken,
+			KeyTokenType:     token.TokenType,
+			KeyExpiresIn:     token.ExpiresIn,
+			KeyScope:         token.Scope,
+			KeyTokenStrategy: strategy,
 		})
 	case GrantRefreshToken:
 		ctx.JSON(http.StatusOK, map[string]string{

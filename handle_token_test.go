@@ -158,10 +158,10 @@ func TestToken_ClientCredentials_HappyPath(t *testing.T) {
 	}
 }
 
-func TestToken_AuthorizationCode_TODO(t *testing.T) {
-	// The implementation returns a TODO placeholder body for this branch.
-	// Test pins the current shape so a future implementation has a
-	// regression target.
+func TestToken_AuthorizationCode_NotImplementedWithoutStore(t *testing.T) {
+	// The token harness wires a client but no AuthCodeStore; the
+	// authorization_code branch should return 501 with the dedicated
+	// error code.
 	srv, _ := newTokenHarness(t, true)
 	code, body := postToken(t, srv, map[string]any{
 		"grant_type":    "authorization_code",
@@ -169,11 +169,11 @@ func TestToken_AuthorizationCode_TODO(t *testing.T) {
 		"client_secret": tokenSecret,
 		"code":          "x",
 	})
-	if code != http.StatusOK {
-		t.Fatalf("status = %d body=%v", code, body)
+	if code != http.StatusNotImplemented {
+		t.Fatalf("status = %d body=%v, want 501", code, body)
 	}
-	if body["token_type"] != "Bearer" {
-		t.Errorf("token_type = %v", body["token_type"])
+	if body["error"] != "authorization_code_not_configured" {
+		t.Errorf("error = %v", body["error"])
 	}
 }
 

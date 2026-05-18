@@ -50,6 +50,8 @@ type Server struct {
 	tracingOperation     string
 	corsPolicy           *cors.Policy
 	issuer               string
+	authCodeStore        AuthCodeStore
+	authCodeTTL          time.Duration
 }
 
 // Option configures the Server.
@@ -115,6 +117,22 @@ func WithLogger(l Logger) Option {
 // WithIssuer sets the token issuer name.
 func WithIssuer(issuer string) Option {
 	return func(s *Server) { s.issuer = issuer }
+}
+
+// WithAuthCodeStore enables the OAuth 2.0 authorization_code grant on the
+// /token endpoint. Without it, /auth/login with response_type=code
+// returns 501 and POST /token grant_type=authorization_code returns the
+// "no authorization code store configured" error.
+//
+// ttl is the lifetime of issued codes (per RFC 6749 §4.1.2 SHOULD be
+// short — 10 minutes is typical). Pass <=0 to use [DefaultAuthCodeTTL].
+func WithAuthCodeStore(store AuthCodeStore, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.authCodeStore = store
+		if ttl > 0 {
+			s.authCodeTTL = ttl
+		}
+	}
 }
 
 // WithSessionTTL is retained for source compatibility but has no effect.

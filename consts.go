@@ -66,6 +66,9 @@ const (
 	KeyTokenStrategy    = "token_strategy"
 	KeyRecommendedLang  = "recommended_language"
 	KeyCountryCode      = "country_code"
+	KeyCode             = "code"
+	KeyState            = "state"
+	KeyRedirectURI      = "redirect_uri"
 )
 
 // Stable error code strings returned to API callers.
@@ -101,6 +104,10 @@ const (
 	ErrNetPolicyNotFound         = "netpolicy_not_found"
 	ErrRiskDenied                = "risk_denied"
 	ErrPayloadTooLarge           = "payload_too_large"
+	ErrInvalidGrant              = "invalid_grant"
+	ErrInvalidRedirectURI        = "invalid_redirect_uri"
+	ErrAuthCodeNotConfigured     = "authorization_code_not_configured"
+	ErrUnsupportedResponseType   = "unsupported_response_type"
 )
 
 // Status strings returned in successful responses.
@@ -142,6 +149,7 @@ const (
 const (
 	DefaultSessionDuration = 24 * time.Hour
 	DefaultTokenTTL        = time.Hour
+	DefaultAuthCodeTTL     = 10 * time.Minute
 	DefaultIssuer          = "snaplink-sso"
 )
 
