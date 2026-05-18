@@ -219,6 +219,51 @@ The `Server` looks up `TokenIssuer` by the client's strategy name registered
 via `sso.WithTokenIssuer(name, issuer)`. Custom strategies plug in the same
 way as custom authenticators.
 
+### 2c. OAuth 2.0 authorization_code grant (`auth_code.go`)
+
+Opt-in via `sso.WithAuthCodeStore(store, ttl)`. Without it, the
+authorization_code grant is unavailable — the server only mints
+tokens via the direct password / phone / code / etc. flows on
+`/auth/login` and the `client_credentials` grant on `/token`.
+
+Flow:
+
+1. Relying party POSTs `/auth/login` with `response_type=code` +
+   `redirect_uri`. The redirect_uri MUST be in the client's
+   `RedirectURIs` allowlist (validated against `Client.IsRedirectURIValid`).
+2. Server authenticates the user via the requested provider,
+   stamps an `AuthCode` bound to (user, client, redirect_uri,
+   scopes, nonce, provider, attributes), persists it in the
+   `AuthCodeStore`, and returns `{code, state}`.
+3. Relying party POSTs `/token` with `grant_type=authorization_code`
+   + `code` + `client_id` + `client_secret` + `redirect_uri`.
+4. Server consumes the code (single-use), verifies the client_id
+   matches the binding, verifies the redirect_uri matches, mints
+   an access token via the client's TokenIssuer, returns the
+   standard `{access_token, token_type, expires_in, scope,
+   token_strategy}` envelope.
+
+Sentinel mapping:
+
+* Unknown / expired / already-consumed code → `400 invalid_grant`
+  (all three indistinguishable from the wire — RFC 6749 §5.2 +
+  oracle-leak hardening).
+* `redirect_uri` mismatch at either side → `400 invalid_redirect_uri`.
+* Store not configured → `501 authorization_code_not_configured`.
+* `response_type` other than `""` / `"token"` / `"code"` → `400
+  unsupported_response_type`.
+
+`defaultimpl.MemoryAuthCodeStore` is the in-process backend.
+Caller-supplied `Scopes` / `Attributes` are copied at Issue
+time (no aliasing) and the store is concurrent-safe under
+`-race`. `defaultimpl.GenerateAuthCode` exposes the 32-byte
+base64url generator for custom store implementations.
+
+TTL default: `DefaultAuthCodeTTL = 10 * time.Minute`. Production
+deployments with multi-replica fleets should swap a
+Redis / SQL-backed store so codes issued on one replica are
+consumable on any other.
+
 ### 3. Audit (`audit/`)
 
 `audit.Recorder` fans Events out to one or more Sinks. Built-in sinks:
