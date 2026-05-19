@@ -569,6 +569,119 @@ capability) and `IDTokenIssuer` (device flows that requested
 Default settings: `DefaultDeviceCodeTTL = 10 min`,
 `DefaultDevicePollMin = 5s`.
 
+### 2i. OIDC RP-Initiated Logout (`handle_end_session.go`)
+
+`GET /end_session` — redirect-based companion to POST `/logout`.
+Lets a relying party redirect the user agent to the SSO server,
+have the session killed, then bounce them back to a registered
+post-logout URL. Always wired; no opt-in.
+
+Query parameters per OIDC RP-Initiated Logout 1.0 §2:
+
+* `id_token_hint` (REQUIRED for session termination)
+* `post_logout_redirect_uri` (validated against the new
+  `Client.PostLogoutRedirectURIs` allowlist)
+* `state` (echoed on the redirect)
+* `client_id` (fallback hint when id_token_hint is absent — only
+  used for redirect-uri allowlist lookup, NOT session termination)
+
+Security:
+
+* id_token_hint signature MUST verify — bad hint = 400
+  `invalid_token`. Without this, an attacker who crafts a fake
+  id_token_hint with a phishing redirect_uri could weaponize the
+  redirect.
+* `post_logout_redirect_uri` MUST exact-match the allowlist (no
+  prefix tolerance, no scheme-only match) per §3.
+* Unknown / unset redirect_uri = 204 with no Location header — we
+  do the session kill, but won't open a redirect vector.
+
+Best-effort actions on every accepted request:
+
+* Revokes the presented id_token across all issuers (so a stolen
+  id_token_hint can't be used as a silent soft-logout that leaves
+  the access token alive until expiry).
+* Wipes every refresh token for (subject, client) via
+  `RefreshTokenSubjectIndex` when wired.
+* Emits a logout audit event with `reason=id_token_hint`.
+
+Discovery doc's `end_session_endpoint` now points to this path
+(previously pointed at `/logout`, which is bearer-authenticated
+and not the OIDC-shaped endpoint RPs expect).
+
+The Ed25519 issuer's `aud` parsing was fixed in this same
+landing: the JWT spec (RFC 7519 §4.1.3) allows the audience to be
+either a string or an array, but `Validate` only accepted arrays.
+OIDC ID tokens always use the string form, so without this fix
+every id_token_hint failed validation. New `audClaim` type
+unmarshals either shape and marshals single-aud as a compact
+string per OIDC convention.
+
+### 2j. Resource indicators — RFC 8707 (`resource` parameter)
+
+Lets clients name the resource server an access token is meant
+for, and lets resource servers verify the token was actually
+issued for them via the standard `aud` JWT claim. Without this,
+a token minted for service A could be replayed against service B
+sharing a single SSO ("confused deputy" defense; complements the
+narrower scope-narrowing path).
+
+* `resource` (repeatable) parameter accepted on every issuance
+  path: `/auth/login`, `/token` (every grant), `/device/code`.
+* `Client.AllowedResources` allowlist — non-allowlisted requests
+  return 400 `invalid_target` per RFC 8707 §2. Empty allowlist
+  = no enforcement (legacy compat; the field is opt-in).
+* Captured-at-authorization wins over caller-supplied at
+  exchange / rotation — refresh of a resource-scoped token
+  produces another resource-scoped token without the caller
+  needing to re-supply the parameter.
+* JWT-level: `Ed25519JWTIssuer` stamps `Subject.Resources` into
+  the standard `aud` claim. Single-resource emits as a string
+  per OIDC convention; multi-resource emits as an array.
+* Persistence: `AuthCode` + `RefreshToken` + `DeviceCode` each
+  carry a `Resources` field. Memory backends round-trip natively;
+  SQLite refresh_tokens gained a `resources` column with
+  idempotent `ALTER TABLE` migration.
+
+### 2k. Token exchange — RFC 8693 (`handle_token_exchange.go`)
+
+`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`. A
+confidential client swaps an existing access token for a new one
+scoped down or audience-shifted on behalf of the same subject —
+canonical use case is downstream service propagation: service A
+holding user U's bearer can get a B-scoped bearer to call
+service B without replaying U's broader token across services.
+
+Request (form-encoded per RFC 6749 §3.2):
+
+* `subject_token` REQUIRED — the token being exchanged.
+* `subject_token_type` REQUIRED — only `access_token` or `jwt`
+  supported in v1 (the two synonymous for this server).
+* `resource` (RFC 8707) + `audience` (RFC 8693) — merged,
+  deduplicated, allowlist-enforced into the new token's `aud`.
+* `scope` — narrowed per RFC 6749 §6; expansion = 400
+  `invalid_scope`.
+* `requested_token_type` — defaults to `access_token`; refresh /
+  ID token output is future scope.
+* `actor_token` / `actor_token_type` — captured but not yet
+  threaded into the issued token's claims (delegation chains are
+  future scope).
+
+Response per §2.2.1: `access_token` + `issued_token_type` +
+`token_type` + `expires_in` + `scope` + `token_strategy`.
+
+Sentinel mapping:
+
+* Missing subject_token / subject_token_type → `invalid_request`
+* Unsupported subject_token_type → `invalid_request`
+* Subject token validation failure → `invalid_grant`
+* Unregistered resource / audience → `invalid_target`
+* Scope expansion → `invalid_scope`
+* Unsupported requested_token_type → `invalid_request`
+
+Discovery doc now advertises the grant in
+`grant_types_supported`.
+
 ### 3. Audit (`audit/`)
 
 `audit.Recorder` fans Events out to one or more Sinks. Built-in sinks:
