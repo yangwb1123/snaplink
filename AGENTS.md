@@ -203,6 +203,16 @@ it with `sso.WithAuthenticator(...)`, then list its name under a client's
 - `sso.TokenStrategyJWT` — Ed25519, JWKS-publishable, stateless verify
 - `sso.TokenStrategySession` — opaque token backed by `SessionManager`
 
+`/.well-known/jwks.json` carries `Cache-Control: public,
+max-age=300` plus a strong `ETag` derived from the body hash
+(`sha256(body)[:8]` base64url). RPs that send `If-None-Match` on
+the next pull get `304 Not Modified` with no body, so a typical
+verifier touches the network once every 5 minutes during steady
+state — long enough to amortise round-trip cost, short enough that
+emergency key rotation lands fleet-wide without operator action.
+The ETag is recomputed deterministically on every request so cache
+correctness survives a server restart.
+
 Each registered client (APP) picks its own:
 
 ```yaml
@@ -218,6 +228,29 @@ clients:
 The `Server` looks up `TokenIssuer` by the client's strategy name registered
 via `sso.WithTokenIssuer(name, issuer)`. Custom strategies plug in the same
 way as custom authenticators.
+
+### 2b1. OAuth wire-format (`oauth_bind.go`)
+
+Every OAuth/OIDC endpoint (`/token`, `/token/introspect`,
+`/token/revoke`, `/device/code`, `/device/verify`) accepts BOTH
+`application/x-www-form-urlencoded` AND `application/json` request
+bodies. RFC 6749 §3.2 + RFC 7662 §2.1 + RFC 7009 §2.1 + RFC 8628
+§3.1 all mandate form-encoded for these endpoints — every
+off-the-shelf OAuth client library defaults to form-encoded, so
+the JSON-only original behaviour was silently incompatible with
+the ecosystem.
+
+The `bindOAuthParams` helper dispatches by Content-Type, decoding
+into the existing request structs via their `json:"..."` tags so
+there's only one source of truth per request shape. Form decoding
+handles string, bool, and `[]string` fields; the `[]string` path
+honours both `scope=a&scope=b` (multi-value) and `scope=a+b`
+(space-separated single value) per §3.3.
+
+HTTP Basic auth on `/token` takes precedence over body-supplied
+`client_id` + `client_secret` per RFC 6749 §2.3.1 — the safer
+credential channel wins when both are present. Tests cover both
+wire formats, the Basic-auth precedence, and the JSON fallback.
 
 ### 2c. OAuth 2.0 authorization_code grant (`auth_code.go`)
 
@@ -359,13 +392,37 @@ swap a Redis / SQL-backed store so tokens issued on one replica
 are consumable on any other AND persist across restarts (a
 server restart shouldn't log every user out).
 
-**Rotation reuse detection (v1).** A presented-twice refresh
-token always fails as `invalid_grant` because Consume deleted it
-on the first presentation — the safe default for any reuse
-attempt, benign retry or active replay attack alike. Token-family
-revocation (an active token issued to the attacker after a
-detected reuse must also be invalidated) is a future hardening
-item; v1 relies on the short access-token TTL to bound damage.
+**Rotation reuse detection + family revocation (OAuth Security
+BCP §4.13/§4.14).** Every refresh token carries a `FamilyID`
+stamped at first issue (login / authz_code / device) and
+propagated unchanged through every rotation — a 30-day chain of
+rotations all share one FamilyID. Stores opt into reuse detection
+by implementing `RefreshTokenFamilyTracker`:
+
+* `Consume` of a previously-consumed token returns the new
+  `ErrRefreshTokenReused` sentinel with the FamilyID stamped on
+  the returned `*RefreshToken`.
+* The rotation grant catches it, calls
+  `DeleteFamily(ctx, fid)` on the tracker to invalidate every
+  active sibling / descendant in one call, emits a
+  `refresh_token_reuse_detected` audit event
+  (Outcome=failure, reason=`family=<id>`, metadata
+  `killed=<n>`), and returns `invalid_grant` on the wire so an
+  attacker and a benign retry caller get identical responses.
+
+The in-tree `defaultimpl.MemoryRefreshTokenStore` and
+`defaultimpl/sqlite.RefreshTokenStore` both implement the
+tracker. The SQLite schema gains a `family_id` column on
+`refresh_tokens` plus a
+`refresh_token_families(token → family_id)` ledger that
+survives Consume so post-rotation replays can be recognised;
+`ALTER TABLE ADD COLUMN` runs idempotently so existing
+deployments migrate transparently.
+
+Empty `FamilyID` opts out (legacy behaviour: rotation works,
+reuse is plain `invalid_grant` with no family revocation). The
+SSO server always mints a family on first issue, so opting out
+only matters for custom store implementations.
 
 **Fail-open issuance.** Refresh-token issuance failures during a
 login or authorization_code exchange are logged but do NOT block
@@ -413,6 +470,18 @@ Refresh deletion routes through the optional
 `RefreshTokenInspector.Delete` extension; stores that don't
 implement it must rely on TTL expiry.
 
+**Bulk subject revocation** at `POST /token/revoke-all`. Lets a
+signed-in user kill every refresh token they hold for the client
+named in their bearer's `aud` claim — the "sign out of all
+devices" button. Authenticated by bearer token only (the user
+authorises their own logout, not a client). Requires the configured
+`RefreshTokenStore` to implement the optional
+`RefreshTokenSubjectIndex` extension (memory + sqlite both do);
+without it, returns 501 + `refresh_token_not_configured`. The
+presented access token itself is also revoked across all issuers
+so it stops working immediately rather than hanging on until
+expiry. Response: `200 {"status":"ok","refresh_tokens_revoked":N}`.
+
 ### 2g. OpenID Connect (`oidc.go` + `oidc_discovery.go`)
 
 **ID Token issuance.** Opt in via `sso.WithIDTokenIssuer(issuer)`.
@@ -445,6 +514,26 @@ served from the same endpoint per de-facto convention.
 first-hop. Internet-facing deployments without a known edge
 proxy MUST install a stricter middleware — XFF spoofing on a
 public endpoint can serve the wrong scheme to OIDC RPs.
+
+**UserInfo scope→claim filtering** per OIDC Core §5.4. The
+`/userinfo` endpoint projects exactly the claims permitted by the
+access token's `scope` claim — `openid` always returns `sub`,
+`profile` adds `name` / `family_name` / `given_name` / `nickname`
+/ `picture` / `updated_at`, `email` adds `email` /
+`email_verified`, `phone` adds `phone_number` /
+`phone_number_verified`, `address` adds `address`. Claims sourced
+from `User.Attributes` (custom verifier output) take precedence
+over the first-class `User.Email` / `User.Name` fields, so a
+verifier that loads richer profile data overrides the seed
+attributes without code changes. Tokens lacking the matching
+scope get the minimal `{sub}` body, never the richer fields.
+
+**End-to-end pipeline test** at `oidc_integration_test.go` proves
+the discovery URL → JWKS pub key → ID Token signature chain is
+internally consistent — discovery advertises a JWKS URL, JWKS
+returns Ed25519 keys, login mints an `id_token` signed by the
+matching private half, and `ed25519.Verify` succeeds with the
+public half. Cracks anywhere in the pipeline fail this test.
 
 ### 2h. Device authorization grant — RFC 8628 (`handle_device.go`)
 
