@@ -59,7 +59,7 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		Scope    string `json:"scope"`
 		Nonce    string `json:"nonce"`
 	}
-	if err := ctx.Bind(&req); err != nil {
+	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return
 	}
@@ -175,7 +175,7 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 		UserCode string `json:"user_code"`
 		Approve  bool   `json:"approve"`
 	}
-	if err := ctx.Bind(&req); err != nil {
+	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return
 	}

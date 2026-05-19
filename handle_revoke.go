@@ -27,7 +27,7 @@ func (s *Server) handleRevoke(ctx HandlerContext) {
 		ClientID      string `json:"client_id"`
 		ClientSecret  string `json:"client_secret"`
 	}
-	if err := ctx.Bind(&req); err != nil {
+	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return
 	}

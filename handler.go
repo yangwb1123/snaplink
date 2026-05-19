@@ -610,9 +610,14 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		CodeVerifier string `json:"code_verifier"` // PKCE RFC 7636 §4.5
 		DeviceCode   string `json:"device_code"`   // RFC 8628 §3.4 device grant
 	}
-	if err := ctx.Bind(&req); err != nil {
+	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return
+	}
+	// HTTP Basic auth takes precedence over body fields per RFC 6749 §2.3.1.
+	if id, secret, ok := basicClientCreds(ctx.Request()); ok {
+		req.ClientID = id
+		req.ClientSecret = secret
 	}
 
 	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)

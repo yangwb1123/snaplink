@@ -138,7 +138,10 @@ func TestRevokeAll_PresentedAccessTokenAlsoRevoked(t *testing.T) {
 	// the refresh tier.
 	r, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	r.Header.Set("Authorization", "Bearer "+access)
-	resp, _ := http.DefaultClient.Do(r)
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatalf("/userinfo: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("/userinfo status = %d, want 401 after revoke-all", resp.StatusCode)
@@ -199,7 +202,10 @@ func TestRevokeAll_WithoutSubjectIndexReturns501(t *testing.T) {
 		"client_id":  raClient,
 		"credential": map[string]string{"username": "x", "password": "y"},
 	})
-	lresp, _ := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(loginBody))
+	lresp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(loginBody))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
 	defer lresp.Body.Close()
 	var lOut map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&lOut)
@@ -207,7 +213,10 @@ func TestRevokeAll_WithoutSubjectIndexReturns501(t *testing.T) {
 
 	r, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/token/revoke-all", nil)
 	r.Header.Set("Authorization", "Bearer "+access)
-	resp, _ := http.DefaultClient.Do(r)
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatalf("revoke-all: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d want 501", resp.StatusCode)
