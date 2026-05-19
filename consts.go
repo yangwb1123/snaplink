@@ -18,6 +18,7 @@ const (
 	PathDeviceVerify   = "/device/verify"
 	PathUserInfo       = "/userinfo"
 	PathLogout         = "/logout"
+	PathEndSession     = "/end_session"
 	PathAPIPrefix      = "/api/v1"
 	PathClientByID     = "/clients/:id"
 	PathAuditEvents    = "/audit/events"

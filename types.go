@@ -53,11 +53,27 @@ type Client struct {
 	// (the default), PKCE is opt-in per-request — the exchange
 	// verifies the challenge only when one was presented at login.
 	RequirePKCE bool `json:"require_pkce,omitempty" yaml:"require_pkce,omitempty"`
+
+	// PostLogoutRedirectURIs is the allowlist of URLs the OIDC
+	// RP-Initiated Logout endpoint will redirect the user back to
+	// after killing the session. Per OIDC RP-Initiated Logout 1.0
+	// §2, the redirect MUST come from this list — an attacker who
+	// crafts a logout URL with a phishing redirect_uri must not be
+	// able to send the user anywhere not pre-registered. Empty
+	// list = no post-logout redirect honored (the endpoint still
+	// kills the session and returns 204 + no Location header).
+	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty" yaml:"post_logout_redirect_uris,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.
 func (c *Client) IsRedirectURIValid(uri string) bool {
 	return slices.Contains(c.RedirectURIs, uri)
+}
+
+// IsPostLogoutRedirectURIValid checks the post-logout redirect
+// URI allowlist for RP-Initiated Logout.
+func (c *Client) IsPostLogoutRedirectURIValid(uri string) bool {
+	return slices.Contains(c.PostLogoutRedirectURIs, uri)
 }
 
 // IsAuthenticatorAllowed reports whether the named authenticator may be used

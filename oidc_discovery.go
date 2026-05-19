@@ -53,7 +53,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		TokenEndpoint:         base + PathToken,
 		UserInfoEndpoint:      base + PathUserInfo,
 		JWKSURI:               base + PathJWKS,
-		EndSessionEndpoint:    base + PathLogout,
+		EndSessionEndpoint:    base + PathEndSession,
 		RevocationEndpoint:    base + PathRevoke,
 		IntrospectionEndpoint: base + PathIntrospect,
 		ResponseTypesSupported: []string{

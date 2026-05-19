@@ -490,6 +490,7 @@ func (s *Server) Mount() {
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
+	s.router.GET(PathEndSession, s.handleEndSession)
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)
 	s.router.GET(PathMyMenus, s.handleMyMenus)
 	s.router.GET(PathMyRoles, s.handleMyRoles)
