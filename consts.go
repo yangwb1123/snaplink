@@ -75,6 +75,7 @@ const (
 	KeyCode             = "code"
 	KeyState            = "state"
 	KeyRedirectURI      = "redirect_uri"
+	KeyIssuedTokenType  = "issued_token_type" // RFC 8693 token-exchange response key
 
 	// RFC 7662 introspection response keys.
 	KeyActive    = "active"
@@ -161,6 +162,16 @@ const (
 	GrantRefreshToken      = "refresh_token"
 	GrantClientCredentials = "client_credentials"
 	GrantDeviceCode        = "urn:ietf:params:oauth:grant-type:device_code"
+	GrantTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange" // RFC 8693
+)
+
+// RFC 8693 token type URIs used by the token-exchange grant.
+const (
+	TokenTypeAccessToken  = "urn:ietf:params:oauth:token-type:access_token"
+	TokenTypeRefreshToken = "urn:ietf:params:oauth:token-type:refresh_token"
+	TokenTypeIDToken      = "urn:ietf:params:oauth:token-type:id_token"
+	TokenTypeSAML2        = "urn:ietf:params:oauth:token-type:saml2"
+	TokenTypeJWT          = "urn:ietf:params:oauth:token-type:jwt"
 )
 
 // Revocation tags returned by /logout.
@@ -212,4 +223,5 @@ var SupportedGrants = []string{
 	GrantRefreshToken,
 	GrantClientCredentials,
 	GrantDeviceCode,
+	GrantTokenExchange,
 }

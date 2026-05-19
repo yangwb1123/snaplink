@@ -645,6 +645,14 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		CodeVerifier string   `json:"code_verifier"` // PKCE RFC 7636 §4.5
 		DeviceCode   string   `json:"device_code"`   // RFC 8628 §3.4 device grant
 		Resource     []string `json:"resource"`      // RFC 8707 resource indicators
+
+		// RFC 8693 token-exchange parameters.
+		SubjectToken       string   `json:"subject_token"`
+		SubjectTokenType   string   `json:"subject_token_type"`
+		ActorToken         string   `json:"actor_token"`
+		ActorTokenType     string   `json:"actor_token_type"`
+		Audience           []string `json:"audience"`
+		RequestedTokenType string   `json:"requested_token_type"`
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -882,6 +890,17 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		})
 	case GrantDeviceCode:
 		s.handleDeviceTokenGrant(ctx, client, req.DeviceCode)
+	case GrantTokenExchange:
+		s.handleTokenExchangeGrant(ctx, client, tokenExchangeRequest{
+			SubjectToken:       req.SubjectToken,
+			SubjectTokenType:   req.SubjectTokenType,
+			ActorToken:         req.ActorToken,
+			ActorTokenType:     req.ActorTokenType,
+			Resource:           req.Resource,
+			Audience:           req.Audience,
+			Scope:              req.Scope,
+			RequestedTokenType: req.RequestedTokenType,
+		})
 	case GrantClientCredentials:
 		strategy, ti, err := s.issuerForClient(client)
 		if err != nil {
