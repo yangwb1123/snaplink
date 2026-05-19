@@ -40,6 +40,15 @@ type Ed25519JWTIssuer struct {
 	issuer     string
 	tokenTTL   time.Duration
 
+	// verifyKeys maps kid → public key for additional verification-
+	// only keys (previously-active signers being phased out). The
+	// primary publicKey is registered here too at construction time
+	// so Validate has one lookup path. Operators add additional
+	// retired-but-still-trusted keys via [WithEd25519VerifyKey] so
+	// in-flight tokens signed by the old key stay valid through
+	// their TTL window after a rotation.
+	verifyKeys map[string]ed25519.PublicKey
+
 	revokedMu sync.RWMutex
 	revoked   map[string]struct{}
 }
@@ -69,6 +78,27 @@ func WithEd25519KeyID(kid string) Ed25519Option {
 	return func(j *Ed25519JWTIssuer) { j.keyID = kid }
 }
 
+// WithEd25519VerifyKey adds a public key the issuer will accept on
+// Validate but will NOT use to sign new tokens — the retired-signer
+// half of a rotation. Operators add the OUTGOING key here for the
+// duration of the access-token TTL after a key swap, so tokens
+// minted before the swap stay verifiable until they expire
+// naturally. Once the TTL window has passed, remove the option on
+// the next deployment and the retired key disappears from JWKS.
+//
+// kid MUST be distinct from the primary signing key's kid and from
+// every other verify-only key (key lookup is by kid in Validate).
+// Idempotent: registering the same kid twice updates the public
+// key without erroring — useful for testing rotations.
+func WithEd25519VerifyKey(kid string, pub ed25519.PublicKey) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) {
+		if j.verifyKeys == nil {
+			j.verifyKeys = make(map[string]ed25519.PublicKey, 2)
+		}
+		j.verifyKeys[kid] = pub
+	}
+}
+
 func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	j := &Ed25519JWTIssuer{
 		issuer:   sso.DefaultIssuer,
@@ -89,6 +119,12 @@ func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	if j.keyID == "" {
 		j.keyID = fingerprintKid(j.publicKey)
 	}
+	if j.verifyKeys == nil {
+		j.verifyKeys = make(map[string]ed25519.PublicKey, 1)
+	}
+	// Always register the primary signing key in the verify map so
+	// Validate has one lookup path (no special-case for "primary").
+	j.verifyKeys[j.keyID] = j.publicKey
 	return j
 }
 
@@ -229,7 +265,16 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 		return nil, fmt.Errorf("ed25519: signature decode: %w", err)
 	}
 	signingInput := parts[0] + "." + parts[1]
-	if !ed25519.Verify(j.publicKey, []byte(signingInput), sig) {
+
+	// Pick the verification key by the JWT header's kid. Tokens
+	// without a kid (legacy) fall back to the primary key —
+	// rotation needs every minted token to carry a kid for the
+	// lookup to be O(1), which `Issue` does unconditionally.
+	pub := j.lookupVerifyKey(parts[0])
+	if pub == nil {
+		return nil, errors.New("ed25519: unknown kid")
+	}
+	if !ed25519.Verify(pub, []byte(signingInput), sig) {
 		return nil, errors.New("ed25519: signature invalid")
 	}
 
@@ -336,18 +381,81 @@ func idTokenSigningInput(header ed25519Header, payload ed25519IDPayload) ([]byte
 	return []byte(encoded), nil
 }
 
-// JWKS returns the issuer's public key as a single JWK suitable for inclusion
-// in the /.well-known/jwks.json document. The sso package's JWKS handler
-// calls this when an issuer implements sso.JWKSProvider.
+// lookupVerifyKey selects the verification key matching the JWT
+// header's kid. Returns the primary publicKey when the header is
+// missing kid (legacy tokens without a kid still verify under the
+// primary), or nil when the kid is supplied but unrecognised so
+// Validate can fail closed on an unknown signer.
+func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
+	raw, err := base64.RawURLEncoding.DecodeString(headerB64)
+	if err != nil {
+		return nil
+	}
+	var h ed25519Header
+	if err := json.Unmarshal(raw, &h); err != nil {
+		return nil
+	}
+	if h.Kid == "" {
+		return j.publicKey
+	}
+	if pub, ok := j.verifyKeys[h.Kid]; ok {
+		return pub
+	}
+	return nil
+}
+
+// JWKS returns the issuer's public keys as JWKs for inclusion in
+// /.well-known/jwks.json. During a key rotation this emits BOTH
+// the primary signing key AND every WithEd25519VerifyKey retired
+// key, so RPs that pulled a token before the rotation can still
+// verify it after the swap.
+//
+// Output order: primary first, then verify-only keys in
+// fingerprint-sorted order. Stable across one process lifetime so
+// the JWKS ETag stays valid until something actually changes.
 func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
-	return []sso.JWK{{
+	out := []sso.JWK{{
 		Kty: jwkKtyOKP,
 		Crv: jwkCrvEd25519,
 		Kid: j.keyID,
 		X:   base64.RawURLEncoding.EncodeToString(j.publicKey),
 		Use: jwkUseSig,
 		Alg: jwtAlgEdDSA,
-	}}, nil
+	}}
+	// Collect kids of verify-only keys (skip the primary, already
+	// emitted above).
+	verifyKids := make([]string, 0, len(j.verifyKeys))
+	for kid := range j.verifyKeys {
+		if kid == j.keyID {
+			continue
+		}
+		verifyKids = append(verifyKids, kid)
+	}
+	// Sort for deterministic output — the JWKS ETag depends on it.
+	sortStrings(verifyKids)
+	for _, kid := range verifyKids {
+		out = append(out, sso.JWK{
+			Kty: jwkKtyOKP,
+			Crv: jwkCrvEd25519,
+			Kid: kid,
+			X:   base64.RawURLEncoding.EncodeToString(j.verifyKeys[kid]),
+			Use: jwkUseSig,
+			Alg: jwtAlgEdDSA,
+		})
+	}
+	return out, nil
+}
+
+// sortStrings is a tiny non-allocating bubble sort to avoid
+// importing "sort" just for one ordering site. n is bounded by the
+// number of retired keys an operator carries — typically 1, almost
+// never more than a handful.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
 }
 
 func jwtSigningInput(header ed25519Header, payload ed25519Payload) ([]byte, error) {
