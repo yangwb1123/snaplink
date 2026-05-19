@@ -318,6 +318,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
 			refreshTokenOut = rt
+			s.recordRefreshTokenIssued(ctx, client.ID, result.UserID, false)
 		}
 	}
 
@@ -348,6 +349,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
 			resp[KeyIDToken] = idToken
+			s.recordIDTokenIssued(ctx, client.ID, result.UserID)
 		}
 	}
 	if result.CountryCode != "" {
@@ -717,6 +719,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
 				resp[KeyRefreshToken] = rt
+				s.recordRefreshTokenIssued(ctx, client.ID, info.UserID, false)
 			}
 		}
 		// OIDC ID Token on the authorization_code path: same gate as
@@ -735,6 +738,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
 				resp[KeyIDToken] = idToken
+				s.recordIDTokenIssued(ctx, client.ID, info.UserID)
 			}
 		}
 		ctx.JSON(http.StatusOK, resp)
@@ -796,6 +800,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			return
 		}
 		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
+		s.recordRefreshTokenIssued(ctx, client.ID, info.UserID, true)
 		ctx.JSON(http.StatusOK, map[string]any{
 			KeyAccessToken:   token.AccessToken,
 			KeyTokenType:     token.TokenType,

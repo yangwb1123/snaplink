@@ -306,6 +306,71 @@ func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subje
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
+// recordRefreshTokenIssued emits a refresh_token_issued event. Set
+// rotation=true on the rotation path so SIEMs can separate first-
+// issue (login / authz_code) from rotation (refresh_token grant).
+func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectID string, rotation bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventRefreshTokenIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	if rotation {
+		setMeta(e, "rotation", "true")
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordIDTokenIssued emits an id_token_issued event whenever an
+// OIDC id_token is appended to the response.
+func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventIDTokenIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordDeviceCodeIssued emits a device_code_issued event at the
+// start of an RFC 8628 device authorization grant.
+func (s *Server) recordDeviceCodeIssued(ctx HandlerContext, clientID string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventDeviceCodeIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordDeviceCodeApproved / Denied emit at the consent step.
+// userID is the user who hit /device/verify; deviceClientID is the
+// client_id that originally requested the device authorization.
+func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClientID string, approved bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	if approved {
+		e.Type = audit.EventDeviceCodeApproved
+		e.Outcome = audit.OutcomeSuccess
+	} else {
+		e.Type = audit.EventDeviceCodeDenied
+		e.Outcome = audit.OutcomeFailure
+	}
+	e.ActorID = userID
+	setMeta(e, "device_client_id", deviceClientID)
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
 // recordCallbackFailure emits a callback_failure event.
 func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
 	if s.auditor == nil {

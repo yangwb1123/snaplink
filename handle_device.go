@@ -122,6 +122,7 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 		return
 	}
+	s.recordDeviceCodeIssued(ctx, client.ID)
 
 	base := s.deviceVerifyBaseURL
 	if base == "" {
@@ -212,6 +213,7 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 			return
 		}
 	}
+	s.recordDeviceCodeDecision(ctx, claims.Subject, dc.ClientID, req.Approve)
 
 	ctx.JSON(http.StatusOK, map[string]any{KeyStatus: StatusOK})
 }
@@ -299,6 +301,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 			s.logger.Error("refresh token issue failed", "error", err)
 		} else {
 			resp[KeyRefreshToken] = rt
+			s.recordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
 		}
 	}
 	if hasOpenIDScope(dc.Scopes) && s.idTokenIssuer != nil {
@@ -314,6 +317,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 			s.logger.Error("id token issue failed", "error", err)
 		} else {
 			resp[KeyIDToken] = idToken
+			s.recordIDTokenIssued(ctx, client.ID, dc.UserID)
 		}
 	}
 	s.recordTokenIssued(ctx, client.ID, strategy, dc.UserID)

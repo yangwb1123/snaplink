@@ -70,6 +70,34 @@ const (
 	EventReleasePinned     EventType = "release_pinned"
 	EventReleaseRolledBack EventType = "release_rolled_back"
 	EventReleaseDeleted    EventType = "release_deleted"
+
+	// OAuth/OIDC token lifecycle beyond the legacy EventTokenIssued.
+	// Refresh + ID Token + device-flow events let SIEMs build per-grant
+	// dashboards (how often is refresh rotating? are device flows being
+	// approved or denied at the consent step?) without parsing reason
+	// strings out of generic token_issued records.
+	//
+	// EventRefreshTokenIssued fires at the three injection sites:
+	// /auth/login direct mint, authorization_code exchange, and
+	// refresh_token rotation. Metadata carries "rotation=true" on the
+	// rotation path so analysts can separate first-issue from rotation.
+	EventRefreshTokenIssued EventType = "refresh_token_issued"
+	// EventIDTokenIssued fires whenever an id_token is appended to the
+	// response (login + authz_code + device flows that requested the
+	// openid scope). Separate from EventTokenIssued because operators
+	// commonly want a "OIDC adoption" metric distinct from raw token
+	// volume.
+	EventIDTokenIssued EventType = "id_token_issued"
+	// EventDeviceCodeIssued fires on POST /device/code — the start of
+	// a device authorization grant.
+	EventDeviceCodeIssued EventType = "device_code_issued"
+	// EventDeviceCodeApproved fires when a signed-in user POSTs
+	// /device/verify with approve=true. ActorID is the user who
+	// approved; Metadata carries device_client_id.
+	EventDeviceCodeApproved EventType = "device_code_approved"
+	// EventDeviceCodeDenied fires on the explicit deny path. Same
+	// metadata as Approved.
+	EventDeviceCodeDenied EventType = "device_code_denied"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
