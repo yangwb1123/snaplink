@@ -59,6 +59,8 @@ type Server struct {
 	deviceCodeTTL        time.Duration
 	deviceCodeInterval   time.Duration
 	deviceVerifyBaseURL  string
+	parStore             PARStore
+	parTTL               time.Duration
 }
 
 // Option configures the Server.
@@ -167,6 +169,31 @@ func WithDeviceCodeStore(store DeviceCodeStore, ttl, pollInterval time.Duration,
 			s.deviceCodeInterval = pollInterval
 		}
 		s.deviceVerifyBaseURL = verificationBaseURL
+	}
+}
+
+// WithPARStore enables Pushed Authorization Requests (RFC 9126) on
+// POST /par. Without it, /par returns 501 and the /auth/login handler
+// ignores any inbound `request_uri` parameter — the legacy direct-
+// parameter flow keeps working unchanged.
+//
+// When wired, confidential clients can push their authorization
+// request parameters server-to-server (authenticated by client
+// credentials) and receive back an opaque request_uri to redirect
+// the user agent with. The /auth/login handler resolves the
+// request_uri via store.Consume and merges the stored params into
+// the in-flight request — request_uri values are SINGLE-USE per
+// §2.2 (atomic delete on consume).
+//
+// ttl is the spec-recommended request_uri lifetime. Pass <=0 for
+// [DefaultPARTTL] (90 seconds — generous floor that still rejects
+// session-length replay windows).
+func WithPARStore(store PARStore, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.parStore = store
+		if ttl > 0 {
+			s.parTTL = ttl
+		}
 	}
 }
 
@@ -488,6 +515,7 @@ func (s *Server) Mount() {
 	s.router.POST(PathRevokeAll, s.handleRevokeAll)
 	s.router.POST(PathDeviceCode, s.handleDeviceCode)
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
+	s.router.POST(PathPAR, s.handlePAR)
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
 	s.router.GET(PathEndSession, s.handleEndSession)

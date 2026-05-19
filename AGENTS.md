@@ -682,6 +682,65 @@ Sentinel mapping:
 Discovery doc now advertises the grant in
 `grant_types_supported`.
 
+### 2l. Pushed Authorization Requests — RFC 9126 (`handle_par.go`)
+
+`POST /par` lets confidential clients push their authorization
+request parameters server-to-server BEFORE redirecting the user
+agent. The server hands back an opaque `request_uri` the client
+then includes in the `/auth/login` request — only `client_id +
+request_uri` need to travel through the user agent, so a
+tampered redirect parameter can't override what the client
+already committed to. Opt in via `sso.WithPARStore(store, ttl)`;
+without it `/par` returns 501 and `/auth/login` ignores
+`request_uri`.
+
+Wire:
+
+* Request body accepts BOTH `application/x-www-form-urlencoded`
+  and `application/json` (same `bindOAuthParams` dispatcher as
+  `/token`).
+* Client auth via HTTP Basic OR body `client_id +
+  client_secret`. Basic wins when both present per RFC 6749
+  §2.3.1 — same precedence rule as `/token` and `/introspect`.
+* Response per §2.2: `{request_uri, expires_in}` with HTTP 201.
+  request_uri is `urn:ietf:params:oauth:request_uri:<token>`
+  (24-byte base64url suffix — overkill for a 90s TTL but
+  matches the entropy floor of the other short-lived OAuth
+  artifacts in this codebase).
+* `/auth/login` merge picks PAR fields over caller-supplied
+  (`client_id`, `response_type`, `redirect_uri`, `scope`,
+  `state`, `nonce`, `code_challenge[_method]`, `resource`) so a
+  tampered redirect parameter at the user-agent redirect step
+  can't override what the client committed to at /par.
+* Single-use: `Consume` atomically deletes — a leaked
+  request_uri can be redeemed at most once.
+* Discovery doc advertises `pushed_authorization_request_endpoint`
+  when wired.
+
+Sentinel mapping:
+
+* Missing client credentials              → `401 invalid_client`
+* Bad redirect_uri (not in allowlist)     → `400 invalid_redirect_uri`
+* Unregistered resource (RFC 8707)        → `400 invalid_target`
+* Store not wired                         → `501 par_not_configured`
+* Unknown / expired / consumed request_uri → `400 invalid_request_uri`
+  (RFC 9126 §2.2 oracle-resistance — all three indistinguishable)
+
+`defaultimpl.MemoryPARStore` is the in-process backend.
+Production multi-replica deployments should swap for a Redis or
+shared-DB store — a request_uri minted on one replica MUST be
+consumable on the replica handling the subsequent /auth/login.
+
+TTL default: `DefaultPARTTL = 90 * time.Second`. RFC 9126 §2.2
+says SHOULD be short (60s floor); 90s gives a slow user agent
+time to follow the redirect.
+
+PAR credentials authenticate the CLIENT — the user still
+authenticates via the normal authenticator on the subsequent
+`/auth/login` call. PAR can't be used to bypass user
+authentication; it just moves request authority upstream of the
+user-agent redirect.
+
 ### 3. Audit (`audit/`)
 
 `audit.Recorder` fans Events out to one or more Sinks. Built-in sinks:

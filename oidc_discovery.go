@@ -24,6 +24,8 @@ type oidcConfiguration struct {
 	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
 	RevocationEndpoint                string   `json:"revocation_endpoint,omitempty"`
 	IntrospectionEndpoint             string   `json:"introspection_endpoint,omitempty"`
+	PushedAuthReqEndpoint             string   `json:"pushed_authorization_request_endpoint,omitempty"`
+	RequirePushedAuthReq              bool     `json:"require_pushed_authorization_requests,omitempty"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported"`
@@ -76,6 +78,13 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// We always sign with EdDSA today; when more signers land this
 		// list should reflect every registered signature algorithm.
 		cfg.IDTokenSigningAlgValuesSupported = []string{"EdDSA"}
+	}
+	if s.parStore != nil {
+		// RFC 9126 §5: advertise the PAR endpoint so RPs that prefer
+		// the pushed-request flow can discover it. require_pushed_*
+		// stays false here — we accept both shapes; a future
+		// per-server policy knob can flip it.
+		cfg.PushedAuthReqEndpoint = base + PathPAR
 	}
 	scopes := scopeAdvertisement(ctx.Request().Context(), s)
 	if len(scopes) > 0 {

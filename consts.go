@@ -19,6 +19,7 @@ const (
 	PathUserInfo       = "/userinfo"
 	PathLogout         = "/logout"
 	PathEndSession     = "/end_session"
+	PathPAR            = "/par" // RFC 9126 Pushed Authorization Requests
 	PathAPIPrefix      = "/api/v1"
 	PathClientByID     = "/clients/:id"
 	PathAuditEvents    = "/audit/events"
@@ -139,6 +140,8 @@ const (
 	ErrInvalidPKCEMethod         = "invalid_pkce_method"
 	ErrPKCERequired              = "pkce_required"
 	ErrInvalidTarget             = "invalid_target" // RFC 8707 §2
+	ErrPARNotConfigured          = "par_not_configured"
+	ErrInvalidRequestURI         = "invalid_request_uri" // RFC 9126 §2.2
 
 	// RFC 8628 device authorization grant errors.
 	ErrDeviceCodeNotConfigured = "device_code_not_configured"

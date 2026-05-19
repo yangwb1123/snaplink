@@ -79,10 +79,59 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		CodeChallenge       string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
 		CodeChallengeMethod string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
 		Resource            []string          `json:"resource"`              // RFC 8707 resource indicators
+		RequestURI          string            `json:"request_uri"`           // RFC 9126 PAR
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
 		return
+	}
+
+	// RFC 9126 §4: when request_uri is present, fetch the pushed
+	// authorization parameters and merge them into the in-flight
+	// request. The PAR record holds the AUTHORIZATION-SHAPED params
+	// (response_type, redirect_uri, scope, etc.) — credentials still
+	// arrive on this request, so PAR can't be used to bypass user
+	// authentication. The merge gives PAR fields priority over
+	// caller-supplied so a tampered redirect parameter can't override
+	// what the client previously committed to.
+	if req.RequestURI != "" {
+		if s.parStore == nil {
+			ctx.JSON(http.StatusNotImplemented, errorBody(ErrPARNotConfigured))
+			return
+		}
+		stored, err := s.parStore.Consume(ctx.Request().Context(), req.RequestURI)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequestURI))
+			return
+		}
+		// Client identity from PAR is authoritative — clients
+		// authenticated at /par; an attacker shouldn't be able to
+		// flip client_id at the user-agent redirect step.
+		if stored.ClientID != "" {
+			req.ClientID = stored.ClientID
+		}
+		if stored.ResponseType != "" {
+			req.ResponseType = stored.ResponseType
+		}
+		if stored.RedirectURI != "" {
+			req.RedirectURI = stored.RedirectURI
+		}
+		if len(stored.Scope) > 0 {
+			req.Scope = stored.Scope
+		}
+		if stored.State != "" {
+			req.State = stored.State
+		}
+		if stored.Nonce != "" {
+			req.Nonce = stored.Nonce
+		}
+		if stored.CodeChallenge != "" {
+			req.CodeChallenge = stored.CodeChallenge
+			req.CodeChallengeMethod = stored.CodeChallengeMethod
+		}
+		if len(stored.Resource) > 0 {
+			req.Resource = stored.Resource
+		}
 	}
 
 	if req.Provider == "" {
@@ -395,6 +444,7 @@ func (s *Server) issueAuthCode(
 		CodeChallenge       string            `json:"code_challenge"`
 		CodeChallengeMethod string            `json:"code_challenge_method"`
 		Resource            []string          `json:"resource"`
+		RequestURI          string            `json:"request_uri"`
 	},
 	client *Client,
 ) (string, error) {
