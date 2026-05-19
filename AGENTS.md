@@ -741,6 +741,83 @@ authenticates via the normal authenticator on the subsequent
 authentication; it just moves request authority upstream of the
 user-agent redirect.
 
+### 2m. Dynamic Client Registration — RFC 7591 (`handle_register.go`)
+
+`POST /register` lets relying parties self-register without an
+operator pre-provisioning them. Opt-in via
+`sso.WithDynamicClientRegistration(policy)`; without it
+`/register` returns 501 + `registration_not_configured` and
+clients MUST be pre-registered in YAML / admin RPC.
+
+Auth gate:
+
+* `InitialAccessToken` (a pre-shared bearer the operator
+  distributes out-of-band) is the default gate — missing or
+  mismatched → `401 invalid_token`.
+* `AllowOpenRegistration: true` opens the endpoint to any
+  caller. Discouraged for production deployments — every public
+  registration endpoint in the wild eventually gets used for
+  resource exhaustion / spam client creation.
+
+Request body (JSON only — RFC 7591 §2 mandates JSON, no form
+encoding). Understood metadata fields:
+
+* `redirect_uris[]` (REQUIRED when `grant_types` includes
+  `authorization_code` — checked at validation time)
+* `token_endpoint_auth_method` — `client_secret_basic` /
+  `client_secret_post` / `none` (public client)
+* `grant_types[]` — must be subset of `SupportedGrants`
+* `response_types[]` — `code` / `token`
+* `client_name`, `scope`, `contacts[]`
+* `allowed_authenticators[]` — gated by policy whitelist when
+  configured
+* `allowed_resources[]` (RFC 8707), `post_logout_redirect_uris[]`,
+  `tenant_id`, `require_pkce`, `token_strategy`
+
+Response per §3.2.1 (HTTP 201):
+
+```json
+{
+  "client_id": "<29-char base64url>",
+  "client_secret": "<43-char base64url, omitted for public clients>",
+  "client_id_issued_at": 1747234567,
+  "client_secret_expires_at": 0,
+  "redirect_uris": [...],
+  "..."
+}
+```
+
+Public clients (`token_endpoint_auth_method=none`) get NO
+secret AND get `require_pkce` forced to true — SPAs / mobile
+apps that can't safely hold a confidential secret MUST use
+PKCE.
+
+Sentinel mapping:
+
+* Store not wired                            → `501 registration_not_configured`
+* Missing / wrong initial access token       → `401 invalid_token`
+* Validation failure (any of the above)      → `400 invalid_client_metadata`
+  + `error_description` with the specific reason
+* Internal store error                       → `500 internal_error`
+
+Discovery doc advertises `registration_endpoint` whenever this
+option is wired (regardless of the auth mode). The initial
+access token is NEVER advertised via discovery — it's
+distributed out-of-band by definition.
+
+`DefaultActive` policy field controls whether the newly-created
+client is immediately usable; security-conscious deployments
+flip it to `false` so an operator manually approves each
+registration. `DefaultTokenStrategy` stamps the new client's
+`TokenStrategy` when the request doesn't specify one — empty
+inherits the server-wide default.
+
+NOT YET IMPLEMENTED (separate task): RFC 7592 Dynamic Client
+Management (`registration_access_token` + GET/PUT/DELETE on
+`/register/{client_id}`). The current registration endpoint is
+write-only — operators manage existing clients via the admin
+RPCs.
+
 ### 3. Audit (`audit/`)
 
 `audit.Recorder` fans Events out to one or more Sinks. Built-in sinks:

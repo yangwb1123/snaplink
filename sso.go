@@ -61,6 +61,7 @@ type Server struct {
 	deviceVerifyBaseURL  string
 	parStore             PARStore
 	parTTL               time.Duration
+	dcrPolicy            *DCRPolicy
 }
 
 // Option configures the Server.
@@ -170,6 +171,25 @@ func WithDeviceCodeStore(store DeviceCodeStore, ttl, pollInterval time.Duration,
 		}
 		s.deviceVerifyBaseURL = verificationBaseURL
 	}
+}
+
+// WithDynamicClientRegistration enables RFC 7591 Dynamic Client
+// Registration on POST /register. Without this option /register
+// returns 501 and a relying party MUST be pre-registered by the
+// operator.
+//
+// The registration endpoint is gated by the policy's
+// InitialAccessToken (a pre-shared bearer the operator distributes
+// to relying parties allowed to register) UNLESS
+// AllowOpenRegistration is set — open registration is supported but
+// strongly discouraged because every public registration endpoint in
+// the wild eventually gets used for resource exhaustion / spam
+// client creation.
+//
+// Discovery doc advertises `registration_endpoint` whenever this
+// option is wired (regardless of the auth mode).
+func WithDynamicClientRegistration(policy DCRPolicy) Option {
+	return func(s *Server) { s.dcrPolicy = &policy }
 }
 
 // WithPARStore enables Pushed Authorization Requests (RFC 9126) on
@@ -516,6 +536,7 @@ func (s *Server) Mount() {
 	s.router.POST(PathDeviceCode, s.handleDeviceCode)
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.POST(PathPAR, s.handlePAR)
+	s.router.POST(PathRegister, s.handleRegister)
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
 	s.router.GET(PathEndSession, s.handleEndSession)

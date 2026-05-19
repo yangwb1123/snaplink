@@ -1,0 +1,77 @@
+package sso
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+)
+
+// PathRegister is the RFC 7591 Dynamic Client Registration endpoint.
+const PathRegister = "/register"
+
+// DCRPolicy controls how the registration endpoint behaves.
+// Defaults are conservative: opt-in via WithDynamicClientRegistration
+// and require an initial access token unless the operator explicitly
+// allows open registration.
+//
+// InitialAccessToken, when non-empty, is the bearer the registration
+// endpoint expects in the Authorization header. Operators distribute
+// it out-of-band to clients allowed to register; a missing or
+// mismatched bearer returns 401 invalid_token. Empty value combined
+// with AllowOpenRegistration=true disables the gate (any caller may
+// register — production deployments SHOULD NOT do this).
+type DCRPolicy struct {
+	InitialAccessToken    string
+	AllowOpenRegistration bool
+
+	// DefaultActive controls the Active field on newly-registered
+	// clients. Most deployments want true so clients work
+	// immediately; security-conscious deployments may prefer false
+	// so an operator approves each registration manually.
+	DefaultActive bool
+
+	// DefaultTokenStrategy stamps the new client's TokenStrategy
+	// when the registration request doesn't specify one. Empty
+	// inherits the server default (the runtime resolver in
+	// issuerForClient picks it up).
+	DefaultTokenStrategy string
+
+	// AllowedAuthenticators, when non-empty, restricts the
+	// AllowedAuthenticators field on newly-registered clients to
+	// this whitelist — registrations that request anything outside
+	// it are rejected with invalid_client_metadata.
+	AllowedAuthenticators []string
+}
+
+// ErrDCRBadMetadata indicates the client metadata failed validation.
+// Mapped to 400 invalid_client_metadata per RFC 7591 §3.2.2.
+var ErrDCRBadMetadata = errors.New("sso: invalid client metadata")
+
+// Registration-specific stable error codes per RFC 7591 §3.2.2.
+const (
+	ErrInvalidClientMetadata = "invalid_client_metadata"
+	ErrRegistrationDisabled  = "registration_not_configured"
+)
+
+// generateClientID mints a base32 client identifier — short enough
+// for log lines but high-entropy enough for an unguessable
+// registration. 18 bytes / 144 bits beats a 128-bit floor while
+// keeping the encoded length at 29 chars (no padding).
+func generateClientID() (string, error) {
+	buf := make([]byte, 18)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// generateClientSecret mints a 32-byte (256-bit) base64url secret —
+// the same shape the admin RotateSecret RPC uses elsewhere in this
+// codebase.
+func generateClientSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}

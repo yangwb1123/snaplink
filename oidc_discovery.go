@@ -24,6 +24,7 @@ type oidcConfiguration struct {
 	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
 	RevocationEndpoint                string   `json:"revocation_endpoint,omitempty"`
 	IntrospectionEndpoint             string   `json:"introspection_endpoint,omitempty"`
+	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
 	PushedAuthReqEndpoint             string   `json:"pushed_authorization_request_endpoint,omitempty"`
 	RequirePushedAuthReq              bool     `json:"require_pushed_authorization_requests,omitempty"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
@@ -85,6 +86,13 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// stays false here — we accept both shapes; a future
 		// per-server policy knob can flip it.
 		cfg.PushedAuthReqEndpoint = base + PathPAR
+	}
+	if s.dcrPolicy != nil {
+		// RFC 7591 §3: advertise the registration endpoint so
+		// dynamic clients can discover it. The initial access
+		// token (when required) is distributed out-of-band, not
+		// via discovery.
+		cfg.RegistrationEndpoint = base + PathRegister
 	}
 	scopes := scopeAdvertisement(ctx.Request().Context(), s)
 	if len(scopes) > 0 {
