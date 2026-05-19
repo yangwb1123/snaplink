@@ -38,6 +38,13 @@ type RefreshToken struct {
 	// attacker might have already obtained from a stolen refresh
 	// token. Empty FamilyID means the store doesn't track families.
 	FamilyID string
+
+	// Resources carries RFC 8707 resource indicators captured at
+	// the original authorization. The rotation grant stamps these
+	// into the new access token's aud claim so a refresh of a
+	// resource-scoped token produces another resource-scoped
+	// token without the caller having to re-supply the parameter.
+	Resources []string
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

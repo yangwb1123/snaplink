@@ -137,6 +137,7 @@ const (
 	ErrInvalidScope              = "invalid_scope"
 	ErrInvalidPKCEMethod         = "invalid_pkce_method"
 	ErrPKCERequired              = "pkce_required"
+	ErrInvalidTarget             = "invalid_target" // RFC 8707 §2
 
 	// RFC 8628 device authorization grant errors.
 	ErrDeviceCodeNotConfigured = "device_code_not_configured"

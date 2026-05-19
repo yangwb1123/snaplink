@@ -55,9 +55,10 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 	}
 
 	var req struct {
-		ClientID string `json:"client_id"`
-		Scope    string `json:"scope"`
-		Nonce    string `json:"nonce"`
+		ClientID string   `json:"client_id"`
+		Scope    string   `json:"scope"`
+		Nonce    string   `json:"nonce"`
+		Resource []string `json:"resource"` // RFC 8707 resource indicators
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -78,6 +79,10 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 	}
 	if !clientTenantOK(ctx, client) {
 		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		return
+	}
+	if !client.AreResourcesAllowed(req.Resource) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
 		return
 	}
 
@@ -115,6 +120,7 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		Scopes:     scopes,
 		Nonce:      req.Nonce,
 		Interval:   interval,
+		Resources:  append([]string(nil), req.Resource...),
 		ExpiresAt:  time.Now().Add(ttl),
 	}
 	if err := s.deviceCodeStore.Issue(ctx.Request().Context(), dc); err != nil {
@@ -281,6 +287,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
 		ID: dc.UserID, Provider: dc.Provider, Claims: dc.Attributes,
+		Resources: dc.Resources,
 	}, dc.Scopes)
 	if err != nil {
 		s.logger.Error("device token issuance failed", "strategy", strategy, "error", err)
@@ -296,7 +303,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	}
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "")
+			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err)
 		} else {

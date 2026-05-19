@@ -188,6 +188,12 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 		Scope: strings.Join(scopes, " "),
 		Extra: subject.Claims,
 	}
+	// RFC 8707 resource indicators flow through Subject.Resources
+	// into the standard `aud` JWT claim. Resource servers verify
+	// their own URI is in the array before accepting the token.
+	if len(subject.Resources) > 0 {
+		payload.Aud = audClaim(append([]string(nil), subject.Resources...))
+	}
 
 	signingInput, err := jwtSigningInput(header, payload)
 	if err != nil {

@@ -39,6 +39,7 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *sso.Au
 	// mutation of info.Scopes by the caller must not be visible at
 	// Consume time.
 	scopes := append([]string(nil), info.Scopes...)
+	resources := append([]string(nil), info.Resources...)
 	attrs := copyMap(info.Attributes)
 	m.entries[code] = &sso.AuthCode{
 		UserID:              info.UserID,
@@ -50,6 +51,7 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *sso.Au
 		Attributes:          attrs,
 		CodeChallenge:       info.CodeChallenge,
 		CodeChallengeMethod: info.CodeChallengeMethod,
+		Resources:           resources,
 		ExpiresAt:           info.ExpiresAt,
 	}
 	return nil

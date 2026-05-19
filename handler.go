@@ -78,6 +78,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		Nonce               string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
 		CodeChallenge       string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
 		CodeChallengeMethod string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
+		Resource            []string          `json:"resource"`              // RFC 8707 resource indicators
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
@@ -116,6 +117,13 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if !client.IsAuthenticatorAllowed(req.Provider) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAuthenticatorNotAllowed)
 		ctx.JSON(http.StatusForbidden, errorBody(ErrAuthenticatorNotAllowed))
+		return
+	}
+	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
+	// the client. Empty allowlist disables enforcement (legacy compat).
+	if !client.AreResourcesAllowed(req.Resource) {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidTarget)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
 		return
 	}
 
@@ -275,9 +283,10 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID:       result.UserID,
-		Provider: result.Provider,
-		Claims:   result.Attributes,
+		ID:        result.UserID,
+		Provider:  result.Provider,
+		Claims:    result.Attributes,
+		Resources: append([]string(nil), req.Resource...),
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
@@ -314,7 +323,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	refreshTokenOut := token.RefreshToken
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "")
+			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
@@ -385,6 +394,7 @@ func (s *Server) issueAuthCode(
 		Nonce               string            `json:"nonce"`
 		CodeChallenge       string            `json:"code_challenge"`
 		CodeChallengeMethod string            `json:"code_challenge_method"`
+		Resource            []string          `json:"resource"`
 	},
 	client *Client,
 ) (string, error) {
@@ -406,6 +416,7 @@ func (s *Server) issueAuthCode(
 		Attributes:          result.Attributes,
 		CodeChallenge:       req.CodeChallenge,
 		CodeChallengeMethod: req.CodeChallengeMethod,
+		Resources:           append([]string(nil), req.Resource...),
 		ExpiresAt:           time.Now().Add(ttl),
 	}
 	if err := s.authCodeStore.Issue(ctx, code, entry); err != nil {
@@ -473,6 +484,7 @@ func (s *Server) issueRefreshToken(
 	scopes []string,
 	attributes map[string]string,
 	familyID string,
+	resources []string,
 ) (string, error) {
 	token, err := generateAuthCodeBytes() // same 32-byte base64url generator
 	if err != nil {
@@ -502,6 +514,7 @@ func (s *Server) issueRefreshToken(
 		IssuedAt:   now,
 		ExpiresAt:  now.Add(ttl),
 		FamilyID:   familyID,
+		Resources:  append([]string(nil), resources...),
 	}
 	if err := s.refreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)
@@ -622,15 +635,16 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	}
 
 	var req struct {
-		GrantType    string `json:"grant_type"`
-		Code         string `json:"code"`
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-		RefreshToken string `json:"refresh_token"`
-		Scope        string `json:"scope"`
-		RedirectURI  string `json:"redirect_uri"`
-		CodeVerifier string `json:"code_verifier"` // PKCE RFC 7636 §4.5
-		DeviceCode   string `json:"device_code"`   // RFC 8628 §3.4 device grant
+		GrantType    string   `json:"grant_type"`
+		Code         string   `json:"code"`
+		ClientID     string   `json:"client_id"`
+		ClientSecret string   `json:"client_secret"`
+		RefreshToken string   `json:"refresh_token"`
+		Scope        string   `json:"scope"`
+		RedirectURI  string   `json:"redirect_uri"`
+		CodeVerifier string   `json:"code_verifier"` // PKCE RFC 7636 §4.5
+		DeviceCode   string   `json:"device_code"`   // RFC 8628 §3.4 device grant
+		Resource     []string `json:"resource"`      // RFC 8707 resource indicators
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -653,6 +667,12 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	}
 	if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
+		return
+	}
+	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
+	// the client. Empty allowlist disables enforcement (legacy compat).
+	if !client.AreResourcesAllowed(req.Resource) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
 		return
 	}
 
@@ -716,8 +736,16 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		if len(scopes) == 0 {
 			scopes = strings.Split(req.Scope, " ")
 		}
+		// Resources captured at authorization win over anything the
+		// exchange caller supplies (RFC 8707 binds the audience at
+		// authorization time, not at token redemption).
+		resources := info.Resources
+		if len(resources) == 0 {
+			resources = req.Resource
+		}
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
+			Resources: resources,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -734,7 +762,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		if s.refreshTokenStore != nil {
 			rt, err := s.issueRefreshToken(ctx.Request().Context(),
-				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "")
+				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources)
 			if err != nil {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
@@ -823,6 +851,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
+			Resources: info.Resources,
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -835,7 +864,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// future reuse anywhere in the chain. A presented-twice old
 		// token now fails as invalid_grant (and kills the family).
 		newRefresh, err := s.issueRefreshToken(ctx.Request().Context(),
-			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID)
+			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources)
 		if err != nil {
 			s.logger.Error("refresh token rotation failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
@@ -859,7 +888,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
 			return
 		}
-		token, err := ti.Issue(ctx.Request().Context(), &Subject{ID: client.ID}, scopes)
+		token, err := ti.Issue(ctx.Request().Context(), &Subject{ID: client.ID, Resources: req.Resource}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))

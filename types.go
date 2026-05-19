@@ -54,6 +54,15 @@ type Client struct {
 	// verifies the challenge only when one was presented at login.
 	RequirePKCE bool `json:"require_pkce,omitempty" yaml:"require_pkce,omitempty"`
 
+	// AllowedResources is the RFC 8707 resource-indicator allowlist.
+	// When non-empty, every `resource` parameter on /token /
+	// /auth/login / /device/code MUST appear in this list — the
+	// token endpoint rejects requests for unregistered audiences
+	// with `invalid_target`. Empty list = no resource binding
+	// enforcement (legacy behavior; the token still mints but
+	// without an aud claim from this source).
+	AllowedResources []string `json:"allowed_resources,omitempty" yaml:"allowed_resources,omitempty"`
+
 	// PostLogoutRedirectURIs is the allowlist of URLs the OIDC
 	// RP-Initiated Logout endpoint will redirect the user back to
 	// after killing the session. Per OIDC RP-Initiated Logout 1.0
@@ -74,6 +83,21 @@ func (c *Client) IsRedirectURIValid(uri string) bool {
 // URI allowlist for RP-Initiated Logout.
 func (c *Client) IsPostLogoutRedirectURIValid(uri string) bool {
 	return slices.Contains(c.PostLogoutRedirectURIs, uri)
+}
+
+// AreResourcesAllowed reports whether every requested resource
+// indicator is permitted for this client. Empty allowlist = no
+// enforcement (legacy compat); empty requested = always allowed.
+func (c *Client) AreResourcesAllowed(requested []string) bool {
+	if len(requested) == 0 || len(c.AllowedResources) == 0 {
+		return true
+	}
+	for _, r := range requested {
+		if !slices.Contains(c.AllowedResources, r) {
+			return false
+		}
+	}
+	return true
 }
 
 // IsAuthenticatorAllowed reports whether the named authenticator may be used
@@ -122,10 +146,17 @@ func (s *Session) IsExpired() bool {
 }
 
 // Subject holds the minimal identity info for token issuance.
+//
+// Resources carries RFC 8707 resource indicators — the URIs the
+// access token is intended for. TokenIssuer implementations should
+// stamp these into the token's `aud` claim so a resource server
+// can verify the token was actually meant for it. Empty Resources
+// = no audience binding (legacy behavior).
 type Subject struct {
-	ID       string
-	Provider string
-	Claims   map[string]string
+	ID        string
+	Provider  string
+	Claims    map[string]string
+	Resources []string
 }
 
 // AuthRequest holds the input for an authentication attempt.

@@ -33,6 +33,7 @@ type DeviceCode struct {
 	Denied     bool
 	LastPoll   time.Time
 	Interval   time.Duration // minimum poll interval
+	Resources  []string      // RFC 8707 resource indicators
 	ExpiresAt  time.Time
 }
 

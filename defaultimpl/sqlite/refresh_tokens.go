@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     attributes  TEXT    NOT NULL DEFAULT '{}',
     issued_at   INTEGER NOT NULL,
     expires_at  INTEGER NOT NULL,
-    family_id   TEXT    NOT NULL DEFAULT ''
+    family_id   TEXT    NOT NULL DEFAULT '',
+    resources   TEXT    NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_client
@@ -81,19 +82,27 @@ func NewRefreshTokenStore(dsn string) (*RefreshTokenStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate refresh_tokens.family_id: %w", err)
 	}
+	if _, err := db.ExecContext(context.Background(),
+		`ALTER TABLE refresh_tokens ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'`); err != nil &&
+		!isDuplicateColumnErr(err) {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: migrate refresh_tokens.resources: %w", err)
+	}
 	return &RefreshTokenStore{db: db}, nil
 }
 
 func NewRefreshTokenStoreWithDB(db *sql.DB) *RefreshTokenStore {
-	// Same idempotent column add on the shared-DB path so this
+	// Same idempotent column adds on the shared-DB path so this
 	// constructor doesn't regress against legacy schemas.
 	_, _ = db.ExecContext(context.Background(), refreshTokenSchema)
 	if _, err := db.ExecContext(context.Background(),
 		`ALTER TABLE refresh_tokens ADD COLUMN family_id TEXT NOT NULL DEFAULT ''`); err != nil &&
 		!isDuplicateColumnErr(err) {
-		// Logged via the caller's pipeline; we deliberately return the
-		// store even on migrate error because the shared-DB path
-		// assumes the schema is already in place.
+		_ = err
+	}
+	if _, err := db.ExecContext(context.Background(),
+		`ALTER TABLE refresh_tokens ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'`); err != nil &&
+		!isDuplicateColumnErr(err) {
 		_ = err
 	}
 	return &RefreshTokenStore{db: db}
@@ -131,14 +140,18 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *sso.R
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal attributes: %w", err)
 	}
+	resources, err := json.Marshal(info.Resources)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal resources: %w", err)
+	}
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
-            scopes, attributes, issued_at, expires_at, family_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            scopes, attributes, issued_at, expires_at, family_id, resources)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
-		info.FamilyID,
+		info.FamilyID, string(resources),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
@@ -169,7 +182,7 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*sso.Ref
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM refresh_tokens WHERE token = ?
         RETURNING user_id, client_id, provider, scopes, attributes,
-                  issued_at, expires_at, family_id`, token)
+                  issued_at, expires_at, family_id, resources`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
@@ -200,7 +213,7 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*sso.Ref
 func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*sso.RefreshToken, error) {
 	row := s.db.QueryRowContext(ctx, `
         SELECT user_id, client_id, provider, scopes, attributes,
-               issued_at, expires_at, family_id
+               issued_at, expires_at, family_id, resources
         FROM refresh_tokens WHERE token = ?`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -293,16 +306,16 @@ func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (
 
 func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 	var (
-		out                             sso.RefreshToken
-		provider, scopesJSON, attrsJSON string
-		familyID                        string
-		issuedAtUnixNs, expiresAtUnixNs int64
+		out                                        sso.RefreshToken
+		provider, scopesJSON, attrsJSON, resources string
+		familyID                                   string
+		issuedAtUnixNs, expiresAtUnixNs            int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &provider,
 		&scopesJSON, &attrsJSON,
 		&issuedAtUnixNs, &expiresAtUnixNs,
-		&familyID,
+		&familyID, &resources,
 	); err != nil {
 		return nil, err
 	}
@@ -318,6 +331,11 @@ func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 	if attrsJSON != "" && attrsJSON != "{}" {
 		if err := json.Unmarshal([]byte(attrsJSON), &out.Attributes); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal attributes: %w", err)
+		}
+	}
+	if resources != "" && resources != "[]" {
+		if err := json.Unmarshal([]byte(resources), &out.Resources); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal resources: %w", err)
 		}
 	}
 	return &out, nil

@@ -52,6 +52,7 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *s
 	// mutation of info.Scopes by the caller must not be visible at
 	// Consume time.
 	scopes := append([]string(nil), info.Scopes...)
+	resources := append([]string(nil), info.Resources...)
 	attrs := copyMap(info.Attributes)
 	m.entries[token] = &sso.RefreshToken{
 		UserID:     info.UserID,
@@ -62,6 +63,7 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *s
 		IssuedAt:   info.IssuedAt,
 		ExpiresAt:  info.ExpiresAt,
 		FamilyID:   info.FamilyID,
+		Resources:  resources,
 	}
 	// Stamp the family even when active so reuse detection works after
 	// the leaf is consumed.

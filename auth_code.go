@@ -31,6 +31,7 @@ type AuthCode struct {
 	Attributes          map[string]string // forwarded into the token subject's Claims
 	CodeChallenge       string            // PKCE challenge captured at issue (empty = no PKCE)
 	CodeChallengeMethod string            // PKCE method: "S256" | "plain"
+	Resources           []string          // RFC 8707 resource indicators (target audiences)
 	ExpiresAt           time.Time
 }
 
