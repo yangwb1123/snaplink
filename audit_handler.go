@@ -371,6 +371,48 @@ func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClie
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
+// recordRefreshTokenReuse emits a refresh_token_reuse_detected event.
+// Fired from the rotation grant when the store signals
+// ErrRefreshTokenReused — a security signal worth routing to alerting.
+func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventRefreshTokenReuse
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.Reason = "family=" + familyID
+	if killed > 0 {
+		setMeta(e, "killed", itoa(killed))
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// itoa is a tiny strconv-free int formatter — keeps audit_handler.go
+// free of a strconv import for one call site.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
 // recordCallbackFailure emits a callback_failure event.
 func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
 	if s.auditor == nil {

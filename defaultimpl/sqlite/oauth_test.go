@@ -235,6 +235,69 @@ func TestSQLiteRefresh_DeleteAllForSubject_EmptyClient(t *testing.T) {
 	}
 }
 
+// ---------- RefreshTokenFamilyTracker ----------
+
+func TestSQLiteRefresh_FamilyTracker_ReuseDetection(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+
+	exp := time.Now().Add(time.Hour)
+	_ = st.Issue(ctx, "leaf-1", &sso.RefreshToken{
+		UserID: "u", ClientID: "c", FamilyID: "fam-x", ExpiresAt: exp,
+	})
+	// First consume succeeds; second is reuse.
+	if _, err := st.Consume(ctx, "leaf-1"); err != nil {
+		t.Fatalf("first consume: %v", err)
+	}
+	tok, err := st.Consume(ctx, "leaf-1")
+	if !errors.Is(err, sso.ErrRefreshTokenReused) {
+		t.Errorf("err = %v want ErrRefreshTokenReused", err)
+	}
+	if tok == nil || tok.FamilyID != "fam-x" {
+		t.Errorf("expected family stamped on reuse RefreshToken: %+v", tok)
+	}
+}
+
+func TestSQLiteRefresh_DeleteFamilyKillsAllAndForgetsLedger(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour)
+
+	for _, tok := range []string{"t1", "t2", "t3"} {
+		_ = st.Issue(ctx, tok, &sso.RefreshToken{
+			UserID: "u", ClientID: "c", FamilyID: "fam-1", ExpiresAt: exp,
+		})
+	}
+	_ = st.Issue(ctx, "ux", &sso.RefreshToken{
+		UserID: "u", ClientID: "c", FamilyID: "fam-2", ExpiresAt: exp,
+	})
+
+	n, err := st.DeleteFamily(ctx, "fam-1")
+	if err != nil {
+		t.Fatalf("DeleteFamily: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("killed=%d want 3", n)
+	}
+	// fam-2 survives.
+	if _, err := st.Consume(ctx, "ux"); err != nil {
+		t.Errorf("fam-2 lost: %v", err)
+	}
+	// Reuse-detection ledger MUST be forgotten — second Consume of a
+	// killed token returns plain not-found, NOT reuse.
+	if _, err := st.Consume(ctx, "t1"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		t.Errorf("post-DeleteFamily consume err = %v (want NotFound, no stale reuse)", err)
+	}
+}
+
 // ---------- DeviceCodeStore ----------
 
 func TestSQLiteDevice_FullStateMachine(t *testing.T) {

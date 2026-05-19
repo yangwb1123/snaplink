@@ -296,7 +296,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	}
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes)
+			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "")
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err)
 		} else {

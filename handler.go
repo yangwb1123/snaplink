@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -313,7 +314,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	refreshTokenOut := token.RefreshToken
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes)
+			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "")
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
@@ -456,6 +457,13 @@ func generateAuthCodeBytes() (string, error) {
 // store, and returns the opaque token string. The TTL is taken from the
 // Server's refreshTokenTTL with a fallback to DefaultRefreshTokenTTL.
 //
+// familyID controls the OAuth Security BCP §4.13 family-tracking
+// chain: pass "" on the FIRST issue (login, authz_code, device) to
+// mint a new family, or the existing FamilyID on rotation to keep
+// every descendant of a single authorization event in one family.
+// Stores that don't implement RefreshTokenFamilyTracker simply
+// ignore the value — opt-in hardening.
+//
 // Callers MUST pre-check s.refreshTokenStore != nil — this helper
 // dereferences it unconditionally so a misuse fails loudly during
 // testing rather than silently no-op'ing in production.
@@ -464,6 +472,7 @@ func (s *Server) issueRefreshToken(
 	userID, clientID, provider string,
 	scopes []string,
 	attributes map[string]string,
+	familyID string,
 ) (string, error) {
 	token, err := generateAuthCodeBytes() // same 32-byte base64url generator
 	if err != nil {
@@ -472,6 +481,16 @@ func (s *Server) issueRefreshToken(
 	ttl := s.refreshTokenTTL
 	if ttl <= 0 {
 		ttl = DefaultRefreshTokenTTL
+	}
+	if familyID == "" {
+		// First-issue path: mint a new family. Length matches the
+		// token itself — 32 bytes / 256 bits — so collisions across
+		// the fleet remain infeasible.
+		fid, err := generateAuthCodeBytes()
+		if err != nil {
+			return "", fmt.Errorf("generate refresh family id: %w", err)
+		}
+		familyID = fid
 	}
 	now := time.Now()
 	entry := &RefreshToken{
@@ -482,6 +501,7 @@ func (s *Server) issueRefreshToken(
 		Attributes: attributes,
 		IssuedAt:   now,
 		ExpiresAt:  now.Add(ttl),
+		FamilyID:   familyID,
 	}
 	if err := s.refreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)
@@ -714,7 +734,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		if s.refreshTokenStore != nil {
 			rt, err := s.issueRefreshToken(ctx.Request().Context(),
-				info.UserID, client.ID, info.Provider, scopes, info.Attributes)
+				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "")
 			if err != nil {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
@@ -753,6 +773,27 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		info, err := s.refreshTokenStore.Consume(ctx.Request().Context(), req.RefreshToken)
 		if err != nil {
+			// OAuth Security BCP §4.13: a previously-consumed token
+			// presented again is a reuse signal. Kill the whole family
+			// (every sibling and descendant) before returning the wire
+			// error — an attacker who already rotated after stealing
+			// the leaf loses access to the active descendant too.
+			if errors.Is(err, ErrRefreshTokenReused) && info != nil && info.FamilyID != "" {
+				killed := 0
+				if tracker, ok := s.refreshTokenStore.(RefreshTokenFamilyTracker); ok {
+					n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
+					if derr != nil {
+						s.logger.Error("family revocation on reuse failed",
+							"error", derr, "family", info.FamilyID)
+					} else {
+						killed = n
+						s.logger.Error("refresh token reuse detected — family revoked",
+							"family", info.FamilyID, "killed", killed,
+							"client", client.ID)
+					}
+				}
+				s.recordRefreshTokenReuse(ctx, client.ID, info.FamilyID, killed)
+			}
 			// Unknown / expired / already-consumed all map to invalid_grant
 			// per RFC 6749 §5.2 — clients can't distinguish, by design.
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
@@ -789,11 +830,12 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			return
 		}
 		// Rotation: issue a NEW refresh token (the old one was deleted by
-		// Consume above). A presented-twice old token now fails as
-		// invalid_grant — the safe default for any reuse attempt, whether
-		// it's a benign client retry or an actual replay attack.
+		// Consume above). Pass info.FamilyID so the new leaf joins the
+		// same family — stores that track families can detect any
+		// future reuse anywhere in the chain. A presented-twice old
+		// token now fails as invalid_grant (and kills the family).
 		newRefresh, err := s.issueRefreshToken(ctx.Request().Context(),
-			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes)
+			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID)
 		if err != nil {
 			s.logger.Error("refresh token rotation failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))

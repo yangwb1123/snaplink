@@ -28,6 +28,16 @@ type RefreshToken struct {
 	Attributes map[string]string // forwarded into the new token subject's Claims
 	IssuedAt   time.Time
 	ExpiresAt  time.Time
+
+	// FamilyID groups every refresh token that descends from a single
+	// authorization event (login, authz_code exchange, or device flow).
+	// Rotation propagates the FamilyID unchanged, so a 30-day chain of
+	// rotations all share one FamilyID. On reuse detection (OAuth
+	// Security BCP §4.13), the server kills the entire family — not
+	// just the replayed leaf — invalidating any active token an
+	// attacker might have already obtained from a stolen refresh
+	// token. Empty FamilyID means the store doesn't track families.
+	FamilyID string
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.
@@ -104,3 +114,37 @@ type RefreshTokenInspector interface {
 type RefreshTokenSubjectIndex interface {
 	DeleteAllForSubject(ctx context.Context, userID, clientID string) (int, error)
 }
+
+// RefreshTokenFamilyTracker is an OPTIONAL extension that turns on
+// OAuth Security BCP §4.13/§4.14 family-wide reuse detection. Stores
+// that implement it MUST:
+//
+//  1. Remember the FamilyID of every refresh token long enough to
+//     detect a replayed-after-rotation presentation. The minimum
+//     window is the refresh token TTL; longer is better for audit.
+//  2. Treat a Consume of a known-but-already-consumed token as a
+//     reuse signal — return ErrRefreshTokenReused so the handler can
+//     kill the whole family via DeleteFamily.
+//
+// Without this extension, reuse fails as plain invalid_grant (the
+// stolen leaf can't be redeemed twice) but any active token already
+// minted by an attacker who rotated first stays alive until expiry.
+// With it, the FIRST replay of any descendant invalidates every
+// sibling — the attacker's window collapses.
+type RefreshTokenFamilyTracker interface {
+	// DeleteFamily removes every refresh token (active or consumed)
+	// sharing the supplied FamilyID. Returns the count of active
+	// tokens that were killed; consumed-only entries are bookkeeping
+	// for reuse detection and aren't counted. Idempotent — deleting
+	// an unknown family returns (0, nil).
+	DeleteFamily(ctx context.Context, familyID string) (int, error)
+}
+
+// ErrRefreshTokenReused is returned by stores that implement
+// RefreshTokenFamilyTracker when Consume sees a token that was
+// previously consumed within the family-tracking window. The handler
+// maps it to invalid_grant on the wire (per RFC 6749 §5.2 +
+// oracle-leak hardening) but ALSO kills the entire family before
+// returning, so an attacker who replays a stolen leaf can't continue
+// rotating from a sibling they already obtained.
+var ErrRefreshTokenReused = errors.New("sso: refresh token already consumed (reuse detected)")

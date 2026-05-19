@@ -98,6 +98,15 @@ const (
 	// EventDeviceCodeDenied fires on the explicit deny path. Same
 	// metadata as Approved.
 	EventDeviceCodeDenied EventType = "device_code_denied"
+
+	// EventRefreshTokenReuse fires when the rotation grant detects a
+	// presented-after-rotation refresh token (OAuth Security BCP §4.13)
+	// AND the store implements RefreshTokenFamilyTracker. Reason
+	// carries the family id; Metadata carries "killed=<n>" with the
+	// count of active descendants invalidated by the family revocation.
+	// Outcome is OutcomeFailure — a reuse event is always a security
+	// signal, never a happy-path operation.
+	EventRefreshTokenReuse EventType = "refresh_token_reuse_detected"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
