@@ -69,10 +69,19 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		return
 	}
 	if req.RequestedTokenType != "" &&
-		req.RequestedTokenType != TokenTypeAccessToken {
-		// v1 only mints access tokens. Refresh / ID token output is
-		// future work — caller wanted something we can't deliver.
+		req.RequestedTokenType != TokenTypeAccessToken &&
+		req.RequestedTokenType != TokenTypeRefreshToken {
+		// Access + Refresh supported; ID token / SAML2 are future
+		// work (no compelling caller need yet). Anything else =>
+		// caller wanted something we can't deliver.
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	// Refresh-token output requires a wired refresh store — without
+	// it there's no way to honor the resulting rotation grant. Fail
+	// fast rather than silently downgrade to access-only.
+	if req.RequestedTokenType == TokenTypeRefreshToken && s.refreshTokenStore == nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrRefreshTokenNotConfigured))
 		return
 	}
 
@@ -171,14 +180,48 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	s.recordTokenIssued(ctx, client.ID, strategy, claims.Subject)
 	s.recordSubjectClientAccess(ctx.Request().Context(), claims.Subject, client.ID)
 
-	ctx.JSON(http.StatusOK, map[string]any{
+	resp := map[string]any{
 		KeyAccessToken:     token.AccessToken,
 		KeyIssuedTokenType: TokenTypeAccessToken,
 		KeyTokenType:       token.TokenType,
 		KeyExpiresIn:       token.ExpiresIn,
 		KeyScope:           token.Scope,
 		KeyTokenStrategy:   strategy,
-	})
+	}
+	// RFC 8693 §2.1: when requested_token_type is refresh_token,
+	// mint a refresh token alongside (the access token is always
+	// returned — the spec uses requested_token_type to name what
+	// the `issued_token_type` field reports back, not what's
+	// emitted exclusively). Provider/AMR/Resources/AuthDetails/SID
+	// propagate from the subject_token's claims so a rotated
+	// chain inherits the same authorization context.
+	if req.RequestedTokenType == TokenTypeRefreshToken && s.refreshTokenStore != nil {
+		provider := ""
+		if len(claims.AMR) > 0 {
+			provider = claims.AMR[0]
+		}
+		rt, rerr := s.issueRefreshToken(
+			ctx.Request().Context(),
+			claims.Subject, client.ID, provider,
+			scopes, claims.Extra, "", resources,
+			nil, // RFC 9396 authz details aren't tracked on the inbound subject_token today
+			claims.SID,
+			client.RefreshTokenTTL,
+		)
+		if rerr != nil {
+			s.logger.Error("token exchange refresh issue failed", "strategy", strategy, "error", rerr)
+			// Fail-open: caller still gets the access token. Spec
+			// allows this since the access token alone is a complete
+			// response; the refresh is a bonus capability the caller
+			// can re-request.
+		} else {
+			resp[KeyRefreshToken] = rt
+			resp[KeyIssuedTokenType] = TokenTypeRefreshToken
+			s.recordRefreshTokenIssued(ctx, client.ID, claims.Subject, false)
+		}
+	}
+
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // tokenExchangeRequest is the subset of /token parameters the
