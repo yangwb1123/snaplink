@@ -137,6 +137,19 @@ type oidcConfiguration struct {
 	// WithClientCertExtractor is wired.
 	TLSClientCertificateBoundAccessTokens bool `json:"tls_client_certificate_bound_access_tokens,omitempty"`
 
+	// RFC 8705 §5 — when the AS terminates mTLS on a different
+	// hostname / port than the standard endpoints (typical edge:
+	// `auth.example.com` for bearer flows, `mtls.example.com` for
+	// cert-authenticated flows), publish the alternates here.
+	// RPs that need cert-bound issuance route to the alias; plain
+	// bearer continues hitting the regular endpoints. This server
+	// publishes the same endpoint URLs on both sides today (the
+	// HTTPS server accepts certs on every endpoint), so RPs see
+	// identical hostnames but the field's presence signals "mTLS
+	// is operationally available." Operators with split-hostname
+	// terminations override via deploy-side proxy rewriting.
+	MTLSEndpointAliases *MTLSEndpointAliases `json:"mtls_endpoint_aliases,omitempty"`
+
 	// OIDC Discovery §3 `acr_values_supported`. Populated from
 	// the operator-declared `WithSupportedACRValues` — empty /
 	// omitted when no list is configured. RPs branching on ACR
@@ -199,6 +212,20 @@ type oidcConfiguration struct {
 	// RequestObjectSigningAlgValuesSupported lists the alg values
 	// the JAR verifier accepts on the request JWT. EdDSA today.
 	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
+}
+
+// MTLSEndpointAliases is the RFC 8705 §5 alias map. Only endpoints
+// that participate in client authentication / token issuance need
+// alternates; discovery, JWKS, and end_session aren't gated on mTLS.
+// Empty fields are omitted from the JSON output so the structure
+// stays compact for deployments that publish a subset of endpoints.
+type MTLSEndpointAliases struct {
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
+	UserInfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
+	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`
+	PushedAuthReqEndpoint string `json:"pushed_authorization_request_endpoint,omitempty"`
 }
 
 // codeChallengeMethodsFor advertises the PKCE methods this AS will
@@ -393,6 +420,14 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.DPoPSigningAlgValuesSupported = []string{"EdDSA"}
 	if s.clientCertExtractor != nil {
 		cfg.TLSClientCertificateBoundAccessTokens = true
+		cfg.MTLSEndpointAliases = &MTLSEndpointAliases{
+			TokenEndpoint:         cfg.TokenEndpoint,
+			RevocationEndpoint:    cfg.RevocationEndpoint,
+			IntrospectionEndpoint: cfg.IntrospectionEndpoint,
+			UserInfoEndpoint:      cfg.UserInfoEndpoint,
+			RegistrationEndpoint:  cfg.RegistrationEndpoint,
+			PushedAuthReqEndpoint: cfg.PushedAuthReqEndpoint,
+		}
 	}
 	if len(s.supportedACRValues) > 0 {
 		cfg.ACRValuesSupported = append([]string(nil), s.supportedACRValues...)
