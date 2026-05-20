@@ -99,6 +99,12 @@ type oidcConfiguration struct {
 	// honor it project the requested claims into output).
 	ClaimsParameterSupported bool `json:"claims_parameter_supported"`
 
+	// OIDC Core §5.3.2 — JWS algs supported for signing /userinfo
+	// responses when the client's `userinfo_signed_response_alg`
+	// metadata is set. Empty / omitted = signed userinfo not
+	// available (the IDTokenIssuer doesn't implement UserinfoSigner).
+	UserinfoSigningAlgValuesSupported []string `json:"userinfo_signing_alg_values_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -195,6 +201,14 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// We always sign with EdDSA today; when more signers land this
 		// list should reflect every registered signature algorithm.
 		cfg.IDTokenSigningAlgValuesSupported = []string{"EdDSA"}
+		// Userinfo signing capability is gated on the issuer
+		// implementing the UserinfoSigner extension. The default
+		// Ed25519JWTIssuer does — third-party implementations may
+		// not, and the omitempty serialization correctly hides the
+		// claim in that case.
+		if _, ok := s.idTokenIssuer.(UserinfoSigner); ok {
+			cfg.UserinfoSigningAlgValuesSupported = []string{"EdDSA"}
+		}
 	}
 	if s.parStore != nil {
 		// RFC 9126 §5: advertise the PAR endpoint so RPs that prefer

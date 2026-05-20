@@ -144,6 +144,19 @@ type Client struct {
 	// be redirected to an internal IP.
 	AllowedRequestURIs []string `json:"allowed_request_uris,omitempty" yaml:"allowed_request_uris,omitempty"`
 
+	// UserinfoSignedResponseAlg is the OIDC Core §5.3.2 client
+	// metadata that names the JWS algorithm the AS uses when
+	// signing the /userinfo response (instead of returning plain
+	// JSON). Empty = JSON response (the default). When set to
+	// a non-empty value, /userinfo returns
+	// `Content-Type: application/jwt` and a signed JWT whose
+	// payload is the userinfo claim set. Today only "EdDSA" is
+	// supported (matches the access-token signing alg); other
+	// values are rejected at request time. Useful when downstream
+	// services want to verify the claims independently of the
+	// access token's signature.
+	UserinfoSignedResponseAlg string `json:"userinfo_signed_response_alg,omitempty" yaml:"userinfo_signed_response_alg,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel

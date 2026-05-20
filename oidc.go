@@ -50,3 +50,20 @@ type IDTokenRequest struct {
 type IDTokenIssuer interface {
 	IssueIDToken(ctx context.Context, req *IDTokenRequest) (string, error)
 }
+
+// UserinfoSigner is an optional extension to IDTokenIssuer. When the
+// wired IDTokenIssuer implements this interface AND a client's
+// UserinfoSignedResponseAlg metadata is set, /userinfo returns a
+// signed JWT (Content-Type: application/jwt) instead of plain JSON.
+//
+// The default Ed25519JWTIssuer implements this interface — the
+// returned JWT uses the same signing key as access + id tokens so
+// RPs verify all three with one JWKS entry.
+//
+// claims is the projected user-info claim set (sub + scope-gated
+// OIDC claims + amr/acr/auth_time when carried by the access token).
+// audience is the client_id the userinfo response is bound to —
+// stamped into the JWT's `aud` claim per OIDC Core §5.3.2.
+type UserinfoSigner interface {
+	SignUserInfo(ctx context.Context, audience string, claims map[string]any) (string, error)
+}

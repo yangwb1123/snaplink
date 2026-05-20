@@ -1474,6 +1474,14 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		if len(claims.AMR) > 0 {
 			body["amr"] = claims.AMR
 		}
+		// OIDC Core §5.3.2 — when the requesting client has
+		// `userinfo_signed_response_alg` set AND the wired
+		// IDTokenIssuer implements UserinfoSigner, return a
+		// signed JWT (Content-Type: application/jwt) instead
+		// of plain JSON. Today only EdDSA is supported.
+		if s.maybeSignUserInfo(ctx, claims.ClientID, body) {
+			return
+		}
 		ctx.JSON(http.StatusOK, body)
 		return
 	}

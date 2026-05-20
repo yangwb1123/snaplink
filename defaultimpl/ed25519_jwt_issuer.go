@@ -528,6 +528,38 @@ func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *sso.IDTokenReque
 	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
+// SignUserInfo implements [sso.UserinfoSigner]. Wraps the supplied
+// claim set in a JWS using the same signing key as access + ID
+// tokens — RPs verify all three with one JWKS entry. Stamps `iss`
+// (AS issuer) and `aud` (client_id) per OIDC Core §5.3.2; the
+// caller-supplied claims override these only if they explicitly
+// set them (extension claims merge naturally with the map).
+func (j *Ed25519JWTIssuer) SignUserInfo(_ context.Context, audience string, claims map[string]any) (string, error) {
+	if claims == nil {
+		claims = make(map[string]any)
+	}
+	if _, ok := claims["iss"]; !ok {
+		claims["iss"] = j.issuer
+	}
+	if audience != "" {
+		if _, ok := claims["aud"]; !ok {
+			claims["aud"] = audience
+		}
+	}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	pb, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
+	sig := ed25519.Sign(j.privateKey, []byte(signingInput))
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
 // idTokenSigningInput is the ID-token mirror of jwtSigningInput — same
 // JOSE encoding, but parametrized on the ID payload shape.
 func idTokenSigningInput(header ed25519Header, payload ed25519IDPayload) ([]byte, error) {
