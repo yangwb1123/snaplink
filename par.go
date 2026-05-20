@@ -47,6 +47,12 @@ type PARRequest struct {
 	// response_type's default mode.
 	ResponseMode string
 
+	// ACRValues is the OIDC Core §3.1.2.1 `acr_values` parameter
+	// (space-separated list in the original form). Stored as the
+	// raw string here for simplicity — splitScope at merge time
+	// reuses one tokenizer. Empty = client didn't pin an ACR.
+	ACRValues string
+
 	ExpiresAt time.Time
 }
 

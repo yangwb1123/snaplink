@@ -89,6 +89,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
 		LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
 		ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
+		ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -155,6 +156,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if stored.ResponseMode != "" {
 			req.ResponseMode = stored.ResponseMode
+		}
+		if stored.ACRValues != "" {
+			req.ACRValues = stored.ACRValues
 		}
 	}
 
@@ -287,6 +291,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if jar.ResponseMode != "" {
 			req.ResponseMode = jar.ResponseMode
 		}
+		if jar.ACRValues != "" {
+			req.ACRValues = jar.ACRValues
+		}
 	}
 
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
@@ -340,6 +347,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		Scope:      req.Scope,
 		State:      req.State,
 		LoginHint:  req.LoginHint,
+		ACRValues:  splitScope(req.ACRValues),
 	})
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
@@ -682,6 +690,7 @@ func (s *Server) issueAuthCode(
 		MaxAge               *int64            `json:"max_age"`
 		LoginHint            string            `json:"login_hint"`
 		ResponseMode         string            `json:"response_mode"`
+		ACRValues            string            `json:"acr_values"`
 	},
 	client *Client,
 ) (string, error) {

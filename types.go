@@ -366,6 +366,16 @@ type AuthRequest struct {
 	// matches the hint and reject mismatches. Empty when the
 	// RP didn't supply a hint.
 	LoginHint string
+
+	// ACRValues is the OIDC Core §3.1.2.1 `acr_values` parameter
+	// — space-separated list of ACR values the RP prefers, in
+	// descending preference order. Authenticators that can pick
+	// among methods use this to choose the strongest method
+	// matching one of the requested ACRs. The AchievedACR field
+	// on AuthResult communicates back what was actually used;
+	// the AS surfaces that value as the id_token's `acr` claim.
+	// Empty = no preference (authenticator picks freely).
+	ACRValues []string
 }
 
 // AuthResult holds the result of a successful authentication.

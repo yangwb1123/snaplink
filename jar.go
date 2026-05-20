@@ -89,6 +89,7 @@ type jarPayload struct {
 	AuthorizationDetails json.RawMessage `json:"authorization_details"`
 	LoginHint            string          `json:"login_hint"`
 	ResponseMode         string          `json:"response_mode"`
+	ACRValues            string          `json:"acr_values"`
 
 	// JWT control claims for §6.3 validation.
 	Aud audClaim `json:"aud,omitempty"`
