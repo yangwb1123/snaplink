@@ -84,6 +84,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 			return
 		}
 		if bearer := bearerToken(ctx.Request()); bearer != s.dcrPolicy.InitialAccessToken {
+			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Initial access token missing or invalid")
 			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 			return
 		}
@@ -291,15 +292,21 @@ func (s *Server) authorizeRegistrationMgmt(ctx HandlerContext) (*Client, bool) {
 	if err != nil {
 		// 401 (not 404) because the resource is auth-gated; a 404
 		// would let an unauthed caller probe for client_id existence.
+		// The challenge stays identical across "unknown client",
+		// "missing bearer", and "wrong bearer" to preserve the
+		// anti-enumeration property the catch-all 401 enforces.
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Registration access token missing or invalid")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return nil, false
 	}
 	bearer := bearerToken(ctx.Request())
 	if bearer == "" || client.RegistrationAccessToken == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Registration access token missing or invalid")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return nil, false
 	}
 	if subtleConstantTimeStringEq(bearer, client.RegistrationAccessToken) != 1 {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Registration access token missing or invalid")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return nil, false
 	}
