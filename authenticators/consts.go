@@ -11,6 +11,7 @@ const (
 	MethodKeyPair     = "keypair"
 	MethodAPIKey      = "apikey"
 	MethodCertificate = "certificate"
+	MethodTOTP        = "totp"
 )
 
 // AuthMethod tags placed on AuthResult.AuthMethods (used by relying parties to
@@ -23,6 +24,7 @@ const (
 	AuthMethodSig      = "sig"
 	AuthMethodAPIKey   = "api_key"
 	AuthMethodX509     = "x509"
+	AuthMethodOTP      = "otp" // RFC 8176 §2: generic OTP (TOTP / HOTP)
 )
 
 // CodeStore key prefixes — kept distinct so a single shared store can hold

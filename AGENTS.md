@@ -332,11 +332,12 @@ non-obvious facts. For "how to wire", grep `WithXxx` in `sso.go`.
 | `keypair` | Ed25519 service-to-service | `NewKeyPairAuthenticator(pubKeyStore, skew)` |
 | `apikey` | Long-lived service credential | `NewAPIKeyAuthenticator(store)` |
 | `certificate` | mTLS / X.509 | `NewCertificateAuthenticator(rootPool)` |
+| `totp` | RFC 6238 Time-based OTP (Google Authenticator / 1Password / Authy) | `NewTOTPAuthenticator(store)` |
 
 A client's `allowed_authenticators:` allowlist gates which methods
-the client may use. There is **no human-MFA flow** (TOTP / WebAuthn /
-Passkey) and **no upstream IdP federation** (Google/Okta/SAML) yet —
-see ROADMAP.md.
+the client may use. TOTP (RFC 6238) is the first human-MFA method
+shipped — WebAuthn / Passkey support and upstream IdP federation
+(Google / Okta / SAML) remain on the ROADMAP.
 
 ### Persistence — SQLite (`defaultimpl/sqlite/`)
 
