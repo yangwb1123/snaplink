@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -74,6 +75,15 @@ type LogoutNotifier interface {
 // not delay the rest of the logout pipeline. A failure here is
 // logged + audited but not fatal.
 const DefaultBackchannelLogoutTimeout = 5 * time.Second
+
+// DefaultBackchannelLogoutMaxConcurrent caps the multi-RP fan-out
+// parallelism so a user with 50+ active RPs doesn't have /end_session
+// open 50 simultaneous outbound HTTP connections (which can starve
+// the connection pool + exhaust ephemeral ports under burst). 8 is
+// a conservative default that keeps p99 logout latency bounded at
+// roughly `timeout × ceil(N / max)` instead of `timeout × N` in the
+// serial path. Override with WithBackchannelLogoutMaxConcurrent.
+const DefaultBackchannelLogoutMaxConcurrent = 8
 
 // HTTPLogoutNotifier is the production LogoutNotifier. POSTs
 // `logout_token=<jwt>` as
@@ -219,6 +229,11 @@ func (s *Server) fanOutBackchannelLogout(ctx HandlerContext, originClient *Clien
 	if originClient != nil {
 		clientIDs = append(clientIDs, originClient.ID)
 	}
+	// Deduplicate + filter to the BCL-capable subset BEFORE spawning
+	// workers so we know exactly how many to wait on and Forget calls
+	// for non-BCL clients happen immediately (no goroutine spin-up
+	// cost for them).
+	targets := make([]*Client, 0, len(clientIDs))
 	for _, cid := range clientIDs {
 		if cid == "" {
 			continue
@@ -229,17 +244,51 @@ func (s *Server) fanOutBackchannelLogout(ctx HandlerContext, originClient *Clien
 		seen[cid] = struct{}{}
 		c, err := s.clientStore.Get(ctx.Request().Context(), cid)
 		if err != nil || c == nil || c.BackchannelLogoutURI == "" {
-			// Either the client was deleted or it doesn't speak
-			// BCL — either way, nothing to notify. Forget so the
-			// index doesn't carry it forever.
+			// Client was deleted or doesn't speak BCL — Forget so the
+			// index doesn't carry it forever; nothing else to do.
 			_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, cid)
 			continue
 		}
-		// Per-client sid filter: the cross-RP fan-out passes the
-		// SAME sid value. RPs that don't recognize the sid will
-		// fall back to subject-wide logout per BCL §2.4 — exactly
-		// the desired soft-degradation.
-		s.sendBackchannelLogout(ctx, c, subject, sid)
-		_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, cid)
+		targets = append(targets, c)
 	}
+	if len(targets) == 0 {
+		return
+	}
+	// Parallel fan-out with bounded concurrency. Serial loop would
+	// stack each RP's `DefaultBackchannelLogoutTimeout` (5s default)
+	// linearly — a user with 10 RPs and one slow RP would block
+	// /end_session for 50s before unblocking. Bounded worker pool
+	// keeps p99 at roughly timeout × ceil(N / max) while avoiding
+	// the 50+-connection burst a naive unbounded goroutine-per-RP
+	// would emit. The Forget call follows the notification (success
+	// or failure) on the same worker — see sendBackchannelLogout
+	// for the audit recording contract.
+	max := s.backchannelLogoutMaxConcurrent
+	if max <= 0 {
+		max = DefaultBackchannelLogoutMaxConcurrent
+	}
+	if max > len(targets) {
+		max = len(targets)
+	}
+	work := make(chan *Client, len(targets))
+	for _, c := range targets {
+		work <- c
+	}
+	close(work)
+	var wg sync.WaitGroup
+	wg.Add(max)
+	for i := 0; i < max; i++ {
+		go func() {
+			defer wg.Done()
+			for c := range work {
+				// Per-client sid filter: every fan-out RP gets the
+				// SAME sid value. RPs that don't recognize the sid
+				// fall back to subject-wide logout per BCL §2.4 —
+				// exactly the desired soft-degradation.
+				s.sendBackchannelLogout(ctx, c, subject, sid)
+				_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, c.ID)
+			}
+		}()
+	}
+	wg.Wait()
 }

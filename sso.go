@@ -65,8 +65,9 @@ type Server struct {
 	parTTL               time.Duration
 	dcrPolicy            *DCRPolicy
 	oauth21Strict        bool
-	logoutTokenIssuer    LogoutTokenIssuer
-	logoutNotifier       LogoutNotifier
+	logoutTokenIssuer              LogoutTokenIssuer
+	logoutNotifier                 LogoutNotifier
+	backchannelLogoutMaxConcurrent int
 	accountLockout       AccountLockout
 	jtiReplayStore       JTIReplayStore
 	subjectClientIndex   SubjectClientIndex
@@ -153,6 +154,17 @@ func WithBackchannelLogout(issuer LogoutTokenIssuer, notifier LogoutNotifier) Op
 		s.logoutTokenIssuer = issuer
 		s.logoutNotifier = notifier
 	}
+}
+
+// WithBackchannelLogoutMaxConcurrent overrides the fan-out
+// parallelism cap when the SubjectClientIndex notifies multiple
+// RPs at once. Defaults to DefaultBackchannelLogoutMaxConcurrent
+// (8). Lower it to ease memory/connection pressure when each RP
+// is on a slow upstream; raise it when N RPs is large and per-RP
+// p99 is well under the timeout. A value <= 0 falls back to the
+// default.
+func WithBackchannelLogoutMaxConcurrent(n int) Option {
+	return func(s *Server) { s.backchannelLogoutMaxConcurrent = n }
 }
 
 // WithOAuth21StrictMode toggles enforcement of the OAuth 2.1
