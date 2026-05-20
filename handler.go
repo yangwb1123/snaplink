@@ -245,6 +245,18 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
 		return
 	}
+	// RFC 9126 §2.1 — clients with RequirePAR=true MUST push their
+	// authorization request via /par first. We check AFTER the PAR
+	// merge above so a legitimate caller using request_uri still
+	// works (the merge consumed the URI; req.RequestURI is the
+	// pre-merge value). The merge succeeded ⇒ request_uri was
+	// present ⇒ this client satisfies the PAR-only contract.
+	// Empty req.RequestURI when RequirePAR=true ⇒ reject.
+	if client.RequirePAR && req.RequestURI == "" {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "client requires pushed authorization request"))
+		return
+	}
 	if !client.IsAuthenticatorAllowed(req.Provider) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAuthenticatorNotAllowed)
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAuthenticatorNotAllowed))

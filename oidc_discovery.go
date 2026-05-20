@@ -105,6 +105,28 @@ type oidcConfiguration struct {
 	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
 }
 
+// anyClientRequiresPAR scans the client store for any registered
+// client with RequirePAR=true. Used by the discovery doc to flip
+// `require_pushed_authorization_requests` to true when at least
+// one client enforces PAR-only authorization — matching the same
+// "advertise when any client opts in" convention `frontchannel_logout_supported`
+// uses. Errors return false (legacy unrestricted behavior).
+func anyClientRequiresPAR(ctx context.Context, s *Server) bool {
+	if s.clientStore == nil {
+		return false
+	}
+	clients, err := s.clientStore.List(ctx)
+	if err != nil {
+		return false
+	}
+	for _, c := range clients {
+		if c != nil && c.RequirePAR {
+			return true
+		}
+	}
+	return false
+}
+
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
 // RFC 8414 metadata document. Always wired by Mount (no opt-in
 // option) — relying parties expect this endpoint at a fixed URL
@@ -162,10 +184,15 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if s.parStore != nil {
 		// RFC 9126 §5: advertise the PAR endpoint so RPs that prefer
-		// the pushed-request flow can discover it. require_pushed_*
-		// stays false here — we accept both shapes; a future
-		// per-server policy knob can flip it.
+		// the pushed-request flow can discover it. The server-wide
+		// `require_pushed_authorization_requests` discovery flag is
+		// flipped when ANY registered client has RequirePAR=true —
+		// matches the OIDC convention where a discovery boolean
+		// reflects "is this supported anywhere".
 		cfg.PushedAuthReqEndpoint = base + PathPAR
+		if anyClientRequiresPAR(ctx.Request().Context(), s) {
+			cfg.RequirePushedAuthReq = true
+		}
 	}
 	if s.dcrPolicy != nil {
 		// RFC 7591 §3: advertise the registration endpoint so

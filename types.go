@@ -122,6 +122,17 @@ type Client struct {
 	// fail with invalid_pkce_method.
 	AllowedPKCEMethods []string `json:"allowed_pkce_methods,omitempty" yaml:"allowed_pkce_methods,omitempty"`
 
+	// RequirePAR forces every authorization request for THIS client
+	// to be pushed via /par BEFORE redirecting the user agent (RFC
+	// 9126 §2.1). When true, a direct /auth/login call without
+	// `request_uri` is rejected with invalid_request — the spec's
+	// closest-fit error for "client must push the request first".
+	// Useful for high-security clients where the full authorization
+	// request must be authenticated server-to-server up front.
+	// When false (default), direct authorization is still allowed —
+	// PAR remains an optional shortcut.
+	RequirePAR bool `json:"require_par,omitempty" yaml:"require_par,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel
