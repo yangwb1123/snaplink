@@ -291,6 +291,13 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 			"client_secret_basic",
 			"client_secret_post",
 			"private_key_jwt", // RFC 7521 + 7523
+			// RFC 6749 §2.1 / OIDC Core §9 — public clients (SPAs,
+			// native apps) authenticate only by client_id + PKCE,
+			// so `none` is the spec-defined method for them. DCR
+			// already accepts it (handle_register.go), so advertise
+			// it here so RP libraries don't reject the AS during
+			// metadata validation.
+			"none",
 		},
 		// Introspection + revocation share the same client-auth
 		// pipeline as /token, so advertise the same list.
