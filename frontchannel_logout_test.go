@@ -104,8 +104,13 @@ func TestFCL_RendersIframeWhenClientOptsIn(t *testing.T) {
 		t.Fatalf("content-type: got %q, want text/html prefix", ct)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `src="`+fclLogoutURI+`"`) {
-		t.Fatalf("iframe src missing: %s", body)
+	// The iframe src starts with the configured URI and now also
+	// carries `sid` + `iss` query params per OIDC FCL §3.
+	if !strings.Contains(string(body), `src="`+fclLogoutURI+`?sid=`) {
+		t.Fatalf("iframe src missing or lacks sid: %s", body)
+	}
+	if !strings.Contains(string(body), `&amp;iss=`) {
+		t.Fatalf("iframe src missing iss param: %s", body)
 	}
 }
 
@@ -129,8 +134,14 @@ func TestFCL_MetaRefreshWhenRedirectAllowlisted(t *testing.T) {
 	if !strings.Contains(s, "state=keep-this") {
 		t.Fatalf("state lost in redirect: %s", s)
 	}
-	if !strings.Contains(s, `src="`+fclLogoutURI+`"`) {
-		t.Fatalf("iframe missing: %s", s)
+	if !strings.Contains(s, `src="`+fclLogoutURI+`?sid=`) {
+		t.Fatalf("iframe missing or lacks sid: %s", s)
+	}
+	// state echo lives on the meta-refresh URL, NOT on the
+	// iframe src (RP-Initiated Logout vs FCL — different
+	// targets); sid + iss are on the iframe.
+	if !strings.Contains(s, `&amp;iss=`) {
+		t.Fatalf("iframe iss missing: %s", s)
 	}
 }
 
@@ -153,7 +164,7 @@ func TestFCL_NoRedirectWhenURIRejected(t *testing.T) {
 	if strings.Contains(s, `http-equiv="refresh"`) {
 		t.Fatalf("meta refresh emitted for un-allowlisted redirect: %s", s)
 	}
-	if !strings.Contains(s, `src="`+fclLogoutURI+`"`) {
+	if !strings.Contains(s, `src="`+fclLogoutURI+`?sid=`) {
 		t.Fatalf("iframe still expected even without redirect: %s", s)
 	}
 }

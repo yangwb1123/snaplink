@@ -143,7 +143,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	// allowlisted. FCL is purely additive to the existing
 	// revoke/BCL pipeline above — those still ran.
 	if client != nil && client.FrontchannelLogoutURI != "" {
-		s.renderFrontchannelLogout(ctx, client.FrontchannelLogoutURI, target)
+		s.renderFrontchannelLogout(ctx, client.FrontchannelLogoutURI, target, sid)
 		return
 	}
 

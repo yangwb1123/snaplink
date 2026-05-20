@@ -4,7 +4,13 @@ import (
 	"context"
 	"html/template"
 	"net/http"
+	"net/url"
+	"strings"
 )
+
+// urlQueryEscape wraps net/url.QueryEscape for callsites that want
+// to compose query strings manually rather than build url.Values.
+func urlQueryEscape(s string) string { return url.QueryEscape(s) }
 
 // OIDC Front-Channel Logout 1.0 — single-RP single-iframe variant.
 //
@@ -63,7 +69,14 @@ type frontchannelLogoutData struct {
 // Options: DENY prevents an attacker from embedding our /end_session
 // response in their own iframe to trick users into involuntary
 // logout (a low-impact but real clickjacking vector).
-func (s *Server) renderFrontchannelLogout(ctx HandlerContext, iframeURI, redirectURI string) {
+//
+// Per OIDC Front-Channel Logout 1.0 §3, when the AS supports
+// session identifiers, the iframe URI carries `sid` + `iss` query
+// parameters so the RP can disambiguate which of its concurrent
+// sessions to clear (sid) and which OP issued the original session
+// (iss, helpful for multi-issuer RPs).
+func (s *Server) renderFrontchannelLogout(ctx HandlerContext, iframeURI, redirectURI, sid string) {
+	iframeURI = appendFrontchannelLogoutSidIss(iframeURI, sid, s.resolveIssuer(ctx))
 	w := ctx.ResponseWriter()
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
@@ -75,6 +88,27 @@ func (s *Server) renderFrontchannelLogout(ctx HandlerContext, iframeURI, redirec
 		IframeURI:   iframeURI,
 		RedirectURI: redirectURI,
 	})
+}
+
+// appendFrontchannelLogoutSidIss appends `sid` + `iss` query params
+// to the iframe URI when present. Both empty = return URI unchanged.
+// Preserves any pre-existing query string on the RP-registered URI.
+func appendFrontchannelLogoutSidIss(uri, sid, iss string) string {
+	if sid == "" && iss == "" {
+		return uri
+	}
+	var params []string
+	if sid != "" {
+		params = append(params, "sid="+urlQueryEscape(sid))
+	}
+	if iss != "" {
+		params = append(params, "iss="+urlQueryEscape(iss))
+	}
+	sep := "?"
+	if strings.Contains(uri, "?") {
+		sep = "&"
+	}
+	return uri + sep + strings.Join(params, "&")
 }
 
 // frontchannelLogoutSupportedAdvertisement reports whether any
