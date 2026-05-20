@@ -64,6 +64,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		LoginHint            string          `json:"login_hint"`            // OIDC Core §3.1.2.1
 		ResponseMode         string          `json:"response_mode"`         // OIDC Form Post 1.0
 		ACRValues            string          `json:"acr_values"`            // OIDC Core §3.1.2.1
+		UILocales            string          `json:"ui_locales"`            // OIDC Core §3.1.2.1
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -137,6 +138,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		LoginHint:            req.LoginHint,
 		ResponseMode:         req.ResponseMode,
 		ACRValues:            req.ACRValues,
+		UILocales:            req.UILocales,
 		ExpiresAt:            time.Now().Add(ttl),
 	})
 	if err != nil {

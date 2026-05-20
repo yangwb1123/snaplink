@@ -53,6 +53,11 @@ type PARRequest struct {
 	// reuses one tokenizer. Empty = client didn't pin an ACR.
 	ACRValues string
 
+	// UILocales is the OIDC Core §3.1.2.1 `ui_locales` parameter
+	// (space-separated BCP-47 language tags). Threaded through PAR
+	// so the merge picks the pushed value over caller-supplied.
+	UILocales string
+
 	ExpiresAt time.Time
 }
 

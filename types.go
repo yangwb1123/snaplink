@@ -376,6 +376,16 @@ type AuthRequest struct {
 	// the AS surfaces that value as the id_token's `acr` claim.
 	// Empty = no preference (authenticator picks freely).
 	ACRValues []string
+
+	// UILocales is the OIDC Core §3.1.2.1 `ui_locales` parameter
+	// — space-separated list of BCP-47 language tags in descending
+	// preference order. Authenticators that render UIs use it to
+	// pick a localization (e.g. "fr-CA en-US"). The AS itself
+	// doesn't render UIs today, but this field is plumbed so
+	// future UI-rendering authenticators (WebAuthn flows, etc.)
+	// get the signal end-to-end. Falls back to Accept-Language /
+	// geo when empty (authenticator's choice).
+	UILocales []string
 }
 
 // AuthResult holds the result of a successful authentication.

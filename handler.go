@@ -90,6 +90,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
 		ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
 		ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
+		UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -159,6 +160,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if stored.ACRValues != "" {
 			req.ACRValues = stored.ACRValues
+		}
+		if stored.UILocales != "" {
+			req.UILocales = stored.UILocales
 		}
 	}
 
@@ -294,6 +298,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if jar.ACRValues != "" {
 			req.ACRValues = jar.ACRValues
 		}
+		if jar.UILocales != "" {
+			req.UILocales = jar.UILocales
+		}
 	}
 
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
@@ -348,6 +355,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		State:      req.State,
 		LoginHint:  req.LoginHint,
 		ACRValues:  splitScope(req.ACRValues),
+		UILocales:  splitScope(req.UILocales),
 	})
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
@@ -691,6 +699,7 @@ func (s *Server) issueAuthCode(
 		LoginHint            string            `json:"login_hint"`
 		ResponseMode         string            `json:"response_mode"`
 		ACRValues            string            `json:"acr_values"`
+		UILocales            string            `json:"ui_locales"`
 	},
 	client *Client,
 ) (string, error) {
