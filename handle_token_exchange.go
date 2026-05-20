@@ -3,6 +3,7 @@ package sso
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 // handleTokenExchangeGrant implements RFC 8693 OAuth 2.0 Token
@@ -107,6 +108,28 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		if aerr != nil || actorClaims == nil {
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
 			return
+		}
+		// Defense-in-depth: when a JTIReplayStore is wired AND the
+		// actor_token carries a `jti`, refuse to honor the same
+		// delegation assertion twice within its expiry window. The
+		// actor_token is a short-lived delegation proof — replay
+		// would let a captured proof be re-used to mint new
+		// downstream tokens after the legitimate exchange already
+		// happened. Mirrors the same defense JAR + DPoP +
+		// client_assertion already opt into; namespace prevents
+		// collision with those jti spaces. Empty jti / no store /
+		// store error all fall through (RFC 8693 doesn't mandate
+		// the check; collapse to invalid_grant on confirmed reuse).
+		if s.jtiReplayStore != nil && actorClaims.JTI != "" {
+			expiry := actorClaims.ExpiresAt
+			if expiry.IsZero() {
+				expiry = time.Now().Add(DefaultJTIReplayWindow)
+			}
+			first, rerr := s.jtiReplayStore.MarkSeen(ctx.Request().Context(), "tokex-act:"+actorClaims.JTI, expiry)
+			if rerr == nil && !first {
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+				return
+			}
 		}
 		// RFC 8693 §4.1.1: when the subject_token already carries
 		// an `act` claim (it was itself a delegated token), the
