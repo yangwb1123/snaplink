@@ -135,11 +135,13 @@ func (s *Server) handleRevokeAll(ctx HandlerContext) {
 
 	bearer := bearerToken(ctx.Request())
 	if bearer == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
 		return
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
 	if err != nil || claims == nil || claims.Subject == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
