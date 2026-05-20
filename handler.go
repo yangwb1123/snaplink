@@ -83,6 +83,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		Resource             []string          `json:"resource"`              // RFC 8707 resource indicators
 		RequestURI           string            `json:"request_uri"`           // RFC 9126 PAR
 		AuthorizationDetails json.RawMessage   `json:"authorization_details"` // RFC 9396
+		Request              string            `json:"request"`               // RFC 9101 JAR
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -174,6 +175,47 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAuthenticatorNotAllowed))
 		return
 	}
+
+	// RFC 9101 JAR: when the `request` parameter is present, the
+	// authorization request parameters live inside a signed JWT.
+	// Verify it against the client's registered JWKS, then merge
+	// JWT claims into req with JWT taking precedence on conflict
+	// (matches PAR's merge semantics; FAPI 2.0's "ignore all
+	// outside" mode is reserved for a future strict flag).
+	if req.Request != "" {
+		jar, jarErr := verifyJAR(req.Request, client, s.resolveIssuer(ctx))
+		if jarErr != nil {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, jarErr.Error()))
+			return
+		}
+		if jar.ResponseType != "" {
+			req.ResponseType = jar.ResponseType
+		}
+		if jar.RedirectURI != "" {
+			req.RedirectURI = jar.RedirectURI
+		}
+		if jar.Scope != "" {
+			req.Scope = strings.Split(jar.Scope, " ")
+		}
+		if jar.State != "" {
+			req.State = jar.State
+		}
+		if jar.Nonce != "" {
+			req.Nonce = jar.Nonce
+		}
+		if jar.CodeChallenge != "" {
+			req.CodeChallenge = jar.CodeChallenge
+			req.CodeChallengeMethod = jar.CodeChallengeMethod
+		}
+		if len(jar.Resource) > 0 {
+			req.Resource = jar.Resource
+		}
+		if len(jar.AuthorizationDetails) > 0 {
+			req.AuthorizationDetails = cloneRawJSON(jar.AuthorizationDetails)
+		}
+	}
+
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
 	// the client. Empty allowlist disables enforcement (legacy compat).
 	if !client.AreResourcesAllowed(req.Resource) {
@@ -489,6 +531,7 @@ func (s *Server) issueAuthCode(
 		Resource             []string          `json:"resource"`
 		RequestURI           string            `json:"request_uri"`
 		AuthorizationDetails json.RawMessage   `json:"authorization_details"`
+		Request              string            `json:"request"`
 	},
 	client *Client,
 ) (string, error) {

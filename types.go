@@ -98,6 +98,15 @@ type Client struct {
 	// logout is disabled for this client (the RP must rely on
 	// access-token expiry or a polling check).
 	BackchannelLogoutURI string `json:"backchannel_logout_uri,omitempty" yaml:"backchannel_logout_uri,omitempty"`
+
+	// JWKS holds the client's public verification keys for RFC
+	// 9101 JWT-Secured Authorization Requests. When non-empty,
+	// the client may send signed request objects via the
+	// `request` parameter on /auth/login; the server picks the
+	// key by `kid` from the JWT header and verifies the
+	// signature. Empty = JAR disabled for this client; presented
+	// request parameters return invalid_request_object.
+	JWKS []JWK `json:"jwks,omitempty" yaml:"jwks,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

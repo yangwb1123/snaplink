@@ -58,6 +58,18 @@ type oidcConfiguration struct {
 	// can't emit `sid` in logout tokens either. Will flip when
 	// session-id support lands across the token issuers.
 	BackchannelLogoutSessionSupported bool `json:"backchannel_logout_session_supported,omitempty"`
+
+	// RFC 9101 §10.5 — true when the `request` parameter is
+	// accepted on /auth/login. Always true here.
+	RequestParameterSupported bool `json:"request_parameter_supported"`
+	// RequestURIParameterSupported stays false; the `request_uri`
+	// parameter accepted today is the RFC 9126 PAR-style opaque
+	// token, NOT a JAR-style URL fetch. When the URL-fetched
+	// variant lands, this flips true.
+	RequestURIParameterSupported bool `json:"request_uri_parameter_supported"`
+	// RequestObjectSigningAlgValuesSupported lists the alg values
+	// the JAR verifier accepts on the request JWT. EdDSA today.
+	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
 }
 
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
@@ -93,6 +105,11 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// RFC 9207 §3: this server always includes `iss` in
 		// authorization responses (see handleLogin + resolveIssuer).
 		AuthorizationResponseIssParameterSupported: true,
+		// RFC 9101 §10.5: JAR `request` parameter accepted; URL
+		// fetched `request_uri` NOT yet wired.
+		RequestParameterSupported:              true,
+		RequestURIParameterSupported:           false,
+		RequestObjectSigningAlgValuesSupported: []string{"EdDSA"},
 	}
 	// When the operator overrode the issuer name with WithIssuer, prefer
 	// that — many production deployments set issuer to the canonical
