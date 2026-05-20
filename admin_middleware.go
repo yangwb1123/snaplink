@@ -179,11 +179,19 @@ func (a *AdminMiddleware) HTTPMiddleware(next http.Handler) http.Handler {
 		}
 		token := bearerFromHTTP(r)
 		if token == "" {
+			// RFC 6750 §3.1: no credentials presented → challenge
+			// without an error parameter so the RP knows the
+			// resource expects Bearer auth.
+			w.Header().Set("WWW-Authenticate", `Bearer realm="admin"`)
 			http.Error(w, `{"error":"missing_token"}`, http.StatusUnauthorized)
 			return
 		}
 		claims, err := a.validator.ValidateToken(r.Context(), token)
 		if err != nil {
+			// RFC 6750 §3.1: token validation failure → carry the
+			// invalid_token error code so the RP can distinguish
+			// "refresh and retry" from "missing credentials".
+			w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token"`)
 			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
 			return
 		}
