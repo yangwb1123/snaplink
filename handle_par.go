@@ -40,6 +40,7 @@ import (
 //	  "expires_in":  90
 //	}
 func (s *Server) handlePAR(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	if s.parStore == nil {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPARNotConfigured))
 		return

@@ -1072,6 +1072,14 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 }
 
 func (s *Server) handleToken(ctx HandlerContext) {
+	// RFC 6749 §5.1: token responses (successful AND error) MUST
+	// include Cache-Control: no-store + Pragma: no-cache so
+	// intermediaries (browsers, HTTP caches, edge proxies) never
+	// retain credentials. Set BEFORE writing the response body so
+	// the header is on the wire regardless of which code path
+	// returns. Same requirement applies to /token/introspect and
+	// /token/revoke via tokenNoStoreHeaders below.
+	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(depTokenIssuer, depClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return

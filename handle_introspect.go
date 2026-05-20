@@ -17,6 +17,7 @@ import (
 // stronger isolation should layer an authorization middleware that
 // checks a custom "introspect" scope or role on the client.
 func (s *Server) handleIntrospect(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(depClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return

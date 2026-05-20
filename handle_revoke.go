@@ -16,6 +16,7 @@ import "net/http"
 // first) but the server still attempts the other tier on miss, so a
 // wrong hint doesn't leave the token alive.
 func (s *Server) handleRevoke(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(depClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
@@ -121,6 +122,7 @@ func (s *Server) revokeRefresh(ctx HandlerContext, token string) {
 // user is the actor — they're authorizing the revocation of their
 // own tokens.
 func (s *Server) handleRevokeAll(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(depTokenIssuer); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
