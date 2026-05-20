@@ -68,6 +68,7 @@ type Server struct {
 	accountLockout       AccountLockout
 	jtiReplayStore       JTIReplayStore
 	subjectClientIndex   SubjectClientIndex
+	jarFetcher           JARFetcher
 }
 
 // Option configures the Server.
@@ -310,6 +311,24 @@ func WithJTIReplayStore(store JTIReplayStore) Option {
 // a client whose last issuance happened on replica B.
 func WithSubjectClientIndex(idx SubjectClientIndex) Option {
 	return func(s *Server) { s.subjectClientIndex = idx }
+}
+
+// WithJARFetcher enables the RFC 9101 §5.2.2 `request_uri` URL-fetch
+// variant. Without it, /auth/login still accepts PAR's `urn:`
+// request_uri prefix but rejects HTTPS URLs with invalid_request_uri.
+// With it wired, RPs can host their signed authorization-request
+// JWT at a URL and pass that URL on the wire.
+//
+// Per-client `AllowedRequestURIs` is the SSRF defense — only URLs
+// explicitly registered on the client are fetched. Operators MUST
+// set the allowlist on every JAR-using client; otherwise an
+// attacker who steals client_id could pivot the AS into fetching
+// arbitrary internal endpoints.
+//
+// The default fetcher (defaultimpl-less here: see NewHTTPJARFetcher)
+// is HTTPS-only, no-redirects, 5s timeout, 16KB body cap.
+func WithJARFetcher(fetcher JARFetcher) Option {
+	return func(s *Server) { s.jarFetcher = fetcher }
 }
 
 // WithIDTokenIssuer enables OpenID Connect ID Token emission alongside

@@ -105,7 +105,50 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// authentication. The merge gives PAR fields priority over
 	// caller-supplied so a tampered redirect parameter can't override
 	// what the client previously committed to.
-	if req.RequestURI != "" {
+	if req.RequestURI != "" && isJARFetchableURI(req.RequestURI) {
+		// RFC 9101 §5.2.2 — JAR `request_uri` URL-fetch variant.
+		// Fetch the signed JWT from the supplied URL, then fall
+		// through into the existing JAR merge below by setting
+		// req.Request to the fetched body. The fetched JWT still
+		// goes through full signature + claim verification —
+		// fetching only saves the RP an inline-JWT round trip.
+		if s.jarFetcher == nil {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+			return
+		}
+		// Per-client allowlist is the SSRF defense. We must
+		// resolve the client BEFORE the fetch — without the
+		// allowlist check, an attacker who supplies an arbitrary
+		// internal HTTPS URL could turn the AS into an SSRF
+		// gadget. The form `client_id` is the lookup key
+		// (the JWT's iss/client_id claim will be cross-checked
+		// during verifyJAR below).
+		if req.ClientID == "" || s.clientStore == nil {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+			return
+		}
+		c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+			return
+		}
+		if !isRequestURIAllowed(req.RequestURI, c.AllowedRequestURIs) {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+			return
+		}
+		body, err := s.jarFetcher.Fetch(ctx.Request().Context(), req.RequestURI)
+		if err != nil {
+			s.logger.Error("jar fetch failed", "error", err, "client", req.ClientID, "uri", req.RequestURI)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+			return
+		}
+		// Hand off to the JAR merge below. Keep req.RequestURI
+		// populated so the downstream `RequirePAR` gate sees the
+		// client did push their request server-side (the two
+		// shapes — PAR `urn:` and JAR URL — are equivalent from
+		// the "request was authenticated up front" standpoint).
+		req.Request = string(body)
+	} else if req.RequestURI != "" {
 		if s.parStore == nil {
 			ctx.JSON(http.StatusNotImplemented, s.authzErrorBody(ctx, ErrPARNotConfigured))
 			return

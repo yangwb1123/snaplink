@@ -133,6 +133,17 @@ type Client struct {
 	// PAR remains an optional shortcut.
 	RequirePAR bool `json:"require_par,omitempty" yaml:"require_par,omitempty"`
 
+	// AllowedRequestURIs is the RFC 9101 §5.2.2 allowlist of URLs
+	// the AS will fetch a JAR request object from when the RP
+	// passes `request_uri=<URL>` on /auth/login. Each entry MUST
+	// be an exact-match HTTPS URL — wildcards would defeat the
+	// SSRF defense. Empty list = JAR URL-fetch is disabled for
+	// this client (PAR's `urn:` prefix still works regardless).
+	// Operators wiring `WithJARFetcher` SHOULD also set this on
+	// every JAR-using client so a compromised request_uri can't
+	// be redirected to an internal IP.
+	AllowedRequestURIs []string `json:"allowed_request_uris,omitempty" yaml:"allowed_request_uris,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel

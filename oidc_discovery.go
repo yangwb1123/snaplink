@@ -95,10 +95,12 @@ type oidcConfiguration struct {
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
-	// RequestURIParameterSupported stays false; the `request_uri`
-	// parameter accepted today is the RFC 9126 PAR-style opaque
-	// token, NOT a JAR-style URL fetch. When the URL-fetched
-	// variant lands, this flips true.
+	// RequestURIParameterSupported reflects whether the AS accepts
+	// `request_uri` as an HTTPS URL it will fetch (RFC 9101 §5.2.2)
+	// — flipped true when `WithJARFetcher` is wired. The PAR
+	// `urn:ietf:params:oauth:request_uri:` prefix is ALWAYS accepted
+	// when a PARStore is wired (advertised separately via
+	// pushed_authorization_request_endpoint).
 	RequestURIParameterSupported bool `json:"request_uri_parameter_supported"`
 	// RequestObjectSigningAlgValuesSupported lists the alg values
 	// the JAR verifier accepts on the request JWT. EdDSA today.
@@ -165,10 +167,14 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// authorization responses (see handleLogin + resolveIssuer).
 		AuthorizationResponseIssParameterSupported: true,
 		// RFC 9101 §10.5: JAR `request` parameter accepted; URL
-		// fetched `request_uri` NOT yet wired.
+		// fetched `request_uri` flips true when WithJARFetcher is
+		// wired (set below).
 		RequestParameterSupported:              true,
 		RequestURIParameterSupported:           false,
 		RequestObjectSigningAlgValuesSupported: []string{"EdDSA"},
+	}
+	if s.jarFetcher != nil {
+		cfg.RequestURIParameterSupported = true
 	}
 	// When the operator overrode the issuer name with WithIssuer, prefer
 	// that — many production deployments set issuer to the canonical
