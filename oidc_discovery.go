@@ -145,6 +145,16 @@ type oidcConfiguration struct {
 	OpTosURI             string `json:"op_tos_uri,omitempty"`
 	ServiceDocumentation string `json:"service_documentation,omitempty"`
 
+	// OIDC Discovery §3 `claim_types_supported`. RPs introspect
+	// what claim shapes the AS emits — "normal" (claims are
+	// inline in the id_token / userinfo response), "aggregated"
+	// (claims arrive as a JWT inside the response), "distributed"
+	// (claims at a fetchable URL). This server only emits the
+	// inline normal form; advertised as ["normal"] for spec
+	// completeness so OIDC conformance suites pass without
+	// inferring the default.
+	ClaimTypesSupported []string `json:"claim_types_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -316,6 +326,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.OpPolicyURI = s.opPolicyURI
 	cfg.OpTosURI = s.opTosURI
 	cfg.ServiceDocumentation = s.serviceDocumentation
+	cfg.ClaimTypesSupported = []string{"normal"}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced
