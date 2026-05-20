@@ -144,6 +144,19 @@ type Client struct {
 	// be redirected to an internal IP.
 	AllowedRequestURIs []string `json:"allowed_request_uris,omitempty" yaml:"allowed_request_uris,omitempty"`
 
+	// DeviceCodeTTL overrides the server-wide device-code lifetime
+	// (RFC 8628 §3.2 `expires_in`) for THIS client. Useful for
+	// kiosk-style clients that want very short windows. Zero =
+	// inherit the server's WithDeviceCodeStore ttl.
+	DeviceCodeTTL time.Duration `json:"device_code_ttl,omitempty" yaml:"device_code_ttl,omitempty"`
+
+	// DeviceCodePollInterval overrides the server-wide device-flow
+	// minimum poll interval (RFC 8628 §3.2 `interval`). Higher
+	// values reduce AS load for slow-poll devices; lower values
+	// shorten the user-visible latency for fast-polling apps.
+	// Zero = inherit the server default.
+	DeviceCodePollInterval time.Duration `json:"device_code_poll_interval,omitempty" yaml:"device_code_poll_interval,omitempty"`
+
 	// UserinfoSignedResponseAlg is the OIDC Core §5.3.2 client
 	// metadata that names the JWS algorithm the AS uses when
 	// signing the /userinfo response (instead of returning plain

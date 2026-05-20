@@ -99,11 +99,19 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		return
 	}
 
-	ttl := s.deviceCodeTTL
+	// TTL resolution precedence: per-client > server-wide > default.
+	// Same shape as Client.RefreshTokenTTL / Client.AccessTokenTTL.
+	ttl := client.DeviceCodeTTL
+	if ttl <= 0 {
+		ttl = s.deviceCodeTTL
+	}
 	if ttl <= 0 {
 		ttl = DefaultDeviceCodeTTL
 	}
-	interval := s.deviceCodeInterval
+	interval := client.DeviceCodePollInterval
+	if interval <= 0 {
+		interval = s.deviceCodeInterval
+	}
 	if interval <= 0 {
 		interval = DefaultDevicePollMin
 	}
