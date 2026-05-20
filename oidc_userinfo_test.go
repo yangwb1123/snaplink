@@ -248,3 +248,52 @@ func TestUserInfo_LegacyNoScopesAtAllAlsoReturnsFullObject(t *testing.T) {
 		t.Errorf("expected full-user shape, got OIDC-shaped response: %v", out)
 	}
 }
+
+// RFC 9068 auth claims passthrough on the OIDC profile: when the
+// access token carries auth_time / amr / acr (because login stamped
+// them via Subject), /userinfo surfaces them so the RP can reason
+// about factor strength without re-validating the access token.
+
+func TestUserInfo_OIDC_AuthTimeAndAMRPassedThrough(t *testing.T) {
+	srv, login := newUserInfoServer(t)
+	bearer := login([]string{"openid"})
+	out := fetchUserInfo(t, srv, bearer)
+	// auth_time stamped by handleLogin from time.Now() at the
+	// authentication moment.
+	authTime, ok := out["auth_time"].(float64)
+	if !ok {
+		t.Fatalf("auth_time missing or wrong type: %v", out["auth_time"])
+	}
+	now := float64(time.Now().Unix())
+	if authTime < now-5 || authTime > now+5 {
+		t.Errorf("auth_time = %v outside the expected window (now=%v)", authTime, now)
+	}
+	// amr from handleLogin = [provider]
+	amr, ok := out["amr"].([]any)
+	if !ok {
+		t.Fatalf("amr missing or wrong type: %v", out["amr"])
+	}
+	if len(amr) != 1 || amr[0] != "password" {
+		t.Errorf("amr = %v want [password]", amr)
+	}
+	// We don't stamp ACR yet → absent.
+	if _, present := out["acr"]; present {
+		t.Errorf("acr should be omitted (no ACR plumbing today): %v", out["acr"])
+	}
+}
+
+func TestUserInfo_OIDC_AbsentWhenNoOpenIDScope(t *testing.T) {
+	// Without openid scope, the legacy User-object response path
+	// fires. auth_time / amr live only on the OIDC-profile branch
+	// — the legacy shape shouldn't accidentally project them
+	// (it returns the User struct which has no such fields).
+	srv, login := newUserInfoServer(t)
+	bearer := login([]string{"email"})
+	out := fetchUserInfo(t, srv, bearer)
+	if _, present := out["auth_time"]; present {
+		t.Errorf("auth_time should not appear on legacy /userinfo: %v", out)
+	}
+	if _, present := out["amr"]; present {
+		t.Errorf("amr should not appear on legacy /userinfo: %v", out)
+	}
+}

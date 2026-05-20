@@ -1132,7 +1132,24 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// non-standard fields like provider, created_at) is returned only
 	// for non-OIDC tokens — pre-OIDC integrations keep working unchanged.
 	if hasOpenIDScope(claims.Scopes) {
-		ctx.JSON(http.StatusOK, projectUserInfoForOIDC(user, claims.Scopes))
+		body := projectUserInfoForOIDC(user, claims.Scopes)
+		// RFC 9068 §2.2 claims passthrough on the OIDC profile: when
+		// the access token carries auth_time / acr / amr (because it
+		// was minted via /auth/login with a fresh user-auth event),
+		// expose them on /userinfo so downstream policy can branch
+		// on factor strength without re-validating the access token.
+		// Empty values are omitted so legacy tokens still produce
+		// the minimal {sub} response.
+		if !claims.AuthTime.IsZero() {
+			body["auth_time"] = claims.AuthTime.Unix()
+		}
+		if claims.ACR != "" {
+			body["acr"] = claims.ACR
+		}
+		if len(claims.AMR) > 0 {
+			body["amr"] = claims.AMR
+		}
+		ctx.JSON(http.StatusOK, body)
 		return
 	}
 
