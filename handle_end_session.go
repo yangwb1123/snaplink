@@ -112,7 +112,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	// session can be torn down. No-op when BCL isn't wired or
 	// the client doesn't declare a backchannel_logout_uri.
 	if userID != "" && client != nil {
-		s.sendBackchannelLogout(ctx, client, userID, sid)
+		s.fanOutBackchannelLogout(ctx, client, userID, sid)
 	}
 
 	if userID != "" {

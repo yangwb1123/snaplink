@@ -168,6 +168,7 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		return
 	}
 	s.recordTokenIssued(ctx, client.ID, strategy, claims.Subject)
+	s.recordSubjectClientAccess(ctx.Request().Context(), claims.Subject, client.ID)
 
 	ctx.JSON(http.StatusOK, map[string]any{
 		KeyAccessToken:     token.AccessToken,

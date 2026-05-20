@@ -522,6 +522,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	}
 
 	s.recordLoginSuccess(ctx, client.ID, req.Provider, strategy, result.UserID, session.ID)
+	s.recordSubjectClientAccess(ctx.Request().Context(), result.UserID, client.ID)
 
 	// Geo enrichment: if the authenticator didn't supply
 	// country/language hints, fall back to whatever the geo
@@ -1028,6 +1029,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			return
 		}
 		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
+		s.recordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
 		resp := map[string]any{
 			KeyAccessToken:   token.AccessToken,
 			KeyTokenType:     token.TokenType,
@@ -1163,6 +1165,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
 		s.recordRefreshTokenIssued(ctx, client.ID, info.UserID, true)
+		s.recordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
 		ctx.JSON(http.StatusOK, map[string]any{
 			KeyAccessToken:   token.AccessToken,
 			KeyTokenType:     token.TokenType,
@@ -1398,7 +1401,10 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	// backchannel_logout_uri declared.
 	if bcSubject != "" && bcClientID != "" && s.clientStore != nil {
 		if c, err := s.clientStore.Get(ctx.Request().Context(), bcClientID); err == nil && c != nil {
-			s.sendBackchannelLogout(ctx, c, bcSubject, bcSID)
+			// Multi-RP fan-out when the SubjectClientIndex is wired;
+			// degrades to single-RP notification of the bearer's
+			// client when it isn't.
+			s.fanOutBackchannelLogout(ctx, c, bcSubject, bcSID)
 		}
 	}
 

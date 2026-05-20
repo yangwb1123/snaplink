@@ -334,6 +334,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		}
 	}
 	s.recordTokenIssued(ctx, client.ID, strategy, dc.UserID)
+	s.recordSubjectClientAccess(ctx.Request().Context(), dc.UserID, client.ID)
 	_ = s.deviceCodeStore.Delete(ctx.Request().Context(), deviceCode)
 	ctx.JSON(http.StatusOK, resp)
 }

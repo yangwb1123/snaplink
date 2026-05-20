@@ -163,3 +163,83 @@ func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subje
 	}
 	s.recordLogoutNotifySuccess(ctx, client.ID, subject, client.BackchannelLogoutURI)
 }
+
+// recordSubjectClientAccess stamps the (subject, clientID) pair into
+// the SubjectClientIndex so multi-RP back-channel logout fan-out can
+// reach this client later. No-op when the index isn't wired or
+// either id is empty (client_credentials passes empty subject in
+// some paths; just skip the bookkeeping write). Failures are logged
+// but never block the calling flow — the index is a UX optimization,
+// not a correctness gate.
+func (s *Server) recordSubjectClientAccess(ctx context.Context, subject, clientID string) {
+	if s.subjectClientIndex == nil || subject == "" || clientID == "" {
+		return
+	}
+	if err := s.subjectClientIndex.RecordAccess(ctx, subject, clientID); err != nil {
+		s.logger.Error("subject_client_index: record access failed",
+			"error", err, "subject", subject, "client", clientID)
+	}
+}
+
+// fanOutBackchannelLogout drives the multi-RP variant of
+// sendBackchannelLogout. When the SubjectClientIndex is wired, every
+// client the subject has been seen with — not just the one the
+// bearer / id_token_hint named — gets a logout_token POST. The
+// triggering client (passed via `originClient`) is included in the
+// fan-out set; callers SHOULD NOT additionally call
+// sendBackchannelLogout for that client.
+//
+// Each successful notification calls Forget so a follow-up logout
+// for the same subject doesn't re-notify a client that already
+// processed its logout — keeps the index trim and prevents
+// duplicate logout_token POSTs on subsequent (no-op) logouts.
+//
+// When the index isn't wired, falls back to the single-RP path
+// behind sendBackchannelLogout against originClient.
+func (s *Server) fanOutBackchannelLogout(ctx HandlerContext, originClient *Client, subject string, sid string) {
+	if s.subjectClientIndex == nil {
+		// Legacy single-RP behavior.
+		s.sendBackchannelLogout(ctx, originClient, subject, sid)
+		return
+	}
+	if subject == "" || s.clientStore == nil {
+		return
+	}
+	clientIDs, err := s.subjectClientIndex.ListClients(ctx.Request().Context(), subject)
+	if err != nil {
+		s.logger.Error("subject_client_index: list failed", "error", err, "subject", subject)
+		// Fall through to single-RP so the triggering client at least
+		// hears about the logout when the index is degraded.
+		s.sendBackchannelLogout(ctx, originClient, subject, sid)
+		return
+	}
+	// Always include the origin client even if the index missed it
+	// (e.g. the very first login on a new replica before propagation).
+	seen := make(map[string]struct{}, len(clientIDs)+1)
+	if originClient != nil {
+		clientIDs = append(clientIDs, originClient.ID)
+	}
+	for _, cid := range clientIDs {
+		if cid == "" {
+			continue
+		}
+		if _, dup := seen[cid]; dup {
+			continue
+		}
+		seen[cid] = struct{}{}
+		c, err := s.clientStore.Get(ctx.Request().Context(), cid)
+		if err != nil || c == nil || c.BackchannelLogoutURI == "" {
+			// Either the client was deleted or it doesn't speak
+			// BCL — either way, nothing to notify. Forget so the
+			// index doesn't carry it forever.
+			_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, cid)
+			continue
+		}
+		// Per-client sid filter: the cross-RP fan-out passes the
+		// SAME sid value. RPs that don't recognize the sid will
+		// fall back to subject-wide logout per BCL §2.4 — exactly
+		// the desired soft-degradation.
+		s.sendBackchannelLogout(ctx, c, subject, sid)
+		_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, cid)
+	}
+}

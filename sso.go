@@ -67,6 +67,7 @@ type Server struct {
 	logoutNotifier       LogoutNotifier
 	accountLockout       AccountLockout
 	jtiReplayStore       JTIReplayStore
+	subjectClientIndex   SubjectClientIndex
 }
 
 // Option configures the Server.
@@ -289,6 +290,26 @@ func WithPARStore(store PARStore, ttl time.Duration) Option {
 // store before the defense holds.
 func WithJTIReplayStore(store JTIReplayStore) Option {
 	return func(s *Server) { s.jtiReplayStore = store }
+}
+
+// WithSubjectClientIndex enables OIDC Back-Channel Logout multi-RP
+// fan-out. Each successful token issuance records (subject, client_id)
+// in the index; at /logout and /end_session the AS iterates every
+// client the subject has been seen with and emits a logout_token to
+// each (filtered to clients that declared a BackchannelLogoutURI).
+//
+// Without it, BCL only notifies the single client present in the
+// bearer / id_token_hint at logout time — the original v1 behavior.
+// With it wired, logging out of app A also logs the user out of
+// apps B, C, ... — "true single sign-out" at the cost of one HTTP
+// POST per signed-in RP.
+//
+// The default backend (defaultimpl.NewMemorySubjectClientIndex) is
+// single-replica only; multi-replica deployments need a shared
+// store (Redis, SQL) so a fan-out triggered on replica A reaches
+// a client whose last issuance happened on replica B.
+func WithSubjectClientIndex(idx SubjectClientIndex) Option {
+	return func(s *Server) { s.subjectClientIndex = idx }
 }
 
 // WithIDTokenIssuer enables OpenID Connect ID Token emission alongside
