@@ -133,7 +133,11 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		},
 		GrantTypesSupported:               append([]string(nil), SupportedGrants...),
 		SubjectTypesSupported:             []string{"public"},
-		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post"},
+		TokenEndpointAuthMethodsSupported: []string{
+			"client_secret_basic",
+			"client_secret_post",
+			"private_key_jwt", // RFC 7521 + 7523
+		},
 		CodeChallengeMethodsSupported:     []string{PKCEMethodS256, PKCEMethodPlain},
 		// RFC 9207 §3: this server always includes `iss` in
 		// authorization responses (see handleLogin + resolveIssuer).

@@ -1009,6 +1009,10 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		ActorTokenType     string   `json:"actor_token_type"`
 		Audience           []string `json:"audience"`
 		RequestedTokenType string   `json:"requested_token_type"`
+
+		// RFC 7521 + 7523 JWT bearer client authentication.
+		ClientAssertion     string `json:"client_assertion"`
+		ClientAssertionType string `json:"client_assertion_type"`
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -1020,6 +1024,34 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		req.ClientSecret = secret
 	}
 
+	// RFC 7521 §4.2 + RFC 7523 §2.2 — JWT bearer client authentication.
+	// When `client_assertion_type` is the jwt-bearer URN AND
+	// `client_assertion` is supplied, the JWT replaces client_secret
+	// as the proof of client identity. The JWT MUST be signed by a
+	// key in Client.JWKS; iss / sub MUST equal the client_id; aud
+	// MUST include the AS issuer or the token endpoint URL; exp
+	// MUST be in the future. Replay defense (jti tracking) reuses
+	// the JTIReplayStore wiring JAR already opts into.
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+		req.ClientID = assertedID
+	}
+
 	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
@@ -1029,9 +1061,14 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
 		return
 	}
-	if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
-		return
+	// Skip the client_secret check when the caller authenticated
+	// via JWT assertion — Client.JWKS verification stands in for
+	// the secret. RFC 7521 §4.2 prohibits requiring BOTH proofs.
+	if req.ClientAssertion == "" {
+		if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
+			return
+		}
 	}
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
 	// the client. Empty allowlist disables enforcement (legacy compat).
