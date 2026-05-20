@@ -19,11 +19,35 @@ import (
 // Ed25519 JWT constants.
 const (
 	jwtAlgEdDSA   = "EdDSA"
-	jwtTyp        = "JWT"
+	jwtTyp        = "JWT" // OIDC ID tokens
+	jwtTypAT      = "at+jwt" // RFC 9068 §2.1 — JWT Profile for OAuth 2.0 Access Tokens
 	jwkKtyOKP     = "OKP"
 	jwkCrvEd25519 = "Ed25519"
 	jwkUseSig     = "sig"
 )
+
+// supportedJWTAlgs is the Validate-time allowlist. Per RFC 9068 §4
+// the recipient MUST reject tokens whose `alg` is outside the
+// allowlist (in particular: never `none`, never asymmetric algs
+// confused with symmetric ones). Today we only sign EdDSA; extend
+// this list only when a new signer is wired AND validated against
+// the JWT algorithm-confusion threat model.
+var supportedJWTAlgs = map[string]struct{}{
+	jwtAlgEdDSA: {},
+}
+
+// supportedJWTTypes is the Validate-time `typ` allowlist for
+// access tokens. `at+jwt` is the RFC 9068 §2.1 canonical value;
+// `JWT` stays accepted for backward compatibility with tokens
+// minted before the profile was wired (in-flight tokens at
+// upgrade time keep verifying until their natural expiry).
+// `application/at+jwt` is the long-form variant some libraries
+// emit per RFC 9068 §2.1 footnote.
+var supportedJWTTypes = map[string]struct{}{
+	jwtTypAT:             {},
+	"application/at+jwt": {},
+	jwtTyp:               {},
+}
 
 // Ed25519JWTIssuer signs 3-segment JWTs (header.payload.signature) with an
 // Ed25519 private key. The public key is published via the JWKS endpoint so
@@ -142,14 +166,21 @@ type ed25519Header struct {
 }
 
 type ed25519Payload struct {
-	Iss   string            `json:"iss,omitempty"`
-	Sub   string            `json:"sub,omitempty"`
-	Aud   audClaim          `json:"aud,omitempty"`
-	Exp   int64             `json:"exp,omitempty"`
-	Nbf   int64             `json:"nbf,omitempty"`
-	Iat   int64             `json:"iat,omitempty"`
-	Scope string            `json:"scope,omitempty"`
-	Extra map[string]string `json:"ext,omitempty"`
+	Iss      string            `json:"iss,omitempty"`
+	Sub      string            `json:"sub,omitempty"`
+	Aud      audClaim          `json:"aud,omitempty"`
+	Exp      int64             `json:"exp,omitempty"`
+	Nbf      int64             `json:"nbf,omitempty"`
+	Iat      int64             `json:"iat,omitempty"`
+	Scope    string            `json:"scope,omitempty"`
+	Extra    map[string]string `json:"ext,omitempty"`
+
+	// RFC 9068 §2.2 access-token claims.
+	ClientID string   `json:"client_id,omitempty"`
+	JTI      string   `json:"jti,omitempty"`
+	AuthTime int64    `json:"auth_time,omitempty"`
+	ACR      string   `json:"acr,omitempty"`
+	AMR      []string `json:"amr,omitempty"`
 }
 
 // audClaim handles RFC 7519 §4.1.3's polymorphic `aud` claim. Per
@@ -214,15 +245,36 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	now := time.Now()
 	expiresAt := now.Add(j.tokenTTL)
 
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	// RFC 9068 §2.1: header `typ` MUST be `at+jwt` to distinguish
+	// access tokens from other JWT shapes (ID tokens, generic JWT)
+	// so strict resource servers can reject misrouted tokens.
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTypAT, Kid: j.keyID}
+
+	// RFC 9068 §2.2 REQUIRES jti — a unique identifier per token,
+	// suitable for replay tracking + revocation lookup. 16 bytes
+	// = 128 bits = collision-free at any practical issue rate.
+	jti, err := generateJTI()
+	if err != nil {
+		return nil, fmt.Errorf("ed25519: generate jti: %w", err)
+	}
+
 	payload := ed25519Payload{
-		Iss:   j.issuer,
-		Sub:   subject.ID,
-		Exp:   expiresAt.Unix(),
-		Nbf:   now.Unix(),
-		Iat:   now.Unix(),
-		Scope: strings.Join(scopes, " "),
-		Extra: subject.Claims,
+		Iss:      j.issuer,
+		Sub:      subject.ID,
+		Exp:      expiresAt.Unix(),
+		Nbf:      now.Unix(),
+		Iat:      now.Unix(),
+		Scope:    strings.Join(scopes, " "),
+		Extra:    subject.Claims,
+		ClientID: subject.ClientID,
+		JTI:      jti,
+		ACR:      subject.ACR,
+	}
+	if !subject.AuthTime.IsZero() {
+		payload.AuthTime = subject.AuthTime.Unix()
+	}
+	if len(subject.AMR) > 0 {
+		payload.AMR = append([]string(nil), subject.AMR...)
 	}
 	// RFC 8707 resource indicators flow through Subject.Resources
 	// into the standard `aud` JWT claim. Resource servers verify
@@ -247,6 +299,16 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	}, nil
 }
 
+// generateJTI mints a 16-byte (128-bit) base64url-encoded unique
+// identifier for the `jti` claim per RFC 9068 §2.2.
+func generateJTI() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
 func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.TokenClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -258,6 +320,32 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	j.revokedMu.RUnlock()
 	if revoked {
 		return nil, errors.New("ed25519: token revoked")
+	}
+
+	// RFC 9068 §4: parse the header explicitly so the algorithm
+	// and typ allowlists are enforced BEFORE signature verification
+	// even runs. Defends against alg-confusion attacks (e.g.
+	// alg=none, alg=HS256-spoofed-with-RS256-public-key) and
+	// against a token meant for a different shape (ID token,
+	// generic JWT) being accepted as an access token.
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("ed25519: header decode: %w", err)
+	}
+	var h ed25519Header
+	if err := json.Unmarshal(headerBytes, &h); err != nil {
+		return nil, fmt.Errorf("ed25519: header parse: %w", err)
+	}
+	if _, ok := supportedJWTAlgs[h.Alg]; !ok {
+		return nil, fmt.Errorf("ed25519: alg %q not in allowlist", h.Alg)
+	}
+	// Empty typ is tolerated for legacy tokens minted before this
+	// gate landed (back-compat); a non-empty typ MUST be in the
+	// allowlist.
+	if h.Typ != "" {
+		if _, ok := supportedJWTTypes[h.Typ]; !ok {
+			return nil, fmt.Errorf("ed25519: typ %q not in allowlist", h.Typ)
+		}
 	}
 
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
@@ -303,6 +391,13 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 		NotBefore: time.Unix(p.Nbf, 0),
 		IssuedAt:  time.Unix(p.Iat, 0),
 		Extra:     p.Extra,
+		ClientID:  p.ClientID,
+		JTI:       p.JTI,
+		ACR:       p.ACR,
+		AMR:       append([]string(nil), p.AMR...),
+	}
+	if p.AuthTime > 0 {
+		claims.AuthTime = time.Unix(p.AuthTime, 0)
 	}
 	if p.Scope != "" {
 		claims.Scopes = strings.Split(p.Scope, " ")

@@ -113,11 +113,22 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 
 	// Carry the subject identity through. The new token's `sub` is
 	// the same as the subject_token's — token exchange does NOT
-	// change the principal, only the audience / scope.
+	// change the principal, only the audience / scope. ClientID is
+	// the requesting (downstream) client, NOT the original; that's
+	// the canonical RFC 8693 semantic ("on behalf of the same
+	// subject, scoped to me").
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
 		ID:        claims.Subject,
 		Claims:    claims.Extra,
 		Resources: resources,
+		ClientID:  client.ID,
+		// auth_time + amr propagate from the original subject_token
+		// — the exchange doesn't represent a fresh end-user auth
+		// event; carrying the originals lets downstream services
+		// see the actual factor strength.
+		AuthTime: claims.AuthTime,
+		ACR:      claims.ACR,
+		AMR:      append([]string(nil), claims.AMR...),
 	}, scopes)
 	if err != nil {
 		s.logger.Error("token exchange issuance failed", "strategy", strategy, "error", err)

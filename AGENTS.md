@@ -206,6 +206,27 @@ unmarshals either shape and marshals single-aud as a compact string
 per OIDC convention. Don't reintroduce array-only parsing — OIDC ID
 tokens always use string form.
 
+### `alg` + `typ` allowlist on Validate (RFC 9068 §4)
+Header `alg` MUST be in `supportedJWTAlgs` (EdDSA today) and `typ`
+MUST be in `supportedJWTTypes` (`at+jwt` / `application/at+jwt` /
+`JWT` for legacy back-compat) — checked BEFORE signature verify so
+alg-confusion attacks (alg=none, wrong-key-shape spoofs) fail
+early. When adding a new signer, add its alg to the allowlist
+explicitly — don't loosen the check.
+
+### RFC 9068 access-token claim population
+`Subject.ClientID` / `AuthTime` / `AMR` / `ACR` are the
+populate-at-issue claim sources for RFC 9068. Every Issue call site
+in handler.go + handle_token_exchange.go + handle_device.go MUST set
+`ClientID` (it's REQUIRED by §2.2); login + auth_code + device set
+`AuthTime` + `AMR` from the live auth event; refresh propagates the
+original `AMR` without resetting `AuthTime` (rotations don't
+represent a fresh authentication); token-exchange propagates
+`AuthTime` + `ACR` + `AMR` from the inbound subject_token's claims
+so downstream services see the original factor strength;
+client_credentials populates ClientID only (no end-user event).
+`jti` is always auto-generated (16-byte base64url).
+
 ### Discovery is derived, not declared
 `/.well-known/openid-configuration` is computed dynamically from
 server state: endpoints from request base URL, issuer from
@@ -266,6 +287,7 @@ every grant.
 | OIDC RP-Initiated Logout 1.0 | `/end_session` | always | `handle_end_session.go` | id_token_hint signature MUST verify; post_logout_redirect_uri exact-match allowlist; unknown URI → 204 no Location |
 | OIDC UserInfo | `/userinfo` | needs ID token issuer wired | `oidc.go` | claim projection driven by access token's `scope` |
 | RFC 9207 AS Issuer Identification | every `/auth/login` response (success + error + provider list) | always | `iss_response.go` | `iss` stamped via `s.resolveIssuer(ctx)`; must equal discovery `issuer` field — mix-up defense |
+| RFC 9068 JWT Access Token Profile | access tokens minted by `Ed25519JWTIssuer` | always (single signer today) | `defaultimpl/ed25519_jwt_issuer.go` | header `typ: at+jwt`; jti always generated; client_id from `Subject.ClientID`; Validate enforces alg + typ allowlist (alg=none rejected); typ=JWT still accepted for legacy back-compat |
 
 **Token strategies** are picked per-client via
 `token_strategy: jwt|session`:

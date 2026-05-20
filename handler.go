@@ -342,6 +342,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		Provider:  result.Provider,
 		Claims:    result.Attributes,
 		Resources: append([]string(nil), req.Resource...),
+		ClientID:  client.ID,
+		AuthTime:  time.Now(),
+		AMR:       []string{result.Provider},
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
@@ -811,6 +814,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
 			Resources: resources,
+			ClientID:  client.ID,
+			AuthTime:  time.Now(),
+			AMR:       []string{info.Provider},
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -917,6 +923,12 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
 			Resources: info.Resources,
+			ClientID:  client.ID,
+			// Refresh rotations don't reset auth_time per RFC 9068
+			// — the underlying authentication event is the original
+			// login, not the refresh exchange. AMR likewise stays
+			// the original method.
+			AMR: []string{info.Provider},
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -964,7 +976,11 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
 			return
 		}
-		token, err := ti.Issue(ctx.Request().Context(), &Subject{ID: client.ID, Resources: req.Resource}, scopes)
+		// client_credentials: subject IS the client, so ClientID =
+		// Sub. No end-user auth event, hence no AuthTime/AMR.
+		token, err := ti.Issue(ctx.Request().Context(), &Subject{
+			ID: client.ID, Resources: req.Resource, ClientID: client.ID,
+		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))

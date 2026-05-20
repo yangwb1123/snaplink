@@ -128,6 +128,14 @@ type Token struct {
 }
 
 // TokenClaims holds the validated claims from a token.
+//
+// ClientID / JTI / AuthTime / ACR / AMR are RFC 9068 (JWT Profile
+// for OAuth 2.0 Access Tokens) claims. JTI is the per-token unique
+// identifier suitable for replay defense + revocation tracking;
+// ClientID is the OAuth client the token was issued to; AuthTime /
+// ACR / AMR carry authentication-event metadata. Empty / zero for
+// tokens minted before this profile was wired or by issuers that
+// don't speak RFC 9068.
 type TokenClaims struct {
 	Subject   string            `json:"sub"`
 	Issuer    string            `json:"iss"`
@@ -137,6 +145,12 @@ type TokenClaims struct {
 	NotBefore time.Time         `json:"nbf"`
 	IssuedAt  time.Time         `json:"iat"`
 	Extra     map[string]string `json:"extra,omitempty"`
+
+	ClientID string    `json:"client_id,omitempty"`
+	JTI      string    `json:"jti,omitempty"`
+	AuthTime time.Time `json:"auth_time,omitempty"`
+	ACR      string    `json:"acr,omitempty"`
+	AMR      []string  `json:"amr,omitempty"`
 }
 
 // Session represents an active user session.
@@ -160,11 +174,42 @@ func (s *Session) IsExpired() bool {
 // stamp these into the token's `aud` claim so a resource server
 // can verify the token was actually meant for it. Empty Resources
 // = no audience binding (legacy behavior).
+//
+// ClientID / AuthTime / AMR / ACR are RFC 9068 (JWT Profile for
+// OAuth 2.0 Access Tokens) claim sources. The issuer stamps them
+// into the standardized claims of the same name when populated.
+// All are optional — TokenIssuer implementations that don't speak
+// RFC 9068 simply ignore them, and call sites that don't know the
+// values leave them zero (the issuer omits the claim).
 type Subject struct {
 	ID        string
 	Provider  string
 	Claims    map[string]string
 	Resources []string
+
+	// ClientID is the OAuth 2.0 client identifier the token was
+	// minted for. REQUIRED by RFC 9068 §2.2; populated by every
+	// /auth/login + /token grant path.
+	ClientID string
+
+	// AuthTime is when the underlying end-user authentication
+	// event occurred. Stamped as `auth_time` per RFC 9068 §2.2
+	// (RECOMMENDED). Zero = omit (e.g. client_credentials has
+	// no end-user auth event; refresh_token rotations don't
+	// reset it).
+	AuthTime time.Time
+
+	// AMR (Authentication Methods References, RFC 8176) lists
+	// the identifiers of the authentication methods used. For
+	// this server: ["password"], ["phone"], ["webauthn"], etc.
+	// Stamped as `amr` per RFC 9068 §2.2.
+	AMR []string
+
+	// ACR (Authentication Context Class Reference) names the
+	// assurance level achieved by the authentication. Today
+	// always empty — populated when step-up auth (RFC 9470)
+	// lands.
+	ACR string
 }
 
 // AuthRequest holds the input for an authentication attempt.

@@ -106,13 +106,34 @@ func (s *Server) introspectAccess(ctx HandlerContext, token string) (map[string]
 	}
 	if len(claims.Audience) > 0 {
 		body[KeyAud] = claims.Audience
-		// First audience entry conventionally maps to client_id in
-		// introspection responses (per RFC 7662 §2.2 "client_id" is
-		// optional but useful for downstream policy).
+	}
+	// RFC 9068 §2.2 supplies a first-class `client_id` claim. Prefer
+	// it; fall back to the first audience entry for older tokens or
+	// non-RFC-9068 issuers (per RFC 7662 §2.2 the field is optional).
+	switch {
+	case claims.ClientID != "":
+		body[KeyClientID] = claims.ClientID
+	case len(claims.Audience) > 0:
 		body[KeyClientID] = claims.Audience[0]
 	}
 	if len(claims.Scopes) > 0 {
 		body[KeyScope] = strings.Join(claims.Scopes, " ")
+	}
+	// RFC 9068 §2.2 jti — useful for replay tracking on the
+	// introspecting resource server. Same goes for auth_time / acr
+	// / amr which let downstream policy reason about how the user
+	// authenticated.
+	if claims.JTI != "" {
+		body[KeyJTI] = claims.JTI
+	}
+	if !claims.AuthTime.IsZero() {
+		body[KeyAuthTime] = claims.AuthTime.Unix()
+	}
+	if claims.ACR != "" {
+		body[KeyACR] = claims.ACR
+	}
+	if len(claims.AMR) > 0 {
+		body[KeyAMR] = claims.AMR
 	}
 	return body, true
 }

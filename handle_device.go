@@ -288,6 +288,9 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
 		ID: dc.UserID, Provider: dc.Provider, Claims: dc.Attributes,
 		Resources: dc.Resources,
+		ClientID:  client.ID,
+		AuthTime:  time.Now(),
+		AMR:       []string{dc.Provider},
 	}, dc.Scopes)
 	if err != nil {
 		s.logger.Error("device token issuance failed", "strategy", strategy, "error", err)

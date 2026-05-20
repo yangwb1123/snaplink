@@ -90,6 +90,13 @@ const (
 	KeyClientID  = "client_id"
 	KeyStrategy  = "token_strategy_used"
 
+	// RFC 9068 §2.2 access-token claim keys also surfaced on
+	// introspection responses per RFC 7662 §2.2.
+	KeyJTI      = "jti"
+	KeyAuthTime = "auth_time"
+	KeyACR      = "acr"
+	KeyAMR      = "amr"
+
 	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
 	KeyIDToken = "id_token"
 
