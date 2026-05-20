@@ -192,6 +192,19 @@ type ed25519Payload struct {
 	// the original `authorization_details` array as raw JSON so
 	// extension fields survive without an explicit schema here.
 	AuthorizationDetails json.RawMessage `json:"authorization_details,omitempty"`
+
+	// RFC 8693 §4.1 `act` claim for delegation chains. Populated
+	// by the token-exchange grant when an actor_token is
+	// presented; nil for direct (non-delegated) tokens.
+	Act *actClaim `json:"act,omitempty"`
+}
+
+// actClaim is the wire shape of `act`. Per RFC 8693 §4.1 the
+// claim is a JSON object with at least `sub`; this v1 shape
+// holds only that field. Future delegation chains will nest
+// another `act` here.
+type actClaim struct {
+	Sub string `json:"sub,omitempty"`
 }
 
 // audClaim handles RFC 7519 §4.1.3's polymorphic `aud` claim. Per
@@ -289,6 +302,9 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	}
 	if len(subject.AuthorizationDetails) > 0 {
 		payload.AuthorizationDetails = append(json.RawMessage(nil), subject.AuthorizationDetails...)
+	}
+	if subject.Actor != nil && subject.Actor.Subject != "" {
+		payload.Act = &actClaim{Sub: subject.Actor.Subject}
 	}
 	// RFC 8707 resource indicators flow through Subject.Resources
 	// into the standard `aud` JWT claim. Resource servers verify
@@ -415,6 +431,9 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	}
 	if p.Scope != "" {
 		claims.Scopes = strings.Split(p.Scope, " ")
+	}
+	if p.Act != nil && p.Act.Sub != "" {
+		claims.Actor = &sso.ActorClaim{Subject: p.Act.Sub}
 	}
 	return claims, nil
 }

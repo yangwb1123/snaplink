@@ -82,6 +82,26 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		return
 	}
 
+	// RFC 8693 §2.1: actor_token and actor_token_type MUST both
+	// be present, or both absent. Mismatch = invalid_request.
+	if (req.ActorToken == "") != (req.ActorTokenType == "") {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	var actor *ActorClaim
+	if req.ActorToken != "" {
+		if req.ActorTokenType != TokenTypeAccessToken && req.ActorTokenType != TokenTypeJWT {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		actorClaims, _, aerr := s.validateAnyToken(ctx.Request().Context(), req.ActorToken)
+		if aerr != nil || actorClaims == nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+		actor = &ActorClaim{Subject: actorClaims.Subject}
+	}
+
 	// Merge `resource` + `audience` into the new token's aud claim.
 	// Both parameter forms are accepted (RFC 8693 + RFC 8707
 	// overlap on intent); deduplicated in-order so the first
@@ -129,6 +149,12 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		AuthTime: claims.AuthTime,
 		ACR:      claims.ACR,
 		AMR:      append([]string(nil), claims.AMR...),
+		// RFC 8693 §4.1 — when an actor_token is presented, the
+		// new token carries `act: {sub: <actor.sub>}` so
+		// downstream services can audit who acted on behalf of
+		// whom. Nil when no actor_token was supplied (the direct
+		// non-delegated path).
+		Actor: actor,
 	}, scopes)
 	if err != nil {
 		s.logger.Error("token exchange issuance failed", "strategy", strategy, "error", err)

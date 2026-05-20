@@ -178,6 +178,12 @@ type TokenClaims struct {
 	AuthTime time.Time `json:"auth_time,omitempty"`
 	ACR      string    `json:"acr,omitempty"`
 	AMR      []string  `json:"amr,omitempty"`
+
+	// Actor is the validated RFC 8693 §4.1 `act` claim, populated
+	// when the token carries delegation provenance. Nil when the
+	// token represents direct subject access (no delegation in
+	// flight).
+	Actor *ActorClaim `json:"act,omitempty"`
 }
 
 // Session represents an active user session.
@@ -245,6 +251,26 @@ type Subject struct {
 	// issuers; non-aware issuers ignore it. Empty = no
 	// authorization_details on the token.
 	AuthorizationDetails json.RawMessage
+
+	// Actor (RFC 8693 §4.1) names the party acting on behalf of
+	// the Subject for delegation chains. When set, the issued
+	// access token carries an `act` claim — a nested object
+	// with at least the actor's `sub`. Today's token-exchange
+	// grant populates this when called with `actor_token`;
+	// other grants leave it nil. Nested act-in-act (multi-hop
+	// delegation) is NOT YET wired — when a subject token
+	// already has `act`, the exchange overwrites with the new
+	// actor; future extension can prepend the chain instead.
+	Actor *ActorClaim
+}
+
+// ActorClaim is the RFC 8693 §4.1 `act` claim shape. v1 carries
+// only the actor's subject identifier; the spec allows arbitrary
+// nested fields (chains of delegation, RP-specific extensions).
+// Extending the struct in place is safe — extra fields go via
+// `Extras` map down the line if needed.
+type ActorClaim struct {
+	Subject string `json:"sub,omitempty"`
 }
 
 // AuthRequest holds the input for an authentication attempt.

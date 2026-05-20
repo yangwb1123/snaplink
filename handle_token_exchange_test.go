@@ -2,6 +2,7 @@ package sso_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -255,6 +256,136 @@ func TestTokenExchange_MergesResourceAndAudience(t *testing.T) {
 	if len(asArr) != 2 || asArr[0] != txAPI || asArr[1] != txBilling {
 		t.Errorf("merged aud = %v want [%q %q]", asArr, txAPI, txBilling)
 	}
+}
+
+func TestTokenExchange_ActorTokenStampsActClaim(t *testing.T) {
+	// RFC 8693 §4.1 delegation: when actor_token is supplied,
+	// the new access token carries `act: {sub: <actor.sub>}` so
+	// downstream services can audit who acted on behalf of whom.
+	srv := newTokenExchangeHarness(t, []string{txAPI})
+	// Subject token = the end user.
+	subject := txLogin(t, srv, []string{"read"})
+	// Actor token = same user is fine for the test — what we
+	// care about is that the actor_token's subject lands in act.
+	// In a real scenario the actor is a different identity
+	// (e.g. a service account); the wire shape is identical.
+	actor := txLogin(t, srv, []string{"read"})
+
+	status, body := postExchange(t, srv, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {txClientID},
+		"client_secret":      {txSecret},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"actor_token":        {actor},
+		"actor_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
+		"resource":           {txAPI},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%v", status, body)
+	}
+	newTok, _ := body["access_token"].(string)
+	if newTok == "" {
+		t.Fatalf("no access_token in response: %v", body)
+	}
+	parts := strings.Split(newTok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a JWT: %q", newTok)
+	}
+	rawPayload, err := decodeRawURL(parts[1])
+	if err != nil {
+		t.Fatalf("payload decode: %v", err)
+	}
+	var p map[string]any
+	_ = json.Unmarshal(rawPayload, &p)
+	act, ok := p["act"].(map[string]any)
+	if !ok {
+		t.Fatalf("act claim missing on delegated token: %v", p)
+	}
+	if act["sub"] != txUserID {
+		t.Errorf("act.sub = %v want %q", act["sub"], txUserID)
+	}
+}
+
+func TestTokenExchange_NoActorTokenNoActClaim(t *testing.T) {
+	// Direct (non-delegated) exchange: `act` claim MUST be
+	// absent so legacy tokens stay byte-identical and downstream
+	// services can use `act` presence as the delegation signal.
+	srv := newTokenExchangeHarness(t, []string{txAPI})
+	subject := txLogin(t, srv, []string{"read"})
+
+	status, body := postExchange(t, srv, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {txClientID},
+		"client_secret":      {txSecret},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"resource":           {txAPI},
+		// no actor_token / actor_token_type
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%v", status, body)
+	}
+	newTok, _ := body["access_token"].(string)
+	parts := strings.Split(newTok, ".")
+	rawPayload, _ := decodeRawURL(parts[1])
+	var p map[string]any
+	_ = json.Unmarshal(rawPayload, &p)
+	if _, present := p["act"]; present {
+		t.Errorf("act claim must be absent on non-delegated exchange: %v", p["act"])
+	}
+}
+
+func TestTokenExchange_ActorTokenWithoutTypeRejected(t *testing.T) {
+	// RFC 8693 §2.1: actor_token MUST be paired with
+	// actor_token_type. One without the other is invalid_request.
+	srv := newTokenExchangeHarness(t, []string{txAPI})
+	subject := txLogin(t, srv, []string{"read"})
+	actor := txLogin(t, srv, []string{"read"})
+
+	status, body := postExchange(t, srv, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {txClientID},
+		"client_secret":      {txSecret},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"actor_token":        {actor},
+		// no actor_token_type
+		"resource": {txAPI},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%v want 400", status, body)
+	}
+	if body["error"] != "invalid_request" {
+		t.Errorf("error = %v want invalid_request", body["error"])
+	}
+}
+
+func TestTokenExchange_BadActorTokenRejectedAsInvalidGrant(t *testing.T) {
+	srv := newTokenExchangeHarness(t, []string{txAPI})
+	subject := txLogin(t, srv, []string{"read"})
+
+	status, body := postExchange(t, srv, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {txClientID},
+		"client_secret":      {txSecret},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"actor_token":        {"not-a-valid-jwt"},
+		"actor_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
+		"resource":           {txAPI},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%v want 400", status, body)
+	}
+	if body["error"] != "invalid_grant" {
+		t.Errorf("error = %v want invalid_grant (actor token validation failure)", body["error"])
+	}
+}
+
+// decodeRawURL is the test-side base64url decoder for JWT segments.
+func decodeRawURL(s string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(s)
 }
 
 func TestTokenExchange_DiscoveryAdvertisesGrant(t *testing.T) {
