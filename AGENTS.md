@@ -277,7 +277,7 @@ every grant.
 | RFC 7662 introspection | `/token/introspect` | always | `handle_introspect.go` | inactive → `{"active":false}` only; `RefreshTokenInspector` extension for refresh tier |
 | RFC 7009 revocation | `/token/revoke`, `/token/revoke-all` | always (bulk needs `RefreshTokenSubjectIndex`) | `handle_revoke.go` | always 200 OK; `revoke-all` is bearer-authed user logout |
 | RFC 8628 device authorization | `/device/code`, `/device/verify`, `/token` grant | `WithDeviceCodeStore(store, ttl, pollMin, verifyBaseURL)` | `handle_device.go` | user_code normalized (dashless+uppercase); `slow_down` enforced |
-| RFC 8693 token exchange | `/token` grant `urn:...:token-exchange` | always | `handle_token_exchange.go` | only access_token/jwt subject types in v1; scope narrowing per §6 |
+| RFC 8693 token exchange | `/token` grant `urn:...:token-exchange` | always | `handle_token_exchange.go` | only access_token/jwt subject types in v1; scope narrowing per §6; `act` claim stamps the actor when `actor_token` is supplied (§4.1) AND nests across multi-hop chains (§4.1.1) — outermost = most recent actor, deepest = first to delegate |
 | RFC 8707 resource indicators | `resource` param on every issuance path | `Client.AllowedResources` allowlist | per-grant | captured-at-authorization wins on rotation/exchange |
 | RFC 9126 PAR | `/par` | `WithPARStore(store, ttl)` | `handle_par.go` | request_uri `urn:ietf:params:oauth:request_uri:<token>`; single-use; default TTL 90s |
 | RFC 7591 dynamic client registration | `/register` | `WithDynamicClientRegistration(policy)` | `handle_register.go` | initial access token OR `AllowOpenRegistration: true`; public clients force `RequirePKCE=true` |

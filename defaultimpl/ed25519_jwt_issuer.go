@@ -200,11 +200,32 @@ type ed25519Payload struct {
 }
 
 // actClaim is the wire shape of `act`. Per RFC 8693 §4.1 the
-// claim is a JSON object with at least `sub`; this v1 shape
-// holds only that field. Future delegation chains will nest
-// another `act` here.
+// claim is a JSON object with at least `sub` and an optional
+// nested `act` for multi-hop delegation chains. Mirrors
+// sso.ActorClaim's structure on the public API side.
 type actClaim struct {
-	Sub string `json:"sub,omitempty"`
+	Sub string    `json:"sub,omitempty"`
+	Act *actClaim `json:"act,omitempty"`
+}
+
+// actorChainToWire walks an sso.ActorClaim chain (outermost-first)
+// into the wire-shape actClaim chain. nil-safe — returns nil so
+// "no delegation" stays distinguishable from "empty chain" in the
+// emitted JWT.
+func actorChainToWire(a *sso.ActorClaim) *actClaim {
+	if a == nil || a.Subject == "" {
+		return nil
+	}
+	return &actClaim{Sub: a.Subject, Act: actorChainToWire(a.Actor)}
+}
+
+// wireChainToActor is the inverse: rebuild the sso.ActorClaim
+// chain from a validated JWT's act tree. nil-safe.
+func wireChainToActor(a *actClaim) *sso.ActorClaim {
+	if a == nil || a.Sub == "" {
+		return nil
+	}
+	return &sso.ActorClaim{Subject: a.Sub, Actor: wireChainToActor(a.Act)}
 }
 
 // audClaim handles RFC 7519 §4.1.3's polymorphic `aud` claim. Per
@@ -303,8 +324,8 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	if len(subject.AuthorizationDetails) > 0 {
 		payload.AuthorizationDetails = append(json.RawMessage(nil), subject.AuthorizationDetails...)
 	}
-	if subject.Actor != nil && subject.Actor.Subject != "" {
-		payload.Act = &actClaim{Sub: subject.Actor.Subject}
+	if chain := actorChainToWire(subject.Actor); chain != nil {
+		payload.Act = chain
 	}
 	// RFC 8707 resource indicators flow through Subject.Resources
 	// into the standard `aud` JWT claim. Resource servers verify
@@ -432,8 +453,8 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	if p.Scope != "" {
 		claims.Scopes = strings.Split(p.Scope, " ")
 	}
-	if p.Act != nil && p.Act.Sub != "" {
-		claims.Actor = &sso.ActorClaim{Subject: p.Act.Sub}
+	if chain := wireChainToActor(p.Act); chain != nil {
+		claims.Actor = chain
 	}
 	return claims, nil
 }

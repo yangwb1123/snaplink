@@ -99,7 +99,13 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
 			return
 		}
-		actor = &ActorClaim{Subject: actorClaims.Subject}
+		// RFC 8693 §4.1.1: when the subject_token already carries
+		// an `act` claim (it was itself a delegated token), the
+		// new act prepends the current actor and nests the
+		// previous chain beneath, preserving full provenance.
+		// Reading outside-in walks the delegation chain in
+		// time-order: outermost is most recent.
+		actor = &ActorClaim{Subject: actorClaims.Subject, Actor: claims.Actor}
 	}
 
 	// Merge `resource` + `audience` into the new token's aud claim.

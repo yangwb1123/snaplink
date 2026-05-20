@@ -275,13 +275,21 @@ type Subject struct {
 	Actor *ActorClaim
 }
 
-// ActorClaim is the RFC 8693 §4.1 `act` claim shape. v1 carries
-// only the actor's subject identifier; the spec allows arbitrary
-// nested fields (chains of delegation, RP-specific extensions).
-// Extending the struct in place is safe — extra fields go via
-// `Extras` map down the line if needed.
+// ActorClaim is the RFC 8693 §4.1 `act` claim shape. Carries the
+// acting party's subject identifier plus an optional nested `act`
+// for multi-hop delegation chains (B acting on behalf of A's
+// previously-delegated session through C, etc.). The spec
+// permits arbitrary nesting; downstream services walk the chain
+// to reconstruct provenance for audit + authorization decisions.
+//
+// Chain ordering: outermost `act` is the MOST RECENT actor, the
+// deepest nested entry is the FIRST one to act. Reading the chain
+// outside-in mirrors how the delegations happened in time —
+// "right now C is acting, having received the right from B, who
+// received it from A's original session."
 type ActorClaim struct {
-	Subject string `json:"sub,omitempty"`
+	Subject string      `json:"sub,omitempty"`
+	Actor   *ActorClaim `json:"act,omitempty"`
 }
 
 // AuthRequest holds the input for an authentication attempt.
