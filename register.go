@@ -9,6 +9,11 @@ import (
 // PathRegister is the RFC 7591 Dynamic Client Registration endpoint.
 const PathRegister = "/register"
 
+// PathRegisterByID is the RFC 7592 Dynamic Client Management endpoint —
+// GET/PUT/DELETE for an individual registered client. Authorized by
+// the registration_access_token issued at /register time.
+const PathRegisterByID = "/register/:client_id"
+
 // DCRPolicy controls how the registration endpoint behaves.
 // Defaults are conservative: opt-in via WithDynamicClientRegistration
 // and require an initial access token unless the operator explicitly

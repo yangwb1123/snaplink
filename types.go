@@ -63,6 +63,14 @@ type Client struct {
 	// without an aud claim from this source).
 	AllowedResources []string `json:"allowed_resources,omitempty" yaml:"allowed_resources,omitempty"`
 
+	// RegistrationAccessToken authenticates RFC 7592 Dynamic
+	// Client Management calls (GET/PUT/DELETE /register/:client_id)
+	// against this client. Issued at /register time alongside the
+	// client_secret; constant-time compared on every management
+	// request. Empty means dynamic management is disabled for this
+	// client (legacy / operator-provisioned clients never had one).
+	RegistrationAccessToken string `json:"-" yaml:"-"`
+
 	// PostLogoutRedirectURIs is the allowlist of URLs the OIDC
 	// RP-Initiated Logout endpoint will redirect the user back to
 	// after killing the session. Per OIDC RP-Initiated Logout 1.0

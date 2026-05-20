@@ -1,8 +1,10 @@
 package sso
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -26,13 +28,16 @@ type dcrRequest struct {
 }
 
 // dcrResponse is the RFC 7591 §3.2.1 successful-registration body.
-// Echoes every accepted metadata field plus the issued credentials
-// and timestamps.
+// Echoes every accepted metadata field plus the issued credentials,
+// timestamps, and the RFC 7592 management URI / access token when
+// the management endpoint is enabled.
 type dcrResponse struct {
 	ClientID                string   `json:"client_id"`
 	ClientSecret            string   `json:"client_secret,omitempty"`
 	ClientIDIssuedAt        int64    `json:"client_id_issued_at"`
 	ClientSecretExpiresAt   int64    `json:"client_secret_expires_at"`
+	RegistrationAccessToken string   `json:"registration_access_token,omitempty"`
+	RegistrationClientURI   string   `json:"registration_client_uri,omitempty"`
 	RedirectURIs            []string `json:"redirect_uris,omitempty"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 	GrantTypes              []string `json:"grant_types,omitempty"`
@@ -117,24 +122,37 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 		}
 	}
 
+	// RFC 7592 §3: every newly-registered client gets a
+	// registration_access_token so the client itself can later
+	// GET/PUT/DELETE its own registration without operator
+	// involvement. The token is bearer-shaped; deployments
+	// storing clients on disk SHOULD hash it at rest.
+	regToken, err := generateClientSecret()
+	if err != nil {
+		s.logger.Error("dcr reg-token gen failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
 	tokenStrategy := req.TokenStrategy
 	if tokenStrategy == "" {
 		tokenStrategy = s.dcrPolicy.DefaultTokenStrategy
 	}
 
 	client := &Client{
-		ID:                     id,
-		Secret:                 secret,
-		Name:                   req.ClientName,
-		RedirectURIs:           append([]string(nil), req.RedirectURIs...),
-		AllowedScopes:          splitScope(req.Scope),
-		AllowedAuthenticators:  append([]string(nil), req.AllowedAuthenticators...),
-		TokenStrategy:          tokenStrategy,
-		Active:                 s.dcrPolicy.DefaultActive,
-		TenantID:               req.TenantID,
-		RequirePKCE:            req.RequirePKCE || public, // public clients always PKCE
-		AllowedResources:       append([]string(nil), req.AllowedResources...),
-		PostLogoutRedirectURIs: append([]string(nil), req.PostLogoutRedirectURIs...),
+		ID:                      id,
+		Secret:                  secret,
+		Name:                    req.ClientName,
+		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
+		AllowedScopes:           splitScope(req.Scope),
+		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
+		TokenStrategy:           tokenStrategy,
+		Active:                  s.dcrPolicy.DefaultActive,
+		TenantID:                req.TenantID,
+		RequirePKCE:             req.RequirePKCE || public, // public clients always PKCE
+		AllowedResources:        append([]string(nil), req.AllowedResources...),
+		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
+		RegistrationAccessToken: regToken,
 	}
 
 	if err := s.clientStore.Add(ctx.Request().Context(), client); err != nil {
@@ -149,6 +167,8 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 		ClientSecret:            secret,
 		ClientIDIssuedAt:        now,
 		ClientSecretExpiresAt:   0, // 0 = never expires per RFC 7591 §3.2.1
+		RegistrationAccessToken: regToken,
+		RegistrationClientURI:   requestBaseURL(ctx.Request()) + PathRegister + "/" + id,
 		RedirectURIs:            client.RedirectURIs,
 		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 		GrantTypes:              req.GrantTypes,
@@ -164,6 +184,163 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 	}
 
 	ctx.JSON(http.StatusCreated, resp)
+}
+
+// handleRegistrationGet implements RFC 7592 §2.1 — the client
+// itself reads its current registration metadata. Auth: bearer
+// matching the registration_access_token issued at /register.
+func (s *Server) handleRegistrationGet(ctx HandlerContext) {
+	client, ok := s.authorizeRegistrationMgmt(ctx)
+	if !ok {
+		return
+	}
+	ctx.JSON(http.StatusOK, projectClientToDCRResponse(client, ctx))
+}
+
+// handleRegistrationPut implements RFC 7592 §2.2 — the client
+// itself updates its metadata. Auth: bearer matching the
+// registration_access_token. Validation: same rules as POST
+// /register; the client_secret stays unchanged across updates
+// (rotation is a separate admin RPC). The registration_access_token
+// is also preserved so the caller can keep managing the registration.
+func (s *Server) handleRegistrationPut(ctx HandlerContext) {
+	client, ok := s.authorizeRegistrationMgmt(ctx)
+	if !ok {
+		return
+	}
+
+	var req dcrRequest
+	if err := ctx.Bind(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidClientMetadata, err.Error()))
+		return
+	}
+	if err := validateDCRMetadata(&req, s.dcrPolicy); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidClientMetadata, err.Error()))
+		return
+	}
+
+	tokenStrategy := req.TokenStrategy
+	if tokenStrategy == "" {
+		tokenStrategy = client.TokenStrategy
+	}
+
+	updated := &Client{
+		ID:                      client.ID,
+		Secret:                  client.Secret,                  // unchanged
+		RegistrationAccessToken: client.RegistrationAccessToken, // unchanged
+		Active:                  client.Active,
+		Name:                    req.ClientName,
+		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
+		AllowedScopes:           splitScope(req.Scope),
+		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
+		TokenStrategy:           tokenStrategy,
+		TenantID:                req.TenantID,
+		RequirePKCE:             req.RequirePKCE || req.TokenEndpointAuthMethod == "none",
+		AllowedResources:        append([]string(nil), req.AllowedResources...),
+		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
+	}
+
+	if err := s.clientStore.Update(ctx.Request().Context(), updated); err != nil {
+		s.logger.Error("dcr update failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, projectClientToDCRResponse(updated, ctx))
+}
+
+// handleRegistrationDelete implements RFC 7592 §2.3 — the client
+// itself removes its registration. Auth: bearer matching the
+// registration_access_token. Successful response: 204 No Content
+// per §2.3.
+func (s *Server) handleRegistrationDelete(ctx HandlerContext) {
+	client, ok := s.authorizeRegistrationMgmt(ctx)
+	if !ok {
+		return
+	}
+	if err := s.clientStore.Delete(ctx.Request().Context(), client.ID); err != nil {
+		s.logger.Error("dcr delete failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
+}
+
+// authorizeRegistrationMgmt is the shared auth + lookup gate for
+// every RFC 7592 endpoint. Resolves the client by path param,
+// constant-time compares the presented bearer against the stored
+// registration_access_token, and writes the appropriate error
+// response when checks fail.
+//
+// Returns (client, true) on success; on failure it has already
+// written the response and returns (nil, false).
+func (s *Server) authorizeRegistrationMgmt(ctx HandlerContext) (*Client, bool) {
+	if s.dcrPolicy == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRegistrationDisabled))
+		return nil, false
+	}
+	if err := s.requireDeps(depClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return nil, false
+	}
+	id := ctx.Param("client_id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		return nil, false
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), id)
+	if err != nil {
+		// 401 (not 404) because the resource is auth-gated; a 404
+		// would let an unauthed caller probe for client_id existence.
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	bearer := bearerToken(ctx.Request())
+	if bearer == "" || client.RegistrationAccessToken == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	if subtleConstantTimeStringEq(bearer, client.RegistrationAccessToken) != 1 {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	return client, true
+}
+
+// projectClientToDCRResponse builds an RFC 7591-shaped response from
+// a stored Client. Re-used by GET/PUT — the registration_access_token
+// is NOT re-emitted (RFC 7592 §2.1: server SHOULD NOT include it on
+// reads; the original /register response is the only canonical
+// distribution point).
+func projectClientToDCRResponse(c *Client, ctx HandlerContext) dcrResponse {
+	return dcrResponse{
+		ClientID:               c.ID,
+		ClientSecret:           c.Secret, // RFC 7592 §2.1 SHOULD include
+		ClientSecretExpiresAt:  0,
+		RegistrationClientURI:  requestBaseURL(ctx.Request()) + PathRegister + "/" + c.ID,
+		RedirectURIs:           c.RedirectURIs,
+		ClientName:             c.Name,
+		Scope:                  joinScope(c.AllowedScopes),
+		TokenStrategy:          c.TokenStrategy,
+		AllowedAuthenticators:  c.AllowedAuthenticators,
+		AllowedResources:       c.AllowedResources,
+		PostLogoutRedirectURIs: c.PostLogoutRedirectURIs,
+		RequirePKCE:            c.RequirePKCE,
+	}
+}
+
+func joinScope(scopes []string) string {
+	return strings.Join(scopes, " ")
+}
+
+// subtleConstantTimeStringEq wraps subtle.ConstantTimeCompare for
+// strings — it short-circuits on length mismatch (the standard
+// library function does too, but we keep the wrapper local so the
+// length check is explicit and reviewable).
+func subtleConstantTimeStringEq(a, b string) int {
+	if len(a) != len(b) {
+		return 0
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b))
 }
 
 // validateDCRMetadata enforces the subset of RFC 7591 §2 / §5
