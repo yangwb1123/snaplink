@@ -946,6 +946,13 @@ func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims,
 func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
 	var lastErr error
 	for name, ti := range s.tokenIssuers {
+		// Skip issuers that explicitly opt out of this token's shape.
+		// Saves an expensive base64 + signature attempt when a session
+		// token reaches the JWT issuer or vice versa. Issuers without
+		// a TokenFormatHinter are always tried (legacy behavior).
+		if h, ok := ti.(TokenFormatHinter); ok && !h.AcceptsTokenFormat(token) {
+			continue
+		}
 		claims, err := ti.Validate(ctx, token)
 		if err == nil {
 			return claims, name, nil

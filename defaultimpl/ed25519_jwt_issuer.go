@@ -704,6 +704,32 @@ var _ sso.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
 // Logout tokens.
 var _ sso.LogoutTokenIssuer = (*Ed25519JWTIssuer)(nil)
 
+// AcceptsTokenFormat implements sso.TokenFormatHinter. A compact JWS
+// has exactly two `.` separators between three non-empty base64url
+// segments — anything else can't possibly be a JWT this issuer
+// minted, so the multi-issuer dispatcher skips us and saves the
+// base64 + signature parse cost. Tokens that happen to contain
+// two dots but aren't JWTs still reach Validate, where the strict
+// alg + typ allowlist + signature check rejects them.
+func (j *Ed25519JWTIssuer) AcceptsTokenFormat(token string) bool {
+	if token == "" {
+		return false
+	}
+	// Fast count via strings.Count without splitting.
+	parts := 0
+	for i := 0; i < len(token); i++ {
+		if token[i] == '.' {
+			parts++
+			if parts > 2 {
+				return false
+			}
+		}
+	}
+	return parts == 2
+}
+
+var _ sso.TokenFormatHinter = (*Ed25519JWTIssuer)(nil)
+
 // logoutTokenTyp is OIDC BCL 1.0 §2.4's REQUIRED `typ` header.
 const logoutTokenTyp = "logout+jwt"
 
