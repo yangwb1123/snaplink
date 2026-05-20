@@ -288,6 +288,7 @@ every grant.
 | OIDC UserInfo | `/userinfo` | needs ID token issuer wired | `oidc.go` | claim projection driven by access token's `scope` |
 | RFC 9207 AS Issuer Identification | every `/auth/login` response (success + error + provider list) | always | `iss_response.go` | `iss` stamped via `s.resolveIssuer(ctx)`; must equal discovery `issuer` field — mix-up defense |
 | RFC 9068 JWT Access Token Profile | access tokens minted by `Ed25519JWTIssuer` | always (single signer today) | `defaultimpl/ed25519_jwt_issuer.go` | header `typ: at+jwt`; jti always generated; client_id from `Subject.ClientID`; Validate enforces alg + typ allowlist (alg=none rejected); typ=JWT still accepted for legacy back-compat |
+| OAuth 2.1 strict mode | `/auth/login` (server-wide flag) | `WithOAuth21StrictMode(true)` | `handler.go` (`isSecureRedirectURI`) | rejects `response_type=token` (and empty); forces PKCE globally; requires https redirect_uri (localhost excepted). Default off → zero breaking change for OAuth 2.0 callers |
 
 **Token strategies** are picked per-client via
 `token_strategy: jwt|session`:

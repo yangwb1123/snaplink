@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"slices"
 	"strings"
 	"time"
@@ -259,6 +260,16 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 	}
 
+	// OAuth 2.1 strict mode: response_type=token (implicit) is
+	// retired by OAuth 2.1; empty response_type (which defaulted
+	// to direct-mint in OAuth 2.0) is treated the same way under
+	// strict mode. Both reject with unsupported_response_type
+	// — strict mode requires explicit response_type=code.
+	if s.oauth21Strict && req.ResponseType != "code" {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedResponseType))
+		return
+	}
+
 	// OAuth 2.0 authorization_code branch: instead of minting a token
 	// here, persist a short-lived code bound to (user, client, redirect_uri)
 	// and return it so the relying party can exchange it via /token.
@@ -272,13 +283,22 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRedirectURI))
 			return
 		}
+		// OAuth 2.1 §4.1.3 — redirect_uri MUST use https. Localhost
+		// (any port) remains permitted for development workflows.
+		if s.oauth21Strict && !isSecureRedirectURI(req.RedirectURI) {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRedirectURI)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRedirectURI))
+			return
+		}
 		// PKCE validation per RFC 7636 §4.3:
 		// * If client policy requires PKCE, code_challenge MUST be set.
+		// * OAuth 2.1 §4.1.1 makes PKCE mandatory; strict mode honors
+		//   that even when the client has RequirePKCE=false set.
 		// * If code_challenge IS set, length and method MUST be valid.
 		// * Empty method defaults to "plain" per §4.3 (callers should
 		//   prefer S256; "plain" stays for legacy interop).
 		if req.CodeChallenge == "" {
-			if client.RequirePKCE {
+			if client.RequirePKCE || s.oauth21Strict {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrPKCERequired)
 				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrPKCERequired))
 				return
@@ -483,6 +503,27 @@ func (s *Server) issueAuthCode(
 		return "", fmt.Errorf("store auth code: %w", err)
 	}
 	return code, nil
+}
+
+// isSecureRedirectURI reports whether the URI satisfies the OAuth 2.1
+// §4.1.3 redirect_uri security profile: scheme=https required for
+// public hosts; http://localhost (or http://127.0.0.1 / [::1]) on any
+// port stays permitted so development workflows don't need a local
+// TLS terminator. URIs that fail to parse return false (closed
+// default), which collapses to invalid_redirect_uri on the caller.
+func isSecureRedirectURI(uri string) bool {
+	u, err := neturl.Parse(uri)
+	if err != nil || u == nil {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	if u.Scheme == "http" {
+		host := u.Hostname()
+		return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	}
+	return false
 }
 
 // isValidPKCEMethod reports whether the named PKCE challenge method is

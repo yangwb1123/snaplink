@@ -62,6 +62,7 @@ type Server struct {
 	parStore             PARStore
 	parTTL               time.Duration
 	dcrPolicy            *DCRPolicy
+	oauth21Strict        bool
 }
 
 // Option configures the Server.
@@ -96,6 +97,27 @@ func WithAuthenticator(a Authenticator) Option {
 // If no client-level strategy is set, the Server's default strategy is used.
 func WithTokenIssuer(name string, ti TokenIssuer) Option {
 	return func(s *Server) { s.tokenIssuers[name] = ti }
+}
+
+// WithOAuth21StrictMode toggles enforcement of the OAuth 2.1
+// deviations from OAuth 2.0. When true:
+//
+//   - response_type=token (the implicit flow) is rejected with
+//     unsupported_response_type on /auth/login. Empty
+//     response_type (which defaulted to direct-mint = implicit
+//     style) is treated the same — strict mode requires
+//     response_type=code explicitly.
+//   - Every authorization_code request MUST carry code_challenge
+//     (PKCE), overriding any per-client RequirePKCE=false opt-out.
+//   - redirect_uri MUST use scheme=https. Localhost (any port)
+//     remains permitted for development.
+//
+// Recommended for new production deployments + FAPI 2.0 / Open
+// Banking customers. Existing OAuth 2.0 callers continue to work
+// when the option is omitted (default false) — no implicit
+// breaking change.
+func WithOAuth21StrictMode(enabled bool) Option {
+	return func(s *Server) { s.oauth21Strict = enabled }
 }
 
 // WithDefaultTokenStrategy names the strategy used when a Client does not
