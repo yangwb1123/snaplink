@@ -59,6 +59,20 @@ type oidcConfiguration struct {
 	// session-id support lands across the token issuers.
 	BackchannelLogoutSessionSupported bool `json:"backchannel_logout_session_supported,omitempty"`
 
+	// OIDC Front-Channel Logout 1.0 §2.1 — true when at least one
+	// registered client opts in via FrontchannelLogoutURI. The
+	// server's /end_session handler then renders an HTML iframe
+	// page instead of the bare 302/204 response. Per-client
+	// metadata (the URI itself) is not advertised in discovery;
+	// it's pre-registered out-of-band like every other client
+	// secret.
+	FrontchannelLogoutSupported bool `json:"frontchannel_logout_supported,omitempty"`
+	// FrontchannelLogoutSessionSupported mirrors the back-channel
+	// flag: false until access tokens carry a sid claim. Without
+	// sid, the iframe URI can't be tagged with the session id the
+	// RP needs to disambiguate concurrent sessions.
+	FrontchannelLogoutSessionSupported bool `json:"frontchannel_logout_session_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -146,6 +160,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if s.logoutTokenIssuer != nil && s.logoutNotifier != nil {
 		cfg.BackchannelLogoutSupported = true
+	}
+	if frontchannelLogoutSupportedAdvertisement(ctx.Request().Context(), s) {
+		cfg.FrontchannelLogoutSupported = true
 	}
 	cfg.ClaimsSupported = []string{
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",

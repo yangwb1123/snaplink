@@ -117,12 +117,13 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 		s.recordLogout(ctx, "", []string{"id_token_hint"})
 	}
 
-	// Redirect ONLY if the client allowlists the URI. Phishing
-	// defense: an attacker who crafts an end_session URL with
-	// post_logout_redirect_uri=https://evil.example MUST not get
-	// the user bounced there.
+	// Resolve a safe redirect destination once — both the FCL HTML
+	// page and the legacy 302 path want the same allowlist + state
+	// composition; computing it in one place keeps phishing defense
+	// uniform across the two response shapes.
+	var target string
 	if postLogoutURI != "" && client != nil && client.IsPostLogoutRedirectURIValid(postLogoutURI) {
-		target := postLogoutURI
+		target = postLogoutURI
 		if state != "" {
 			sep := "?"
 			if strings.Contains(target, "?") {
@@ -130,6 +131,25 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 			}
 			target = target + sep + "state=" + url.QueryEscape(state)
 		}
+	}
+
+	// OIDC Front-Channel Logout 1.0 — when the client opts in via
+	// FrontchannelLogoutURI, render an HTML page with a hidden
+	// iframe pointing at the RP's logout URL. The browser fires
+	// the iframe request (clearing RP cookies); a meta-refresh
+	// then navigates to post_logout_redirect_uri if one was
+	// allowlisted. FCL is purely additive to the existing
+	// revoke/BCL pipeline above — those still ran.
+	if client != nil && client.FrontchannelLogoutURI != "" {
+		s.renderFrontchannelLogout(ctx, client.FrontchannelLogoutURI, target)
+		return
+	}
+
+	// Redirect ONLY if the client allowlists the URI. Phishing
+	// defense: an attacker who crafts an end_session URL with
+	// post_logout_redirect_uri=https://evil.example MUST not get
+	// the user bounced there.
+	if target != "" {
 		ctx.Redirect(http.StatusFound, target)
 		return
 	}

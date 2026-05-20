@@ -99,6 +99,17 @@ type Client struct {
 	// access-token expiry or a polling check).
 	BackchannelLogoutURI string `json:"backchannel_logout_uri,omitempty" yaml:"backchannel_logout_uri,omitempty"`
 
+	// FrontchannelLogoutURI is the OIDC Front-Channel Logout 1.0
+	// §2 endpoint embedded in a hidden iframe on /end_session's
+	// HTML response when this client is logged out. The browser
+	// loads the URI, the RP responds by clearing its own session
+	// cookies. Complements (not replaces) BackchannelLogoutURI:
+	// FCL works without an RP backend reachable to the AS but
+	// requires a live user agent; BCL works without a live user
+	// agent but requires the RP to be network-reachable. Empty =
+	// /end_session falls through to the legacy 302/204 behavior.
+	FrontchannelLogoutURI string `json:"frontchannel_logout_uri,omitempty" yaml:"frontchannel_logout_uri,omitempty"`
+
 	// JWKS holds the client's public verification keys for RFC
 	// 9101 JWT-Secured Authorization Requests. When non-empty,
 	// the client may send signed request objects via the
