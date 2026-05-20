@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"maps"
 	"sync"
 
@@ -41,18 +42,23 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *sso.Au
 	scopes := append([]string(nil), info.Scopes...)
 	resources := append([]string(nil), info.Resources...)
 	attrs := copyMap(info.Attributes)
+	var authDetails json.RawMessage
+	if len(info.AuthorizationDetails) > 0 {
+		authDetails = append(json.RawMessage(nil), info.AuthorizationDetails...)
+	}
 	m.entries[code] = &sso.AuthCode{
-		UserID:              info.UserID,
-		ClientID:            info.ClientID,
-		RedirectURI:         info.RedirectURI,
-		Scopes:              scopes,
-		Nonce:               info.Nonce,
-		Provider:            info.Provider,
-		Attributes:          attrs,
-		CodeChallenge:       info.CodeChallenge,
-		CodeChallengeMethod: info.CodeChallengeMethod,
-		Resources:           resources,
-		ExpiresAt:           info.ExpiresAt,
+		UserID:               info.UserID,
+		ClientID:             info.ClientID,
+		RedirectURI:          info.RedirectURI,
+		Scopes:               scopes,
+		Nonce:                info.Nonce,
+		Provider:             info.Provider,
+		Attributes:           attrs,
+		CodeChallenge:        info.CodeChallenge,
+		CodeChallengeMethod:  info.CodeChallengeMethod,
+		Resources:            resources,
+		AuthorizationDetails: authDetails,
+		ExpiresAt:            info.ExpiresAt,
 	}
 	return nil
 }

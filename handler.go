@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -69,18 +70,19 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 
 func (s *Server) handleLogin(ctx HandlerContext) {
 	var req struct {
-		Provider            string            `json:"provider"`
-		Credential          map[string]string `json:"credential"`
-		ClientID            string            `json:"client_id"`
-		Scope               []string          `json:"scope"`
-		State               string            `json:"state"`
-		ResponseType        string            `json:"response_type"`         // "code" → return auth code instead of token
-		RedirectURI         string            `json:"redirect_uri"`          // required when response_type=code
-		Nonce               string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
-		CodeChallenge       string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
-		CodeChallengeMethod string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
-		Resource            []string          `json:"resource"`              // RFC 8707 resource indicators
-		RequestURI          string            `json:"request_uri"`           // RFC 9126 PAR
+		Provider             string            `json:"provider"`
+		Credential           map[string]string `json:"credential"`
+		ClientID             string            `json:"client_id"`
+		Scope                []string          `json:"scope"`
+		State                string            `json:"state"`
+		ResponseType         string            `json:"response_type"`         // "code" → return auth code instead of token
+		RedirectURI          string            `json:"redirect_uri"`          // required when response_type=code
+		Nonce                string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
+		CodeChallenge        string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
+		CodeChallengeMethod  string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
+		Resource             []string          `json:"resource"`              // RFC 8707 resource indicators
+		RequestURI           string            `json:"request_uri"`           // RFC 9126 PAR
+		AuthorizationDetails json.RawMessage   `json:"authorization_details"` // RFC 9396
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -177,6 +179,16 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if !client.AreResourcesAllowed(req.Resource) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidTarget)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidTarget))
+		return
+	}
+	// RFC 9396 §6: authorization_details, when present, MUST be a
+	// JSON array of {type, ...} objects, and (if the client
+	// declared an allowlist) every element's type MUST match.
+	// Empty allowlist = parameter accepted but unconstrained
+	// (legacy compat).
+	if _, err := validateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidAuthorizationDetails)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidAuthorizationDetails, err.Error()))
 		return
 	}
 
@@ -358,13 +370,14 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID:        result.UserID,
-		Provider:  result.Provider,
-		Claims:    result.Attributes,
-		Resources: append([]string(nil), req.Resource...),
-		ClientID:  client.ID,
-		AuthTime:  time.Now(),
-		AMR:       []string{result.Provider},
+		ID:                   result.UserID,
+		Provider:             result.Provider,
+		Claims:               result.Attributes,
+		Resources:            append([]string(nil), req.Resource...),
+		ClientID:             client.ID,
+		AuthTime:             time.Now(),
+		AMR:                  []string{result.Provider},
+		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
@@ -463,18 +476,19 @@ func (s *Server) issueAuthCode(
 	ctx context.Context,
 	result *AuthResult,
 	req *struct {
-		Provider            string            `json:"provider"`
-		Credential          map[string]string `json:"credential"`
-		ClientID            string            `json:"client_id"`
-		Scope               []string          `json:"scope"`
-		State               string            `json:"state"`
-		ResponseType        string            `json:"response_type"`
-		RedirectURI         string            `json:"redirect_uri"`
-		Nonce               string            `json:"nonce"`
-		CodeChallenge       string            `json:"code_challenge"`
-		CodeChallengeMethod string            `json:"code_challenge_method"`
-		Resource            []string          `json:"resource"`
-		RequestURI          string            `json:"request_uri"`
+		Provider             string            `json:"provider"`
+		Credential           map[string]string `json:"credential"`
+		ClientID             string            `json:"client_id"`
+		Scope                []string          `json:"scope"`
+		State                string            `json:"state"`
+		ResponseType         string            `json:"response_type"`
+		RedirectURI          string            `json:"redirect_uri"`
+		Nonce                string            `json:"nonce"`
+		CodeChallenge        string            `json:"code_challenge"`
+		CodeChallengeMethod  string            `json:"code_challenge_method"`
+		Resource             []string          `json:"resource"`
+		RequestURI           string            `json:"request_uri"`
+		AuthorizationDetails json.RawMessage   `json:"authorization_details"`
 	},
 	client *Client,
 ) (string, error) {
@@ -487,17 +501,18 @@ func (s *Server) issueAuthCode(
 		ttl = DefaultAuthCodeTTL
 	}
 	entry := &AuthCode{
-		UserID:              result.UserID,
-		ClientID:            client.ID,
-		RedirectURI:         req.RedirectURI,
-		Scopes:              append([]string(nil), req.Scope...),
-		Nonce:               req.Nonce,
-		Provider:            result.Provider,
-		Attributes:          result.Attributes,
-		CodeChallenge:       req.CodeChallenge,
-		CodeChallengeMethod: req.CodeChallengeMethod,
-		Resources:           append([]string(nil), req.Resource...),
-		ExpiresAt:           time.Now().Add(ttl),
+		UserID:               result.UserID,
+		ClientID:             client.ID,
+		RedirectURI:          req.RedirectURI,
+		Scopes:               append([]string(nil), req.Scope...),
+		Nonce:                req.Nonce,
+		Provider:             result.Provider,
+		Attributes:           result.Attributes,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Resources:            append([]string(nil), req.Resource...),
+		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		ExpiresAt:            time.Now().Add(ttl),
 	}
 	if err := s.authCodeStore.Issue(ctx, code, entry); err != nil {
 		return "", fmt.Errorf("store auth code: %w", err)
@@ -854,10 +869,11 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
-			Resources: resources,
-			ClientID:  client.ID,
-			AuthTime:  time.Now(),
-			AMR:       []string{info.Provider},
+			Resources:            resources,
+			ClientID:             client.ID,
+			AuthTime:             time.Now(),
+			AMR:                  []string{info.Provider},
+			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)

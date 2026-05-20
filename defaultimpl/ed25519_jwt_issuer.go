@@ -181,6 +181,11 @@ type ed25519Payload struct {
 	AuthTime int64    `json:"auth_time,omitempty"`
 	ACR      string   `json:"acr,omitempty"`
 	AMR      []string `json:"amr,omitempty"`
+
+	// RFC 9396 — Rich Authorization Requests. Pass-through of
+	// the original `authorization_details` array as raw JSON so
+	// extension fields survive without an explicit schema here.
+	AuthorizationDetails json.RawMessage `json:"authorization_details,omitempty"`
 }
 
 // audClaim handles RFC 7519 §4.1.3's polymorphic `aud` claim. Per
@@ -275,6 +280,9 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	}
 	if len(subject.AMR) > 0 {
 		payload.AMR = append([]string(nil), subject.AMR...)
+	}
+	if len(subject.AuthorizationDetails) > 0 {
+		payload.AuthorizationDetails = append(json.RawMessage(nil), subject.AuthorizationDetails...)
 	}
 	// RFC 8707 resource indicators flow through Subject.Resources
 	// into the standard `aud` JWT claim. Resource servers verify

@@ -41,6 +41,12 @@ type oidcConfiguration struct {
 	// because handleLogin unconditionally stamps it via
 	// authzErrorBody / resolveIssuer.
 	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported"`
+
+	// RFC 9396 §13 — the union of every registered client's
+	// AllowedAuthorizationDetailsTypes. Empty / omitted when no
+	// client has declared a type allowlist (the parameter is
+	// still accepted but unconstrained).
+	AuthorizationDetailsTypesSupported []string `json:"authorization_details_types_supported,omitempty"`
 }
 
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
@@ -107,12 +113,48 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	if len(scopes) > 0 {
 		cfg.ScopesSupported = scopes
 	}
+	if rar := authorizationDetailsTypeAdvertisement(ctx.Request().Context(), s); len(rar) > 0 {
+		cfg.AuthorizationDetailsTypesSupported = rar
+	}
 	cfg.ClaimsSupported = []string{
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",
 		"nonce", "auth_time", "amr", "acr", "azp",
 	}
 
 	ctx.JSON(http.StatusOK, cfg)
+}
+
+// authorizationDetailsTypeAdvertisement collects the union of
+// every client's AllowedAuthorizationDetailsTypes. Empty result
+// = omit the discovery field (no client has declared a type
+// allowlist; the parameter remains accepted but unconstrained).
+// ClientStore.List errors are non-fatal — discovery MUST keep
+// responding even when the store is degraded.
+func authorizationDetailsTypeAdvertisement(ctx context.Context, s *Server) []string {
+	if s.clientStore == nil {
+		return nil
+	}
+	clients, err := s.clientStore.List(ctx)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	for _, c := range clients {
+		for _, t := range c.AllowedAuthorizationDetailsTypes {
+			if t != "" {
+				seen[t] = struct{}{}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for t := range seen {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // scopeAdvertisement collects scopes the server can grant. Always

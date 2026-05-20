@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"encoding/json"
 	"net/url"
 	"slices"
 	"time"
@@ -80,6 +81,16 @@ type Client struct {
 	// list = no post-logout redirect honored (the endpoint still
 	// kills the session and returns 204 + no Location header).
 	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty" yaml:"post_logout_redirect_uris,omitempty"`
+
+	// AllowedAuthorizationDetailsTypes is the RFC 9396 type
+	// allowlist for authorization_details elements. Each element
+	// in the wire array MUST have a `type` field; when this
+	// allowlist is non-empty, every element's type MUST appear in
+	// the list — non-matching requests fail with
+	// invalid_authorization_details. Empty list = no
+	// authorization_details enforcement (legacy compat); the
+	// parameter is still accepted but unconstrained.
+	AllowedAuthorizationDetailsTypes []string `json:"allowed_authorization_details_types,omitempty" yaml:"allowed_authorization_details_types,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.
@@ -210,6 +221,14 @@ type Subject struct {
 	// always empty — populated when step-up auth (RFC 9470)
 	// lands.
 	ACR string
+
+	// AuthorizationDetails is the RFC 9396 array of fine-grained
+	// authorization elements, preserved as raw JSON so extension
+	// fields pass through unmodified. Stamped into the issued
+	// token's `authorization_details` claim by RFC 9396-aware
+	// issuers; non-aware issuers ignore it. Empty = no
+	// authorization_details on the token.
+	AuthorizationDetails json.RawMessage
 }
 
 // AuthRequest holds the input for an authentication attempt.

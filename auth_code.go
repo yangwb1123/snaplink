@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -32,7 +33,16 @@ type AuthCode struct {
 	CodeChallenge       string            // PKCE challenge captured at issue (empty = no PKCE)
 	CodeChallengeMethod string            // PKCE method: "S256" | "plain"
 	Resources           []string          // RFC 8707 resource indicators (target audiences)
-	ExpiresAt           time.Time
+
+	// AuthorizationDetails carries the RFC 9396 array of
+	// fine-grained authorization elements verbatim from the
+	// authorization request to the token exchange. Preserved as
+	// raw JSON so type-specific extensions don't need to be
+	// modeled in this SDK. Empty = no authorization_details on
+	// the eventual access token.
+	AuthorizationDetails json.RawMessage
+
+	ExpiresAt time.Time
 }
 
 // IsExpired reports whether the code's lifetime has elapsed. Callers that
