@@ -165,6 +165,11 @@ const (
 	ErrInteractionRequired      = "interaction_required"
 	ErrConsentRequired          = "consent_required"
 	ErrAccountSelectionRequired = "account_selection_required"
+
+	// RFC 9449 §5.2 — invalid_dpop_proof is returned when the
+	// `DPoP` header is present but fails verification (bad
+	// signature, mismatched htm / htu / iat, replayed jti).
+	ErrInvalidDPoPProof = "invalid_dpop_proof"
 )
 
 // OIDC Core §3.1.2.1 prompt values. Space-separated combinations are
@@ -212,6 +217,14 @@ const (
 const (
 	TokenStrategyJWT     = "jwt"
 	TokenStrategySession = "session"
+)
+
+// HTTP token_type response values. "Bearer" is the RFC 6750 default;
+// "DPoP" (RFC 9449) signals the token is sender-constrained via the
+// DPoP JWK thumbprint stamped in `cnf.jkt`.
+const (
+	TokenTypeNameBearer = "Bearer"
+	TokenTypeNameDPoP   = "DPoP"
 )
 
 // PKCE (RFC 7636) method names + verifier length bounds. The RFC mandates

@@ -182,12 +182,13 @@ type ed25519Payload struct {
 	Extra    map[string]string `json:"ext,omitempty"`
 
 	// RFC 9068 §2.2 access-token claims.
-	ClientID string   `json:"client_id,omitempty"`
-	JTI      string   `json:"jti,omitempty"`
-	AuthTime int64    `json:"auth_time,omitempty"`
-	ACR      string   `json:"acr,omitempty"`
-	AMR      []string `json:"amr,omitempty"`
-	SID      string   `json:"sid,omitempty"`
+	ClientID string             `json:"client_id,omitempty"`
+	JTI      string             `json:"jti,omitempty"`
+	AuthTime int64              `json:"auth_time,omitempty"`
+	ACR      string             `json:"acr,omitempty"`
+	AMR      []string           `json:"amr,omitempty"`
+	SID      string             `json:"sid,omitempty"`
+	CNF      *confirmationClaim `json:"cnf,omitempty"`
 
 	// RFC 9396 — Rich Authorization Requests. Pass-through of
 	// the original `authorization_details` array as raw JSON so
@@ -198,6 +199,14 @@ type ed25519Payload struct {
 	// by the token-exchange grant when an actor_token is
 	// presented; nil for direct (non-delegated) tokens.
 	Act *actClaim `json:"act,omitempty"`
+}
+
+// confirmationClaim is RFC 7800 §3.1's `cnf` JSON object. RFC 9449
+// §6 uses the `jkt` member to carry a DPoP key's JWK thumbprint;
+// other PoP mechanisms (mTLS via RFC 8705) populate `x5t#S256`
+// instead — that field is reserved here for the future mTLS commit.
+type confirmationClaim struct {
+	JKT string `json:"jkt,omitempty"`
 }
 
 // actClaim is the wire shape of `act`. Per RFC 8693 §4.1 the
@@ -325,6 +334,9 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 		JTI:      jti,
 		ACR:      subject.ACR,
 		SID:      subject.SID,
+	}
+	if subject.ConfirmationJKT != "" {
+		payload.CNF = &confirmationClaim{JKT: subject.ConfirmationJKT}
 	}
 	if !subject.AuthTime.IsZero() {
 		payload.AuthTime = subject.AuthTime.Unix()
@@ -458,6 +470,9 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 		ACR:       p.ACR,
 		AMR:       append([]string(nil), p.AMR...),
 		SID:       p.SID,
+	}
+	if p.CNF != nil {
+		claims.ConfirmationJKT = p.CNF.JKT
 	}
 	if p.AuthTime > 0 {
 		claims.AuthTime = time.Unix(p.AuthTime, 0)

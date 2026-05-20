@@ -105,6 +105,12 @@ type oidcConfiguration struct {
 	// available (the IDTokenIssuer doesn't implement UserinfoSigner).
 	UserinfoSigningAlgValuesSupported []string `json:"userinfo_signing_alg_values_supported,omitempty"`
 
+	// RFC 9449 §5.1 — JWS algs accepted on the DPoP proof
+	// header. Always EdDSA today (matches every other JWT path
+	// on this server). Presence of the field signals the AS
+	// supports DPoP at all.
+	DPoPSigningAlgValuesSupported []string `json:"dpop_signing_alg_values_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -252,6 +258,10 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",
 		"nonce", "auth_time", "amr", "acr", "azp",
 	}
+	// DPoP advertisement is unconditional — the handler accepts
+	// the `DPoP` header on /token whenever it's present; there's
+	// no opt-in store to wire.
+	cfg.DPoPSigningAlgValuesSupported = []string{"EdDSA"}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced

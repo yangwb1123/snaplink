@@ -265,6 +265,12 @@ type TokenClaims struct {
 	// the loop).
 	SID string `json:"sid,omitempty"`
 
+	// ConfirmationJKT is the RFC 9449 DPoP JWK thumbprint when
+	// the token was issued bound to a DPoP key. Empty for
+	// unbound bearer tokens. Resource servers receiving this
+	// token MUST verify a fresh DPoP proof's thumbprint matches.
+	ConfirmationJKT string `json:"-"`
+
 	// Actor is the validated RFC 8693 §4.1 `act` claim, populated
 	// when the token carries delegation provenance. Nil when the
 	// token represents direct subject access (no delegation in
@@ -354,6 +360,14 @@ type Subject struct {
 	// Empty = no session anchor (client_credentials, service
 	// flows, etc.).
 	SID string
+
+	// ConfirmationJKT is the RFC 9449 DPoP JWK thumbprint that
+	// binds this access token to a specific public key. When non-
+	// empty, the issued JWT carries `cnf: {jkt: <value>}` (RFC
+	// 7800) and the response's token_type flips from Bearer to
+	// DPoP — a resource server checks for a matching DPoP proof
+	// on every protected-resource request.
+	ConfirmationJKT string
 
 	// Actor (RFC 8693 §4.1) names the party acting on behalf of
 	// the Subject for delegation chains. When set, the issued

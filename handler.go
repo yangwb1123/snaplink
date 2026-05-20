@@ -1152,6 +1152,28 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		return
 	}
 
+	// RFC 9449 — DPoP. When the request carries a `DPoP` header,
+	// validate the proof and stash the resulting JKT so the grant
+	// branches below can bind the issued access token to the key.
+	// Absence of the header keeps the legacy bearer-token path —
+	// DPoP is opt-in per request, never required by this server.
+	var dpopJKT string
+	if proof := ctx.Request().Header.Get(HeaderDPoP); proof != "" {
+		binding, err := verifyDPoPProof(
+			ctx.Request().Context(),
+			proof,
+			ctx.Request().Method,
+			requestURLForDPoP(ctx.Request()),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			s.logger.Error("dpop proof failed", "error", err)
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidDPoPProof))
+			return
+		}
+		dpopJKT = binding.JKT
+	}
+
 	var scopes []string
 	if req.Scope != "" {
 		scopes = strings.Split(req.Scope, " ")
@@ -1228,6 +1250,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
 			SID:                  info.SID,
 			TTL:                  client.AccessTokenTTL,
+			ConfirmationJKT:      dpopJKT,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1238,7 +1261,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		s.recordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
 		resp := map[string]any{
 			KeyAccessToken:   token.AccessToken,
-			KeyTokenType:     token.TokenType,
+			KeyTokenType:     dpopTokenTypeOr(token.TokenType, dpopJKT),
 			KeyExpiresIn:     token.ExpiresIn,
 			KeyScope:         token.Scope,
 			KeyTokenStrategy: strategy,
@@ -1349,8 +1372,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
 			// SID is locked to the original authorization's
 			// session — rotation never opens a new session.
-			SID: info.SID,
-			TTL: client.AccessTokenTTL,
+			SID:             info.SID,
+			TTL:             client.AccessTokenTTL,
+			ConfirmationJKT: dpopJKT,
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1404,7 +1428,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// Sub. No end-user auth event, hence no AuthTime/AMR.
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: client.ID, Resources: req.Resource, ClientID: client.ID,
-			TTL: client.AccessTokenTTL,
+			TTL:             client.AccessTokenTTL,
+			ConfirmationJKT: dpopJKT,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1414,7 +1439,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		s.recordTokenIssued(ctx, client.ID, strategy, client.ID)
 		ctx.JSON(http.StatusOK, map[string]any{
 			KeyAccessToken:   token.AccessToken,
-			KeyTokenType:     token.TokenType,
+			KeyTokenType:     dpopTokenTypeOr(token.TokenType, dpopJKT),
 			KeyExpiresIn:     token.ExpiresIn,
 			KeyScope:         token.Scope,
 			KeyTokenStrategy: strategy,
