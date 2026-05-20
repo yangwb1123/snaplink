@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,6 +50,7 @@ type Server struct {
 	metrics              *metrics.Metrics
 	rateLimitPolicy      *ratelimit.Policy
 	bodyLimit            int64
+	bodyLimitByPath      map[string]int64 // exact-prefix overrides; longest prefix wins
 	readyChecks          []namedReadyCheck
 	tracingOperation     string
 	corsPolicy           *cors.Policy
@@ -686,8 +688,33 @@ func WithTracing(operation string) Option {
 // protection from: pathological JSON bombs that swallow process
 // memory, and slow-loris reads where an attacker dribbles bytes
 // forever.
+//
+// For endpoints that need a different cap (e.g. /par accepts JAR
+// JWTs that legitimately exceed the global default), combine with
+// WithBodyLimitForPath.
 func WithBodyLimit(maxBytes int64) Option {
 	return func(s *Server) { s.bodyLimit = maxBytes }
+}
+
+// WithBodyLimitForPath overrides the body cap for requests whose URL
+// path matches the given prefix. Useful for /par (accepts a signed
+// JAR JWT — encrypted JARs especially can run 8-32 KiB while the
+// rest of the SSO surface stays under 4 KiB) or /scim/v2/Bulk
+// (legitimately large). Longest-matching prefix wins; falls back to
+// WithBodyLimit's global value (or unlimited when neither is set).
+//
+// Pass max == 0 to make a specific path unlimited even while the
+// global limit is in effect (escape hatch — use sparingly).
+//
+// May be called multiple times to register several overrides; later
+// calls for the same prefix replace earlier values.
+func WithBodyLimitForPath(prefix string, maxBytes int64) Option {
+	return func(s *Server) {
+		if s.bodyLimitByPath == nil {
+			s.bodyLimitByPath = map[string]int64{}
+		}
+		s.bodyLimitByPath[prefix] = maxBytes
+	}
 }
 
 // WithRateLimit installs the ratelimit middleware in the server's
@@ -812,8 +839,8 @@ func (s *Server) Handler() http.Handler {
 		// preflight floods.
 		inner = cors.Middleware(*s.corsPolicy)(inner)
 	}
-	if s.bodyLimit > 0 {
-		inner = bodyLimitMiddleware(s.bodyLimit)(inner)
+	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {
+		inner = bodyLimitMiddleware(s.bodyLimit, s.bodyLimitByPath)(inner)
 	}
 	if s.rateLimitPolicy != nil {
 		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
@@ -887,9 +914,45 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 // Content-Length when set so over-sized requests fail before allocating
 // any buffers. Chunked requests fall back to MaxBytesReader's
 // streaming guard.
-func bodyLimitMiddleware(max int64) func(http.Handler) http.Handler {
+//
+// `byPath` overrides the global default per URL prefix (longest match
+// wins). An override of 0 means "unlimited for this path" — escape
+// hatch for endpoints that legitimately accept large bodies even
+// while the global cap is in effect.
+func bodyLimitMiddleware(defaultMax int64, byPath map[string]int64) func(http.Handler) http.Handler {
+	// Pre-sort the override prefixes by descending length so the
+	// hot path picks the longest match without re-sorting per
+	// request.
+	type prefixCap struct {
+		prefix string
+		max    int64
+	}
+	prefixes := make([]prefixCap, 0, len(byPath))
+	for p, m := range byPath {
+		prefixes = append(prefixes, prefixCap{prefix: p, max: m})
+	}
+	sort.Slice(prefixes, func(i, j int) bool {
+		return len(prefixes[i].prefix) > len(prefixes[j].prefix)
+	})
+
+	resolveMax := func(path string) int64 {
+		for _, pc := range prefixes {
+			if strings.HasPrefix(path, pc.prefix) {
+				return pc.max
+			}
+		}
+		return defaultMax
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			max := resolveMax(r.URL.Path)
+			if max <= 0 {
+				// Unlimited — either no global cap and no override,
+				// or an explicit "0" override (escape hatch).
+				next.ServeHTTP(w, r)
+				return
+			}
 			if r.ContentLength > max {
 				w.Header().Set(HeaderContentType, ContentTypeJSON)
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
