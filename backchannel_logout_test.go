@@ -354,6 +354,43 @@ func TestBCL_DiscoveryAdvertisesSupport(t *testing.T) {
 	}
 }
 
+func TestBCL_EndSessionAlsoFiresNotification(t *testing.T) {
+	// /end_session is the redirect-style mirror of POST /logout.
+	// When a user logs out via that path, the back-channel
+	// notification MUST fire for the client identified by the
+	// id_token_hint. Without this, federated session
+	// termination only works half the time (POST-style only).
+	n := &captureNotifier{}
+	srv, _, _ := newBCLServer(t, "https://app.example.com/bc-logout", n)
+	tok := loginBCL(t, srv)
+
+	// validateAnyToken accepts any AS-signed token; we use the
+	// access token in place of an id_token_hint — the carrier
+	// shape is the same and handleEndSession identifies user +
+	// client from the validated claims.
+	endSessionURL := srv.URL + "/end_session?id_token_hint=" + tok
+	resp, err := http.Get(endSessionURL)
+	if err != nil {
+		t.Fatalf("end_session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s want 204 (no post_logout_redirect_uri)", resp.StatusCode, body)
+	}
+
+	calls := n.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 notifier call from /end_session, got %d", len(calls))
+	}
+	if calls[0].URI != "https://app.example.com/bc-logout" {
+		t.Errorf("URI = %q want client's BackchannelLogoutURI", calls[0].URI)
+	}
+	if calls[0].LogoutToken == "" {
+		t.Errorf("LogoutToken empty")
+	}
+}
+
 func TestBCL_NotWired_NoNotification(t *testing.T) {
 	// Server with NO WithBackchannelLogout option — even when the
 	// client has BackchannelLogoutURI set, no notification fires.

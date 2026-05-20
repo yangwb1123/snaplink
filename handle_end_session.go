@@ -67,8 +67,16 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 			return
 		}
 		userID = claims.Subject
-		if len(claims.Audience) > 0 && s.clientStore != nil {
-			if c, err := s.clientStore.Get(ctx.Request().Context(), claims.Audience[0]); err == nil {
+		// Resolve the client by RFC 9068 client_id claim (preferred,
+		// first-class) or fall back to the first audience entry (the
+		// pre-9068 heuristic) — matches handleLogout's lookup so
+		// behavior is consistent across the two logout endpoints.
+		clientLookupID := claims.ClientID
+		if clientLookupID == "" && len(claims.Audience) > 0 {
+			clientLookupID = claims.Audience[0]
+		}
+		if clientLookupID != "" && s.clientStore != nil {
+			if c, err := s.clientStore.Get(ctx.Request().Context(), clientLookupID); err == nil {
 				client = c
 			}
 		}
@@ -93,6 +101,16 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 		if idx, ok := s.refreshTokenStore.(RefreshTokenSubjectIndex); ok {
 			_, _ = idx.DeleteAllForSubject(ctx.Request().Context(), userID, client.ID)
 		}
+	}
+
+	// OIDC Back-Channel Logout 1.0 — mirror of the /logout
+	// behavior. When the user logs out via the redirect-style
+	// /end_session, the RP whose id_token_hint was presented
+	// should also be notified via back-channel so its local
+	// session can be torn down. No-op when BCL isn't wired or
+	// the client doesn't declare a backchannel_logout_uri.
+	if userID != "" && client != nil {
+		s.sendBackchannelLogout(ctx, client, userID)
 	}
 
 	if userID != "" {
