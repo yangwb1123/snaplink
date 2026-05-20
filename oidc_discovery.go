@@ -33,6 +33,16 @@ type oidcConfiguration struct {
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+
+	// RFC 8414 §2 + RFC 7662 §6: same set of client auth methods
+	// the introspection endpoint accepts. The /token + /par +
+	// /introspect + /revoke endpoints all share the same auth
+	// pipeline in this server, so we advertise the same list on
+	// each.
+	IntrospectionEndpointAuthMethodsSupported []string `json:"introspection_endpoint_auth_methods_supported,omitempty"`
+	// RFC 8414 §2 + RFC 7009 §4.1.2: same set for the revocation
+	// endpoint.
+	RevocationEndpointAuthMethodsSupported []string `json:"revocation_endpoint_auth_methods_supported,omitempty"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
 	ClaimsSupported                   []string `json:"claims_supported,omitempty"`
 
@@ -192,6 +202,14 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 			"client_secret_basic",
 			"client_secret_post",
 			"private_key_jwt", // RFC 7521 + 7523
+		},
+		// Introspection + revocation share the same client-auth
+		// pipeline as /token, so advertise the same list.
+		IntrospectionEndpointAuthMethodsSupported: []string{
+			"client_secret_basic", "client_secret_post", "private_key_jwt",
+		},
+		RevocationEndpointAuthMethodsSupported: []string{
+			"client_secret_basic", "client_secret_post", "private_key_jwt",
 		},
 		CodeChallengeMethodsSupported:     []string{PKCEMethodS256, PKCEMethodPlain},
 		// RFC 9207 §3: this server always includes `iss` in
