@@ -155,6 +155,13 @@ type oidcConfiguration struct {
 	// inferring the default.
 	ClaimTypesSupported []string `json:"claim_types_supported,omitempty"`
 
+	// OIDC Core §9 — JWS algorithms the AS accepts on the
+	// `client_assertion` JWT for `private_key_jwt` client
+	// authentication. RPs introspect this to know which alg to
+	// sign their assertion with. Matches the same EdDSA-only
+	// surface JAR + DPoP advertise.
+	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -327,6 +334,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.OpTosURI = s.opTosURI
 	cfg.ServiceDocumentation = s.serviceDocumentation
 	cfg.ClaimTypesSupported = []string{"normal"}
+	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced
