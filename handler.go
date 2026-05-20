@@ -1496,12 +1496,21 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 
 	tokenString := bearerToken(ctx.Request())
 	if tokenString == "" {
+		// RFC 6750 §3: a 401 from a protected resource MUST carry
+		// a WWW-Authenticate challenge naming the scheme + realm.
+		// The "no credentials" case omits error parameters per §3.1
+		// (the request didn't try to authenticate).
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
 		return
 	}
 
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
 	if err != nil {
+		// RFC 6750 §3.1: token-validation failures carry
+		// error="invalid_token" in the challenge so the RP can
+		// distinguish "I need to refresh" from "I forgot to send".
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
@@ -1515,6 +1524,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// response probing.
 	if err := s.verifyDPoPBearer(ctx, claims); err != nil {
 		s.logger.Error("dpop bearer verification failed", "error", err, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
@@ -1524,6 +1534,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// shape collapse to invalid_token.
 	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
 		s.logger.Error("mtls bearer verification failed", "error", err, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
