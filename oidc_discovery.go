@@ -73,6 +73,13 @@ type oidcConfiguration struct {
 	// RP needs to disambiguate concurrent sessions.
 	FrontchannelLogoutSessionSupported bool `json:"frontchannel_logout_session_supported,omitempty"`
 
+	// OIDC Core §3.1.2.1 — the prompt values this AS understands.
+	// "none" enables silent renewal via id_token_hint; the others
+	// are accepted but currently lower the request to its default
+	// interactive path (login/consent/select_account UIs aren't
+	// rendered by this server, only their downstream signaling).
+	PromptValuesSupported []string `json:"prompt_values_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -168,6 +175,12 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",
 		"nonce", "auth_time", "amr", "acr", "azp",
 	}
+	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
+	// run silent renewal via id_token_hint. The other prompt
+	// values (login / consent / select_account) aren't surfaced
+	// today because this server doesn't render those UIs itself;
+	// the RP is responsible for the interactive flow.
+	cfg.PromptValuesSupported = []string{PromptNone}
 
 	ctx.JSON(http.StatusOK, cfg)
 }

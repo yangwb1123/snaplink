@@ -84,6 +84,8 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		RequestURI           string            `json:"request_uri"`           // RFC 9126 PAR
 		AuthorizationDetails json.RawMessage   `json:"authorization_details"` // RFC 9396
 		Request              string            `json:"request"`               // RFC 9101 JAR
+		Prompt               string            `json:"prompt"`                // OIDC Core §3.1.2.1: space-separated none|login|consent|select_account
+		IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -144,6 +146,52 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			// scope/resource/redirect_uri override the redirect-time
 			// parameters).
 			req.AuthorizationDetails = cloneRawJSON(stored.AuthorizationDetails)
+		}
+	}
+
+	// OIDC Core §3.1.2.1 prompt parameter — parse early so the
+	// silent-renewal branch can override the providers-list probe
+	// and the credential-validation pipeline alike. prompt=none
+	// stays in the iframe contract (no UI, no credentials): the
+	// only valid response is either a renewed token (if a session
+	// is live) or login_required (§3.1.2.6).
+	prompts := parsePromptValues(req.Prompt)
+	if promptHasNone(prompts) {
+		// Silent renewal needs the client resolved to verify
+		// id_token_hint binding. Mirror the validation guards the
+		// post-probe path runs so a misconfigured caller still
+		// gets a coherent error.
+		if req.ClientID == "" {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMissingClientID))
+			return
+		}
+		if s.clientStore == nil {
+			ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
+			return
+		}
+		c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidClient))
+			return
+		}
+		if !c.Active {
+			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
+			return
+		}
+		if !clientTenantOK(ctx, c) {
+			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
+			return
+		}
+		if s.handleSilentRenewal(ctx, prompts, silentRenewalRequest{
+			ClientID:             req.ClientID,
+			Scope:                req.Scope,
+			State:                req.State,
+			Nonce:                req.Nonce,
+			Resource:             req.Resource,
+			AuthorizationDetails: req.AuthorizationDetails,
+			IDTokenHint:          req.IDTokenHint,
+		}, c) {
+			return
 		}
 	}
 
@@ -576,6 +624,8 @@ func (s *Server) issueAuthCode(
 		RequestURI           string            `json:"request_uri"`
 		AuthorizationDetails json.RawMessage   `json:"authorization_details"`
 		Request              string            `json:"request"`
+		Prompt               string            `json:"prompt"`
+		IDTokenHint          string            `json:"id_token_hint"`
 	},
 	client *Client,
 ) (string, error) {

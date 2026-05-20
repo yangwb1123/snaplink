@@ -39,6 +39,10 @@ exact emission site.
 | `unsupported_grant_type`              | 400  | `/token` received an unrecognized `grant_type`                     | Use a supported grant type                 |
 | `invalid_callback`                    | 400  | OAuth callback body malformed                                      | Restart the auth flow                      |
 | `callback_failed`                     | 401  | OAuth provider rejected the exchange                               | Restart the auth flow                      |
+| `login_required`                      | 400  | `prompt=none` was requested but no live session can fulfill the silent renewal (missing/bad `id_token_hint`, session ended, or hint bound to a different client) | Fall back to the visible login flow        |
+| `interaction_required`                | 400  | (reserved) `prompt=none` set when the AS needs UI interaction to proceed                                            | Fall back to the visible login flow        |
+| `consent_required`                    | 400  | (reserved) `prompt=none` set when consent UI is required                                                            | Fall back to the visible consent step      |
+| `account_selection_required`          | 400  | (reserved) `prompt=none` set when account-picker UI is required                                                     | Fall back to the visible chooser           |
 
 ### Code delivery (`/auth/send-code`)
 

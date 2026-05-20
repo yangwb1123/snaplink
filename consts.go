@@ -157,6 +157,23 @@ const (
 	ErrSlowDown                = "slow_down"
 	ErrAccessDenied            = "access_denied"
 	ErrExpiredToken            = "expired_token"
+
+	// OIDC Core §3.1.2.6 authentication error responses returned
+	// when a prompt parameter constrains the AS's ability to
+	// surface the necessary interaction.
+	ErrLoginRequired            = "login_required"
+	ErrInteractionRequired      = "interaction_required"
+	ErrConsentRequired          = "consent_required"
+	ErrAccountSelectionRequired = "account_selection_required"
+)
+
+// OIDC Core §3.1.2.1 prompt values. Space-separated combinations are
+// allowed by the spec EXCEPT for "none" which MUST appear alone.
+const (
+	PromptNone          = "none"
+	PromptLogin         = "login"
+	PromptConsent       = "consent"
+	PromptSelectAccount = "select_account"
 )
 
 // Status strings returned in successful responses.
