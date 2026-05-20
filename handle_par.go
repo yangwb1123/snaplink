@@ -65,6 +65,8 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ResponseMode         string          `json:"response_mode"`         // OIDC Form Post 1.0
 		ACRValues            string          `json:"acr_values"`            // OIDC Core §3.1.2.1
 		UILocales            string          `json:"ui_locales"`            // OIDC Core §3.1.2.1
+		ClientAssertion      string          `json:"client_assertion"`      // RFC 7521 + 7523
+		ClientAssertionType  string          `json:"client_assertion_type"` // RFC 7521 + 7523
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -74,6 +76,31 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		req.ClientID = id
 		req.ClientSecret = secret
 	}
+
+	// RFC 7521/7523 — JWT bearer client authentication is accepted
+	// on /par just like /token. When the assertion is supplied, the
+	// JWT's `sub` claim is the authoritative client identity (form
+	// `client_id` MUST agree if supplied at all).
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+		req.ClientID = assertedID
+	}
+
 	if req.ClientID == "" {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingClientID))
 		return
@@ -92,9 +119,13 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
 		return
 	}
-	if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
-		return
+	// Skip client_secret validation when the JWT assertion already
+	// proved client identity (RFC 7521 §4.2 forbids requiring both).
+	if req.ClientAssertion == "" {
+		if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
+			return
+		}
 	}
 	if req.RedirectURI != "" && !client.IsRedirectURIValid(req.RedirectURI) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))

@@ -22,10 +22,12 @@ func (s *Server) handleRevoke(ctx HandlerContext) {
 	}
 
 	var req struct {
-		Token         string `json:"token"`
-		TokenTypeHint string `json:"token_type_hint"`
-		ClientID      string `json:"client_id"`
-		ClientSecret  string `json:"client_secret"`
+		Token               string `json:"token"`
+		TokenTypeHint       string `json:"token_type_hint"`
+		ClientID            string `json:"client_id"`
+		ClientSecret        string `json:"client_secret"`
+		ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
+		ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -36,7 +38,31 @@ func (s *Server) handleRevoke(ctx HandlerContext) {
 		req.ClientSecret = secret
 	}
 
-	if err := s.authenticateIntrospectionClient(ctx, req.ClientID, req.ClientSecret); err != nil {
+	// RFC 7521/7523 JWT bearer client auth on /token/revoke.
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+		req.ClientID = assertedID
+		c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+		if err != nil || c == nil || !c.Active || !clientTenantOK(ctx, c) {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+	} else if err := s.authenticateIntrospectionClient(ctx, req.ClientID, req.ClientSecret); err != nil {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
 		return
 	}
