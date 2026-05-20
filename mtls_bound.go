@@ -74,6 +74,59 @@ func certificateThumbprintS256(cert *x509.Certificate) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// verifyMTLSBearer enforces the resource-side half of RFC 8705 §3.
+// Mirror of verifyDPoPBearer: when the access token carries
+// cnf.x5t#S256, the inbound request MUST be on a TLS connection
+// whose client cert has the matching SHA-256 thumbprint.
+//
+// Returns nil when:
+//   - the token isn't mTLS-bound (no cnf.x5t#S256), OR
+//   - the inbound cert thumbprint equals the bound value.
+//
+// Returns an error mapped to invalid_token (same wire shape as
+// "invalid bearer") on mismatch — oracle-resistance: probes can't
+// distinguish unbound from bound-but-mismatched tokens.
+//
+// Skips the check when no ClientCertExtractor is wired: an
+// operator that minted mTLS-bound tokens via one deployment and
+// then disabled the extractor would otherwise lock every bound
+// token out. Operators changing mTLS posture should revoke
+// existing bound tokens explicitly.
+func (s *Server) verifyMTLSBearer(ctx HandlerContext, claims *TokenClaims) error {
+	if claims == nil || claims.ConfirmationX5TS256 == "" {
+		return nil
+	}
+	if s.clientCertExtractor == nil {
+		// No extractor wired — see method doc for the
+		// trade-off. The cert is still required on the wire
+		// for any HTTP framework that auto-populates r.TLS,
+		// just not validated.
+		return nil
+	}
+	cert, ok := s.clientCertExtractor.ExtractClientCert(ctx.Request())
+	if !ok || cert == nil {
+		return errCertRequired
+	}
+	got := certificateThumbprintS256(cert)
+	if got != claims.ConfirmationX5TS256 {
+		return errCertThumbprintMismatch
+	}
+	return nil
+}
+
+// Sentinel errors so logging can distinguish the failure modes
+// even though the wire collapses them to invalid_token.
+var (
+	errCertRequired           = httpError("mtls: token bound but no client cert presented")
+	errCertThumbprintMismatch = httpError("mtls: cert thumbprint does not match cnf.x5t#S256")
+)
+
+// httpError is a stdlib-free sentinel-error type kept local to
+// this file (avoids importing errors just for two constants).
+type httpError string
+
+func (e httpError) Error() string { return string(e) }
+
 // mtlsBoundTokenTypeOr returns the appropriate token_type response
 // value. Today, mTLS-bound tokens still report "Bearer" per RFC
 // 8705 §3 (it does NOT introduce a new type; the binding is implicit

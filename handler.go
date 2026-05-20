@@ -1498,6 +1498,15 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
+	// RFC 8705 §3 — symmetric mTLS resource verification. When
+	// the token carries cnf.x5t#S256, the inbound TLS connection's
+	// client cert MUST have the matching thumbprint. Same wire-
+	// shape collapse to invalid_token.
+	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
+		s.logger.Error("mtls bearer verification failed", "error", err, "subject", claims.Subject)
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
 
 	user, err := s.userProvider.GetByID(ctx.Request().Context(), claims.Subject)
 	if err != nil {
