@@ -162,6 +162,13 @@ type oidcConfiguration struct {
 	// surface JAR + DPoP advertise.
 	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
 
+	// Same JWS algorithm advertisement for the introspect /
+	// revoke / PAR endpoints — all share the JWT-assertion path
+	// so they accept the same alg set.
+	IntrospectionEndpointAuthSigningAlgValuesSupported            []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
+	RevocationEndpointAuthSigningAlgValuesSupported               []string `json:"revocation_endpoint_auth_signing_alg_values_supported,omitempty"`
+	PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported []string `json:"pushed_authorization_request_endpoint_auth_signing_alg_values_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -335,6 +342,11 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.ServiceDocumentation = s.serviceDocumentation
 	cfg.ClaimTypesSupported = []string{"normal"}
 	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	cfg.RevocationEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	if s.parStore != nil {
+		cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced
