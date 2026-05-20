@@ -87,6 +87,7 @@ type jarPayload struct {
 	CodeChallengeMethod  string          `json:"code_challenge_method"`
 	Resource             []string        `json:"resource"`
 	AuthorizationDetails json.RawMessage `json:"authorization_details"`
+	LoginHint            string          `json:"login_hint"`
 
 	// JWT control claims for §6.3 validation.
 	Aud audClaim `json:"aud,omitempty"`

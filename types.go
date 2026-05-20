@@ -319,6 +319,15 @@ type AuthRequest struct {
 	ClientID   string
 	Scope      []string
 	State      string
+
+	// LoginHint is the OIDC Core §3.1.2.1 `login_hint` parameter
+	// — a hint to the AS about the End-User's identifier (email,
+	// phone, account name). Authenticators that render UIs use
+	// it to pre-fill the username field; password / code
+	// authenticators MAY validate that the supplied credential
+	// matches the hint and reject mismatches. Empty when the
+	// RP didn't supply a hint.
+	LoginHint string
 }
 
 // AuthResult holds the result of a successful authentication.

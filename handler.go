@@ -87,6 +87,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		Prompt               string            `json:"prompt"`                // OIDC Core §3.1.2.1: space-separated none|login|consent|select_account
 		IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
 		MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
+		LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -147,6 +148,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			// scope/resource/redirect_uri override the redirect-time
 			// parameters).
 			req.AuthorizationDetails = cloneRawJSON(stored.AuthorizationDetails)
+		}
+		if stored.LoginHint != "" {
+			req.LoginHint = stored.LoginHint
 		}
 	}
 
@@ -273,6 +277,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if len(jar.AuthorizationDetails) > 0 {
 			req.AuthorizationDetails = cloneRawJSON(jar.AuthorizationDetails)
 		}
+		if jar.LoginHint != "" {
+			req.LoginHint = jar.LoginHint
+		}
 	}
 
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
@@ -325,6 +332,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		ClientID:   req.ClientID,
 		Scope:      req.Scope,
 		State:      req.State,
+		LoginHint:  req.LoginHint,
 	})
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
@@ -632,6 +640,7 @@ func (s *Server) issueAuthCode(
 		Prompt               string            `json:"prompt"`
 		IDTokenHint          string            `json:"id_token_hint"`
 		MaxAge               *int64            `json:"max_age"`
+		LoginHint            string            `json:"login_hint"`
 	},
 	client *Client,
 ) (string, error) {

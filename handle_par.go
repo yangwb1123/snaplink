@@ -61,6 +61,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		CodeChallengeMethod  string          `json:"code_challenge_method"`
 		Resource             []string        `json:"resource"`
 		AuthorizationDetails json.RawMessage `json:"authorization_details"` // RFC 9396
+		LoginHint            string          `json:"login_hint"`            // OIDC Core §3.1.2.1
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -124,6 +125,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		CodeChallengeMethod:  req.CodeChallengeMethod,
 		Resource:             req.Resource,
 		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		LoginHint:            req.LoginHint,
 		ExpiresAt:            time.Now().Add(ttl),
 	})
 	if err != nil {

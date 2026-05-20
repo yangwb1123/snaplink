@@ -51,6 +51,7 @@ func (m *MemoryPARStore) Issue(_ context.Context, req *sso.PARRequest) (string, 
 		CodeChallengeMethod:  req.CodeChallengeMethod,
 		Resource:             append([]string(nil), req.Resource...),
 		AuthorizationDetails: cloneRawBytes(req.AuthorizationDetails),
+		LoginHint:            req.LoginHint,
 		ExpiresAt:            req.ExpiresAt,
 	}
 	m.mu.Lock()

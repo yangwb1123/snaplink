@@ -32,7 +32,15 @@ type PARRequest struct {
 	// request just like Scope / Resource. Empty = client did not
 	// push any authorization_details (legacy PAR caller).
 	AuthorizationDetails json.RawMessage
-	ExpiresAt            time.Time
+
+	// LoginHint is the OIDC Core §3.1.2.1 `login_hint` value
+	// pushed by the client at PAR time. Threaded into /auth/login
+	// when the request_uri is consumed (PAR's payload beats any
+	// caller-supplied login_hint at the redirect, same precedence
+	// as scope / redirect_uri). Empty = no hint pushed.
+	LoginHint string
+
+	ExpiresAt time.Time
 }
 
 // IsExpired reports whether the PAR record's lifetime has elapsed.
