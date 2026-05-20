@@ -155,6 +155,15 @@ type oidcConfiguration struct {
 	// inferring the default.
 	ClaimTypesSupported []string `json:"claim_types_supported,omitempty"`
 
+	// OIDC Core §3.1.2.1 `display` parameter — values RPs may pass
+	// to hint the auth UI form factor (page / popup / touch / wap).
+	// This server renders no chrome itself (authenticators own the
+	// UI), but advertises "page" — the spec default — so OIDC
+	// conformance suites don't have to infer it. RPs requesting
+	// other values get the same default path; the parameter is
+	// accepted on the wire without being acted on.
+	DisplayValuesSupported []string `json:"display_values_supported,omitempty"`
+
 	// OIDC Core §9 — JWS algorithms the AS accepts on the
 	// `client_assertion` JWT for `private_key_jwt` client
 	// authentication. RPs introspect this to know which alg to
@@ -341,6 +350,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.OpTosURI = s.opTosURI
 	cfg.ServiceDocumentation = s.serviceDocumentation
 	cfg.ClaimTypesSupported = []string{"normal"}
+	cfg.DisplayValuesSupported = []string{"page"}
 	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
 	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
 	cfg.RevocationEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}

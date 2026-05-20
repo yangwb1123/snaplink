@@ -215,6 +215,25 @@ func TestDiscovery_ClaimsAdvertised(t *testing.T) {
 	}
 }
 
+func TestDiscovery_DisplayValuesAdvertised(t *testing.T) {
+	srv := newDiscoveryServer(t, true)
+	doc := fetchDiscovery(t, srv)
+	dv, _ := doc["display_values_supported"].([]any)
+	if len(dv) == 0 {
+		t.Fatal("display_values_supported missing")
+	}
+	found := false
+	for _, v := range dv {
+		if v == "page" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("display_values_supported = %v, want to contain \"page\"", dv)
+	}
+}
+
 func TestDiscovery_DegradesGracefullyOnEmptyClientStore(t *testing.T) {
 	// Server with no ClientStore — discovery MUST still respond, just
 	// without the client-derived scopes.
