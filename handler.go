@@ -490,7 +490,8 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	refreshTokenOut := token.RefreshToken
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource)
+			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource,
+			req.AuthorizationDetails)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
@@ -678,6 +679,7 @@ func (s *Server) issueRefreshToken(
 	attributes map[string]string,
 	familyID string,
 	resources []string,
+	authDetails json.RawMessage,
 ) (string, error) {
 	token, err := generateAuthCodeBytes() // same 32-byte base64url generator
 	if err != nil {
@@ -699,15 +701,16 @@ func (s *Server) issueRefreshToken(
 	}
 	now := time.Now()
 	entry := &RefreshToken{
-		UserID:     userID,
-		ClientID:   clientID,
-		Provider:   provider,
-		Scopes:     append([]string(nil), scopes...),
-		Attributes: attributes,
-		IssuedAt:   now,
-		ExpiresAt:  now.Add(ttl),
-		FamilyID:   familyID,
-		Resources:  append([]string(nil), resources...),
+		UserID:               userID,
+		ClientID:             clientID,
+		Provider:             provider,
+		Scopes:               append([]string(nil), scopes...),
+		Attributes:           attributes,
+		IssuedAt:             now,
+		ExpiresAt:            now.Add(ttl),
+		FamilyID:             familyID,
+		Resources:            append([]string(nil), resources...),
+		AuthorizationDetails: cloneRawJSON(authDetails),
 	}
 	if err := s.refreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)
@@ -967,7 +970,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		if s.refreshTokenStore != nil {
 			rt, err := s.issueRefreshToken(ctx.Request().Context(),
-				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources)
+				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
+				info.AuthorizationDetails)
 			if err != nil {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
@@ -1063,6 +1067,11 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			// login, not the refresh exchange. AMR likewise stays
 			// the original method.
 			AMR: []string{info.Provider},
+			// RFC 9396: the authorization_details grant captured
+			// at the original authorization survives the rotation
+			// — refreshed tokens MUST carry the same fine-grained
+			// authorization the user already consented to.
+			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1075,7 +1084,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// future reuse anywhere in the chain. A presented-twice old
 		// token now fails as invalid_grant (and kills the family).
 		newRefresh, err := s.issueRefreshToken(ctx.Request().Context(),
-			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources)
+			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
+			info.AuthorizationDetails)
 		if err != nil {
 			s.logger.Error("refresh token rotation failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))

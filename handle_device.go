@@ -305,8 +305,11 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		KeyTokenStrategy: strategy,
 	}
 	if s.refreshTokenStore != nil {
+		// Device grant doesn't accept authorization_details today; pass
+		// nil so refresh rotations don't fabricate a binding the user
+		// never consented to.
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources)
+			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err)
 		} else {

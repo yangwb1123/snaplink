@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -45,6 +46,19 @@ type RefreshToken struct {
 	// resource-scoped token produces another resource-scoped
 	// token without the caller having to re-supply the parameter.
 	Resources []string
+
+	// AuthorizationDetails preserves the RFC 9396 grant captured
+	// at the original authorization (login, auth_code exchange,
+	// or device flow). Rotation re-stamps it into the new access
+	// token's `authorization_details` claim so the binding
+	// survives the chain — without this, refreshed tokens would
+	// silently lose fine-grained authorization the user already
+	// consented to. Preserved as raw JSON so extension fields
+	// pass through unchanged; empty = no RAR on the original
+	// grant. Stores that don't know about RAR can ignore the
+	// field — propagation degrades to "lost on rotation" exactly
+	// as the v1 behavior was.
+	AuthorizationDetails json.RawMessage
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

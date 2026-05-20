@@ -55,15 +55,16 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *s
 	resources := append([]string(nil), info.Resources...)
 	attrs := copyMap(info.Attributes)
 	m.entries[token] = &sso.RefreshToken{
-		UserID:     info.UserID,
-		ClientID:   info.ClientID,
-		Provider:   info.Provider,
-		Scopes:     scopes,
-		Attributes: attrs,
-		IssuedAt:   info.IssuedAt,
-		ExpiresAt:  info.ExpiresAt,
-		FamilyID:   info.FamilyID,
-		Resources:  resources,
+		UserID:               info.UserID,
+		ClientID:             info.ClientID,
+		Provider:             info.Provider,
+		Scopes:               scopes,
+		Attributes:           attrs,
+		IssuedAt:             info.IssuedAt,
+		ExpiresAt:            info.ExpiresAt,
+		FamilyID:             info.FamilyID,
+		Resources:            resources,
+		AuthorizationDetails: cloneRawBytes(info.AuthorizationDetails),
 	}
 	// Stamp the family even when active so reuse detection works after
 	// the leaf is consumed.

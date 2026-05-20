@@ -354,3 +354,191 @@ func TestRAR_DiscoveryOmittedWhenNoClientDeclaresTypes(t *testing.T) {
 			doc["authorization_details_types_supported"])
 	}
 }
+
+// newRARServerWithRefresh wires the same harness as newRARServer
+// but adds a refresh-token store so the rotation path is exercisable.
+func newRARServerWithRefresh(t *testing.T) (*httptest.Server, *defaultimpl.MemoryRefreshTokenStore) {
+	t.Helper()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: rarUser})
+
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: rarClient, Secret: rarSecret, Active: true,
+		Name:                  "RAR Refresh Test",
+		RedirectURIs:          []string{rarRedirect},
+		AllowedAuthenticators: []string{"password"},
+		TokenStrategy:         "jwt",
+	})
+
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if u == rarUser && p == rarPassword {
+				return &sso.AuthResult{UserID: rarUser}, nil
+			}
+			return nil, errors.New("bad")
+		},
+	))
+
+	rt := defaultimpl.NewMemoryRefreshTokenStore()
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithRefreshTokenStore(rt, time.Hour),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+	return httpSrv, rt
+}
+
+func TestRAR_SurvivesRefreshRotation(t *testing.T) {
+	// Closes the documented gap from the RFC 9396 commit: a
+	// refreshed access token MUST carry the same
+	// authorization_details the user originally consented to. The
+	// rotation grant doesn't accept authorization_details on the
+	// wire (caller can only narrow it; expansion would let the
+	// client fabricate consent) — instead the refresh token
+	// captures the original grant and re-stamps it on every
+	// rotation.
+	srv, _ := newRARServerWithRefresh(t)
+	const details = `[{"type":"payment_initiation","amount":"42.50","currency":"USD","payee":"acme-corp"}]`
+
+	// Login with authorization_details + capture the refresh
+	// token (login wires refresh issuance because we configured
+	// WithRefreshTokenStore).
+	status, body := rarLogin(t, srv, details, false)
+	if status != http.StatusOK {
+		t.Fatalf("login status=%d body=%v", status, body)
+	}
+	refresh, _ := body["refresh_token"].(string)
+	if refresh == "" {
+		t.Fatalf("no refresh_token in login response: %v", body)
+	}
+
+	// Rotate.
+	exchangeBody, _ := json.Marshal(map[string]any{
+		"grant_type":    "refresh_token",
+		"refresh_token": refresh,
+		"client_id":     rarClient,
+		"client_secret": rarSecret,
+	})
+	resp, err := http.Post(srv.URL+"/token", "application/json", bytes.NewReader(exchangeBody))
+	if err != nil {
+		t.Fatalf("refresh exchange: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh exchange status=%d body=%s", resp.StatusCode, raw)
+	}
+	var ex map[string]any
+	_ = json.Unmarshal(raw, &ex)
+
+	// The rotated access token MUST carry the same
+	// authorization_details as the original.
+	tok, _ := ex["access_token"].(string)
+	if tok == "" {
+		t.Fatalf("no access_token after rotation: %s", raw)
+	}
+	payload := decodeAccessTokenPayload(t, tok)
+	ad, ok := payload["authorization_details"].([]any)
+	if !ok {
+		t.Fatalf("authorization_details lost on rotation: %v", payload)
+	}
+	if len(ad) != 1 {
+		t.Fatalf("expected 1 element after rotation, got %d: %v", len(ad), ad)
+	}
+	elem, _ := ad[0].(map[string]any)
+	if elem["type"] != "payment_initiation" {
+		t.Errorf("type = %v want payment_initiation", elem["type"])
+	}
+	if elem["amount"] != "42.50" {
+		t.Errorf("amount lost on rotation: %v", elem["amount"])
+	}
+	if elem["payee"] != "acme-corp" {
+		t.Errorf("extension field lost on rotation: %v", elem["payee"])
+	}
+
+	// Now rotate AGAIN — the binding should survive multi-hop chains,
+	// not just the first rotation. This catches a bug where the
+	// rotation handler reads from info but forgets to re-issue with
+	// authorization_details, breaking the second hop.
+	refresh2, _ := ex["refresh_token"].(string)
+	if refresh2 == "" {
+		t.Fatalf("no refresh_token after first rotation")
+	}
+	exchangeBody2, _ := json.Marshal(map[string]any{
+		"grant_type":    "refresh_token",
+		"refresh_token": refresh2,
+		"client_id":     rarClient,
+		"client_secret": rarSecret,
+	})
+	resp2, err := http.Post(srv.URL+"/token", "application/json", bytes.NewReader(exchangeBody2))
+	if err != nil {
+		t.Fatalf("second rotation: %v", err)
+	}
+	defer resp2.Body.Close()
+	raw2, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("second rotation status=%d body=%s", resp2.StatusCode, raw2)
+	}
+	var ex2 map[string]any
+	_ = json.Unmarshal(raw2, &ex2)
+	tok2, _ := ex2["access_token"].(string)
+	payload2 := decodeAccessTokenPayload(t, tok2)
+	ad2, ok := payload2["authorization_details"].([]any)
+	if !ok {
+		t.Fatalf("authorization_details lost on second rotation: %v", payload2)
+	}
+	elem2, _ := ad2[0].(map[string]any)
+	if elem2["amount"] != "42.50" || elem2["payee"] != "acme-corp" {
+		t.Errorf("binding mutated across multi-hop rotation: %v", elem2)
+	}
+}
+
+func TestRAR_RefreshWithoutOriginalGrantStaysClean(t *testing.T) {
+	// Inverse of the survival test: a login WITHOUT
+	// authorization_details must produce a refresh chain whose
+	// rotated tokens ALSO lack the claim. Catches a regression
+	// where the rotation accidentally fabricates a synthetic
+	// empty array (which would change the wire shape and confuse
+	// resource servers branching on presence).
+	srv, _ := newRARServerWithRefresh(t)
+
+	status, body := rarLogin(t, srv, "", false)
+	if status != http.StatusOK {
+		t.Fatalf("login status=%d body=%v", status, body)
+	}
+	refresh, _ := body["refresh_token"].(string)
+	if refresh == "" {
+		t.Fatalf("no refresh_token in login response: %v", body)
+	}
+
+	exchangeBody, _ := json.Marshal(map[string]any{
+		"grant_type":    "refresh_token",
+		"refresh_token": refresh,
+		"client_id":     rarClient,
+		"client_secret": rarSecret,
+	})
+	resp, err := http.Post(srv.URL+"/token", "application/json", bytes.NewReader(exchangeBody))
+	if err != nil {
+		t.Fatalf("refresh exchange: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh exchange status=%d body=%s", resp.StatusCode, raw)
+	}
+	var ex map[string]any
+	_ = json.Unmarshal(raw, &ex)
+	tok, _ := ex["access_token"].(string)
+	payload := decodeAccessTokenPayload(t, tok)
+	if _, present := payload["authorization_details"]; present {
+		t.Errorf("rotated token unexpectedly carries authorization_details: %v",
+			payload["authorization_details"])
+	}
+}

@@ -102,5 +102,20 @@ func copyMap(m map[string]string) map[string]string {
 	return out
 }
 
+// cloneRawBytes returns a defensive copy of the byte slice (typically
+// a json.RawMessage). nil-safe — returns nil when b is nil so a
+// "no value" caller stays distinguishable from a zero-length slice
+// downstream. Memory stores hand back what they were given by
+// reference; without this, the caller's later mutation of the slice
+// would leak into the stored entry.
+func cloneRawBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out
+}
+
 // Compile-time interface check.
 var _ sso.AuthCodeStore = (*MemoryAuthCodeStore)(nil)
