@@ -136,6 +136,15 @@ type oidcConfiguration struct {
 	// can request from the AS.
 	ACRValuesSupported []string `json:"acr_values_supported,omitempty"`
 
+	// OIDC Discovery §3 operator metadata. Pointed at by RPs
+	// during consent ("by signing in you accept ..." linking to
+	// op_policy_uri / op_tos_uri) and used by integrators looking
+	// up the AS's own SDK reference (service_documentation).
+	// Populated via `WithOperatorMetadata`; omitted when unset.
+	OpPolicyURI          string `json:"op_policy_uri,omitempty"`
+	OpTosURI             string `json:"op_tos_uri,omitempty"`
+	ServiceDocumentation string `json:"service_documentation,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -304,6 +313,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	if len(s.supportedACRValues) > 0 {
 		cfg.ACRValuesSupported = append([]string(nil), s.supportedACRValues...)
 	}
+	cfg.OpPolicyURI = s.opPolicyURI
+	cfg.OpTosURI = s.opTosURI
+	cfg.ServiceDocumentation = s.serviceDocumentation
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced

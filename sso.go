@@ -71,6 +71,9 @@ type Server struct {
 	jarFetcher           JARFetcher
 	clientCertExtractor  ClientCertExtractor
 	supportedACRValues   []string
+	opPolicyURI          string
+	opTosURI             string
+	serviceDocumentation string
 }
 
 // Option configures the Server.
@@ -384,6 +387,20 @@ func WithSupportedACRValues(values ...string) Option {
 			out = append(out, v)
 		}
 		s.supportedACRValues = out
+	}
+}
+
+// WithOperatorMetadata registers the OIDC Discovery §3 `op_policy_uri`,
+// `op_tos_uri`, and `service_documentation` advertisements. RPs
+// surface these to their end users when displaying a consent screen
+// ("by signing in you accept <op_policy_uri> ...") and integrators
+// link to `service_documentation` for SDK reference. Empty values
+// omit the corresponding discovery field (omitempty semantics).
+func WithOperatorMetadata(policyURI, tosURI, docs string) Option {
+	return func(s *Server) {
+		s.opPolicyURI = policyURI
+		s.opTosURI = tosURI
+		s.serviceDocumentation = docs
 	}
 }
 
