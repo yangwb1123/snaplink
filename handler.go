@@ -1104,6 +1104,14 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		ActorTokenType     string   `json:"actor_token_type"`
 		Audience           []string `json:"audience"`
 		RequestedTokenType string   `json:"requested_token_type"`
+		// RFC 9470 step-up: caller may demand the exchanged token
+		// carries an ACR at least as strong as one in this list.
+		// Used when the subject_token was minted from a weak factor
+		// (e.g. password only) but the downstream resource requires
+		// MFA — caller passes acr_values="urn:mace:incommon:iap:silver"
+		// and the dispatcher rejects with insufficient_user_authentication
+		// when the inbound ACR doesn't satisfy.
+		ACRValues string `json:"acr_values"`
 
 		// RFC 7521 + 7523 JWT bearer client authentication.
 		ClientAssertion     string `json:"client_assertion"`
@@ -1452,6 +1460,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			Audience:           req.Audience,
 			Scope:              req.Scope,
 			RequestedTokenType: req.RequestedTokenType,
+			ACRValues:          req.ACRValues,
 		})
 	case GrantClientCredentials:
 		strategy, ti, err := s.issuerForClient(client)

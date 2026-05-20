@@ -92,6 +92,22 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		return
 	}
 
+	// RFC 9470 step-up: when the caller demands a minimum ACR via
+	// `acr_values`, the inbound subject_token's ACR claim MUST match
+	// at least one value in the demand set. Otherwise the AS would
+	// have to re-authenticate the user, which token-exchange
+	// (server-to-server) can't do — caller must instead route the
+	// user through /auth/login with the same acr_values. Same wire
+	// shape as the resource-server challenge (insufficient_user_authentication)
+	// so SPAs branch on it uniformly across grants.
+	if req.ACRValues != "" {
+		demanded := strings.Fields(req.ACRValues)
+		if !acrMatchesAny(claims.ACR, demanded) {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInsufficientUserAuthentication))
+			return
+		}
+	}
+
 	// RFC 8693 §2.1: actor_token and actor_token_type MUST both
 	// be present, or both absent. Mismatch = invalid_request.
 	if (req.ActorToken == "") != (req.ActorTokenType == "") {
@@ -266,6 +282,28 @@ type tokenExchangeRequest struct {
 	Audience           []string
 	Scope              string
 	RequestedTokenType string
+	// RFC 9470 step-up: caller-asserted ACR floor for the exchanged
+	// token. Space-separated values; the inbound subject_token's
+	// ACR claim MUST be a member of this set or the exchange fails
+	// with insufficient_user_authentication. Empty = no demand
+	// (inbound ACR transparently propagates as today).
+	ACRValues string
+}
+
+// acrMatchesAny reports whether the inbound ACR claim matches any of
+// the demanded values. Empty inbound ACR never matches any non-empty
+// demand — a subject token with no factor information can't satisfy
+// a step-up gate.
+func acrMatchesAny(inbound string, demanded []string) bool {
+	if inbound == "" || len(demanded) == 0 {
+		return false
+	}
+	for _, d := range demanded {
+		if d == inbound {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeTargets deduplicates a slice of resource / audience URIs
