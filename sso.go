@@ -70,6 +70,7 @@ type Server struct {
 	subjectClientIndex   SubjectClientIndex
 	jarFetcher           JARFetcher
 	clientCertExtractor  ClientCertExtractor
+	supportedACRValues   []string
 }
 
 // Option configures the Server.
@@ -352,6 +353,38 @@ func WithJARFetcher(fetcher JARFetcher) Option {
 // separation as DPoP.
 func WithClientCertExtractor(ex ClientCertExtractor) Option {
 	return func(s *Server) { s.clientCertExtractor = ex }
+}
+
+// WithSupportedACRValues declares the OIDC ACR values this server's
+// authenticators can actually deliver. Surfaced as
+// `acr_values_supported` in discovery so RPs that branch on ACR
+// (step-up auth, FAPI 2.0 compliance) can introspect.
+//
+// Operators populate this with the full set of ACR strings their
+// wired authenticators stamp into `result.AuthMethods` / `.ACR` —
+// e.g. ["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"].
+// Empty / omitted leaves the field absent (legacy behavior, RP must
+// infer capabilities out-of-band).
+//
+// Authenticators that compute ACR dynamically (e.g. MFA combiners)
+// SHOULD list every possible output value here so RPs see the
+// complete contract.
+func WithSupportedACRValues(values ...string) Option {
+	return func(s *Server) {
+		out := make([]string, 0, len(values))
+		seen := map[string]struct{}{}
+		for _, v := range values {
+			if v == "" {
+				continue
+			}
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+		s.supportedACRValues = out
+	}
 }
 
 // WithIDTokenIssuer enables OpenID Connect ID Token emission alongside

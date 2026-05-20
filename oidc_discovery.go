@@ -116,6 +116,13 @@ type oidcConfiguration struct {
 	// WithClientCertExtractor is wired.
 	TLSClientCertificateBoundAccessTokens bool `json:"tls_client_certificate_bound_access_tokens,omitempty"`
 
+	// OIDC Discovery §3 `acr_values_supported`. Populated from
+	// the operator-declared `WithSupportedACRValues` — empty /
+	// omitted when no list is configured. RPs branching on ACR
+	// (step-up auth, FAPI 2.0) use this to validate what they
+	// can request from the AS.
+	ACRValuesSupported []string `json:"acr_values_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -269,6 +276,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.DPoPSigningAlgValuesSupported = []string{"EdDSA"}
 	if s.clientCertExtractor != nil {
 		cfg.TLSClientCertificateBoundAccessTokens = true
+	}
+	if len(s.supportedACRValues) > 0 {
+		cfg.ACRValuesSupported = append([]string(nil), s.supportedACRValues...)
 	}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
