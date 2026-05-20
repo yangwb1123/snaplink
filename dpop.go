@@ -209,6 +209,49 @@ func normalizeDPoPHTU(raw string) string {
 	return raw
 }
 
+// verifyDPoPBearer enforces the resource-side half of RFC 9449.
+// Called on bearer-protected endpoints (/userinfo today; future
+// protected paths can adopt the same helper):
+//
+//   - If the access token has no cnf.jkt (legacy bearer), DPoP
+//     is irrelevant — return success with the existing claims.
+//   - If the access token has cnf.jkt:
+//     • the request MUST carry a DPoP proof header
+//     • the proof MUST validate against the request method + URL
+//     • the proof's JWK thumbprint MUST equal the token's cnf.jkt
+//
+// Returns an error mapped to invalid_token on the wire (matches the
+// existing bearer-token error shape; RFC 9449 §7.1 also allows
+// invalid_dpop_proof — collapsing to invalid_token keeps the
+// wire surface stable for legacy bearer clients).
+func (s *Server) verifyDPoPBearer(ctx HandlerContext, claims *TokenClaims) error {
+	if claims == nil {
+		return errors.New("dpop: nil claims")
+	}
+	if claims.ConfirmationJKT == "" {
+		// Token isn't DPoP-bound — legacy bearer flow continues.
+		return nil
+	}
+	proof := ctx.Request().Header.Get(HeaderDPoP)
+	if proof == "" {
+		return errors.New("dpop: token requires DPoP proof header")
+	}
+	binding, err := verifyDPoPProof(
+		ctx.Request().Context(),
+		proof,
+		ctx.Request().Method,
+		requestURLForDPoP(ctx.Request()),
+		s.jtiReplayStore,
+	)
+	if err != nil {
+		return fmt.Errorf("dpop: proof verification: %w", err)
+	}
+	if binding.JKT != claims.ConfirmationJKT {
+		return errors.New("dpop: proof JKT does not match token cnf.jkt")
+	}
+	return nil
+}
+
 // dpopTokenTypeOr returns "DPoP" when the issued token carries a
 // DPoP key binding, else the issuer's default token_type (typically
 // "Bearer"). RFC 9449 §4 + RFC 6750 §6.1.1 — sender-constrained

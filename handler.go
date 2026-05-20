@@ -1470,6 +1470,19 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		return
 	}
 
+	// RFC 9449 §7 — when the access token carries a `cnf.jkt`
+	// binding, the request MUST also carry a fresh DPoP proof
+	// whose JWK thumbprint matches. Legacy bearer tokens (no
+	// cnf.jkt) skip this gate. A failure here is indistinguishable
+	// from "invalid bearer" on the wire (single error code) so
+	// attackers can't tell DPoP-bound from unbound tokens via
+	// response probing.
+	if err := s.verifyDPoPBearer(ctx, claims); err != nil {
+		s.logger.Error("dpop bearer verification failed", "error", err, "subject", claims.Subject)
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+
 	user, err := s.userProvider.GetByID(ctx.Request().Context(), claims.Subject)
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, errorBody(ErrUserNotFound))
