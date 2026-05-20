@@ -91,6 +91,7 @@ type jarPayload struct {
 	ResponseMode         string          `json:"response_mode"`
 	ACRValues            string          `json:"acr_values"`
 	UILocales            string          `json:"ui_locales"`
+	Claims               json.RawMessage `json:"claims"`
 
 	// JWT control claims for §6.3 validation.
 	Aud audClaim `json:"aud,omitempty"`

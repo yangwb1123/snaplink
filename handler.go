@@ -91,6 +91,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
 		ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
 		UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
+		Claims               json.RawMessage   `json:"claims"`                // OIDC Core §5.5: requested claims JSON object
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -206,6 +207,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if stored.UILocales != "" {
 			req.UILocales = stored.UILocales
+		}
+		if len(stored.Claims) > 0 {
+			req.Claims = cloneRawJSON(stored.Claims)
 		}
 	}
 
@@ -356,6 +360,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if jar.UILocales != "" {
 			req.UILocales = jar.UILocales
 		}
+		if len(jar.Claims) > 0 {
+			req.Claims = cloneRawJSON(jar.Claims)
+		}
 	}
 
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
@@ -370,6 +377,17 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// declared an allowlist) every element's type MUST match.
 	// Empty allowlist = parameter accepted but unconstrained
 	// (legacy compat).
+	// OIDC Core §5.5: when supplied, the `claims` parameter MUST be
+	// a JSON object. We don't require any specific top-level keys
+	// (the spec allows extension members); just enforce shape so a
+	// caller passing an array / string / number fails fast.
+	if len(req.Claims) > 0 {
+		if err := validateClaimsParameter(req.Claims); err != nil {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
+			return
+		}
+	}
 	if _, err := validateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidAuthorizationDetails)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidAuthorizationDetails, err.Error()))
@@ -403,14 +421,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	}
 
 	result, err := auth.Authenticate(ctx.Request().Context(), &AuthRequest{
-		Provider:   req.Provider,
-		Credential: req.Credential,
-		ClientID:   req.ClientID,
-		Scope:      req.Scope,
-		State:      req.State,
-		LoginHint:  req.LoginHint,
-		ACRValues:  splitScope(req.ACRValues),
-		UILocales:  splitScope(req.UILocales),
+		Provider:        req.Provider,
+		Credential:      req.Credential,
+		ClientID:        req.ClientID,
+		Scope:           req.Scope,
+		State:           req.State,
+		LoginHint:       req.LoginHint,
+		ACRValues:       splitScope(req.ACRValues),
+		UILocales:       splitScope(req.UILocales),
+		RequestedClaims: cloneRawJSON(req.Claims),
 	})
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
@@ -755,6 +774,7 @@ func (s *Server) issueAuthCode(
 		ResponseMode         string            `json:"response_mode"`
 		ACRValues            string            `json:"acr_values"`
 		UILocales            string            `json:"ui_locales"`
+		Claims               json.RawMessage   `json:"claims"`
 	},
 	client *Client,
 ) (string, error) {

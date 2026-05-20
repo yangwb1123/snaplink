@@ -408,6 +408,19 @@ type AuthRequest struct {
 	// get the signal end-to-end. Falls back to Accept-Language /
 	// geo when empty (authenticator's choice).
 	UILocales []string
+
+	// RequestedClaims is the OIDC Core §5.5 `claims` request
+	// parameter — a JSON object asking for specific claims in
+	// the id_token or userinfo response. Shape:
+	//
+	//	{"userinfo": {"email": null, "name": {"essential": true}},
+	//	 "id_token": {"acr": {"values": ["urn:level:high"]}}}
+	//
+	// Preserved as raw JSON so extension claim names pass through
+	// unmodified. Authenticators / issuers that honor the
+	// parameter project these claims into their output;
+	// implementations that don't simply ignore the field.
+	RequestedClaims json.RawMessage
 }
 
 // AuthResult holds the result of a successful authentication.

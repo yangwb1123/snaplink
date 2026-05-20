@@ -65,6 +65,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ResponseMode         string          `json:"response_mode"`         // OIDC Form Post 1.0
 		ACRValues            string          `json:"acr_values"`            // OIDC Core §3.1.2.1
 		UILocales            string          `json:"ui_locales"`            // OIDC Core §3.1.2.1
+		Claims               json.RawMessage `json:"claims"`                // OIDC Core §5.5
 		ClientAssertion      string          `json:"client_assertion"`      // RFC 7521 + 7523
 		ClientAssertionType  string          `json:"client_assertion_type"` // RFC 7521 + 7523
 	}
@@ -170,6 +171,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ResponseMode:         req.ResponseMode,
 		ACRValues:            req.ACRValues,
 		UILocales:            req.UILocales,
+		Claims:               cloneRawJSON(req.Claims),
 		ExpiresAt:            time.Now().Add(ttl),
 	})
 	if err != nil {

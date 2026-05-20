@@ -58,6 +58,12 @@ type PARRequest struct {
 	// so the merge picks the pushed value over caller-supplied.
 	UILocales string
 
+	// Claims is the OIDC Core §5.5 `claims` request parameter
+	// (a JSON object naming claims requested for id_token /
+	// userinfo). Preserved as raw JSON so extension members
+	// survive the round-trip.
+	Claims json.RawMessage
+
 	ExpiresAt time.Time
 }
 

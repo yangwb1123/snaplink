@@ -92,6 +92,13 @@ type oidcConfiguration struct {
 	// (this server is JSON-bodied for /auth/login by default).
 	ResponseModesSupported []string `json:"response_modes_supported,omitempty"`
 
+	// OIDC Core §5.5 — true when the AS accepts the `claims`
+	// request parameter. Always true here (the parameter is
+	// validated for JSON-object shape and threaded into
+	// AuthRequest.RequestedClaims; authenticators / issuers that
+	// honor it project the requested claims into output).
+	ClaimsParameterSupported bool `json:"claims_parameter_supported"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -172,6 +179,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		RequestParameterSupported:              true,
 		RequestURIParameterSupported:           false,
 		RequestObjectSigningAlgValuesSupported: []string{"EdDSA"},
+		ClaimsParameterSupported:               true,
 	}
 	if s.jarFetcher != nil {
 		cfg.RequestURIParameterSupported = true
