@@ -95,7 +95,8 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	// stolen id_token_hint can't be used as a soft-logout that
 	// leaves the access token alive until expiry.
 	if idTokenHint != "" {
-		_ = s.revokeAcrossIssuers(ctx.Request().Context(), idTokenHint)
+		revoked, failed := s.revokeAcrossIssuers(ctx.Request().Context(), idTokenHint)
+		s.auditPartialRevokeFailure(ctx, revoked, failed)
 	}
 	// Wipe every refresh token the user holds for the client in
 	// scope, so descendant rotations can't outlive the logout.

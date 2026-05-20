@@ -91,7 +91,8 @@ func (s *Server) revokeAccess(ctx HandlerContext, token string) {
 	if len(s.tokenIssuers) == 0 {
 		return
 	}
-	_ = s.revokeAcrossIssuers(ctx.Request().Context(), token)
+	revoked, failed := s.revokeAcrossIssuers(ctx.Request().Context(), token)
+	s.auditPartialRevokeFailure(ctx, revoked, failed)
 }
 
 // revokeRefresh deletes via the optional RefreshTokenInspector.Delete
@@ -162,7 +163,8 @@ func (s *Server) handleRevokeAll(ctx HandlerContext) {
 	// stops working immediately — without this, the bearer the caller
 	// just used would keep working until expiry, which is surprising
 	// for a "logout everywhere" semantic.
-	_ = s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
+	revoked, failed := s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
+	s.auditPartialRevokeFailure(ctx, revoked, failed)
 
 	ctx.JSON(http.StatusOK, map[string]any{
 		KeyStatus:                StatusOK,

@@ -1698,10 +1698,11 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		}
 	}
 	if bearer != "" && len(s.tokenIssuers) > 0 {
-		issuersHit := s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
+		issuersHit, failedIssuers := s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
 		for range issuersHit {
 			revoked = append(revoked, RevokedToken)
 		}
+		s.auditPartialRevokeFailure(ctx, issuersHit, failedIssuers)
 	}
 
 	// OIDC Back-Channel Logout 1.0: notify the client in the

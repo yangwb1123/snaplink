@@ -27,6 +27,17 @@ const (
 	// reason string.
 	EventLogoutNotified EventType = "logout_notified"
 
+	// EventPartialRevokeFailure — at least one TokenIssuer's Revoke
+	// returned an error during a bulk revoke (e.g. /token/revoke-all
+	// or backchannel logout) while at least one other issuer
+	// succeeded. The presented bearer keeps working at the failed
+	// issuer until natural expiry, so this MUST page someone or
+	// trigger SIEM follow-up — the "logout everywhere" semantic
+	// the endpoint promises has been partially violated. Metadata
+	// carries `revoked` (succeeded issuer names) + `failed` (failing
+	// names) so operators can scope the manual remediation.
+	EventPartialRevokeFailure EventType = "partial_revoke_failure"
+
 	// EventAccountLocked — per-account lockout engaged or
 	// attempted-against-when-locked. Outcome=failure. ActorID
 	// is the lockout key (clientID:identifier so SIEMs can pivot
