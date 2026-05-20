@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -88,6 +89,7 @@ func main() {
 	_ = flag.String("listen", "", "override server.listen from config (e.g. :9090)")
 	_ = flag.String("log-level", "", "override logging.level (debug|info|error)")
 	_ = flag.String("bootstrap-restore-from", "", "snapshot URI for first-boot restore (overrides snapshot.restore_from); e.g. file:///var/snapshots/snap.snap")
+	_ = flag.String("bootstrap-admin-password-file", "", "path to write the generated admin password to (mode 0600), in addition to stdout; overrides bootstrap.admin_password_file")
 
 	// Runtime-only flags: not in Config (yet) — passed directly to run().
 	grpcListen := flag.String("grpc-listen", ":8081", "gRPC listen address ('' to disable)")
@@ -111,7 +113,8 @@ func main() {
 	flagSrc := config.NewFlagSource(flag.CommandLine).
 		Bind("listen", "server.listen").
 		Bind("log-level", "logging.level").
-		Bind("bootstrap-restore-from", "snapshot.restore_from")
+		Bind("bootstrap-restore-from", "snapshot.restore_from").
+		Bind("bootstrap-admin-password-file", "bootstrap.admin_password_file")
 
 	sources := []config.Source{
 		config.NewFileSource(*cfgPath),
@@ -422,6 +425,25 @@ func runBootstrap(cfg *config.Config, a *app, logger sso.Logger) error {
 		AdminClientID:  cfg.Bootstrap.AdminClientID,
 		AdminRoleCode:  cfg.Bootstrap.AdminRoleCode,
 		AdminClientApp: cfg.Bootstrap.AdminClientApp,
+	}
+	if path := cfg.Bootstrap.AdminPasswordFile; path != "" {
+		// Compose stdout printer (banner stays so live operators
+		// still see the value) + file write at 0600. Atomic write
+		// via tmp+rename so a crashed write doesn't leave an empty
+		// file the operator trusts.
+		baseStdout := func(p string) {
+			fmt.Printf("\n=========================================================\n")
+			fmt.Printf(" SSO admin user seeded — capture this password NOW. It is\n")
+			fmt.Printf(" printed once and never again.\n")
+			fmt.Printf("   user_id: %s\n   password: %s\n   file:     %s (mode 0600)\n", cfg.Bootstrap.AdminUserID, p, path)
+			fmt.Printf("=========================================================\n\n")
+		}
+		seed.PasswordPrinter = func(p string) {
+			if err := writeAdminPasswordFile(path, p); err != nil {
+				logger.Error("bootstrap: write admin password file failed", "error", err, "path", path)
+			}
+			baseStdout(p)
+		}
 	}
 
 	// Snapshot restore runs BEFORE the runner so AdvanceBootstrap can
@@ -1170,4 +1192,44 @@ func (l *slogLogger) Debug(msg string, kv ...any) { l.inner.Debug(msg, kv...) }
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// writeAdminPasswordFile atomically writes the bootstrap admin
+// password to path at mode 0600. Atomicity (tmp + rename) prevents
+// a crashed write from leaving a half-empty file the operator
+// might trust as authoritative. Parent directory must exist —
+// not auto-created so an operator who points at /secrets/admin
+// without mounting the volume sees the error rather than the
+// password landing somewhere unexpected.
+func writeAdminPasswordFile(path, password string) error {
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, ".admin-password-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	// chmod BEFORE writing so a concurrent reader can't observe
+	// 0644 in the brief window before the rename.
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if _, err := tmp.WriteString(password + "\n"); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }

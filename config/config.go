@@ -113,7 +113,17 @@ type BootstrapConfig struct {
 	AdminClientID  string              `yaml:"admin_client_id"`
 	AdminRoleCode  string              `yaml:"admin_role_code"`
 	AdminClientApp string              `yaml:"admin_client_app"`
-	Lock           BootstrapLockConfig `yaml:"lock"`
+
+	// AdminPasswordFile is an optional path where the generated
+	// admin password is written (mode 0600) on first boot in
+	// ADDITION to the stdout banner. Containerized deployments
+	// where stdout is async-shipped to a log sink frequently lose
+	// the boot banner; pointing at a tmpfs / secret-volume path
+	// guarantees retrievability. The file is written once per
+	// generation; if the bootstrap step doesn't re-run (already
+	// at high-water), the file is NOT touched.
+	AdminPasswordFile string              `yaml:"admin_password_file"`
+	Lock              BootstrapLockConfig `yaml:"lock"`
 }
 
 // BootstrapLockConfig configures the distributed lock the Runner takes
