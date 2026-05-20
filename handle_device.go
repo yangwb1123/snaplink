@@ -291,6 +291,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		ClientID:  client.ID,
 		AuthTime:  time.Now(),
 		AMR:       []string{dc.Provider},
+		TTL:       client.AccessTokenTTL,
 	}, dc.Scopes)
 	if err != nil {
 		s.logger.Error("device token issuance failed", "strategy", strategy, "error", err)

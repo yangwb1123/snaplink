@@ -551,6 +551,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		AMR:                  []string{result.Provider},
 		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
+		TTL:                  client.AccessTokenTTL,
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
@@ -1069,6 +1070,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			AMR:                  []string{info.Provider},
 			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
 			SID:                  info.SID,
+			TTL:                  client.AccessTokenTTL,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1191,6 +1193,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			// SID is locked to the original authorization's
 			// session — rotation never opens a new session.
 			SID: info.SID,
+			TTL: client.AccessTokenTTL,
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1244,6 +1247,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// Sub. No end-user auth event, hence no AuthTime/AMR.
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: client.ID, Resources: req.Resource, ClientID: client.ID,
+			TTL: client.AccessTokenTTL,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)

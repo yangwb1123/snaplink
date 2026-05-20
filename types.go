@@ -103,6 +103,14 @@ type Client struct {
 	// authorization_code exchange, and rotation grant alike.
 	RefreshTokenTTL time.Duration `json:"refresh_token_ttl,omitempty" yaml:"refresh_token_ttl,omitempty"`
 
+	// AccessTokenTTL overrides the TokenIssuer's default lifetime
+	// for access (and ID) tokens minted on behalf of THIS client.
+	// Plumbed via Subject.TTL into Ed25519JWTIssuer.Issue (and
+	// IDTokenRequest.TTL for id_tokens). Zero = use the issuer's
+	// configured tokenTTL. Same SPA-vs-service shaping rationale
+	// as RefreshTokenTTL above.
+	AccessTokenTTL time.Duration `json:"access_token_ttl,omitempty" yaml:"access_token_ttl,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel
@@ -283,6 +291,14 @@ type Subject struct {
 	// issuers; non-aware issuers ignore it. Empty = no
 	// authorization_details on the token.
 	AuthorizationDetails json.RawMessage
+
+	// TTL overrides the TokenIssuer's default access-token
+	// lifetime for THIS specific issuance. Sourced from
+	// Client.AccessTokenTTL at every issue call site; issuers
+	// that honor it (Ed25519JWTIssuer does) use it in place of
+	// their configured tokenTTL. Zero = let the issuer pick
+	// (backward-compatible default).
+	TTL time.Duration
 
 	// SID is the OIDC Core §2 session identifier propagated into
 	// the token's `sid` claim. Populated from the active

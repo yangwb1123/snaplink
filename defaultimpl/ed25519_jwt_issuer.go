@@ -290,7 +290,15 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 		return nil, errors.New("ed25519: subject required")
 	}
 	now := time.Now()
-	expiresAt := now.Add(j.tokenTTL)
+	// Per-issuance TTL override (Client.AccessTokenTTL) wins over
+	// the issuer's configured tokenTTL. Zero = use the issuer's
+	// default — preserves backwards compatibility for callers
+	// that don't set Subject.TTL.
+	effectiveTTL := j.tokenTTL
+	if subject.TTL > 0 {
+		effectiveTTL = subject.TTL
+	}
+	expiresAt := now.Add(effectiveTTL)
 
 	// RFC 9068 §2.1: header `typ` MUST be `at+jwt` to distinguish
 	// access tokens from other JWT shapes (ID tokens, generic JWT)
@@ -347,7 +355,7 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	return &sso.Token{
 		AccessToken: token,
 		TokenType:   sso.TokenTypeBearer,
-		ExpiresIn:   int(j.tokenTTL.Seconds()),
+		ExpiresIn:   int(effectiveTTL.Seconds()),
 		Scope:       payload.Scope,
 		CreatedAt:   now,
 	}, nil

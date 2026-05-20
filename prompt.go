@@ -192,6 +192,7 @@ func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req s
 		// for, so RPs that bound their local state to the sid see
 		// continuity across renewals.
 		SID: claims.SID,
+		TTL: client.AccessTokenTTL,
 	}, scopes)
 	if err != nil {
 		s.logger.Error("silent renewal token issuance failed", "strategy", strategy, "error", err)

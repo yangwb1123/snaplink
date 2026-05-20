@@ -161,6 +161,7 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		// whom. Nil when no actor_token was supplied (the direct
 		// non-delegated path).
 		Actor: actor,
+		TTL:   client.AccessTokenTTL,
 	}, scopes)
 	if err != nil {
 		s.logger.Error("token exchange issuance failed", "strategy", strategy, "error", err)
