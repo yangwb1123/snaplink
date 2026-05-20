@@ -91,6 +91,13 @@ type Client struct {
 	// authorization_details enforcement (legacy compat); the
 	// parameter is still accepted but unconstrained.
 	AllowedAuthorizationDetailsTypes []string `json:"allowed_authorization_details_types,omitempty" yaml:"allowed_authorization_details_types,omitempty"`
+
+	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
+	// §2.5 endpoint the AS POSTs a signed logout_token to when
+	// the user logs out of the SSO server. Empty = back-channel
+	// logout is disabled for this client (the RP must rely on
+	// access-token expiry or a polling check).
+	BackchannelLogoutURI string `json:"backchannel_logout_uri,omitempty" yaml:"backchannel_logout_uri,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

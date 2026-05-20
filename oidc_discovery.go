@@ -47,6 +47,17 @@ type oidcConfiguration struct {
 	// client has declared a type allowlist (the parameter is
 	// still accepted but unconstrained).
 	AuthorizationDetailsTypesSupported []string `json:"authorization_details_types_supported,omitempty"`
+
+	// OIDC Back-Channel Logout 1.0 §2.1 — true when this server
+	// will POST logout tokens to RPs' backchannel_logout_uri
+	// endpoints. Set when both LogoutTokenIssuer + LogoutNotifier
+	// are wired via WithBackchannelLogout.
+	BackchannelLogoutSupported bool `json:"backchannel_logout_supported,omitempty"`
+	// BackchannelLogoutSessionSupported stays false today — this
+	// server doesn't stamp `sid` in access tokens yet, so it
+	// can't emit `sid` in logout tokens either. Will flip when
+	// session-id support lands across the token issuers.
+	BackchannelLogoutSessionSupported bool `json:"backchannel_logout_session_supported,omitempty"`
 }
 
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
@@ -115,6 +126,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if rar := authorizationDetailsTypeAdvertisement(ctx.Request().Context(), s); len(rar) > 0 {
 		cfg.AuthorizationDetailsTypesSupported = rar
+	}
+	if s.logoutTokenIssuer != nil && s.logoutNotifier != nil {
+		cfg.BackchannelLogoutSupported = true
 	}
 	cfg.ClaimsSupported = []string{
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",

@@ -20,6 +20,13 @@ const (
 	EventNetPolicyApply  EventType = "netpolicy_apply"
 	EventNetPolicyDelete EventType = "netpolicy_delete"
 
+	// EventLogoutNotified — OIDC Back-Channel Logout 1.0
+	// notification attempt. Outcome=success when the RP returned
+	// 2xx; Outcome=failure when the POST failed or the RP returned
+	// non-2xx. Metadata carries the target URI + (on failure) the
+	// reason string.
+	EventLogoutNotified EventType = "logout_notified"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason

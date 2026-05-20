@@ -271,6 +271,40 @@ func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []st
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
+// recordLogoutNotifySuccess emits a `logout_notified` audit
+// event for a successful back-channel logout fanout. ClientID is
+// the RP that was notified; ActorID is the user whose logout
+// triggered the notification.
+func (s *Server) recordLogoutNotifySuccess(ctx HandlerContext, clientID, subject, uri string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLogoutNotified
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subject
+	setMeta(e, "uri", uri)
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordLogoutNotifyFailure emits a `logout_notified` audit
+// event with Outcome=failure when the back-channel POST failed
+// or the RP returned a non-2xx status. The error string lands
+// in Reason so SIEMs can alert on patterns ("rp-X always 503").
+func (s *Server) recordLogoutNotifyFailure(ctx HandlerContext, clientID, subject, reason string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLogoutNotified
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.ActorID = subject
+	e.Reason = reason
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
 // recordCodeSent emits a code_sent event for two-step flows (phone/email).
 // target is intentionally not stored in full to limit PII spread; only its
 // type lives in Provider, the value goes into a short metadata key.

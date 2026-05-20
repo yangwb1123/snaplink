@@ -43,6 +43,12 @@ var supportedJWTAlgs = map[string]struct{}{
 // upgrade time keep verifying until their natural expiry).
 // `application/at+jwt` is the long-form variant some libraries
 // emit per RFC 9068 §2.1 footnote.
+//
+// Note: logout tokens carry `typ: logout+jwt` and MUST NOT be
+// validated through this allowlist — they have a separate
+// shape (events claim, no scope/aud-array, etc.) and a
+// dedicated verifier on the RP side. Validate here is
+// access-token only.
 var supportedJWTTypes = map[string]struct{}{
 	jwtTypAT:             {},
 	"application/at+jwt": {},
@@ -584,3 +590,77 @@ func fingerprintKid(pub ed25519.PublicKey) string {
 // Compile-time check: the same issuer can mint OIDC ID Tokens, so
 // operators don't need a second key + JWKS entry.
 var _ sso.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
+
+// Compile-time check: same key also mints OIDC Back-Channel
+// Logout tokens.
+var _ sso.LogoutTokenIssuer = (*Ed25519JWTIssuer)(nil)
+
+// logoutTokenTyp is OIDC BCL 1.0 §2.4's REQUIRED `typ` header.
+const logoutTokenTyp = "logout+jwt"
+
+// backchannelLogoutEvent is the URI used as the key inside the
+// `events` claim per OIDC BCL §2.4. Value is an empty object —
+// the spec says "any non-null value MAY be used; this
+// specification uses the empty JSON object {} ".
+const backchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout"
+
+// ed25519LogoutPayload is the BCL §2.4 claim set. `events` is a
+// map[string]json.RawMessage so the conventional empty-object
+// value (`{}`) marshals cleanly.
+type ed25519LogoutPayload struct {
+	Iss    string                     `json:"iss,omitempty"`
+	Sub    string                     `json:"sub,omitempty"`
+	Aud    string                     `json:"aud,omitempty"`
+	Iat    int64                      `json:"iat,omitempty"`
+	Exp    int64                      `json:"exp,omitempty"`
+	JTI    string                     `json:"jti,omitempty"`
+	Events map[string]json.RawMessage `json:"events,omitempty"`
+	// nonce + sid intentionally omitted: §2.4 forbids `nonce` on
+	// a logout token, and `sid` requires session-id support which
+	// this server hasn't wired in access tokens yet.
+}
+
+// DefaultLogoutTokenTTL bounds the logout-token lifetime. Short
+// (60s) per OIDC BCL §2.4 — the RP processes the notification on
+// receipt; a stale logout token has no use.
+const DefaultLogoutTokenTTL = 60 * time.Second
+
+// IssueLogoutToken mints a Back-Channel Logout token per OIDC
+// BCL 1.0 §2.4. Same signing key, same kid, same JWKS entry as
+// access + ID tokens — RPs verify all three with one key
+// lookup.
+func (j *Ed25519JWTIssuer) IssueLogoutToken(_ context.Context, req *sso.LogoutTokenRequest) (string, error) {
+	if req == nil || req.Subject == "" || req.Audience == "" {
+		return "", errors.New("ed25519: logout token requires subject + audience")
+	}
+	ttl := req.TTL
+	if ttl <= 0 {
+		ttl = DefaultLogoutTokenTTL
+	}
+	jti, err := generateJTI()
+	if err != nil {
+		return "", fmt.Errorf("ed25519: generate jti: %w", err)
+	}
+	now := time.Now()
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: logoutTokenTyp, Kid: j.keyID}
+	payload := ed25519LogoutPayload{
+		Iss:    j.issuer,
+		Sub:    req.Subject,
+		Aud:    req.Audience,
+		Iat:    now.Unix(),
+		Exp:    now.Add(ttl).Unix(),
+		JTI:    jti,
+		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
+	}
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	pb, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
+	sig := ed25519.Sign(j.privateKey, []byte(signingInput))
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}

@@ -1184,6 +1184,23 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		return
 	}
 
+	// Capture (subject, client) for back-channel logout BEFORE
+	// revoking the bearer — the post-revoke Validate call would
+	// fail. We do this in a best-effort way: a malformed or
+	// already-expired bearer just yields no back-channel
+	// notification, never an error.
+	var bcSubject, bcClientID string
+	if bearer != "" {
+		if claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer); err == nil && claims != nil {
+			bcSubject = claims.Subject
+			if claims.ClientID != "" {
+				bcClientID = claims.ClientID
+			} else if len(claims.Audience) > 0 {
+				bcClientID = claims.Audience[0]
+			}
+		}
+	}
+
 	revoked := []string{}
 	if req.SessionID != "" && s.sessionMgr != nil {
 		if err := s.sessionMgr.Destroy(ctx.Request().Context(), req.SessionID); err != nil {
@@ -1196,6 +1213,17 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		issuersHit := s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
 		for range issuersHit {
 			revoked = append(revoked, RevokedToken)
+		}
+	}
+
+	// OIDC Back-Channel Logout 1.0: notify the client in the
+	// bearer's aud / client_id that this user just logged out so
+	// the RP can tear down its local session. No-op when the
+	// subsystem isn't wired or the client has no
+	// backchannel_logout_uri declared.
+	if bcSubject != "" && bcClientID != "" && s.clientStore != nil {
+		if c, err := s.clientStore.Get(ctx.Request().Context(), bcClientID); err == nil && c != nil {
+			s.sendBackchannelLogout(ctx, c, bcSubject)
 		}
 	}
 

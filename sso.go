@@ -63,6 +63,8 @@ type Server struct {
 	parTTL               time.Duration
 	dcrPolicy            *DCRPolicy
 	oauth21Strict        bool
+	logoutTokenIssuer    LogoutTokenIssuer
+	logoutNotifier       LogoutNotifier
 }
 
 // Option configures the Server.
@@ -97,6 +99,23 @@ func WithAuthenticator(a Authenticator) Option {
 // If no client-level strategy is set, the Server's default strategy is used.
 func WithTokenIssuer(name string, ti TokenIssuer) Option {
 	return func(s *Server) { s.tokenIssuers[name] = ti }
+}
+
+// WithBackchannelLogout wires the two SPIs that together enable
+// OIDC Back-Channel Logout 1.0: a LogoutTokenIssuer (typically
+// the same Ed25519JWTIssuer that mints access + ID tokens — one
+// signing key serves all three) and a LogoutNotifier (the
+// production default is `NewHTTPLogoutNotifier()`). Without
+// both wired, /logout still revokes the local session + token
+// but no RP notification fires.
+//
+// When wired, the discovery doc advertises
+// backchannel_logout_supported: true.
+func WithBackchannelLogout(issuer LogoutTokenIssuer, notifier LogoutNotifier) Option {
+	return func(s *Server) {
+		s.logoutTokenIssuer = issuer
+		s.logoutNotifier = notifier
+	}
 }
 
 // WithOAuth21StrictMode toggles enforcement of the OAuth 2.1
