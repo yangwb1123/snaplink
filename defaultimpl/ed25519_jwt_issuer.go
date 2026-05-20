@@ -480,6 +480,9 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 		claims.ConfirmationJKT = p.CNF.JKT
 		claims.ConfirmationX5TS256 = p.CNF.X5TS256
 	}
+	if len(p.AuthorizationDetails) > 0 {
+		claims.AuthorizationDetails = append(json.RawMessage(nil), p.AuthorizationDetails...)
+	}
 	if p.AuthTime > 0 {
 		claims.AuthTime = time.Unix(p.AuthTime, 0)
 	}

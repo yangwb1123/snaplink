@@ -171,6 +171,13 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		// non-delegated path).
 		Actor: actor,
 		TTL:   client.AccessTokenTTL,
+		// RFC 9396: preserve the subject_token's authorization_details
+		// across the exchange so the resulting token carries the
+		// same fine-grained authorization the user originally
+		// consented to. The downstream service relying on RAR
+		// shouldn't lose its binding just because a token was
+		// exchanged into a narrower audience.
+		AuthorizationDetails: cloneRawJSON(claims.AuthorizationDetails),
 	}, scopes)
 	if err != nil {
 		s.logger.Error("token exchange issuance failed", "strategy", strategy, "error", err)
@@ -204,7 +211,7 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 			ctx.Request().Context(),
 			claims.Subject, client.ID, provider,
 			scopes, claims.Extra, "", resources,
-			nil, // RFC 9396 authz details aren't tracked on the inbound subject_token today
+			cloneRawJSON(claims.AuthorizationDetails), // RFC 9396 — propagate the inbound binding
 			claims.SID,
 			client.RefreshTokenTTL,
 		)

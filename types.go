@@ -278,6 +278,13 @@ type TokenClaims struct {
 	// inbound connection's client cert thumbprint matches.
 	ConfirmationX5TS256 string `json:"-"`
 
+	// AuthorizationDetails is the RFC 9396 fine-grained authorization
+	// array originally consented to. Validate() echoes this back so
+	// downstream grants (token-exchange, refresh rotation) can
+	// preserve the binding across the chain. Empty = the token had
+	// no RAR claim.
+	AuthorizationDetails json.RawMessage `json:"authorization_details,omitempty"`
+
 	// Actor is the validated RFC 8693 §4.1 `act` claim, populated
 	// when the token carries delegation provenance. Nil when the
 	// token represents direct subject access (no delegation in
