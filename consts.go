@@ -109,6 +109,7 @@ const (
 const (
 	ErrInvalidRequest            = "invalid_request"
 	ErrInvalidCredentials        = "invalid_credentials"
+	ErrAccountLocked             = "account_locked"
 	ErrInvalidToken              = "invalid_token"
 	ErrInvalidClient             = "invalid_client"
 	ErrInvalidClientSecret       = "invalid_client_secret"

@@ -246,6 +246,20 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 
+	// Per-account lockout gate: BEFORE invoking the credential
+	// verifier, check whether the (client, identifier) pair is
+	// currently locked. Skips the verifier entirely on a locked
+	// account so a botnet can't drain the verifier's
+	// constant-time hash budget while the lock is active.
+	lockKey := lockoutKey(req.ClientID, req.Credential)
+	if s.accountLockout != nil && lockKey != "" {
+		if locked, until, _ := s.accountLockout.IsLocked(ctx.Request().Context(), lockKey); locked {
+			s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
+			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+			return
+		}
+	}
+
 	result, err := auth.Authenticate(ctx.Request().Context(), &AuthRequest{
 		Provider:   req.Provider,
 		Credential: req.Credential,
@@ -255,9 +269,29 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	})
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
+		// Failure attribution to per-account lockout BEFORE the
+		// generic login_failure audit so the auditor records the
+		// lockout state alongside the failure.
+		if s.accountLockout != nil && lockKey != "" {
+			if locked, until, _ := s.accountLockout.RegisterFailure(ctx.Request().Context(), lockKey); locked {
+				s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
+				ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+				return
+			}
+		}
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidCredentials)
 		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidCredentials))
 		return
+	}
+
+	// Successful credential validation clears any pending failure
+	// counter for this (client, identifier) — a single legit
+	// login resets the brute-force budget. Done BEFORE risk
+	// evaluation so a risk-denied login doesn't unlock the
+	// account (risk decisions might want the lock to stay
+	// engaged for repeat-offender patterns).
+	if s.accountLockout != nil && lockKey != "" {
+		_ = s.accountLockout.RegisterSuccess(ctx.Request().Context(), lockKey)
 	}
 
 	// Risk evaluation. Skipped entirely (zero overhead) when no scorer

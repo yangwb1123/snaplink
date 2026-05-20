@@ -65,6 +65,7 @@ type Server struct {
 	oauth21Strict        bool
 	logoutTokenIssuer    LogoutTokenIssuer
 	logoutNotifier       LogoutNotifier
+	accountLockout       AccountLockout
 }
 
 // Option configures the Server.
@@ -99,6 +100,21 @@ func WithAuthenticator(a Authenticator) Option {
 // If no client-level strategy is set, the Server's default strategy is used.
 func WithTokenIssuer(name string, ti TokenIssuer) Option {
 	return func(s *Server) { s.tokenIssuers[name] = ti }
+}
+
+// WithAccountLockout wires a per-account brute-force defense.
+// Complements `WithRateLimit` — rate limit catches IP-level
+// volume; account lockout catches per-account targeting that
+// stays under the IP threshold (the distributed credential
+// stuffing case). Without this option, the per-account defense
+// is absent and operators rely entirely on the IP rate limiter.
+//
+// `NewMemoryAccountLockout()` is the in-process default with
+// conservative thresholds (5 failures / 1 hour window / 15 min
+// lockout). Multi-replica deployments MUST swap for a shared
+// backend so attackers can't slip through the per-replica fork.
+func WithAccountLockout(a AccountLockout) Option {
+	return func(s *Server) { s.accountLockout = a }
 }
 
 // WithBackchannelLogout wires the two SPIs that together enable

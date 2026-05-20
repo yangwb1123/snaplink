@@ -305,6 +305,29 @@ func (s *Server) recordLogoutNotifyFailure(ctx HandlerContext, clientID, subject
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
+// recordAccountLocked emits an account_locked audit event. Fires
+// both when a NEW lockout engages (after the failure crossed the
+// threshold) and when a subsequent attempt arrives while the
+// lock is still active — operators want both signals to
+// distinguish "lock just engaged" from "attacker keeps trying
+// against a locked account". The lockoutKey lands in ActorID so
+// SIEMs can pivot on it.
+func (s *Server) recordAccountLocked(ctx HandlerContext, clientID, provider, lockKey string, until time.Time) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventAccountLocked
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.Provider = provider
+	e.ActorID = lockKey
+	if !until.IsZero() {
+		setMeta(e, "until", until.UTC().Format(time.RFC3339))
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
 // recordCodeSent emits a code_sent event for two-step flows (phone/email).
 // target is intentionally not stored in full to limit PII spread; only its
 // type lives in Provider, the value goes into a short metadata key.

@@ -27,6 +27,13 @@ const (
 	// reason string.
 	EventLogoutNotified EventType = "logout_notified"
 
+	// EventAccountLocked — per-account lockout engaged or
+	// attempted-against-when-locked. Outcome=failure. ActorID
+	// is the lockout key (clientID:identifier so SIEMs can pivot
+	// on either dimension). Metadata "until" carries the
+	// auto-unlock time.
+	EventAccountLocked EventType = "account_locked"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason
