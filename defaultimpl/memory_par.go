@@ -41,16 +41,17 @@ func (m *MemoryPARStore) Issue(_ context.Context, req *sso.PARRequest) (string, 
 	// Defensive slice copies so post-Issue mutation by the caller
 	// doesn't leak into stored state.
 	stored := &sso.PARRequest{
-		ClientID:            req.ClientID,
-		ResponseType:        req.ResponseType,
-		RedirectURI:         req.RedirectURI,
-		Scope:               append([]string(nil), req.Scope...),
-		State:               req.State,
-		Nonce:               req.Nonce,
-		CodeChallenge:       req.CodeChallenge,
-		CodeChallengeMethod: req.CodeChallengeMethod,
-		Resource:            append([]string(nil), req.Resource...),
-		ExpiresAt:           req.ExpiresAt,
+		ClientID:             req.ClientID,
+		ResponseType:         req.ResponseType,
+		RedirectURI:          req.RedirectURI,
+		Scope:                append([]string(nil), req.Scope...),
+		State:                req.State,
+		Nonce:                req.Nonce,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Resource:             append([]string(nil), req.Resource...),
+		AuthorizationDetails: cloneRawBytes(req.AuthorizationDetails),
+		ExpiresAt:            req.ExpiresAt,
 	}
 	m.mu.Lock()
 	m.entries[uri] = stored

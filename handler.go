@@ -136,6 +136,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if len(stored.Resource) > 0 {
 			req.Resource = stored.Resource
 		}
+		if len(stored.AuthorizationDetails) > 0 {
+			// RFC 9396 + RFC 9126: PAR's value is committing the
+			// authorization request authoritatively up-front, so the
+			// pushed authorization_details wins over any caller-
+			// supplied value at /auth/login (mirrors how PAR's
+			// scope/resource/redirect_uri override the redirect-time
+			// parameters).
+			req.AuthorizationDetails = cloneRawJSON(stored.AuthorizationDetails)
+		}
 	}
 
 	if req.Provider == "" {

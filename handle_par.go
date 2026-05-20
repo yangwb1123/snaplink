@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -49,16 +50,17 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 	}
 
 	var req struct {
-		ClientID            string   `json:"client_id"`
-		ClientSecret        string   `json:"client_secret"`
-		ResponseType        string   `json:"response_type"`
-		RedirectURI         string   `json:"redirect_uri"`
-		Scope               string   `json:"scope"`
-		State               string   `json:"state"`
-		Nonce               string   `json:"nonce"`
-		CodeChallenge       string   `json:"code_challenge"`
-		CodeChallengeMethod string   `json:"code_challenge_method"`
-		Resource            []string `json:"resource"`
+		ClientID             string          `json:"client_id"`
+		ClientSecret         string          `json:"client_secret"`
+		ResponseType         string          `json:"response_type"`
+		RedirectURI          string          `json:"redirect_uri"`
+		Scope                string          `json:"scope"`
+		State                string          `json:"state"`
+		Nonce                string          `json:"nonce"`
+		CodeChallenge        string          `json:"code_challenge"`
+		CodeChallengeMethod  string          `json:"code_challenge_method"`
+		Resource             []string        `json:"resource"`
+		AuthorizationDetails json.RawMessage `json:"authorization_details"` // RFC 9396
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -98,22 +100,31 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
 		return
 	}
+	// RFC 9396: validate authorization_details up front so a
+	// malformed / disallowed payload fails at PAR time rather than
+	// surfacing later at /auth/login (PAR's whole point is to move
+	// validation upstream of the user-agent redirect).
+	if _, err := validateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidAuthorizationDetails, err.Error()))
+		return
+	}
 
 	ttl := s.parTTL
 	if ttl <= 0 {
 		ttl = DefaultPARTTL
 	}
 	uri, err := s.parStore.Issue(ctx.Request().Context(), &PARRequest{
-		ClientID:            req.ClientID,
-		ResponseType:        req.ResponseType,
-		RedirectURI:         req.RedirectURI,
-		Scope:               splitScope(req.Scope),
-		State:               req.State,
-		Nonce:               req.Nonce,
-		CodeChallenge:       req.CodeChallenge,
-		CodeChallengeMethod: req.CodeChallengeMethod,
-		Resource:            req.Resource,
-		ExpiresAt:           time.Now().Add(ttl),
+		ClientID:             req.ClientID,
+		ResponseType:         req.ResponseType,
+		RedirectURI:          req.RedirectURI,
+		Scope:                splitScope(req.Scope),
+		State:                req.State,
+		Nonce:                req.Nonce,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Resource:             req.Resource,
+		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		ExpiresAt:            time.Now().Add(ttl),
 	})
 	if err != nil {
 		s.logger.Error("par issue failed", "error", err)

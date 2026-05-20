@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -25,7 +26,13 @@ type PARRequest struct {
 	CodeChallenge       string
 	CodeChallengeMethod string
 	Resource            []string
-	ExpiresAt           time.Time
+	// AuthorizationDetails carries the RFC 9396 raw JSON array the
+	// client pushed up front. Stored verbatim so extension fields
+	// survive the round-trip; merged into the in-flight /auth/login
+	// request just like Scope / Resource. Empty = client did not
+	// push any authorization_details (legacy PAR caller).
+	AuthorizationDetails json.RawMessage
+	ExpiresAt            time.Time
 }
 
 // IsExpired reports whether the PAR record's lifetime has elapsed.
