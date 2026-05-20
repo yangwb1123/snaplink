@@ -22,6 +22,7 @@ func TestDiscovery_IntrospectionRevocationAuthMethods(t *testing.T) {
 		sso.WithClientStore(clients),
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithPARStore(defaultimpl.NewMemoryPARStore(), 0),
 	)
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
@@ -40,6 +41,7 @@ func TestDiscovery_IntrospectionRevocationAuthMethods(t *testing.T) {
 	for _, field := range []string{
 		"introspection_endpoint_auth_methods_supported",
 		"revocation_endpoint_auth_methods_supported",
+		"pushed_authorization_request_endpoint_auth_methods_supported",
 	} {
 		raw, ok := doc[field].([]any)
 		if !ok {

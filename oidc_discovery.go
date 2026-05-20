@@ -43,6 +43,9 @@ type oidcConfiguration struct {
 	// RFC 8414 §2 + RFC 7009 §4.1.2: same set for the revocation
 	// endpoint.
 	RevocationEndpointAuthMethodsSupported []string `json:"revocation_endpoint_auth_methods_supported,omitempty"`
+	// RFC 9126 §5: client auth methods accepted on /par. Mirrors
+	// the /token list since /par shares the same auth pipeline.
+	PushedAuthorizationRequestEndpointAuthMethodsSupported []string `json:"pushed_authorization_request_endpoint_auth_methods_supported,omitempty"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
 	ClaimsSupported                   []string `json:"claims_supported,omitempty"`
 
@@ -254,6 +257,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// matches the OIDC convention where a discovery boolean
 		// reflects "is this supported anywhere".
 		cfg.PushedAuthReqEndpoint = base + PathPAR
+		cfg.PushedAuthorizationRequestEndpointAuthMethodsSupported = []string{
+			"client_secret_basic", "client_secret_post", "private_key_jwt",
+		}
 		if anyClientRequiresPAR(ctx.Request().Context(), s) {
 			cfg.RequirePushedAuthReq = true
 		}
