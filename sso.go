@@ -66,6 +66,7 @@ type Server struct {
 	logoutTokenIssuer    LogoutTokenIssuer
 	logoutNotifier       LogoutNotifier
 	accountLockout       AccountLockout
+	jtiReplayStore       JTIReplayStore
 }
 
 // Option configures the Server.
@@ -272,6 +273,22 @@ func WithPARStore(store PARStore, ttl time.Duration) Option {
 			s.parTTL = ttl
 		}
 	}
+}
+
+// WithJTIReplayStore enables jti-based replay protection on every JWT
+// the server consumes that carries a jti claim (today: RFC 9101 JAR
+// request objects; future hooks: DPoP proofs, JWT bearer client
+// assertions, token-exchange actor_tokens).
+//
+// Without it, JTI replay defense is OFF and every JAR JWT is accepted
+// once per signature validation — the spec-correct fallback per
+// RFC 9101 §10.8 ("SHOULD" not "MUST"). Production deployments
+// exposed to network adversaries SHOULD wire it; the in-memory
+// backend (defaultimpl.NewMemoryJTIReplayStore) is single-replica
+// only and multi-replica deployments need a Redis-style shared
+// store before the defense holds.
+func WithJTIReplayStore(store JTIReplayStore) Option {
+	return func(s *Server) { s.jtiReplayStore = store }
 }
 
 // WithIDTokenIssuer enables OpenID Connect ID Token emission alongside

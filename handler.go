@@ -242,7 +242,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// (matches PAR's merge semantics; FAPI 2.0's "ignore all
 	// outside" mode is reserved for a future strict flag).
 	if req.Request != "" {
-		jar, jarErr := verifyJAR(req.Request, client, s.resolveIssuer(ctx))
+		jar, jarErr := verifyJAR(ctx.Request().Context(), req.Request, client, s.resolveIssuer(ctx), s.jtiReplayStore)
 		if jarErr != nil {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, jarErr.Error()))
