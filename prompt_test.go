@@ -263,6 +263,74 @@ func TestPromptNone_LoginRequiredWhenHintClientDiffers(t *testing.T) {
 	}
 }
 
+func TestPromptNone_MaxAgeRejectsStaleHint(t *testing.T) {
+	srv, _ := newPromptHarness(t)
+	first := promptLogin(t, srv, []string{"openid"})
+	hint, _ := first["id_token"].(string)
+	originalAuthTime := readAuthTime(t, hint)
+	if originalAuthTime == 0 {
+		t.Fatalf("no auth_time on the original token")
+	}
+
+	// max_age=0 means the AS MUST reauthenticate (any elapsed
+	// time fails the freshness check). prompt=none can't show
+	// UI, so login_required is the only spec-correct answer.
+	body := map[string]any{
+		"client_id":     promptClientID,
+		"prompt":        "none",
+		"id_token_hint": hint,
+		"max_age":       0,
+	}
+	// Sleep a moment so the hint is actually older than 0s by
+	// integer-second granularity.
+	time.Sleep(1100 * time.Millisecond)
+	raw, _ := json.Marshal(body)
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("renewal: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	out := map[string]any{}
+	_ = json.Unmarshal(rb, &out)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
+	}
+	if out["error"] != sso.ErrLoginRequired {
+		t.Errorf("error=%v want %q", out["error"], sso.ErrLoginRequired)
+	}
+}
+
+func TestPromptNone_MaxAgeAcceptsFreshHint(t *testing.T) {
+	srv, _ := newPromptHarness(t)
+	first := promptLogin(t, srv, []string{"openid"})
+	hint, _ := first["id_token"].(string)
+
+	// max_age generously large — auth happened seconds ago, so
+	// the freshness check passes and the renewal succeeds.
+	body := map[string]any{
+		"client_id":     promptClientID,
+		"prompt":        "none",
+		"id_token_hint": hint,
+		"max_age":       3600,
+	}
+	raw, _ := json.Marshal(body)
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("renewal: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	out := map[string]any{}
+	_ = json.Unmarshal(rb, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
+	}
+	if _, ok := out["access_token"].(string); !ok {
+		t.Errorf("expected access_token on fresh-enough silent renewal: %v", out)
+	}
+}
+
 func TestPromptNone_DiscoveryAdvertisesPromptValues(t *testing.T) {
 	srv, _ := newPromptHarness(t)
 	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")

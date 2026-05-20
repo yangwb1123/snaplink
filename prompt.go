@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // silentRenewalRequest captures the subset of /auth/login parameters
@@ -18,6 +19,11 @@ type silentRenewalRequest struct {
 	Resource             []string
 	AuthorizationDetails json.RawMessage
 	IDTokenHint          string
+	// MaxAge is the OIDC Core §3.1.2.1 max_age parameter — when
+	// non-nil, the silent renewal is rejected with login_required
+	// if the hint's auth_time is older than this many seconds.
+	// nil = no max_age constraint (RP didn't pass one).
+	MaxAge *int64
 }
 
 // parsePromptValues splits the OIDC prompt parameter and returns the
@@ -107,6 +113,25 @@ func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req s
 	if hintedClientID != "" && hintedClientID != client.ID {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
 		return true
+	}
+	// OIDC Core §3.1.2.1 max_age: when the RP sets it, the AS MUST
+	// reauthenticate if the elapsed time since auth_time exceeds
+	// the value. prompt=none can't reauthenticate (no UI allowed),
+	// so the only spec-correct response is login_required —
+	// telling the iframe to fall back to the visible login flow.
+	// max_age=0 collapses to "always reauthenticate"; nil = no
+	// constraint. A zero auth_time means the original token was
+	// minted without RFC 9068 claim population — treat as
+	// unverifiable freshness and reject the silent renewal.
+	if req.MaxAge != nil {
+		if claims.AuthTime.IsZero() {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+			return true
+		}
+		if time.Since(claims.AuthTime) > time.Duration(*req.MaxAge)*time.Second {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+			return true
+		}
 	}
 
 	if s.sessionMgr == nil {

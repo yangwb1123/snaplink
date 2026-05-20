@@ -86,6 +86,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		Request              string            `json:"request"`               // RFC 9101 JAR
 		Prompt               string            `json:"prompt"`                // OIDC Core §3.1.2.1: space-separated none|login|consent|select_account
 		IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
+		MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -190,6 +191,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			Resource:             req.Resource,
 			AuthorizationDetails: req.AuthorizationDetails,
 			IDTokenHint:          req.IDTokenHint,
+			MaxAge:               req.MaxAge,
 		}, c) {
 			return
 		}
@@ -626,6 +628,7 @@ func (s *Server) issueAuthCode(
 		Request              string            `json:"request"`
 		Prompt               string            `json:"prompt"`
 		IDTokenHint          string            `json:"id_token_hint"`
+		MaxAge               *int64            `json:"max_age"`
 	},
 	client *Client,
 ) (string, error) {
