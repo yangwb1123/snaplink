@@ -92,6 +92,17 @@ type Client struct {
 	// parameter is still accepted but unconstrained.
 	AllowedAuthorizationDetailsTypes []string `json:"allowed_authorization_details_types,omitempty" yaml:"allowed_authorization_details_types,omitempty"`
 
+	// RefreshTokenTTL overrides the server-wide refresh-token
+	// lifetime for THIS client. Useful when one deployment serves
+	// both public SPAs (where shorter refresh tokens limit blast
+	// radius if exfiltrated) and confidential service clients
+	// (which want longer refresh chains to avoid frequent
+	// re-auth). Zero = inherit the server's WithRefreshTokenStore
+	// ttl (or DefaultRefreshTokenTTL when that's also unset).
+	// Applies at every issuance: first-mint at /auth/login,
+	// authorization_code exchange, and rotation grant alike.
+	RefreshTokenTTL time.Duration `json:"refresh_token_ttl,omitempty" yaml:"refresh_token_ttl,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel

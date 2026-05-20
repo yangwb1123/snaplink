@@ -309,7 +309,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		// nil so refresh rotations don't fabricate a binding the user
 		// never consented to.
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "")
+			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "", client.RefreshTokenTTL)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err)
 		} else {

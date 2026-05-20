@@ -589,7 +589,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
 			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource,
-			req.AuthorizationDetails, session.ID)
+			req.AuthorizationDetails, session.ID, client.RefreshTokenTTL)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
@@ -785,12 +785,20 @@ func (s *Server) issueRefreshToken(
 	resources []string,
 	authDetails json.RawMessage,
 	sid string,
+	clientTTLOverride time.Duration,
 ) (string, error) {
 	token, err := generateAuthCodeBytes() // same 32-byte base64url generator
 	if err != nil {
 		return "", fmt.Errorf("generate refresh token: %w", err)
 	}
-	ttl := s.refreshTokenTTL
+	// TTL resolution precedence: per-client override > server-wide
+	// configuration > DefaultRefreshTokenTTL. The per-client override
+	// lets operators give SPAs (public clients) short refresh tokens
+	// while keeping long ones for service clients.
+	ttl := clientTTLOverride
+	if ttl <= 0 {
+		ttl = s.refreshTokenTTL
+	}
 	if ttl <= 0 {
 		ttl = DefaultRefreshTokenTTL
 	}
@@ -1079,7 +1087,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		if s.refreshTokenStore != nil {
 			rt, err := s.issueRefreshToken(ctx.Request().Context(),
 				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
-				info.AuthorizationDetails, info.SID)
+				info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
 			if err != nil {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
@@ -1196,7 +1204,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// token now fails as invalid_grant (and kills the family).
 		newRefresh, err := s.issueRefreshToken(ctx.Request().Context(),
 			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
-			info.AuthorizationDetails, info.SID)
+			info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
 		if err != nil {
 			s.logger.Error("refresh token rotation failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
