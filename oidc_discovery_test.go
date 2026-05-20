@@ -139,6 +139,28 @@ func TestDiscovery_PKCEMethodsAdvertised(t *testing.T) {
 	}
 }
 
+func TestDiscovery_PKCEMethodsDropPlainUnderOAuth21Strict(t *testing.T) {
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{ID: "demo", Secret: "s", Active: true})
+	srv := sso.NewServer(
+		sso.WithIssuer(discoIssuer),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithOAuth21StrictMode(true),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+	doc := fetchDiscovery(t, httpSrv)
+	methods, _ := doc["code_challenge_methods_supported"].([]any)
+	if len(methods) != 1 {
+		t.Fatalf("strict mode methods = %v, want [S256] only", methods)
+	}
+	if methods[0] != "S256" {
+		t.Errorf("methods[0] = %v, want S256", methods[0])
+	}
+}
+
 func TestDiscovery_ScopesUnionFromClientAndOpenID(t *testing.T) {
 	srv := newDiscoveryServer(t, true)
 	doc := fetchDiscovery(t, srv)

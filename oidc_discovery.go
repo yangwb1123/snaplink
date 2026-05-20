@@ -201,6 +201,20 @@ type oidcConfiguration struct {
 	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
 }
 
+// codeChallengeMethodsFor advertises the PKCE methods this AS will
+// actually accept. OAuth 2.1 strict mode forbids `plain` server-wide
+// (RFC 7636 §4.2 marks it weaker; 2.1 §7.5.2 mandates S256), so the
+// discovery list MUST shrink to ["S256"] when the operator enabled
+// the strict flag. Otherwise both are accepted on the wire and both
+// are advertised. Per-client AllowedPKCEMethods narrows further at
+// the request path; the discovery list reflects the AS-wide ceiling.
+func codeChallengeMethodsFor(s *Server) []string {
+	if s.oauth21Strict {
+		return []string{PKCEMethodS256}
+	}
+	return []string{PKCEMethodS256, PKCEMethodPlain}
+}
+
 // allClientsRequireSignedRequestObject returns true only when the
 // client store has at least one client AND every registered client
 // has RequireSignedRequestObject=true. Matches RFC 9101 §10.5
@@ -286,7 +300,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		RevocationEndpointAuthMethodsSupported: []string{
 			"client_secret_basic", "client_secret_post", "private_key_jwt",
 		},
-		CodeChallengeMethodsSupported:     []string{PKCEMethodS256, PKCEMethodPlain},
+		CodeChallengeMethodsSupported:     codeChallengeMethodsFor(s),
 		// RFC 9207 §3: this server always includes `iss` in
 		// authorization responses (see handleLogin + resolveIssuer).
 		AuthorizationResponseIssParameterSupported: true,
