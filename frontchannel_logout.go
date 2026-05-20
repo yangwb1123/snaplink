@@ -1,7 +1,6 @@
 package sso
 
 import (
-	"context"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -111,24 +110,3 @@ func appendFrontchannelLogoutSidIss(uri, sid, iss string) string {
 	return uri + sep + strings.Join(params, "&")
 }
 
-// frontchannelLogoutSupportedAdvertisement reports whether any
-// registered client opts into front-channel logout. Drives the
-// discovery doc's frontchannel_logout_supported flag — true when
-// at least one client has a FrontchannelLogoutURI set. ClientStore
-// errors are non-fatal (discovery MUST keep responding) and fall
-// through to false.
-func frontchannelLogoutSupportedAdvertisement(ctx context.Context, s *Server) bool {
-	if s.clientStore == nil {
-		return false
-	}
-	clients, err := s.clientStore.List(ctx)
-	if err != nil {
-		return false
-	}
-	for _, c := range clients {
-		if c.FrontchannelLogoutURI != "" {
-			return true
-		}
-	}
-	return false
-}

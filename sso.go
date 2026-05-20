@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -74,6 +76,16 @@ type Server struct {
 	opPolicyURI          string
 	opTosURI             string
 	serviceDocumentation string
+
+	// Discovery doc derivations from the client store (scopes union,
+	// RequirePAR-any, RequireSignedRequestObject-all,
+	// frontchannel_logout_supported, authorization_details types union).
+	// Cached for `discoveryCacheTTL` so a high-QPS RP polling
+	// `/.well-known/openid-configuration` doesn't pay 5× ClientStore.List
+	// per request. Refresh is single-flight gated by discoveryCacheMu.
+	discoveryCacheTTL time.Duration
+	discoveryCache    atomic.Pointer[clientDiscoverySnapshot]
+	discoveryCacheMu  sync.Mutex
 }
 
 // Option configures the Server.
@@ -82,10 +94,11 @@ type Option func(*Server)
 // NewServer creates a new SSO server.
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		authenticators: make(map[string]Authenticator),
-		tokenIssuers:   make(map[string]TokenIssuer),
-		issuer:         DefaultIssuer,
-		logger:         NopLogger{},
+		authenticators:    make(map[string]Authenticator),
+		tokenIssuers:      make(map[string]TokenIssuer),
+		issuer:            DefaultIssuer,
+		logger:            NopLogger{},
+		discoveryCacheTTL: defaultDiscoveryCacheTTL,
 	}
 	for _, opt := range opts {
 		opt(s)

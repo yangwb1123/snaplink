@@ -1,9 +1,7 @@
 package sso
 
 import (
-	"context"
 	"net/http"
-	"sort"
 	"strings"
 )
 
@@ -242,49 +240,11 @@ func codeChallengeMethodsFor(s *Server) []string {
 	return []string{PKCEMethodS256, PKCEMethodPlain}
 }
 
-// allClientsRequireSignedRequestObject returns true only when the
-// client store has at least one client AND every registered client
-// has RequireSignedRequestObject=true. Matches RFC 9101 §10.5
-// semantics — the boolean is an AS-wide promise, so anything less
-// than universal enforcement must advertise false. Errors / empty
-// stores return false (legacy unrestricted behavior).
-func allClientsRequireSignedRequestObject(ctx context.Context, s *Server) bool {
-	if s.clientStore == nil {
-		return false
-	}
-	clients, err := s.clientStore.List(ctx)
-	if err != nil || len(clients) == 0 {
-		return false
-	}
-	for _, c := range clients {
-		if c == nil || !c.RequireSignedRequestObject {
-			return false
-		}
-	}
-	return true
-}
-
-// anyClientRequiresPAR scans the client store for any registered
-// client with RequirePAR=true. Used by the discovery doc to flip
-// `require_pushed_authorization_requests` to true when at least
-// one client enforces PAR-only authorization — matching the same
-// "advertise when any client opts in" convention `frontchannel_logout_supported`
-// uses. Errors return false (legacy unrestricted behavior).
-func anyClientRequiresPAR(ctx context.Context, s *Server) bool {
-	if s.clientStore == nil {
-		return false
-	}
-	clients, err := s.clientStore.List(ctx)
-	if err != nil {
-		return false
-	}
-	for _, c := range clients {
-		if c != nil && c.RequirePAR {
-			return true
-		}
-	}
-	return false
-}
+// Both `require_signed_request_object` (RFC 9101 §10.5) and
+// `require_pushed_authorization_requests` (RFC 9126 §5) derive from
+// scanning the client store. They share the cached
+// clientDiscoverySnapshot so a single iteration powers every
+// derivation across one discovery doc request.
 
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
 // RFC 8414 metadata document. Always wired by Mount (no opt-in
@@ -299,6 +259,12 @@ func anyClientRequiresPAR(ctx context.Context, s *Server) bool {
 // not http — otherwise OIDC RPs refuse the issuer per §4.3.
 func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	base := requestBaseURL(ctx.Request())
+	// Single client-store iteration powers every derived field below
+	// (scopes union, RequirePAR-any, RequireSignedRequestObject-all,
+	// frontchannel_logout_supported, authorization_details types
+	// union). TTL-cached across requests so a hot RP polling the
+	// discovery doc doesn't pay 5× ClientStore.List per call.
+	clientSnap := s.discoverySnapshot(ctx.Request().Context())
 	cfg := oidcConfiguration{
 		Issuer:                base,
 		AuthorizationEndpoint: base + PathLogin,
@@ -380,7 +346,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		cfg.PushedAuthorizationRequestEndpointAuthMethodsSupported = []string{
 			"client_secret_basic", "client_secret_post", "private_key_jwt",
 		}
-		if anyClientRequiresPAR(ctx.Request().Context(), s) {
+		if clientSnap.requirePAR {
 			cfg.RequirePushedAuthReq = true
 		}
 	}
@@ -391,12 +357,11 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// via discovery.
 		cfg.RegistrationEndpoint = base + PathRegister
 	}
-	scopes := scopeAdvertisement(ctx.Request().Context(), s)
-	if len(scopes) > 0 {
-		cfg.ScopesSupported = scopes
+	if len(clientSnap.scopes) > 0 {
+		cfg.ScopesSupported = clientSnap.scopes
 	}
-	if rar := authorizationDetailsTypeAdvertisement(ctx.Request().Context(), s); len(rar) > 0 {
-		cfg.AuthorizationDetailsTypesSupported = rar
+	if len(clientSnap.authorizationDetailTypes) > 0 {
+		cfg.AuthorizationDetailsTypesSupported = clientSnap.authorizationDetailTypes
 	}
 	if s.logoutTokenIssuer != nil && s.logoutNotifier != nil {
 		cfg.BackchannelLogoutSupported = true
@@ -404,7 +369,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 			cfg.BackchannelLogoutSessionSupported = true
 		}
 	}
-	if frontchannelLogoutSupportedAdvertisement(ctx.Request().Context(), s) {
+	if clientSnap.frontchannelLogout {
 		cfg.FrontchannelLogoutSupported = true
 		if s.sessionMgr != nil {
 			cfg.FrontchannelLogoutSessionSupported = true
@@ -437,7 +402,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.ServiceDocumentation = s.serviceDocumentation
 	cfg.ClaimTypesSupported = []string{"normal"}
 	cfg.DisplayValuesSupported = []string{"page"}
-	if allClientsRequireSignedRequestObject(ctx.Request().Context(), s) {
+	if clientSnap.requireSignedRequestObject {
 		cfg.RequireSignedRequestObjectGlobal = true
 	}
 	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
@@ -463,73 +428,6 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 
 	ctx.JSON(http.StatusOK, cfg)
-}
-
-// authorizationDetailsTypeAdvertisement collects the union of
-// every client's AllowedAuthorizationDetailsTypes. Empty result
-// = omit the discovery field (no client has declared a type
-// allowlist; the parameter remains accepted but unconstrained).
-// ClientStore.List errors are non-fatal — discovery MUST keep
-// responding even when the store is degraded.
-func authorizationDetailsTypeAdvertisement(ctx context.Context, s *Server) []string {
-	if s.clientStore == nil {
-		return nil
-	}
-	clients, err := s.clientStore.List(ctx)
-	if err != nil {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	for _, c := range clients {
-		for _, t := range c.AllowedAuthorizationDetailsTypes {
-			if t != "" {
-				seen[t] = struct{}{}
-			}
-		}
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(seen))
-	for t := range seen {
-		out = append(out, t)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// scopeAdvertisement collects scopes the server can grant. Always
-// includes "openid" when an ID token issuer is wired, plus the union
-// of every client's AllowedScopes — so RPs see what they can ask for
-// without poking each client manually. A ClientStore.List error is
-// non-fatal (the OIDC discovery endpoint MUST keep responding even
-// when the store is degraded); the openid scope still gets
-// advertised on its own.
-func scopeAdvertisement(ctx context.Context, s *Server) []string {
-	seen := map[string]struct{}{}
-	if s.idTokenIssuer != nil {
-		seen[ScopeOpenID] = struct{}{}
-	}
-	if s.clientStore != nil {
-		if clients, err := s.clientStore.List(ctx); err == nil {
-			for _, c := range clients {
-				for _, sc := range c.AllowedScopes {
-					if sc != "" {
-						seen[sc] = struct{}{}
-					}
-				}
-			}
-		}
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(seen))
-	for sc := range seen {
-		out = append(out, sc)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // requestBaseURL derives an absolute scheme://host base from the
