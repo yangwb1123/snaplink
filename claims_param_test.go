@@ -157,6 +157,60 @@ func TestClaimsParam_RejectsInnerNonObject(t *testing.T) {
 	}
 }
 
+func TestClaimsParam_RejectsTypoedEssentialBool(t *testing.T) {
+	// The classic RP misconfig: `{"essential": "true"}` (string)
+	// instead of `{"essential": true}` (bool). The old validator
+	// silently accepted any inner JSON; the new one rejects so
+	// the RP sees the bug immediately instead of debugging "why
+	// is my essential claim being ignored".
+	srv, _, _ := newClaimsParamHarness(t)
+	body, _ := json.Marshal(map[string]any{
+		"provider":   "password",
+		"client_id":  cpClientID,
+		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
+		"claims":     json.RawMessage(`{"userinfo": {"email": {"essential": "true"}}}`),
+	})
+	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 on essential=\"true\" typo", resp.StatusCode)
+	}
+}
+
+func TestClaimsParam_RejectsValuesNotAnArray(t *testing.T) {
+	// `values` MUST be an array per §5.5.1. RP passing a scalar
+	// is a typo for `value` (singular) — surface it.
+	srv, _, _ := newClaimsParamHarness(t)
+	body, _ := json.Marshal(map[string]any{
+		"provider":   "password",
+		"client_id":  cpClientID,
+		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
+		"claims":     json.RawMessage(`{"id_token": {"acr": {"values": "level-2"}}}`),
+	})
+	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 on values=string", resp.StatusCode)
+	}
+}
+
+func TestClaimsParam_AcceptsNullPerSpec(t *testing.T) {
+	// `{"email": null}` is the canonical "just request this claim,
+	// no constraints" shape. MUST be accepted.
+	srv, _, _ := newClaimsParamHarness(t)
+	body, _ := json.Marshal(map[string]any{
+		"provider":   "password",
+		"client_id":  cpClientID,
+		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
+		"claims":     json.RawMessage(`{"userinfo": {"email": null, "name": {"essential": true}}}`),
+	})
+	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200 on valid mixed shape", resp.StatusCode)
+	}
+}
+
 func TestClaimsParam_PARPushSurvives(t *testing.T) {
 	srv, auth, store := newClaimsParamHarness(t)
 	uri, _ := store.Issue(context.Background(), &sso.PARRequest{

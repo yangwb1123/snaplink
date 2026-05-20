@@ -33,10 +33,17 @@ import (
 // safe no-op.
 
 // validateClaimsParameter asserts the raw JSON is a JSON object
-// (the only shape OIDC Core §5.5 defines). Detailed per-claim
-// validation is deferred to consumers — extension members are
-// explicitly allowed by the spec, and a strict schema here would
-// reject perfectly valid forward-compatible payloads.
+// (the only shape OIDC Core §5.5 defines) AND that each requested-
+// claim entry is either null OR a JSON object whose well-known
+// members (essential / value / values) carry the spec-mandated
+// types. Catching shape errors here means RP misconfiguration
+// surfaces as invalid_request at /auth/login rather than silently
+// dropping through to "your essential claim was ignored" — the
+// latter is the bug RPs spend hours debugging.
+//
+// Extension members of the per-claim object are explicitly allowed
+// by §5.5 and skipped here — strict-typing them would reject
+// forward-compatible payloads.
 func validateClaimsParameter(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
@@ -45,19 +52,55 @@ func validateClaimsParameter(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return errors.New("claims: must be a JSON object")
 	}
-	// Per §5.5, top-level "userinfo" and "id_token" entries (when
-	// present) MUST themselves be JSON objects. Other top-level
-	// keys are unspecified by the spec — we accept them quietly so
-	// future-extension RPs aren't broken.
-	for _, key := range []string{"userinfo", "id_token"} {
-		raw, ok := obj[key]
-		if !ok || len(raw) == 0 {
+	for _, top := range []string{"userinfo", "id_token"} {
+		section, ok := obj[top]
+		if !ok || len(section) == 0 {
 			continue
 		}
 		var inner map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &inner); err != nil {
-			return errors.New("claims: \"" + key + "\" must be a JSON object")
+		if err := json.Unmarshal(section, &inner); err != nil {
+			return errors.New("claims: \"" + top + "\" must be a JSON object")
+		}
+		for claim, spec := range inner {
+			if err := validateClaimRequestSpec(top, claim, spec); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
+}
+
+// validateClaimRequestSpec checks one entry inside `userinfo` or
+// `id_token`. Per OIDC Core §5.5.1, the value is either JSON null
+// (request the claim, no extra constraints) or a JSON object with
+// optional `essential` (bool), `value` (any single value), `values`
+// (array). Wrong types → invalid_request; this gives RPs a clear
+// signal that their {"essential": "yes"} typo isn't silently
+// downgraded to non-essential.
+func validateClaimRequestSpec(top, claim string, raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return errors.New("claims: \"" + top + "." + claim + "\" must be null or an object")
+	}
+	if v, ok := obj["essential"]; ok && len(v) > 0 {
+		// json.Unmarshal of a non-bool into *bool returns an error
+		// — that's exactly the shape signal we want.
+		var b bool
+		if err := json.Unmarshal(v, &b); err != nil {
+			return errors.New("claims: \"" + top + "." + claim + ".essential\" must be a boolean")
+		}
+	}
+	if v, ok := obj["values"]; ok && len(v) > 0 {
+		var arr []json.RawMessage
+		if err := json.Unmarshal(v, &arr); err != nil {
+			return errors.New("claims: \"" + top + "." + claim + ".values\" must be an array")
+		}
+	}
+	// `value` accepts any JSON primitive per §5.5.1 — no shape check
+	// beyond well-formed JSON, which the outer Unmarshal already
+	// verified. Extension fields are ignored.
 	return nil
 }
