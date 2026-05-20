@@ -271,6 +271,13 @@ type TokenClaims struct {
 	// token MUST verify a fresh DPoP proof's thumbprint matches.
 	ConfirmationJKT string `json:"-"`
 
+	// ConfirmationX5TS256 is the RFC 8705 §3 mTLS client cert
+	// SHA-256 thumbprint when the token was issued bound to a
+	// TLS client certificate. Empty for non-mTLS-bound tokens.
+	// Resource servers receiving this token MUST verify the
+	// inbound connection's client cert thumbprint matches.
+	ConfirmationX5TS256 string `json:"-"`
+
 	// Actor is the validated RFC 8693 §4.1 `act` claim, populated
 	// when the token carries delegation provenance. Nil when the
 	// token represents direct subject access (no delegation in
@@ -368,6 +375,13 @@ type Subject struct {
 	// DPoP — a resource server checks for a matching DPoP proof
 	// on every protected-resource request.
 	ConfirmationJKT string
+
+	// ConfirmationX5TS256 is the RFC 8705 §3 mTLS certificate
+	// thumbprint that binds this access token to a specific
+	// client TLS cert. When non-empty, the issued JWT carries
+	// `cnf: {x5t#S256: <value>}`. Mutually exclusive with
+	// ConfirmationJKT — a single token uses one PoP mechanism.
+	ConfirmationX5TS256 string
 
 	// Actor (RFC 8693 §4.1) names the party acting on behalf of
 	// the Subject for delegation chains. When set, the issued

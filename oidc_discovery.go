@@ -111,6 +111,11 @@ type oidcConfiguration struct {
 	// supports DPoP at all.
 	DPoPSigningAlgValuesSupported []string `json:"dpop_signing_alg_values_supported,omitempty"`
 
+	// RFC 8705 §3.3 — true when the AS supports issuing tokens
+	// bound to mTLS client certificates. Flipped when
+	// WithClientCertExtractor is wired.
+	TLSClientCertificateBoundAccessTokens bool `json:"tls_client_certificate_bound_access_tokens,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -262,6 +267,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	// the `DPoP` header on /token whenever it's present; there's
 	// no opt-in store to wire.
 	cfg.DPoPSigningAlgValuesSupported = []string{"EdDSA"}
+	if s.clientCertExtractor != nil {
+		cfg.TLSClientCertificateBoundAccessTokens = true
+	}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced

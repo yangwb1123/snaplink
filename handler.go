@@ -1174,6 +1174,19 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		dpopJKT = binding.JKT
 	}
 
+	// RFC 8705 §3 — mTLS certificate-bound access tokens. When a
+	// client cert extractor is wired AND the inbound request
+	// carries a client cert, stamp the cert's SHA-256 thumbprint
+	// into the token's cnf.x5t#S256 claim. Mutually exclusive
+	// with DPoP — first-set wins (caller MUST NOT supply both,
+	// the configuration is per-token).
+	var mtlsX5T string
+	if s.clientCertExtractor != nil {
+		if cert, ok := s.clientCertExtractor.ExtractClientCert(ctx.Request()); ok && cert != nil {
+			mtlsX5T = certificateThumbprintS256(cert)
+		}
+	}
+
 	var scopes []string
 	if req.Scope != "" {
 		scopes = strings.Split(req.Scope, " ")
@@ -1251,6 +1264,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			SID:                  info.SID,
 			TTL:                  client.AccessTokenTTL,
 			ConfirmationJKT:      dpopJKT,
+			ConfirmationX5TS256:  mtlsX5T,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1372,9 +1386,10 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
 			// SID is locked to the original authorization's
 			// session — rotation never opens a new session.
-			SID:             info.SID,
-			TTL:             client.AccessTokenTTL,
-			ConfirmationJKT: dpopJKT,
+			SID:                 info.SID,
+			TTL:                 client.AccessTokenTTL,
+			ConfirmationJKT:     dpopJKT,
+			ConfirmationX5TS256: mtlsX5T,
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1428,8 +1443,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// Sub. No end-user auth event, hence no AuthTime/AMR.
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: client.ID, Resources: req.Resource, ClientID: client.ID,
-			TTL:             client.AccessTokenTTL,
-			ConfirmationJKT: dpopJKT,
+			TTL:                 client.AccessTokenTTL,
+			ConfirmationJKT:     dpopJKT,
+			ConfirmationX5TS256: mtlsX5T,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)

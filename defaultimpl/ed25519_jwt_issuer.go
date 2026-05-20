@@ -203,10 +203,12 @@ type ed25519Payload struct {
 
 // confirmationClaim is RFC 7800 §3.1's `cnf` JSON object. RFC 9449
 // §6 uses the `jkt` member to carry a DPoP key's JWK thumbprint;
-// other PoP mechanisms (mTLS via RFC 8705) populate `x5t#S256`
-// instead — that field is reserved here for the future mTLS commit.
+// RFC 8705 §3.1 uses `x5t#S256` to carry the mTLS client cert
+// thumbprint. A single token uses one mechanism — both fields
+// populated simultaneously would be a caller bug.
 type confirmationClaim struct {
-	JKT string `json:"jkt,omitempty"`
+	JKT      string `json:"jkt,omitempty"`
+	X5TS256  string `json:"x5t#S256,omitempty"`
 }
 
 // actClaim is the wire shape of `act`. Per RFC 8693 §4.1 the
@@ -335,8 +337,11 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 		ACR:      subject.ACR,
 		SID:      subject.SID,
 	}
-	if subject.ConfirmationJKT != "" {
-		payload.CNF = &confirmationClaim{JKT: subject.ConfirmationJKT}
+	if subject.ConfirmationJKT != "" || subject.ConfirmationX5TS256 != "" {
+		payload.CNF = &confirmationClaim{
+			JKT:     subject.ConfirmationJKT,
+			X5TS256: subject.ConfirmationX5TS256,
+		}
 	}
 	if !subject.AuthTime.IsZero() {
 		payload.AuthTime = subject.AuthTime.Unix()
@@ -473,6 +478,7 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	}
 	if p.CNF != nil {
 		claims.ConfirmationJKT = p.CNF.JKT
+		claims.ConfirmationX5TS256 = p.CNF.X5TS256
 	}
 	if p.AuthTime > 0 {
 		claims.AuthTime = time.Unix(p.AuthTime, 0)

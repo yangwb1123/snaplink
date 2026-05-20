@@ -69,6 +69,7 @@ type Server struct {
 	jtiReplayStore       JTIReplayStore
 	subjectClientIndex   SubjectClientIndex
 	jarFetcher           JARFetcher
+	clientCertExtractor  ClientCertExtractor
 }
 
 // Option configures the Server.
@@ -329,6 +330,28 @@ func WithSubjectClientIndex(idx SubjectClientIndex) Option {
 // is HTTPS-only, no-redirects, 5s timeout, 16KB body cap.
 func WithJARFetcher(fetcher JARFetcher) Option {
 	return func(s *Server) { s.jarFetcher = fetcher }
+}
+
+// WithClientCertExtractor enables RFC 8705 §3 mTLS certificate-
+// bound access tokens. When wired, every /token request whose
+// extractor returns a non-nil cert has the issued access token
+// stamped with `cnf.x5t#S256` — the cert's SHA-256 thumbprint.
+// Discovery's `tls_client_certificate_bound_access_tokens` flag
+// flips true.
+//
+// Pluggable so reverse-proxy-terminated TLS works: deployments
+// where envoy / nginx forward client certs via
+// `X-Forwarded-Client-Cert` supply a custom extractor that parses
+// the header. Direct-TLS deployments wire
+// [DefaultTLSPeerCertExtractor].
+//
+// mTLS-bound tokens still report `token_type: Bearer` per RFC
+// 8705 §3 (the binding is implicit in the cnf claim, not a new
+// type). Resource servers MUST check the cert on every protected
+// request against the token's cnf — same architectural
+// separation as DPoP.
+func WithClientCertExtractor(ex ClientCertExtractor) Option {
+	return func(s *Server) { s.clientCertExtractor = ex }
 }
 
 // WithIDTokenIssuer enables OpenID Connect ID Token emission alongside
