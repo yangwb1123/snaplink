@@ -62,6 +62,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		Resource             []string        `json:"resource"`
 		AuthorizationDetails json.RawMessage `json:"authorization_details"` // RFC 9396
 		LoginHint            string          `json:"login_hint"`            // OIDC Core §3.1.2.1
+		ResponseMode         string          `json:"response_mode"`         // OIDC Form Post 1.0
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -101,6 +102,13 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
 		return
 	}
+	// OIDC Form Post 1.0: reject malformed response_mode at PAR
+	// time so the caller fails fast (whole point of PAR — surface
+	// validation upstream of the user-agent redirect).
+	if req.ResponseMode != "" && !isValidResponseMode(req.ResponseMode) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
 	// RFC 9396: validate authorization_details up front so a
 	// malformed / disallowed payload fails at PAR time rather than
 	// surfacing later at /auth/login (PAR's whole point is to move
@@ -126,6 +134,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		Resource:             req.Resource,
 		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
 		LoginHint:            req.LoginHint,
+		ResponseMode:         req.ResponseMode,
 		ExpiresAt:            time.Now().Add(ttl),
 	})
 	if err != nil {

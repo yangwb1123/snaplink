@@ -84,6 +84,14 @@ type oidcConfiguration struct {
 	// rendered by this server, only their downstream signaling).
 	PromptValuesSupported []string `json:"prompt_values_supported,omitempty"`
 
+	// OIDC Core §3.1.2.1 + Form Post Response Mode 1.0 — the
+	// response delivery modes this AS supports for authorization
+	// responses. `form_post` triggers the HTML auto-POST page;
+	// `query` / `fragment` are accepted but currently just
+	// influence the response shape the RP's own JS handles
+	// (this server is JSON-bodied for /auth/login by default).
+	ResponseModesSupported []string `json:"response_modes_supported,omitempty"`
+
 	// RFC 9101 §10.5 — true when the `request` parameter is
 	// accepted on /auth/login. Always true here.
 	RequestParameterSupported bool `json:"request_parameter_supported"`
@@ -191,6 +199,15 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	// today because this server doesn't render those UIs itself;
 	// the RP is responsible for the interactive flow.
 	cfg.PromptValuesSupported = []string{PromptNone}
+
+	// Form Post Response Mode 1.0: every shape this server can
+	// emit. `form_post` is the value-add (auto-POST HTML page);
+	// query + fragment are advertised for spec completeness so
+	// RPs that introspect discovery know they're accepted on
+	// the wire.
+	cfg.ResponseModesSupported = []string{
+		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
+	}
 
 	ctx.JSON(http.StatusOK, cfg)
 }

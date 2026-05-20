@@ -88,6 +88,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
 		MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
 		LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
+		ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
 	}
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
@@ -151,6 +152,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if stored.LoginHint != "" {
 			req.LoginHint = stored.LoginHint
+		}
+		if stored.ResponseMode != "" {
+			req.ResponseMode = stored.ResponseMode
 		}
 	}
 
@@ -279,6 +283,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if jar.LoginHint != "" {
 			req.LoginHint = jar.LoginHint
+		}
+		if jar.ResponseMode != "" {
+			req.ResponseMode = jar.ResponseMode
 		}
 	}
 
@@ -425,6 +432,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 
+	// OIDC Form Post Response Mode 1.0 — validate response_mode
+	// early so a bad value fails BEFORE any side-effects (auth code
+	// issue, session create). Empty is always valid and falls
+	// through to the response_type's default mode.
+	if req.ResponseMode != "" && !isValidResponseMode(req.ResponseMode) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+		return
+	}
+
 	// OAuth 2.0 authorization_code branch: instead of minting a token
 	// here, persist a short-lived code bound to (user, client, redirect_uri)
 	// and return it so the relying party can exchange it via /token.
@@ -480,6 +496,19 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			return
 		}
 		s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "")
+
+		// OIDC Form Post Response Mode 1.0: when the RP requested
+		// form_post, render an HTML auto-POST page targeting
+		// redirect_uri instead of the JSON body. Available only on
+		// code flow (where there's a redirect_uri to POST to);
+		// other response modes (query, fragment, empty) keep the
+		// existing JSON response — the RP's own JS handles the
+		// post-fetch redirect.
+		if req.ResponseMode == ResponseModeFormPost {
+			s.renderFormPostResponse(ctx, req.RedirectURI, code, req.State)
+			return
+		}
+
 		resp := map[string]any{
 			KeyCode: code,
 			KeyIss:  s.resolveIssuer(ctx),
@@ -641,6 +670,7 @@ func (s *Server) issueAuthCode(
 		IDTokenHint          string            `json:"id_token_hint"`
 		MaxAge               *int64            `json:"max_age"`
 		LoginHint            string            `json:"login_hint"`
+		ResponseMode         string            `json:"response_mode"`
 	},
 	client *Client,
 ) (string, error) {

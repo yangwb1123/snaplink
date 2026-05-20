@@ -40,6 +40,13 @@ type PARRequest struct {
 	// as scope / redirect_uri). Empty = no hint pushed.
 	LoginHint string
 
+	// ResponseMode is the OIDC Form Post Response Mode 1.0 +
+	// OIDC Core §3.1.2.1 `response_mode` parameter. Threaded
+	// through PAR so the merge at /auth/login picks the pushed
+	// value over any caller-supplied one. Empty = use the
+	// response_type's default mode.
+	ResponseMode string
+
 	ExpiresAt time.Time
 }
 
