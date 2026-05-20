@@ -122,6 +122,15 @@ type Client struct {
 	// fail with invalid_pkce_method.
 	AllowedPKCEMethods []string `json:"allowed_pkce_methods,omitempty" yaml:"allowed_pkce_methods,omitempty"`
 
+	// RequireSignedRequestObject forces every authorization request
+	// for THIS client to be wrapped in a signed JAR request object
+	// (RFC 9101 §10.8). When true, a direct /auth/login without
+	// `request` or `request_uri` is rejected with invalid_request.
+	// Useful for high-security clients (FAPI 2.0 baseline) where
+	// the AS must not accept unauthenticated authorization
+	// parameters. When false (default), JAR remains optional.
+	RequireSignedRequestObject bool `json:"require_signed_request_object,omitempty" yaml:"require_signed_request_object,omitempty"`
+
 	// RequirePAR forces every authorization request for THIS client
 	// to be pushed via /par BEFORE redirecting the user agent (RFC
 	// 9126 §2.1). When true, a direct /auth/login call without

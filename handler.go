@@ -304,6 +304,18 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "client requires pushed authorization request"))
 		return
 	}
+	// RFC 9101 §10.8 — high-security clients require a signed JAR
+	// request object (inline `request` or fetched `request_uri`).
+	// Direct /auth/login without either fails fast. PAR's pushed
+	// JWT doesn't satisfy this gate by itself — PAR is about
+	// transport, not about signing the request — but a JAR fetched
+	// via request_uri does (the merge already populated req.Request
+	// in that branch).
+	if client.RequireSignedRequestObject && req.Request == "" {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "client requires signed request object"))
+		return
+	}
 	if !client.IsAuthenticatorAllowed(req.Provider) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAuthenticatorNotAllowed)
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAuthenticatorNotAllowed))
