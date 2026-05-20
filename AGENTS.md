@@ -376,6 +376,15 @@ default. Caveats: in-process only (restart = new genesis), the
 *last* event isn't detectable from the chain alone (needs external
 attestation), reordering fields in `Event` rotates every chain.
 
+**PII redaction (opt-in)**: `audit.WithRedactor(r)` runs BEFORE
+the chainer so the chain validates over the redacted form (a
+SIEM verifier doesn't need pre-redaction values). Built-in
+helpers: `RedactActorIDHash(salt)` (sha256-16-byte prefix; salt
+REQUIRED), `RedactIPTruncate` (v4 → /24, v6 → /48), `RedactUserAgent`
+(clear), `RedactMetadataKeys(...)` + `RedactMetadataKeyPrefixes(...)`,
+`DefaultPIIRedactor(salt)` (composes the first three). Mutate
+in place — fast, simple, ownership transferred at `Record`.
+
 ### Permissions (`permissions/`)
 
 `permissions.Provider` is the storage interface. `MemoryProvider`

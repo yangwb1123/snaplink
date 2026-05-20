@@ -29,10 +29,11 @@ type ErrorHandler func(error)
 //   - error redirection through ErrorHandler instead of returning
 //   - nil-safe Record (so handlers can call it without conditional guards)
 type Recorder struct {
-	sink    Sink
-	onError ErrorHandler
-	now     func() time.Time
-	chain   *chainer
+	sink     Sink
+	onError  ErrorHandler
+	now      func() time.Time
+	chain    *chainer
+	redactor Redactor
 }
 
 type Option func(*Recorder)
@@ -85,6 +86,12 @@ func (r *Recorder) Record(ctx context.Context, e *Event) {
 	}
 	if e.Timestamp.IsZero() {
 		e.Timestamp = r.now()
+	}
+	// Redaction runs BEFORE the hash chainer so the chain validates
+	// over the redacted form. A downstream verifier shouldn't need
+	// access to the pre-redaction values to check chain integrity.
+	if r.redactor != nil {
+		r.redactor.Redact(e)
 	}
 	if r.chain != nil {
 		r.chain.stamp(e)
