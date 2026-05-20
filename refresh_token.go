@@ -59,6 +59,15 @@ type RefreshToken struct {
 	// field — propagation degrades to "lost on rotation" exactly
 	// as the v1 behavior was.
 	AuthorizationDetails json.RawMessage
+
+	// SID is the OIDC Core §2 session identifier captured at the
+	// original authorization. Rotation re-stamps it into the new
+	// access + id tokens so back-channel logout's `sid` claim
+	// matches across the entire token family — RPs that bound
+	// local state to the sid see continuity across refreshes.
+	// Empty = no session anchor (the rotation simply omits the
+	// sid claim on emitted tokens).
+	SID string
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

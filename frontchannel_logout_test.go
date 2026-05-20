@@ -225,10 +225,13 @@ func TestFCL_DiscoveryAdvertisesWhenAnyClientOptsIn(t *testing.T) {
 	if v, _ := doc["frontchannel_logout_supported"].(bool); !v {
 		t.Fatalf("frontchannel_logout_supported: got %v, want true", doc["frontchannel_logout_supported"])
 	}
-	// sid claim isn't plumbed yet → session_supported must NOT
-	// surface (omitempty). A future sid implementation flips this.
-	if _, present := doc["frontchannel_logout_session_supported"]; present {
-		t.Fatalf("frontchannel_logout_session_supported leaked: %v", doc["frontchannel_logout_session_supported"])
+	// sid claim is now plumbed through SessionManager-wired
+	// deployments → session_supported flips true when the
+	// front-channel base condition (any client with FCL URI)
+	// holds. The harness wires a SessionManager so this MUST
+	// be true.
+	if v, _ := doc["frontchannel_logout_session_supported"].(bool); !v {
+		t.Fatalf("frontchannel_logout_session_supported = %v want true (session manager wired)", doc["frontchannel_logout_session_supported"])
 	}
 }
 

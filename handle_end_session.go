@@ -55,6 +55,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	var (
 		client *Client
 		userID string
+		sid    string
 	)
 
 	if idTokenHint != "" {
@@ -67,6 +68,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 			return
 		}
 		userID = claims.Subject
+		sid = claims.SID
 		// Resolve the client by RFC 9068 client_id claim (preferred,
 		// first-class) or fall back to the first audience entry (the
 		// pre-9068 heuristic) — matches handleLogout's lookup so
@@ -110,7 +112,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	// session can be torn down. No-op when BCL isn't wired or
 	// the client doesn't declare a backchannel_logout_uri.
 	if userID != "" && client != nil {
-		s.sendBackchannelLogout(ctx, client, userID)
+		s.sendBackchannelLogout(ctx, client, userID, sid)
 	}
 
 	if userID != "" {

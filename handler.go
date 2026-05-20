@@ -513,6 +513,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		AuthTime:             time.Now(),
 		AMR:                  []string{result.Provider},
 		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		SID:                  session.ID,
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
@@ -550,7 +551,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
 			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource,
-			req.AuthorizationDetails)
+			req.AuthorizationDetails, session.ID)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
@@ -582,6 +583,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			AuthTime: time.Now(),
 			AMR:      []string{result.Provider},
 			Claims:   result.Attributes,
+			SID:      session.ID,
 		})
 		if err != nil {
 			s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -742,6 +744,7 @@ func (s *Server) issueRefreshToken(
 	familyID string,
 	resources []string,
 	authDetails json.RawMessage,
+	sid string,
 ) (string, error) {
 	token, err := generateAuthCodeBytes() // same 32-byte base64url generator
 	if err != nil {
@@ -773,6 +776,7 @@ func (s *Server) issueRefreshToken(
 		FamilyID:             familyID,
 		Resources:            append([]string(nil), resources...),
 		AuthorizationDetails: cloneRawJSON(authDetails),
+		SID:                  sid,
 	}
 	if err := s.refreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)
@@ -1016,6 +1020,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			AuthTime:             time.Now(),
 			AMR:                  []string{info.Provider},
 			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
+			SID:                  info.SID,
 		}, scopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1033,7 +1038,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		if s.refreshTokenStore != nil {
 			rt, err := s.issueRefreshToken(ctx.Request().Context(),
 				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
-				info.AuthorizationDetails)
+				info.AuthorizationDetails, info.SID)
 			if err != nil {
 				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 			} else {
@@ -1134,6 +1139,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			// — refreshed tokens MUST carry the same fine-grained
 			// authorization the user already consented to.
 			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
+			// SID is locked to the original authorization's
+			// session — rotation never opens a new session.
+			SID: info.SID,
 		}, grantScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
@@ -1147,7 +1155,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// token now fails as invalid_grant (and kills the family).
 		newRefresh, err := s.issueRefreshToken(ctx.Request().Context(),
 			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
-			info.AuthorizationDetails)
+			info.AuthorizationDetails, info.SID)
 		if err != nil {
 			s.logger.Error("refresh token rotation failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
@@ -1355,10 +1363,11 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	// fail. We do this in a best-effort way: a malformed or
 	// already-expired bearer just yields no back-channel
 	// notification, never an error.
-	var bcSubject, bcClientID string
+	var bcSubject, bcClientID, bcSID string
 	if bearer != "" {
 		if claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer); err == nil && claims != nil {
 			bcSubject = claims.Subject
+			bcSID = claims.SID
 			if claims.ClientID != "" {
 				bcClientID = claims.ClientID
 			} else if len(claims.Audience) > 0 {
@@ -1389,7 +1398,7 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	// backchannel_logout_uri declared.
 	if bcSubject != "" && bcClientID != "" && s.clientStore != nil {
 		if c, err := s.clientStore.Get(ctx.Request().Context(), bcClientID); err == nil && c != nil {
-			s.sendBackchannelLogout(ctx, c, bcSubject)
+			s.sendBackchannelLogout(ctx, c, bcSubject, bcSID)
 		}
 	}
 

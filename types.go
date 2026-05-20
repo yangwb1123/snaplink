@@ -190,6 +190,16 @@ type TokenClaims struct {
 	ACR      string    `json:"acr,omitempty"`
 	AMR      []string  `json:"amr,omitempty"`
 
+	// SID is the OIDC Core §2 / Back-Channel Logout 1.0 §2.4
+	// session identifier. Populated when the token was minted in
+	// the context of a server-managed session; downstream RPs
+	// can correlate this with the same claim in a future
+	// logout_token to know which local session to invalidate.
+	// Empty for tokens minted without a session (client_credentials,
+	// service-to-service token-exchange where no end-user is in
+	// the loop).
+	SID string `json:"sid,omitempty"`
+
 	// Actor is the validated RFC 8693 §4.1 `act` claim, populated
 	// when the token carries delegation provenance. Nil when the
 	// token represents direct subject access (no delegation in
@@ -262,6 +272,15 @@ type Subject struct {
 	// issuers; non-aware issuers ignore it. Empty = no
 	// authorization_details on the token.
 	AuthorizationDetails json.RawMessage
+
+	// SID is the OIDC Core §2 session identifier propagated into
+	// the token's `sid` claim. Populated from the active
+	// SessionManager session at login time; carried through
+	// refresh-token rotation and prompt=none silent renewal so
+	// the sid stays stable for the lifetime of the session.
+	// Empty = no session anchor (client_credentials, service
+	// flows, etc.).
+	SID string
 
 	// Actor (RFC 8693 §4.1) names the party acting on behalf of
 	// the Subject for delegation chains. When set, the issued

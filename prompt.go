@@ -187,6 +187,11 @@ func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req s
 		AMR:                  append([]string(nil), claims.AMR...),
 		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
 		Actor:                claims.Actor,
+		// SID stays locked to the hint's session — silent renewal
+		// targets the same session the original id_token was minted
+		// for, so RPs that bound their local state to the sid see
+		// continuity across renewals.
+		SID: claims.SID,
 	}, scopes)
 	if err != nil {
 		s.logger.Error("silent renewal token issuance failed", "strategy", strategy, "error", err)
@@ -218,6 +223,7 @@ func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req s
 			AuthTime: claims.AuthTime,
 			ACR:      claims.ACR,
 			AMR:      append([]string(nil), claims.AMR...),
+			SID:      claims.SID,
 		})
 		if idErr != nil {
 			s.logger.Error("silent renewal id_token issuance failed", "error", idErr)

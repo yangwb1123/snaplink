@@ -29,6 +29,14 @@ type IDTokenRequest struct {
 	AZP      string            // Authorized Party — used when aud is multi-valued
 	Claims   map[string]string // extra OIDC-defined claims (email, name, ...)
 	TTL      time.Duration     // 0 = let the issuer pick (typically same as access TTL)
+
+	// SID is the OIDC Core §2 session identifier. When populated,
+	// the issued ID token carries a `sid` claim — RPs that store
+	// the session id on first login can match it to a later
+	// back-channel logout_token's sid for surgical session
+	// invalidation (vs the coarser "kill every session for this
+	// sub" fallback). Empty omits the claim.
+	SID string
 }
 
 // IDTokenIssuer mints OIDC ID Tokens. Optional SPI — when the server

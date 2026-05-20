@@ -349,8 +349,10 @@ func TestBCL_DiscoveryAdvertisesSupport(t *testing.T) {
 	if doc["backchannel_logout_supported"] != true {
 		t.Errorf("backchannel_logout_supported = %v want true", doc["backchannel_logout_supported"])
 	}
-	if doc["backchannel_logout_session_supported"] == true {
-		t.Errorf("backchannel_logout_session_supported = true unexpectedly (no sid in tokens yet)")
+	// SessionManager is wired in newBCLServer → sid is stamped
+	// in access + id tokens → session support advertised.
+	if doc["backchannel_logout_session_supported"] != true {
+		t.Errorf("backchannel_logout_session_supported = %v want true (session manager wired → sid emitted)", doc["backchannel_logout_session_supported"])
 	}
 }
 

@@ -187,6 +187,7 @@ type ed25519Payload struct {
 	AuthTime int64    `json:"auth_time,omitempty"`
 	ACR      string   `json:"acr,omitempty"`
 	AMR      []string `json:"amr,omitempty"`
+	SID      string   `json:"sid,omitempty"`
 
 	// RFC 9396 — Rich Authorization Requests. Pass-through of
 	// the original `authorization_details` array as raw JSON so
@@ -280,6 +281,7 @@ type ed25519IDPayload struct {
 	AMR      []string          `json:"amr,omitempty"`
 	ACR      string            `json:"acr,omitempty"`
 	AZP      string            `json:"azp,omitempty"`
+	SID      string            `json:"sid,omitempty"`
 	Extra    map[string]string `json:"ext,omitempty"`
 }
 
@@ -314,6 +316,7 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 		ClientID: subject.ClientID,
 		JTI:      jti,
 		ACR:      subject.ACR,
+		SID:      subject.SID,
 	}
 	if !subject.AuthTime.IsZero() {
 		payload.AuthTime = subject.AuthTime.Unix()
@@ -446,6 +449,7 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 		JTI:       p.JTI,
 		ACR:       p.ACR,
 		AMR:       append([]string(nil), p.AMR...),
+		SID:       p.SID,
 	}
 	if p.AuthTime > 0 {
 		claims.AuthTime = time.Unix(p.AuthTime, 0)
@@ -502,6 +506,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *sso.IDTokenReque
 		AMR:   req.AMR,
 		ACR:   req.ACR,
 		AZP:   req.AZP,
+		SID:   req.SID,
 		Extra: req.Claims,
 	}
 	if !req.AuthTime.IsZero() {
@@ -655,9 +660,12 @@ type ed25519LogoutPayload struct {
 	Exp    int64                      `json:"exp,omitempty"`
 	JTI    string                     `json:"jti,omitempty"`
 	Events map[string]json.RawMessage `json:"events,omitempty"`
-	// nonce + sid intentionally omitted: §2.4 forbids `nonce` on
-	// a logout token, and `sid` requires session-id support which
-	// this server hasn't wired in access tokens yet.
+	// `nonce` is intentionally omitted — OIDC BCL §2.4 forbids
+	// it. `sid` is populated when the caller passes a session id
+	// via LogoutTokenRequest.SID — RPs use it to invalidate the
+	// specific session they received the matching id_token for,
+	// rather than wiping every session for the subject.
+	SID string `json:"sid,omitempty"`
 }
 
 // DefaultLogoutTokenTTL bounds the logout-token lifetime. Short
@@ -691,6 +699,7 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(_ context.Context, req *sso.LogoutTo
 		Exp:    now.Add(ttl).Unix(),
 		JTI:    jti,
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
+		SID:    req.SID,
 	}
 	hb, err := json.Marshal(header)
 	if err != nil {

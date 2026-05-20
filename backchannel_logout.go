@@ -50,6 +50,14 @@ type LogoutTokenRequest struct {
 	Subject  string
 	Audience string
 	TTL      time.Duration
+
+	// SID is the OIDC Back-Channel Logout 1.0 §2.4 session
+	// identifier. When set, the issued logout_token carries a
+	// `sid` claim — the RP uses it to invalidate the specific
+	// session it received the matching id_token for, rather
+	// than wiping every session for the subject. Empty omits
+	// the claim (legacy/coarse behavior).
+	SID string
 }
 
 // LogoutNotifier delivers a signed logout_token to the RP's
@@ -123,7 +131,7 @@ func (n *HTTPLogoutNotifier) Notify(ctx context.Context, uri string, logoutToken
 //
 // Failures are logged + audited but never block the parent
 // /logout response — see the contract on LogoutNotifier.
-func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subject string) {
+func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subject string, sid string) {
 	if s.logoutTokenIssuer == nil || s.logoutNotifier == nil {
 		return
 	}
@@ -135,6 +143,11 @@ func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subje
 	logoutToken, err := s.logoutTokenIssuer.IssueLogoutToken(tokenCtx, &LogoutTokenRequest{
 		Subject:  subject,
 		Audience: client.ID,
+		// OIDC BCL §2.4: `sid` lets the RP scope the logout to
+		// the specific session it received the matching id_token
+		// for. Empty when the inbound id_token_hint had no sid
+		// claim (legacy tokens minted before sid plumbing).
+		SID: sid,
 	})
 	if err != nil {
 		s.logger.Error("backchannel logout: issue token failed",

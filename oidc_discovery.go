@@ -53,10 +53,14 @@ type oidcConfiguration struct {
 	// endpoints. Set when both LogoutTokenIssuer + LogoutNotifier
 	// are wired via WithBackchannelLogout.
 	BackchannelLogoutSupported bool `json:"backchannel_logout_supported,omitempty"`
-	// BackchannelLogoutSessionSupported stays false today — this
-	// server doesn't stamp `sid` in access tokens yet, so it
-	// can't emit `sid` in logout tokens either. Will flip when
-	// session-id support lands across the token issuers.
+	// BackchannelLogoutSessionSupported flips true when the AS
+	// stamps `sid` in access + ID tokens — that is, when a
+	// SessionManager is wired. Without a session manager every
+	// token has empty sid, so advertising session support would
+	// be a lie. With one wired, /end_session reads the sid from
+	// the id_token_hint and forwards it on logout_tokens, letting
+	// RPs invalidate the specific session rather than every
+	// session for the subject.
 	BackchannelLogoutSessionSupported bool `json:"backchannel_logout_session_supported,omitempty"`
 
 	// OIDC Front-Channel Logout 1.0 §2.1 — true when at least one
@@ -68,9 +72,9 @@ type oidcConfiguration struct {
 	// secret.
 	FrontchannelLogoutSupported bool `json:"frontchannel_logout_supported,omitempty"`
 	// FrontchannelLogoutSessionSupported mirrors the back-channel
-	// flag: false until access tokens carry a sid claim. Without
-	// sid, the iframe URI can't be tagged with the session id the
-	// RP needs to disambiguate concurrent sessions.
+	// flag — true when SessionManager is wired so id_tokens
+	// carry a sid claim the RP can correlate to its local
+	// session at logout time.
 	FrontchannelLogoutSessionSupported bool `json:"frontchannel_logout_session_supported,omitempty"`
 
 	// OIDC Core §3.1.2.1 — the prompt values this AS understands.
@@ -167,9 +171,15 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if s.logoutTokenIssuer != nil && s.logoutNotifier != nil {
 		cfg.BackchannelLogoutSupported = true
+		if s.sessionMgr != nil {
+			cfg.BackchannelLogoutSessionSupported = true
+		}
 	}
 	if frontchannelLogoutSupportedAdvertisement(ctx.Request().Context(), s) {
 		cfg.FrontchannelLogoutSupported = true
+		if s.sessionMgr != nil {
+			cfg.FrontchannelLogoutSessionSupported = true
+		}
 	}
 	cfg.ClaimsSupported = []string{
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",

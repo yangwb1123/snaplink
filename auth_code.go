@@ -42,6 +42,15 @@ type AuthCode struct {
 	// the eventual access token.
 	AuthorizationDetails json.RawMessage
 
+	// SID is the OIDC Core §2 session identifier captured at
+	// /auth/login (the active SessionManager session ID). The
+	// /token authorization_code grant re-stamps it into the
+	// minted access + refresh tokens so the entire token chain
+	// shares one sid — RPs that bound state to the sid at first
+	// id_token receipt can correlate it across the back-channel
+	// logout. Empty = no session anchor.
+	SID string
+
 	ExpiresAt time.Time
 }
 

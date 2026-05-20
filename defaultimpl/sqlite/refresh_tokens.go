@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     expires_at             INTEGER NOT NULL,
     family_id              TEXT    NOT NULL DEFAULT '',
     resources              TEXT    NOT NULL DEFAULT '[]',
-    authorization_details  TEXT    NOT NULL DEFAULT ''
+    authorization_details  TEXT    NOT NULL DEFAULT '',
+    sid                    TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_client
@@ -95,6 +96,12 @@ func NewRefreshTokenStore(dsn string) (*RefreshTokenStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate refresh_tokens.authorization_details: %w", err)
 	}
+	if _, err := db.ExecContext(context.Background(),
+		`ALTER TABLE refresh_tokens ADD COLUMN sid TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!isDuplicateColumnErr(err) {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: migrate refresh_tokens.sid: %w", err)
+	}
 	return &RefreshTokenStore{db: db}, nil
 }
 
@@ -114,6 +121,11 @@ func NewRefreshTokenStoreWithDB(db *sql.DB) *RefreshTokenStore {
 	}
 	if _, err := db.ExecContext(context.Background(),
 		`ALTER TABLE refresh_tokens ADD COLUMN authorization_details TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!isDuplicateColumnErr(err) {
+		_ = err
+	}
+	if _, err := db.ExecContext(context.Background(),
+		`ALTER TABLE refresh_tokens ADD COLUMN sid TEXT NOT NULL DEFAULT ''`); err != nil &&
 		!isDuplicateColumnErr(err) {
 		_ = err
 	}
@@ -159,13 +171,13 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *sso.R
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
             scopes, attributes, issued_at, expires_at, family_id, resources,
-            authorization_details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            authorization_details, sid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
 		info.FamilyID, string(resources),
-		string(info.AuthorizationDetails),
+		string(info.AuthorizationDetails), info.SID,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
@@ -197,7 +209,7 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*sso.Ref
         DELETE FROM refresh_tokens WHERE token = ?
         RETURNING user_id, client_id, provider, scopes, attributes,
                   issued_at, expires_at, family_id, resources,
-                  authorization_details`, token)
+                  authorization_details, sid`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
@@ -229,7 +241,7 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*sso.Ref
 	row := s.db.QueryRowContext(ctx, `
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, resources,
-               authorization_details
+               authorization_details, sid
         FROM refresh_tokens WHERE token = ?`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -324,7 +336,7 @@ func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 	var (
 		out                                        sso.RefreshToken
 		provider, scopesJSON, attrsJSON, resources string
-		familyID, authDetails                      string
+		familyID, authDetails, sid                 string
 		issuedAtUnixNs, expiresAtUnixNs            int64
 	)
 	if err := s.Scan(
@@ -332,7 +344,7 @@ func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 		&scopesJSON, &attrsJSON,
 		&issuedAtUnixNs, &expiresAtUnixNs,
 		&familyID, &resources,
-		&authDetails,
+		&authDetails, &sid,
 	); err != nil {
 		return nil, err
 	}
@@ -341,6 +353,7 @@ func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 	}
 	out.Provider = provider
 	out.FamilyID = familyID
+	out.SID = sid
 	out.IssuedAt = time.Unix(0, issuedAtUnixNs).UTC()
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
 	if scopesJSON != "" && scopesJSON != "[]" {
