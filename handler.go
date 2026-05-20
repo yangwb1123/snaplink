@@ -488,6 +488,16 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			if req.CodeChallengeMethod == "" {
 				req.CodeChallengeMethod = PKCEMethodPlain
 			}
+			// Per-client PKCE method allowlist (Client.AllowedPKCEMethods).
+			// When set, every challenge method MUST appear in the list
+			// — the canonical use case is forcing S256 on production
+			// clients while leaving legacy clients on the default
+			// (RFC-permissive) behavior.
+			if !isPKCEMethodAllowedForClient(req.CodeChallengeMethod, client.AllowedPKCEMethods) {
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidPKCEMethod)
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidPKCEMethod))
+				return
+			}
 		}
 		code, err := s.issueAuthCode(ctx.Request().Context(), result, &req, client)
 		if err != nil {
@@ -730,6 +740,23 @@ func isSecureRedirectURI(uri string) bool {
 // recommended method for production.
 func isValidPKCEMethod(method string) bool {
 	return method == "" || method == PKCEMethodPlain || method == PKCEMethodS256
+}
+
+// isPKCEMethodAllowedForClient reports whether the (already-validated)
+// PKCE challenge method is permitted under the client's per-client
+// allowlist. Empty allowlist = unrestricted (legacy behavior, accept
+// anything isValidPKCEMethod accepted). Empty method input means the
+// default was applied — must be allowlisted too.
+func isPKCEMethodAllowedForClient(method string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, a := range allowed {
+		if a == method {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyPKCE returns true when the supplied verifier derives to the

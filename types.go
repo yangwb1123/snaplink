@@ -111,6 +111,17 @@ type Client struct {
 	// as RefreshTokenTTL above.
 	AccessTokenTTL time.Duration `json:"access_token_ttl,omitempty" yaml:"access_token_ttl,omitempty"`
 
+	// AllowedPKCEMethods narrows the PKCE challenge methods this
+	// client may use. RFC 7636 mandates support for "S256" and
+	// tolerates "plain" for legacy clients; production deployments
+	// SHOULD reject "plain" for new clients (it offers no protection
+	// against a stolen authorization code on a non-private channel).
+	// Empty = legacy "any RFC-defined method accepted" behavior.
+	// When non-empty, every PKCE-bearing request from this client
+	// MUST have code_challenge_method in this list; mismatches
+	// fail with invalid_pkce_method.
+	AllowedPKCEMethods []string `json:"allowed_pkce_methods,omitempty" yaml:"allowed_pkce_methods,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel
