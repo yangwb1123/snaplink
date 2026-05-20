@@ -54,6 +54,21 @@ func newRSROHarness(t *testing.T) *httptest.Server {
 	return httpSrv
 }
 
+func TestRequireSignedRequestObject_DiscoveryAdvertisesGlobalFlag(t *testing.T) {
+	srv := newRSROHarness(t)
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("discovery: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var doc map[string]any
+	_ = json.Unmarshal(raw, &doc)
+	if v, _ := doc["require_signed_request_object"].(bool); !v {
+		t.Fatalf("require_signed_request_object missing/false; want true (all clients enforce): %s", raw)
+	}
+}
+
 func TestRequireSignedRequestObject_RejectsDirectLogin(t *testing.T) {
 	srv := newRSROHarness(t)
 	body, _ := json.Marshal(map[string]any{

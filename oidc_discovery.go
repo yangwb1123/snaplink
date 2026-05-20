@@ -27,6 +27,14 @@ type oidcConfiguration struct {
 	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
 	PushedAuthReqEndpoint             string   `json:"pushed_authorization_request_endpoint,omitempty"`
 	RequirePushedAuthReq              bool     `json:"require_pushed_authorization_requests,omitempty"`
+	// RFC 9101 §10.5 — true when every registered client enforces
+	// signed request objects (RequireSignedRequestObject=true on
+	// the Client). Advertised AS-wide because the spec field is
+	// boolean (no per-client surface in discovery). Stays false
+	// when any client still accepts unsigned authorization
+	// requests — matching the strictest-possible-promise semantics
+	// the field implies.
+	RequireSignedRequestObjectGlobal bool `json:"require_signed_request_object,omitempty"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported"`
@@ -193,6 +201,28 @@ type oidcConfiguration struct {
 	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
 }
 
+// allClientsRequireSignedRequestObject returns true only when the
+// client store has at least one client AND every registered client
+// has RequireSignedRequestObject=true. Matches RFC 9101 §10.5
+// semantics — the boolean is an AS-wide promise, so anything less
+// than universal enforcement must advertise false. Errors / empty
+// stores return false (legacy unrestricted behavior).
+func allClientsRequireSignedRequestObject(ctx context.Context, s *Server) bool {
+	if s.clientStore == nil {
+		return false
+	}
+	clients, err := s.clientStore.List(ctx)
+	if err != nil || len(clients) == 0 {
+		return false
+	}
+	for _, c := range clients {
+		if c == nil || !c.RequireSignedRequestObject {
+			return false
+		}
+	}
+	return true
+}
+
 // anyClientRequiresPAR scans the client store for any registered
 // client with RequirePAR=true. Used by the discovery doc to flip
 // `require_pushed_authorization_requests` to true when at least
@@ -351,6 +381,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	cfg.ServiceDocumentation = s.serviceDocumentation
 	cfg.ClaimTypesSupported = []string{"normal"}
 	cfg.DisplayValuesSupported = []string{"page"}
+	if allClientsRequireSignedRequestObject(ctx.Request().Context(), s) {
+		cfg.RequireSignedRequestObjectGlobal = true
+	}
 	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
 	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
 	cfg.RevocationEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
