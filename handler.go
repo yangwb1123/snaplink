@@ -82,7 +82,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		RequestURI          string            `json:"request_uri"`           // RFC 9126 PAR
 	}
 	if err := ctx.Bind(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
 		return
 	}
 
@@ -96,12 +96,12 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// what the client previously committed to.
 	if req.RequestURI != "" {
 		if s.parStore == nil {
-			ctx.JSON(http.StatusNotImplemented, errorBody(ErrPARNotConfigured))
+			ctx.JSON(http.StatusNotImplemented, s.authzErrorBody(ctx, ErrPARNotConfigured))
 			return
 		}
 		stored, err := s.parStore.Consume(ctx.Request().Context(), req.RequestURI)
 		if err != nil {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequestURI))
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
 			return
 		}
 		// Client identity from PAR is authoritative — clients
@@ -135,50 +135,53 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	}
 
 	if req.Provider == "" {
-		ctx.JSON(http.StatusOK, map[string]any{KeyProviders: s.providersForClient(ctx, req.ClientID)})
+		ctx.JSON(http.StatusOK, map[string]any{
+			KeyProviders: s.providersForClient(ctx, req.ClientID),
+			KeyIss:       s.resolveIssuer(ctx),
+		})
 		return
 	}
 
 	if req.ClientID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMissingClientID))
 		return
 	}
 	if s.clientStore == nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrClientStoreNotConfigured))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
 		return
 	}
 	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidClient)
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidClient))
 		return
 	}
 	if !client.Active {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInactiveClient)
-		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
 		return
 	}
 	if !clientTenantOK(ctx, client) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrTenantMismatch)
-		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
 		return
 	}
 	if !client.IsAuthenticatorAllowed(req.Provider) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAuthenticatorNotAllowed)
-		ctx.JSON(http.StatusForbidden, errorBody(ErrAuthenticatorNotAllowed))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAuthenticatorNotAllowed))
 		return
 	}
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
 	// the client. Empty allowlist disables enforcement (legacy compat).
 	if !client.AreResourcesAllowed(req.Resource) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidTarget)
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidTarget))
 		return
 	}
 
 	auth, err := s.getAuthenticator(req.Provider)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnsupportedProvider))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedProvider))
 		return
 	}
 
@@ -198,7 +201,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidCredentials)
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidCredentials))
+		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidCredentials))
 		return
 	}
 
@@ -232,7 +235,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			}
 			if assessment.Decision == DecisionDeny {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrRiskDenied)
-				ctx.JSON(http.StatusForbidden, errorBody(ErrRiskDenied))
+				ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrRiskDenied))
 				return
 			}
 			// DecisionRequireMFA: documented in risk.go as future-reserved.
@@ -251,7 +254,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
 			s.logger.Error("failed to upsert user", "error", err)
-			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 			return
 		}
 	}
@@ -261,12 +264,12 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// and return it so the relying party can exchange it via /token.
 	if req.ResponseType == "code" {
 		if s.authCodeStore == nil {
-			ctx.JSON(http.StatusNotImplemented, errorBody(ErrAuthCodeNotConfigured))
+			ctx.JSON(http.StatusNotImplemented, s.authzErrorBody(ctx, ErrAuthCodeNotConfigured))
 			return
 		}
 		if req.RedirectURI == "" || !client.IsRedirectURIValid(req.RedirectURI) {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRedirectURI)
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRedirectURI))
 			return
 		}
 		// PKCE validation per RFC 7636 §4.3:
@@ -277,18 +280,18 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if req.CodeChallenge == "" {
 			if client.RequirePKCE {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrPKCERequired)
-				ctx.JSON(http.StatusBadRequest, errorBody(ErrPKCERequired))
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrPKCERequired))
 				return
 			}
 		} else {
 			if l := len(req.CodeChallenge); l < PKCEVerifierMinLen || l > PKCEVerifierMaxLen {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
-				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
 				return
 			}
 			if !isValidPKCEMethod(req.CodeChallengeMethod) {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidPKCEMethod)
-				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidPKCEMethod))
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidPKCEMethod))
 				return
 			}
 			if req.CodeChallengeMethod == "" {
@@ -298,11 +301,14 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		code, err := s.issueAuthCode(ctx.Request().Context(), result, &req, client)
 		if err != nil {
 			s.logger.Error("failed to issue auth code", "error", err)
-			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 			return
 		}
 		s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "")
-		resp := map[string]any{KeyCode: code}
+		resp := map[string]any{
+			KeyCode: code,
+			KeyIss:  s.resolveIssuer(ctx),
+		}
 		if req.State != "" {
 			resp[KeyState] = req.State
 		}
@@ -310,25 +316,25 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 	if req.ResponseType != "" && req.ResponseType != "token" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnsupportedResponseType))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedResponseType))
 		return
 	}
 
 	if s.sessionMgr == nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrSessionMgrNotConfigured))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrSessionMgrNotConfigured))
 		return
 	}
 	session, err := s.sessionMgr.Create(ctx.Request().Context(), result.UserID)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 		return
 	}
 
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
 		s.logger.Error("no token strategy for client", "client", client.ID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrNoTokenStrategy))
 		return
 	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
@@ -339,7 +345,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 		return
 	}
 
@@ -389,6 +395,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		KeyExpiresIn:     token.ExpiresIn,
 		KeyScope:         token.Scope,
 		KeyTokenStrategy: strategy,
+		KeyIss:           s.resolveIssuer(ctx),
 	}
 	// OIDC ID Token: emit alongside the access token whenever the
 	// caller requested "openid" scope AND an issuer is wired. Errors

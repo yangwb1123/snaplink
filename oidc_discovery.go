@@ -35,6 +35,12 @@ type oidcConfiguration struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
 	ClaimsSupported                   []string `json:"claims_supported,omitempty"`
+
+	// RFC 9207 §3 — when true, this AS includes `iss` on every
+	// authorization response (success + error). Constant true here
+	// because handleLogin unconditionally stamps it via
+	// authzErrorBody / resolveIssuer.
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported"`
 }
 
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
@@ -67,6 +73,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		SubjectTypesSupported:             []string{"public"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post"},
 		CodeChallengeMethodsSupported:     []string{PKCEMethodS256, PKCEMethodPlain},
+		// RFC 9207 §3: this server always includes `iss` in
+		// authorization responses (see handleLogin + resolveIssuer).
+		AuthorizationResponseIssParameterSupported: true,
 	}
 	// When the operator overrode the issuer name with WithIssuer, prefer
 	// that — many production deployments set issuer to the canonical
