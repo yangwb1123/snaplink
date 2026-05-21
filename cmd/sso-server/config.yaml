@@ -363,6 +363,16 @@ authenticators:
     trusted_ca_files: []
     intermediate_files: []
 
+  # RFC 6238 TOTP — the same primitive Google Authenticator / 1Password /
+  # Authy speak. cmd's wiring uses an in-process MemoryTOTPStore (demo /
+  # dev tier); operators with durable-secret needs fork cmd and supply
+  # their own TOTPStore implementation (secrets are MUST-encrypt
+  # material). skew_steps tolerates ±N 30-second windows of clock drift
+  # between the caller and the server; default 1 (≈±30s).
+  totp:
+    enabled: false
+    skew_steps: 1
+
   # Upstream OAuth 2.0 / OIDC IdP federation — delegate authentication
   # to Google, Microsoft, GitHub, Auth0, Keycloak, etc. Each entry
   # wires one provider accessible at /auth/login?provider=<name>.
@@ -566,3 +576,130 @@ webauthn:
       backend: "memory"  # memory | sqlite
       sqlite:
         dsn: "file:/var/lib/sso/webauthn_sessions.db?_journal=WAL&_busy_timeout=5000"
+
+# Admin gRPC + REST gateway. Mounts the four admin services
+# (Client/User/Token/Permission) plus Snapshot/Release/Tenant admin
+# under /api/v1/admin/. api_rest_enabled defaults true when enabled
+# is true; set false to expose admin via gRPC only. Every mutation
+# emits an `admin_*` audit event; reads require admin:read scope,
+# mutations require admin:write (admin:* matches both).
+admin:
+  enabled: true
+  api_rest_enabled: true
+
+# Service registry — multi-replica discovery for the SSO cluster.
+# memory backend is per-process (single-replica); etcd lease-backed
+# registration with KeepAlive shares state across replicas. service_id
+# defaults to <issuer>-<short-hostname> when empty so two pods of the
+# same issuer don't collide on the same etcd key. service_ttl matters
+# only under etcd (lease lifetime); memory ignores it because process
+# lifetime IS the registration lifetime. Etcd Registry's Ping(ctx)
+# surfaces as `etcd-registry` on /readyz.
+registry:
+  backend: "memory"           # memory | etcd
+  service_id: ""              # default: <issuer>-<short-hostname>
+  service_address: ""         # default: derived from server.listen
+  service_tags: ["sso"]
+  service_ttl: 30s
+  etcd_endpoints: []
+  # etcd_prefix: "/snaplink/registry"
+  # etcd_dial_timeout: 5s
+  # etcd_username: ""
+  # etcd_password: ""
+
+# Multi-tenant + multi-domain routing. Tenant sits above Client: one
+# tenant typically owns many clients (admin / customer / mobile)
+# sharing one audit pipeline. Domains map hostnames to tenants so a
+# single SSO instance serves t1.example.com and t2.example.com from
+# distinct tenant contexts. Client.TenantID then enforces issuance
+# only inside the right tenant (mismatches → 403 tenant_mismatch).
+# suspension_check enables the active post-validation gate that
+# rejects tokens whose tenant flipped to "suspended" since issuance;
+# without it, existing bearers keep working until natural expiry.
+tenant:
+  enabled: false
+  backend: "memory"          # memory only today
+  lookup_timeout: 200ms
+  include_suspended: false
+  tenants: []
+  # - id: "acme"
+  #   slug: "acme"
+  #   name: "Acme Corp"
+  #   status: "active"        # active | suspended
+  #   settings:
+  #     billing_tier: gold
+  domains: []
+  # - hostname: "sso.acme.example.com"
+  #   tenant_id: "acme"
+  #   default_client_id: "acme-web"
+  #   is_apex: false
+  #   branding:
+  #     logo_url: "https://cdn.acme.example.com/logo.svg"
+  suspension_check:
+    enabled: false
+    cache_ttl: 30s
+
+# IP → geo enrichment. Best for UX hints (preferred language, country
+# code on login response); NOT a security boundary. static backend
+# is in-process CIDR longest-prefix match — fine for the small operator-
+# curated table of intranet ranges + regional offices. Real geo
+# coverage needs a future maxmind backend stacked behind static.
+# lookup_timeout caps a single Lookup in the request hot path (200ms
+# default).
+geo:
+  enabled: false
+  backend: "static"
+  lookup_timeout: 200ms
+  static:
+    entries: []
+    # - cidr: "10.0.0.0/8"
+    #   country_code: "US"
+    #   region: "CA"
+    #   city: "San Francisco"
+    #   time_zone: "America/Los_Angeles"
+    #   recommended_language: "en-US"
+
+# Admin-managed state export/restore. Snapshotter pulls every wired
+# backend's List(); Restorer applies in dependency order with three
+# modes (merge / overwrite / replace) and dry-run. Storage selects
+# where envelopes live (file or inline); encryption seals them
+# (none = plaintext, passphrase = argon2id + XChaCha20-Poly1305).
+# restore_from is a snapshot URI consumed by the bootstrap step on
+# first boot; --bootstrap-restore-from overrides it for one-off
+# operator restores. Admin RPCs mount at /api/v1/admin/snapshots.
+snapshot:
+  enabled: false
+  storage:
+    backend: "file"           # file | inline
+    file:
+      dir: "./snapshots"
+  encryption:
+    backend: "none"           # none | passphrase
+    passphrase: ""
+    passphrase_file: ""
+  restore_from: ""            # file:///abs/path or inline:<base64>
+
+# Frontend + backend app version pin / rollback. Pinner.PinForward +
+# PinRollback encode asymmetric ordering (backend-first forward,
+# frontend-first rollback). HealthProbe gates forward Pin; all-fail
+# triggers auto-rollback. SnapshotIntegration ties Rollback into the
+# snapshot subsystem so admin state can roll back alongside code.
+# Admin RPCs mount at /api/v1/admin/releases.
+releases:
+  enabled: false
+  store:
+    backend: "file"           # file | memory
+    file:
+      dir: "./releases"
+  pinner:
+    backend: "noop"           # noop | static | docker
+    static:
+      bundle_dir: "/srv/sso/frontend"
+    # docker:
+    #   bundle_dir: "/etc/sso/compose"
+  probe:
+    backend: "noop"           # noop | http
+    # http:
+    #   url: "http://localhost:8080/health"
+    #   timeout: 2s
+  snapshot_integration: false
