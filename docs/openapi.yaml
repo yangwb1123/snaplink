@@ -4,10 +4,13 @@
 # Stoplight / swagger-ui — every mainstream third-party API doc platform
 # accepts this file directly.
 #
-# Coverage scope (v1): core auth flow + self-service endpoints. Admin
-# REST surface (/api/v1/admin/*), audit query API, netpolicy CRUD, and
-# the OAuth callback / token endpoints are deferred to v2 — additive
-# layering only, no schema rewrites needed.
+# Coverage scope (v1): core auth flow + self-service endpoints +
+# operational probes + OIDC discovery + RP-initiated logout + the
+# WebAuthn (CTAP/FIDO2) ceremony. The OAuth /token grant endpoints
+# (/token, /token/introspect, /token/revoke, /par, /device/*,
+# /register*), the admin REST surface (/api/v1/admin/*), the audit
+# query API, and the netpolicy CRUD surface are deferred to v2 —
+# additive layering only, no schema rewrites needed.
 #
 # Validate locally:    make docs-validate
 # Serve swagger-ui:    make docs-serve   (then open http://localhost:8088)
@@ -47,11 +50,15 @@ tags:
   - name: auth
     description: Login, token issuance, logout, code-based 2FA delivery.
   - name: discovery
-    description: Health probe + JWKS for offline token verification.
+    description: Health probe + JWKS + OIDC discovery for offline token verification.
   - name: me
     description: Self-service endpoints scoped to the bearer token's subject.
   - name: userinfo
     description: OpenID-style user profile fetch.
+  - name: operational
+    description: Kubernetes / load-balancer liveness + readiness probes.
+  - name: webauthn
+    description: CTAP/FIDO2 registration + login ceremony (four-call begin/finish).
 
 paths:
 
@@ -312,6 +319,396 @@ paths:
                 $ref: "#/components/schemas/MenuTree"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /livez:
+    get:
+      tags: [operational]
+      summary: Liveness probe.
+      description: |
+        Returns 200 unconditionally as long as the HTTP handler is
+        running — the handler responding at all is itself the
+        signal. Wired outside the rate-limit + metrics middleware
+        stack so kubelet probes can't be throttled. Distinct from
+        `/health`, which also returns the configured issuer name.
+      operationId: getLivez
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+
+  /readyz:
+    get:
+      tags: [operational]
+      summary: Readiness probe — aggregates every registered ReadyCheck.
+      description: |
+        Runs every wired `ReadyCheck` in parallel (bounded by a 3s
+        context deadline) and returns 200 when all pass / 503 when
+        any fail. The cmd binary auto-registers one check per SQLite
+        store via `appendReadyCheck` (names like
+        `sqlite-identity-clients`, `sqlite-jti-replay`,
+        `sqlite-webauthn-users`, etc.). Memory-backed stores
+        contribute no readiness signal.
+
+        Wired outside the rate-limit + metrics middleware stack so
+        kubelet probes can't be throttled.
+      operationId: getReadyz
+      responses:
+        "200":
+          description: All registered checks reported ok.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more checks failed; per-check detail in body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+
+  /.well-known/openid-configuration:
+    get:
+      tags: [discovery]
+      summary: OpenID Connect Discovery 1.0 document.
+      description: |
+        Derived from the server's wired feature set on every fetch
+        (then double-cached: a `clientDiscoverySnapshot` for client-
+        store projection + a marshaled-body cache keyed by request
+        base URL, both default 5s; see `WithDiscoveryCacheTTL` and
+        `WithDiscoveryDocCacheTTL`). The response shape conforms to
+        OpenID Connect Discovery 1.0 + RFC 8414 — only the fields the
+        AS actually supports are emitted (e.g. `pushed_authorization_request_endpoint`
+        appears only when a PAR store is wired; `registration_endpoint`
+        only when DCR is enabled). Honors `If-None-Match` against the
+        body sha256 and returns 304 on a match.
+      operationId: getOpenIDConfiguration
+      responses:
+        "200":
+          description: Live OIDC + RFC 8414 metadata.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: '`public, max-age=<ttl>` when caching is enabled.'
+            ETag:
+              schema:
+                type: string
+              description: Short sha256 prefix of the response body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenIDConfiguration"
+        "304":
+          description: Not Modified — body matches the supplied If-None-Match.
+
+  /end_session:
+    get:
+      tags: [auth]
+      summary: OpenID Connect RP-Initiated Logout 1.0.
+      description: |
+        Relying-party-initiated logout. The RP redirects the user
+        agent here with `id_token_hint` (a previously-issued
+        id_token); the server validates the hint signature, kills
+        the corresponding session + best-effort revokes the access-
+        token-side counterpart, then redirects to
+        `post_logout_redirect_uri` (when in the client's allowlist)
+        or returns 204.
+
+        `post_logout_redirect_uri` MUST exact-match a registered
+        URI — no path tolerance, no scheme-only match. Unrecognized
+        URIs fall back to 204 rather than opening a redirect vector
+        for unauthenticated callers.
+      operationId: getEndSession
+      parameters:
+        - name: id_token_hint
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Previously-issued ID Token identifying the user. Signature
+            is verified before any session action.
+        - name: post_logout_redirect_uri
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uri
+          description: |
+            Where to send the user after logout. MUST be in the
+            client's `post_logout_redirect_uris` allowlist.
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque value echoed back on the 302 Location.
+        - name: client_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Fallback when `id_token_hint` is absent. Used only to look
+            up the redirect-uri allowlist — no session is revoked
+            without a verified id_token_hint.
+      responses:
+        "204":
+          description: |
+            Session terminated (or no session to terminate).
+            `post_logout_redirect_uri` was absent or not in the
+            client's allowlist, so no redirect was issued.
+        "302":
+          description: |
+            Session terminated and the user agent is being redirected
+            to `post_logout_redirect_uri` (with `state` appended when
+            supplied).
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+              description: The post-logout redirect target.
+        "400":
+          description: |
+            `id_token_hint` was supplied but failed signature / expiry
+            / format validation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /webauthn/registration/begin:
+    post:
+      tags: [webauthn]
+      summary: Start a WebAuthn registration ceremony.
+      description: |
+        Step 1 of 2 for enrolling a new credential. The server
+        generates `PublicKeyCredentialCreationOptions` (challenge,
+        RP info, user info) + a single-use `session_id` the client
+        echoes back on `/webauthn/registration/finish`.
+
+        Mount this endpoint by setting `webauthn.enabled: true` in
+        the cmd YAML config — the cmd registers all four ceremony
+        routes on the SSO router automatically when the helper is
+        configured.
+      operationId: postWebAuthnRegistrationBegin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnBeginRequest"
+            examples:
+              registration:
+                value:
+                  username: alice
+                  display_name: Alice Lovelace
+      responses:
+        "200":
+          description: Creation options + session_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnBeginRegistrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          description: WebAuthn library or store error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /webauthn/registration/finish:
+    post:
+      tags: [webauthn]
+      summary: Complete a WebAuthn registration ceremony.
+      description: |
+        Step 2 of 2. The body is the raw
+        `PublicKeyCredential.AttestationResponse` produced by the
+        browser's `navigator.credentials.create()` call. The server
+        consumes the `session_id` (single-use; SQLite-backed stores
+        use `DELETE ... RETURNING` so concurrent finish calls can't
+        both succeed) and persists the new credential.
+
+        Unknown / expired session_id and unknown user both collapse
+        to `404 session_invalid` — probes can't distinguish "wrong
+        session_id" from "never enrolled" (oracle-leak resistance,
+        same pattern the OAuth code paths use).
+      operationId: postWebAuthnRegistrationFinish
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Session id returned by `/webauthn/registration/begin`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: |
+                `PublicKeyCredential.AttestationResponse` (CBOR-encoded
+                attestation object + clientDataJSON, base64url-wrapped
+                per WebAuthn Level 2). Forwarded to the
+                `go-webauthn/webauthn` library unchanged — see its
+                `protocol.ParseCredentialCreationResponseBody` for the
+                exact shape.
+      responses:
+        "200":
+          description: Credential persisted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnFinishRegistrationResponse"
+        "400":
+          description: Attestation parse or verification failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: |
+            `session_invalid` — session_id is unknown / expired, or the
+            user record disappeared mid-ceremony.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /webauthn/login/begin:
+    post:
+      tags: [webauthn]
+      summary: Start a WebAuthn login (assertion) ceremony.
+      description: |
+        Step 1 of 2 for authenticating with a previously-enrolled
+        credential. The server generates
+        `PublicKeyCredentialRequestOptions` (challenge + the
+        credential id list for the named user) + a single-use
+        `session_id`. The browser passes the options to
+        `navigator.credentials.get()`.
+      operationId: postWebAuthnLoginBegin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnBeginRequest"
+            examples:
+              login:
+                value: { username: alice }
+      responses:
+        "200":
+          description: Request options + session_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnBeginLoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: |
+            `session_invalid` — username is not enrolled (same code
+            unknown-session uses, so probes can't enumerate
+            registered users).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /webauthn/login/finish:
+    post:
+      tags: [webauthn]
+      summary: Complete a WebAuthn login — optionally mint a token.
+      description: |
+        Step 2 of 2. The body carries the raw
+        `PublicKeyCredential.AssertionResponse`. Without a
+        `client_id` query parameter the response stays in v1
+        credential-verification mode — `{username, credential_id}`
+        only.
+
+        When `client_id` is supplied AND the cmd binary has a
+        `ClientStore` + `TokenIssuer` wired (the default config
+        does), the server mints an access token for the
+        authenticated subject and includes it inline. The same
+        emission rules `/auth/login` uses apply:
+
+        * `id_token` rides along when the resolved client's
+          `allowed_scopes` contains `openid` **and** a
+          `WithIDTokenIssuer` is wired.
+        * `refresh_token` rides along when a
+          `WithRefreshTokenStore` is wired (unconditional on scope,
+          matching `/auth/login` — RFC 6749 §1.5 AS discretion).
+
+        Token `AMR` is `["webauthn"]`; `Provider` is `"webauthn"`;
+        scopes default to the client's full `allowed_scopes` (the
+        ceremony has no scope-selection step). Per-client
+        `refresh_token_ttl` overrides the global TTL.
+      operationId: postWebAuthnLoginFinish
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Session id returned by `/webauthn/login/begin`.
+        - name: client_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Registered Client.ID — when present, the response
+            additionally carries access / refresh / id tokens for
+            this client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: |
+                `PublicKeyCredential.AssertionResponse` (authenticator
+                data + signature + clientDataJSON). Forwarded to
+                `go-webauthn/webauthn` unchanged.
+      responses:
+        "200":
+          description: |
+            Assertion verified. Token fields are present only when
+            `client_id` was supplied and the cmd has the matching
+            backends wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnFinishLoginResponse"
+        "400":
+          description: |
+            Assertion failed (`ceremony_failed`) or unknown client
+            (`invalid_client`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: |
+            `session_invalid` — session_id unknown / expired or user
+            disappeared mid-ceremony.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Token issuer / refresh-token store failure (`server_error`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
 
@@ -585,3 +982,257 @@ components:
         error_description:
           type: string
           description: Optional human-readable detail.
+
+    LivenessResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: alive
+
+    ReadinessResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, unready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            description: '`ok` for passing checks, the error string for failing ones.'
+          example:
+            sqlite-identity-clients: ok
+            sqlite-jti-replay: ok
+            sqlite-account-lockout: ok
+
+    OpenIDConfiguration:
+      type: object
+      description: |
+        OpenID Connect Discovery 1.0 + RFC 8414 metadata. Field set
+        is dynamic — only features actually wired into the running
+        server appear (e.g. `pushed_authorization_request_endpoint`
+        and `require_pushed_authorization_requests` are present only
+        when a PAR store is wired). Treat unknown fields as forward
+        compatibility, not as errors.
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+        - jwks_uri
+        - response_types_supported
+        - subject_types_supported
+        - id_token_signing_alg_values_supported
+      properties:
+        issuer:
+          type: string
+          format: uri
+          description: |
+            Identifier the AS uses for itself. MUST equal the
+            `iss` claim of every token issued AND the `iss`
+            parameter on every authorization response (RFC 9207).
+        authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
+        userinfo_endpoint:
+          type: string
+          format: uri
+        jwks_uri:
+          type: string
+          format: uri
+        registration_endpoint:
+          type: string
+          format: uri
+          description: RFC 7591 DCR endpoint. Present only when DCR is enabled.
+        introspection_endpoint:
+          type: string
+          format: uri
+        revocation_endpoint:
+          type: string
+          format: uri
+        device_authorization_endpoint:
+          type: string
+          format: uri
+          description: RFC 8628. Present only when a DeviceCodeStore is wired.
+        pushed_authorization_request_endpoint:
+          type: string
+          format: uri
+          description: RFC 9126. Present only when a PARStore is wired.
+        require_pushed_authorization_requests:
+          type: boolean
+        end_session_endpoint:
+          type: string
+          format: uri
+          description: OIDC RP-Initiated Logout 1.0.
+        backchannel_logout_supported:
+          type: boolean
+        backchannel_logout_session_supported:
+          type: boolean
+        frontchannel_logout_supported:
+          type: boolean
+        frontchannel_logout_session_supported:
+          type: boolean
+        scopes_supported:
+          type: array
+          items:
+            type: string
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        response_modes_supported:
+          type: array
+          items:
+            type: string
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+        subject_types_supported:
+          type: array
+          items:
+            type: string
+            enum: [public, pairwise]
+        id_token_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        userinfo_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+        acr_values_supported:
+          type: array
+          items:
+            type: string
+        dpop_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        tls_client_certificate_bound_access_tokens:
+          type: boolean
+        mtls_endpoint_aliases:
+          type: object
+          additionalProperties:
+            type: string
+            format: uri
+        authorization_response_iss_parameter_supported:
+          type: boolean
+          description: RFC 9207. Always true on this server.
+        signed_metadata:
+          type: string
+          description: |
+            RFC 8414 §2.1 signed_metadata JWT. Present only when
+            `WithMetadataSigner` is wired.
+      additionalProperties: true
+
+    WebAuthnBeginRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          description: |
+            Account identifier. For registration this is the new
+            account's username; for login it identifies the enrolled
+            credentials to challenge.
+        display_name:
+          type: string
+          description: |
+            Friendly name shown to the authenticator UI. Only used on
+            registration; ignored for login.
+
+    WebAuthnBeginRegistrationResponse:
+      type: object
+      required: [session_id, options]
+      properties:
+        session_id:
+          type: string
+          description: |
+            Single-use ceremony handle. Pass to
+            `/webauthn/registration/finish` as `?session_id=`.
+        options:
+          type: object
+          description: |
+            `PublicKeyCredentialCreationOptions` per WebAuthn Level
+            2 (challenge, rp, user, pubKeyCredParams, etc.). Pass
+            to `navigator.credentials.create({publicKey: options})`.
+
+    WebAuthnBeginLoginResponse:
+      type: object
+      required: [session_id, options]
+      properties:
+        session_id:
+          type: string
+          description: |
+            Single-use ceremony handle. Pass to
+            `/webauthn/login/finish` as `?session_id=`.
+        options:
+          type: object
+          description: |
+            `PublicKeyCredentialRequestOptions` (challenge,
+            allowCredentials, rpId, userVerification). Pass to
+            `navigator.credentials.get({publicKey: options})`.
+
+    WebAuthnFinishRegistrationResponse:
+      type: object
+      required: [credential_id]
+      properties:
+        credential_id:
+          type: string
+          description: |
+            Base64url-encoded credential id the authenticator
+            produced. Persist on the client side so subsequent
+            login flows can list it under `allowCredentials`.
+
+    WebAuthnFinishLoginResponse:
+      type: object
+      required: [username, credential_id]
+      properties:
+        username:
+          type: string
+        credential_id:
+          type: string
+          description: Base64url-encoded credential id used to authenticate.
+        access_token:
+          type: string
+          description: |
+            Present only when `client_id` was supplied AND the cmd
+            has a ClientStore + TokenIssuer wired. Same Ed25519 JWT
+            shape `/auth/login` returns.
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Token lifetime in seconds.
+        scope:
+          type: string
+          description: Space-delimited scope list (defaults to the client's full allowed_scopes).
+        refresh_token:
+          type: string
+          description: |
+            Present only when `client_id` is supplied AND a
+            RefreshTokenStore is wired. Opaque 32-byte base64url
+            token; redeem via the OAuth `/token` endpoint with
+            `grant_type=refresh_token`.
+        id_token:
+          type: string
+          description: |
+            Present only when `client_id` is supplied AND the
+            resolved client's `allowed_scopes` contains `openid`
+            AND an IDTokenIssuer is wired. Ed25519 JWT with `amr`
+            of `["webauthn"]`.
