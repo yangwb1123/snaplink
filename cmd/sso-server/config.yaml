@@ -259,6 +259,14 @@ security:
     lockout_duration: 15m
     failure_window: 1h
 
+  # RFC 8705 mTLS-bound access tokens. The built-in extractor reads
+  # r.TLS.PeerCertificates — only works when the binary terminates TLS
+  # directly (--tls-cert/--tls-key). Behind a reverse-proxy edge,
+  # operators MUST plug their own header-based extractor (X-Client-Cert
+  # or similar) via the SDK; this flag becomes a no-op in that case.
+  mtls:
+    enabled: false
+
   cors:
     enabled: false           # flip to true + list allowed_origins for SPAs
     allowed_origins: []      # exact-match origins; "*" wildcards

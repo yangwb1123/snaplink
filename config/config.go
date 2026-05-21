@@ -167,6 +167,22 @@ type SecurityConfig struct {
 	DPoPNonce      DPoPNonceConfig      `yaml:"dpop_nonce"`
 	JTIReplay      JTIReplayConfig      `yaml:"jti_replay"`
 	AccountLockout AccountLockoutConfig `yaml:"account_lockout"`
+	MTLS           MTLSConfig           `yaml:"mtls"`
+}
+
+// MTLSConfig opts into RFC 8705 mTLS-bound access tokens. The
+// built-in extractor pulls the client cert from r.TLS.PeerCertificates
+// — works when the binary terminates TLS itself (--tls-cert/--tls-key).
+// Behind a reverse proxy that terminates TLS, operators MUST plug
+// their own header-based extractor via sso.WithClientCertExtractor
+// (typical shape: read X-Client-Cert/X-SSL-Client-Cert, PEM-decode).
+//
+// With the extractor wired, /token binds cnf.x5t#S256 onto issued
+// tokens when the request presents a client cert, and resource
+// endpoints (/userinfo) enforce the binding. Discovery doc flips
+// mtls_endpoint_aliases on automatically.
+type MTLSConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // AccountLockoutConfig opts into per-account lockout on /auth/login.

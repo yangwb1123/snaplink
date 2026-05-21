@@ -595,6 +595,7 @@ security:      # body_limit, rate_limit, cors
                # dpop_nonce: { enabled, key_file, ttl }
                # jti_replay: { enabled } — memory backend, single-replica only
                # account_lockout: { enabled, max_failures, lockout_duration, failure_window }
+               # mtls: { enabled } — RFC 8705 with DefaultTLSPeerCertExtractor (in-process TLS only)
 tenant:        # enabled, backend, lookup_timeout, include_suspended,
                # tenants[], domains[],
                # suspension_check: { enabled, cache_ttl }

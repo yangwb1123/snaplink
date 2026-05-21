@@ -130,6 +130,30 @@ func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
 	}
 }
 
+func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.MTLS.Enabled = true
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body := make([]byte, 8192)
+	n, _ := resp.Body.Read(body)
+	if !bytes.Contains(body[:n], []byte("mtls_endpoint_aliases")) {
+		t.Errorf("mtls_endpoint_aliases missing from discovery doc: %s", body[:n])
+	}
+}
+
 func TestBuildApp_CORSWiredWhenOriginsSet(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Security.CORS.Enabled = true

@@ -1118,6 +1118,14 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithJTIReplayStore(defaultimpl.NewMemoryJTIReplayStore()))
 		logger.Info("security: jti replay protection enabled (memory backend — single-replica only)")
 	}
+	if cfg.Security.MTLS.Enabled {
+		// Default extractor reads r.TLS.PeerCertificates — only works
+		// when the binary terminates TLS itself. Behind a reverse proxy
+		// that terminates TLS, this is silently a no-op; operators
+		// MUST plug a header-based extractor via the SDK directly.
+		opts = append(opts, sso.WithClientCertExtractor(sso.DefaultTLSPeerCertExtractor))
+		logger.Info("security: mTLS bound tokens enabled (DefaultTLSPeerCertExtractor — TLS must terminate in-process)")
+	}
 	if al := cfg.Security.AccountLockout; al.Enabled {
 		lockout := sso.NewMemoryAccountLockout()
 		if al.MaxFailures > 0 {
