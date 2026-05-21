@@ -91,12 +91,13 @@ via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 ### Storage today
 Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
 Client / AuthCode / RefreshToken (+ FamilyTracker) / DeviceCode /
-PAR / Session / JTIReplay / SubjectClientIndex. RateLimiter /
-AccountLockout remain memory-only — both need a shared counter for
-cross-replica abuse detection, and SQLite's lock contention on
-write-hot endpoints makes Redis/Memcached the better backend. Every
-OAuth/OIDC issuance + redemption + BCL fan-out works horizontally
-today.
+PAR / Session / JTIReplay / SubjectClientIndex / AccountLockout.
+Only RateLimiter remains memory-only — high-write token-bucket
+math on every request is the one place SQLite contention costs
+more than the cross-replica defense gives back; operators wanting
+distributed limits should plug Redis via `sso.WithRateLimit`
+directly. Every other OAuth/OIDC + abuse-defense store works
+horizontally today.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -279,13 +280,16 @@ IdP federation remain on the roadmap.
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
 AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
-PAR, Session, JTIReplay, SubjectClientIndex. Single-use stores
-(AuthCode, DeviceCode, RefreshToken, PAR) use `DELETE … RETURNING`
-for race-free consumption; Session uses `UPDATE … RETURNING` on
-Refresh; JTIReplay uses `INSERT … ON CONFLICT DO NOTHING` +
-RowsAffected for atomic first-sighting; SubjectClientIndex uses
-`INSERT … ON CONFLICT … DO UPDATE` for idempotent record-access
-with last_seen refresh.
+PAR, Session, JTIReplay, SubjectClientIndex, AccountLockout.
+Single-use stores (AuthCode, DeviceCode, RefreshToken, PAR) use
+`DELETE … RETURNING` for race-free consumption; Session uses
+`UPDATE … RETURNING` on Refresh; JTIReplay uses
+`INSERT … ON CONFLICT DO NOTHING` + RowsAffected for atomic
+first-sighting; SubjectClientIndex uses
+`INSERT … ON CONFLICT … DO UPDATE` for idempotent upsert;
+AccountLockout wraps read-modify-write in `BEGIN IMMEDIATE` so
+concurrent failure increments across replicas can't both observe
+count=N-1 and miss the threshold trigger.
 
 DSN cookbook:
 | DSN | Use |
@@ -605,7 +609,8 @@ geo:           # enabled, backend(static), lookup_timeout, static.entries[]
 security:      # body_limit, rate_limit, cors
                # dpop_nonce: { enabled, key_file, ttl }
                # jti_replay: { enabled, backend(memory|sqlite), sqlite.dsn } — sqlite shares jti set across the cluster
-               # account_lockout: { enabled, max_failures, lockout_duration, failure_window }
+               # account_lockout: { enabled, backend(memory|sqlite), sqlite.dsn, max_failures, lockout_duration, failure_window }
+               #   sqlite shares the failure counter so cross-replica attackers can't evade the threshold
                # mtls: { enabled, backend(tls|header), header.{name, encoding(url-pem|pem|base64-der)} }
                #   tls    — DefaultTLSPeerCertExtractor (in-process TLS termination)
                #   header — HeaderClientCertExtractor for reverse-proxy edges (nginx X-SSL-Client-Cert,

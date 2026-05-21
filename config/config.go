@@ -269,15 +269,26 @@ type MTLSHeaderConfig struct {
 // All three numeric fields fall back to SDK defaults (5 failures,
 // 15min lockout, 1h sliding window) when <= 0.
 //
-// Memory backend is single-replica only — multi-replica deployments
-// MUST plug a shared backend via sso.WithAccountLockout directly,
-// otherwise an attacker just rotates targets across replicas to
-// stay below each replica's local threshold.
+// Backend choice:
+//   - "" / "memory" (default) — single-replica; an attacker rotating
+//     targets across replicas evades each replica's local threshold.
+//   - "sqlite" — cluster-shared file; the counter sums failures
+//     across every replica so the threshold is global.
+//
+// Redis / Memcached backends still need to be wired via the SDK
+// directly for high-write workloads where SQLite's lock contention
+// would dominate /auth/login latency.
 type AccountLockoutConfig struct {
-	Enabled         bool          `yaml:"enabled"`
-	MaxFailures     int           `yaml:"max_failures"`
-	LockoutDuration time.Duration `yaml:"lockout_duration"`
-	FailureWindow   time.Duration `yaml:"failure_window"`
+	Enabled         bool                       `yaml:"enabled"`
+	Backend         string                     `yaml:"backend"`
+	SQLite          AccountLockoutSQLiteConfig `yaml:"sqlite"`
+	MaxFailures     int                        `yaml:"max_failures"`
+	LockoutDuration time.Duration              `yaml:"lockout_duration"`
+	FailureWindow   time.Duration              `yaml:"failure_window"`
+}
+
+type AccountLockoutSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // JTIReplayConfig opts into RFC 9101 §10.8 + RFC 9449 §11.1 jti-based

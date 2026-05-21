@@ -329,9 +329,14 @@ security:
   # failure_window, the account is locked for lockout_duration —
   # subsequent attempts return immediately without consulting the
   # authenticator. Mitigates credential stuffing + bcrypt-CPU starvation
-  # attacks. Memory backend only; multi-replica needs a shared backend.
+  # attacks. backend: memory (single-replica) or sqlite (cluster-shared
+  # counter — attackers can't rotate across replicas to evade the
+  # threshold). Redis still needs the SDK route for high-write workloads.
   account_lockout:
     enabled: false
+    backend: memory       # memory | sqlite
+    sqlite:
+      dsn: ""             # e.g. file:/var/lib/sso/lockout.db?_journal=WAL
     max_failures: 5
     lockout_duration: 15m
     failure_window: 1h

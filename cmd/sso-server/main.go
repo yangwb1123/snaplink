@@ -566,6 +566,48 @@ var _ = lockNoop.New
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
+// buildAccountLockout picks the lockout backend. memory keeps the
+// single-replica defense; sqlite shares the failure counter so an
+// attacker rotating across replicas can't stay under each replica's
+// local threshold. Policy overrides (MaxFailures / LockoutDuration
+// / FailureWindow) are applied identically to both backends.
+func buildAccountLockout(cfg config.AccountLockoutConfig) (sso.AccountLockout, string, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "memory":
+		l := sso.NewMemoryAccountLockout()
+		if cfg.MaxFailures > 0 {
+			l.MaxFailures = cfg.MaxFailures
+		}
+		if cfg.LockoutDuration > 0 {
+			l.LockoutDuration = cfg.LockoutDuration
+		}
+		if cfg.FailureWindow > 0 {
+			l.FailureWindow = cfg.FailureWindow
+		}
+		return l, "memory (single-replica only)", nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, "", errors.New("security.account_lockout.sqlite.dsn required when backend=sqlite")
+		}
+		l, err := sqlitestores.NewAccountLockout(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, "", err
+		}
+		if cfg.MaxFailures > 0 {
+			l.MaxFailures = cfg.MaxFailures
+		}
+		if cfg.LockoutDuration > 0 {
+			l.LockoutDuration = cfg.LockoutDuration
+		}
+		if cfg.FailureWindow > 0 {
+			l.FailureWindow = cfg.FailureWindow
+		}
+		return l, "sqlite (cluster-shared)", nil
+	default:
+		return nil, "", fmt.Errorf("unknown security.account_lockout.backend %q", cfg.Backend)
+	}
+}
+
 // buildSubjectClientIndex picks the SubjectClientIndex backend that
 // drives OIDC BCL multi-RP fan-out. memory keeps the single-replica
 // story; sqlite shares the index so a logout reaching any replica
@@ -1426,21 +1468,16 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		logger.Info("security: mTLS bound tokens enabled", "extractor", mode)
 	}
 	if al := cfg.Security.AccountLockout; al.Enabled {
-		lockout := sso.NewMemoryAccountLockout()
-		if al.MaxFailures > 0 {
-			lockout.MaxFailures = al.MaxFailures
-		}
-		if al.LockoutDuration > 0 {
-			lockout.LockoutDuration = al.LockoutDuration
-		}
-		if al.FailureWindow > 0 {
-			lockout.FailureWindow = al.FailureWindow
+		lockout, mode, err := buildAccountLockout(al)
+		if err != nil {
+			return nil, fmt.Errorf("account lockout: %w", err)
 		}
 		opts = append(opts, sso.WithAccountLockout(lockout))
-		logger.Info("security: account lockout enabled (memory backend — single-replica only)",
-			"max_failures", lockout.MaxFailures,
-			"lockout_duration", lockout.LockoutDuration,
-			"failure_window", lockout.FailureWindow)
+		logger.Info("security: account lockout enabled",
+			"backend", mode,
+			"max_failures", al.MaxFailures,
+			"lockout_duration", al.LockoutDuration,
+			"failure_window", al.FailureWindow)
 	}
 	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(cors.Policy{

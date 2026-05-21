@@ -178,6 +178,60 @@ func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
 	}
 }
 
+func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
+	l, mode, err := buildAccountLockout(config.AccountLockoutConfig{
+		MaxFailures:     7,
+		LockoutDuration: 30 * sso.NewMemoryAccountLockout().LockoutDuration,
+	})
+	if err != nil {
+		t.Fatalf("memory build: %v", err)
+	}
+	if l == nil {
+		t.Fatal("lockout nil")
+	}
+	if !strings.Contains(mode, "memory") {
+		t.Fatalf("mode label %q missing memory marker", mode)
+	}
+	if mem, ok := l.(*sso.MemoryAccountLockout); !ok {
+		t.Fatalf("expected *sso.MemoryAccountLockout, got %T", l)
+	} else if mem.MaxFailures != 7 {
+		t.Fatalf("MaxFailures override lost: got %d want 7", mem.MaxFailures)
+	}
+}
+
+func TestBuildAccountLockout_SQLiteNeedsDSN(t *testing.T) {
+	_, _, err := buildAccountLockout(config.AccountLockoutConfig{Backend: "sqlite"})
+	if err == nil {
+		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "lockout.db") + "?_journal=WAL"
+	l, mode, err := buildAccountLockout(config.AccountLockoutConfig{
+		Backend:     "sqlite",
+		SQLite:      config.AccountLockoutSQLiteConfig{DSN: dsn},
+		MaxFailures: 4,
+	})
+	if err != nil {
+		t.Fatalf("sqlite build: %v", err)
+	}
+	if l == nil {
+		t.Fatal("lockout nil")
+	}
+	if !strings.Contains(mode, "sqlite") {
+		t.Fatalf("mode label %q missing sqlite marker", mode)
+	}
+}
+
+func TestBuildAccountLockout_UnknownBackendErrors(t *testing.T) {
+	_, _, err := buildAccountLockout(config.AccountLockoutConfig{Backend: "redis"})
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
+	}
+}
+
 func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Security.MTLS.Enabled = true
