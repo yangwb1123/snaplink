@@ -1075,6 +1075,10 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 		logger.Info("backchannel logout: enabled (memory subject-client index — single-replica only)")
 	}
+	if cfg.Server.OAuth21StrictMode {
+		opts = append(opts, sso.WithOAuth21StrictMode(true))
+		logger.Info("oauth2.1 strict mode: implicit grant disabled, S256-only PKCE, PKCE required for every login")
+	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
 		opts = append(opts, sso.WithSupportedACRValues(cfg.Server.SupportedACRValues...))
 	}

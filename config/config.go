@@ -703,6 +703,14 @@ type ServerConfig struct {
 	// no-op and an info log is emitted at startup.
 	SignedMetadata bool `yaml:"signed_metadata"`
 
+	// OAuth21StrictMode flips the AS into draft-OAuth-2.1 strict
+	// posture: rejects response_type=token (implicit), drops `plain`
+	// from code_challenge_methods_supported (S256-only), and gates
+	// every /auth/login on PKCE regardless of per-client opt-out.
+	// Discovery doc adjusts accordingly so RPs see the actual
+	// posture and don't request features they'd fail.
+	OAuth21StrictMode bool `yaml:"oauth_21_strict_mode"`
+
 	// SupportedACRValues advertises the OIDC `acr_values_supported`
 	// claim on the discovery doc. RPs use it to know which Authentication
 	// Context Class References they can demand via `acr_values` /

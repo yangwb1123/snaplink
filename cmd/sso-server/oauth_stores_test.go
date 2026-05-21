@@ -49,6 +49,25 @@ func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
 	}
 }
 
+func TestBuildApp_OAuth21StrictModeFlipsDiscovery(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.OAuth21StrictMode = true
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	doc := fetchDiscovery(t, srv.URL)
+	methods, _ := doc["code_challenge_methods_supported"].([]any)
+	if len(methods) != 1 || methods[0] != "S256" {
+		t.Errorf("code_challenge_methods_supported = %v want [S256] (plain disallowed in 2.1 strict)", methods)
+	}
+}
+
 func TestBuildApp_JARFetcherFlipsRequestURIParameterSupported(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.OAuth.JAR = config.OAuthJARConfig{Enabled: true}

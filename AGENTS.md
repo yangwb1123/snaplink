@@ -571,7 +571,7 @@ Scorers needing richer signals query their own store inside
 
 ```yaml
 server:        # listen, issuer, TTLs, default_token_strategy,
-               # discovery_doc_cache_ttl, signed_metadata,
+               # discovery_doc_cache_ttl, signed_metadata, oauth_21_strict_mode,
                # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity

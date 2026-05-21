@@ -15,6 +15,14 @@ server:
   token_ttl: 1h
   default_token_strategy: jwt
 
+  # draft-ietf-oauth-v2-1 strict mode. When true:
+  #   - response_type=token (implicit) rejected on /auth/login
+  #   - code_challenge_methods_supported limited to S256 only
+  #   - every /auth/login MUST present a code_challenge (per-client
+  #     require_pkce: false is ignored)
+  # Discovery doc adjusts to match.
+  oauth_21_strict_mode: false
+
   # Discovery doc informational hints (OIDC Discovery §3). RPs surface
   # these on consent screens / integrator docs. Each field is
   # independently optional — leave blank to omit from the response.
