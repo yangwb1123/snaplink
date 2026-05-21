@@ -761,6 +761,34 @@ func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
 }
 
+// Handle mounts an extra route on the SSO router so embedders can
+// serve extension endpoints (e.g. WebAuthn ceremony begin/finish
+// handlers from authenticators/webauthn) from the same listener +
+// middleware stack the built-in SSO endpoints use. Must be called
+// after Mount or Handler — the router has to exist.
+//
+// method is one of GET/POST/PUT/DELETE (case-insensitive). Unknown
+// methods return an error rather than silently routing.
+func (s *Server) Handle(method, path string, handler http.HandlerFunc) error {
+	if s.router == nil {
+		return fmt.Errorf("sso: Mount() must be called before Handle()")
+	}
+	wrap := func(ctx HandlerContext) { handler(ctx.ResponseWriter(), ctx.Request()) }
+	switch strings.ToUpper(method) {
+	case http.MethodGet:
+		s.router.GET(path, wrap)
+	case http.MethodPost:
+		s.router.POST(path, wrap)
+	case http.MethodPut:
+		s.router.PUT(path, wrap)
+	case http.MethodDelete:
+		s.router.DELETE(path, wrap)
+	default:
+		return fmt.Errorf("sso: unsupported method %q", method)
+	}
+	return nil
+}
+
 // Mount registers all SSO endpoints on the router.
 func (s *Server) Mount() {
 	if s.router == nil {
