@@ -15,6 +15,19 @@ server:
   token_ttl: 1h
   default_token_strategy: jwt
 
+  # Discovery doc informational hints (OIDC Discovery §3). RPs surface
+  # these on consent screens / integrator docs. Each field is
+  # independently optional — leave blank to omit from the response.
+  operator_metadata:
+    policy_uri: ""
+    tos_uri: ""
+    service_documentation: ""
+
+  # Advertised acr_values_supported (OIDC Discovery + RFC 9470). Tells
+  # RPs which Authentication Context Class References they can demand
+  # via acr_values / claims.id_token.acr. Empty list omits the claim.
+  supported_acr_values: []
+
 logging:
   level: info
 

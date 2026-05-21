@@ -1020,6 +1020,12 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithDPoPNonceProvider(provider))
 	}
+	if len(cfg.Server.SupportedACRValues) > 0 {
+		opts = append(opts, sso.WithSupportedACRValues(cfg.Server.SupportedACRValues...))
+	}
+	if om := cfg.Server.OperatorMetadata; om.PolicyURI != "" || om.TosURI != "" || om.ServiceDocumentation != "" {
+		opts = append(opts, sso.WithOperatorMetadata(om.PolicyURI, om.TosURI, om.ServiceDocumentation))
+	}
 	if cfg.Server.SignedMetadata {
 		// jwtIssuer satisfies sso.MetadataSigner — reuse the same
 		// signing key as access + id + userinfo so JWKS continues to

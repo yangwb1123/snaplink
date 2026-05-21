@@ -550,6 +550,27 @@ type ServerConfig struct {
 	// built-in Ed25519JWTIssuer does); otherwise this flag is a
 	// no-op and an info log is emitted at startup.
 	SignedMetadata bool `yaml:"signed_metadata"`
+
+	// SupportedACRValues advertises the OIDC `acr_values_supported`
+	// claim on the discovery doc. RPs use it to know which Authentication
+	// Context Class References they can demand via `acr_values` /
+	// `claims.id_token.acr`. Empty list omits the claim entirely.
+	SupportedACRValues []string `yaml:"supported_acr_values"`
+
+	// OperatorMetadata surfaces the OIDC Discovery §3 op_policy_uri,
+	// op_tos_uri, and service_documentation fields. RPs link them
+	// from consent screens / integrator docs. Each field is
+	// independently optional — empty values are omitted.
+	OperatorMetadata OperatorMetadataConfig `yaml:"operator_metadata"`
+}
+
+// OperatorMetadataConfig groups the three Discovery §3 informational
+// URIs. All three fields are independently optional; the SDK omits
+// each one whose value is empty.
+type OperatorMetadataConfig struct {
+	PolicyURI            string `yaml:"policy_uri"`
+	TosURI               string `yaml:"tos_uri"`
+	ServiceDocumentation string `yaml:"service_documentation"`
 }
 
 // LoggingConfig controls the embedded logger.
