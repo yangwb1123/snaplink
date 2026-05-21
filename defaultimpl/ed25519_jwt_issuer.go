@@ -70,6 +70,14 @@ type Ed25519JWTIssuer struct {
 	issuer     string
 	tokenTTL   time.Duration
 
+	// maxClockSkew is the leeway granted to inbound exp/nbf checks
+	// per RFC 7519 §4.1.4-5 ("Implementers MAY provide for some
+	// small leeway"). Zero = exact comparison (the historical
+	// behavior). Positive values widen the acceptance window in
+	// both directions — a token whose exp is X seconds in the past
+	// is still accepted when maxClockSkew >= X.
+	maxClockSkew time.Duration
+
 	// verifyKeys maps kid → public key for additional verification-
 	// only keys (previously-active signers being phased out). The
 	// primary publicKey is registered here too at construction time
@@ -91,6 +99,20 @@ func WithEd25519Issuer(name string) Ed25519Option {
 
 func WithEd25519TokenTTL(ttl time.Duration) Ed25519Option {
 	return func(j *Ed25519JWTIssuer) { j.tokenTTL = ttl }
+}
+
+// WithEd25519MaxClockSkew widens the inbound exp/nbf validation
+// window per RFC 7519 §4.1.4-5. Useful when AS and resource server
+// clocks drift (NTP-managed clocks routinely drift 100ms-1s; a
+// well-managed pair drifts under 5s). Default 0 = exact comparison.
+// Recommended production value: 30s-2min. Going much higher widens
+// the window an attacker has to replay an expired token.
+func WithEd25519MaxClockSkew(skew time.Duration) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) {
+		if skew > 0 {
+			j.maxClockSkew = skew
+		}
+	}
 }
 
 // WithEd25519Key uses the supplied keypair instead of generating one.
@@ -455,10 +477,11 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	}
 
 	now := time.Now().Unix()
-	if p.Exp != 0 && now >= p.Exp {
+	skew := int64(j.maxClockSkew.Seconds())
+	if p.Exp != 0 && now-skew >= p.Exp {
 		return nil, errors.New("ed25519: token expired")
 	}
-	if p.Nbf != 0 && now < p.Nbf {
+	if p.Nbf != 0 && now+skew < p.Nbf {
 		return nil, errors.New("ed25519: token not yet valid")
 	}
 

@@ -14,6 +14,10 @@ server:
   session_ttl: 24h
   token_ttl: 1h
   default_token_strategy: jwt
+  # RFC 7519 §4.1.4-5 exp/nbf leeway on inbound JWTs. Wider windows
+  # tolerate AS↔RS clock drift; narrower windows reduce replay window
+  # for compromised expired tokens. Production-typical: 30s-2m.
+  max_clock_skew: 30s
 
   # draft-ietf-oauth-v2-1 strict mode. When true:
   #   - response_type=token (implicit) rejected on /auth/login

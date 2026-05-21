@@ -918,6 +918,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
 		defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),
+		defaultimpl.WithEd25519MaxClockSkew(cfg.Server.MaxClockSkew),
 	)
 	sessionIssuer := defaultimpl.NewSessionTokenIssuer(
 		defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),

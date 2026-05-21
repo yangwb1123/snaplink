@@ -735,6 +735,13 @@ type ServerConfig struct {
 	// multi-replica deployments need a shared backend.
 	PairwiseSubjects PairwiseSubjectsConfig `yaml:"pairwise_subjects"`
 
+	// MaxClockSkew widens the exp/nbf validation window the wired
+	// Ed25519JWTIssuer accepts on inbound JWTs (RFC 7519 §4.1.4-5
+	// leeway). Useful when AS and resource server clocks drift.
+	// 0 = exact comparison (no leeway). Recommended production
+	// value: 30s-2min.
+	MaxClockSkew time.Duration `yaml:"max_clock_skew"`
+
 	// SupportedACRValues advertises the OIDC `acr_values_supported`
 	// claim on the discovery doc. RPs use it to know which Authentication
 	// Context Class References they can demand via `acr_values` /
