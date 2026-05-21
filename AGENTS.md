@@ -290,6 +290,15 @@ INTEGER.
   the chainer. Helpers: `RedactActorIDHash(salt)`, `RedactIPTruncate`,
   `RedactUserAgent`, `RedactMetadataKeys(...)`,
   `DefaultPIIRedactor(salt)`.
+- **Async wrapper** (opt-in): `audit.NewAsyncSink(inner, ...).Start()`
+  drains a bounded buffer on a worker pool — Record never blocks the
+  request path. Options: `WithAsyncBuffer(n)` (default 1024),
+  `WithAsyncWorkers(n)` (default 1), `WithAsyncDropHandler(fn)`,
+  `WithAsyncRecordTimeout(d)`. Drop reasons: `ErrAsyncQueueFull`,
+  `ErrAsyncSinkClosed`, plus surfaced inner errors. Caller-side
+  context is intentionally dropped (TraceID rides on the Event, not
+  ctx) so request-goroutine cancellation can't abort delivery. Use
+  this for `WebhookSink`; skip for `MemorySink` / `WriterSink`.
 
 ### Permissions (`permissions/`)
 `MemoryProvider` gives per-APP role registries, wildcard matcher
