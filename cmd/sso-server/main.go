@@ -706,6 +706,20 @@ func buildDeviceCodeStore(cfg config.OAuthConfig) (sso.DeviceCodeStore, error) {
 	}
 }
 
+func buildPARStore(cfg config.OAuthConfig) (sso.PARStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemoryPARStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewPARStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+	}
+}
+
 // resolvePairwiseSalt reads the pairwise hash salt with the same
 // file-wins-over-inline precedence the PII redactor uses. Empty
 // salt falls back to sso.DefaultPairwiseSalt — fine for tests, not
@@ -1234,7 +1248,11 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		))
 	}
 	if cfg.OAuth.PAR.Enabled {
-		opts = append(opts, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), cfg.OAuth.PAR.TTL))
+		store, err := buildPARStore(cfg.OAuth)
+		if err != nil {
+			return nil, fmt.Errorf("par store: %w", err)
+		}
+		opts = append(opts, sso.WithPARStore(store, cfg.OAuth.PAR.TTL))
 	}
 	if jar := cfg.OAuth.JAR; jar.Enabled {
 		f := sso.NewHTTPJARFetcher()

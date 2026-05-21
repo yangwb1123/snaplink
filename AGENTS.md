@@ -90,10 +90,10 @@ via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 
 ### Storage today
 Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
-AuthCode / RefreshToken / DeviceCode. PAR / Session / Client /
+Client / AuthCode / RefreshToken / DeviceCode / PAR. Session /
 RateLimiter / RefreshTokenFamily are memory-only. **Multi-replica
-deployments break OAuth flows** until those grow distributed
-backends.
+deployments break Session-strategy + lockout/family-reuse signals**
+until those grow distributed backends.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -274,9 +274,10 @@ on a client gates which methods are permitted. WebAuthn + upstream
 IdP federation remain on the roadmap.
 
 ### SQLite (`defaultimpl/sqlite/`)
-Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, AuthCode,
-RefreshToken (+ Inspector + FamilyTracker), DeviceCode. Single-use
-stores use `DELETE … RETURNING` for race-free consumption.
+Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
+AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
+PAR. Single-use stores (AuthCode, DeviceCode, RefreshToken, PAR)
+use `DELETE … RETURNING` for race-free consumption.
 
 DSN cookbook:
 | DSN | Use |

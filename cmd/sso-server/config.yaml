@@ -368,9 +368,10 @@ metrics:
 # OAuth/OIDC grant stores. Each block opts into one grant; without
 # any of these flags the corresponding /token branch (or /par) returns
 # 501. backend: memory (default; in-process) or sqlite (persistent +
-# survives restart). PAR is memory-only regardless of backend (no
-# SQLite impl). Each SQLite-backed store opens its own *sql.DB pool
-# against the shared file — SQLite's OS-level file lock coordinates.
+# survives restart). All four single-use grant stores (auth_code,
+# refresh_token, device_code, par) honor the backend selector. Each
+# SQLite-backed store opens its own *sql.DB pool against the shared
+# file — SQLite's OS-level file lock coordinates.
 oauth:
   backend: memory        # memory | sqlite
   sqlite:
