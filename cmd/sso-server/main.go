@@ -728,6 +728,28 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (sso.JTIReplayStore, string
 //   - "" / "tls" — DefaultTLSPeerCertExtractor (in-process TLS only)
 //   - "header"   — HeaderClientCertExtractor (reverse-proxy edge)
 //
+// convertClientJWKs maps cmd-config JWK entries to sso.JWK. Drops
+// nothing — every parameter the SDK consumes is exposed in YAML.
+func convertClientJWKs(in []config.ClientJWK) []sso.JWK {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sso.JWK, len(in))
+	for i, j := range in {
+		out[i] = sso.JWK{
+			Kty: j.Kty,
+			Use: j.Use,
+			Alg: j.Alg,
+			Kid: j.Kid,
+			Crv: j.Crv,
+			X:   j.X,
+			N:   j.N,
+			E:   j.E,
+		}
+	}
+	return out
+}
+
 // The second return value is a human-readable mode label suitable
 // for the boot log so operators can confirm the wiring matches the
 // surrounding network topology.
@@ -1248,15 +1270,33 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}
 	for _, c := range cfg.Clients {
 		seeded := &sso.Client{
-			ID:                    c.ID,
-			Secret:                c.Secret,
-			Name:                  c.Name,
-			RedirectURIs:          c.RedirectURIs,
-			AllowedScopes:         c.AllowedScopes,
-			AllowedAuthenticators: c.AllowedAuthenticators,
-			TokenStrategy:         c.TokenStrategy,
-			Active:                c.Active,
-			TenantID:              c.TenantID,
+			ID:                               c.ID,
+			Secret:                           c.Secret,
+			Name:                             c.Name,
+			RedirectURIs:                     c.RedirectURIs,
+			AllowedScopes:                    c.AllowedScopes,
+			AllowedAuthenticators:            c.AllowedAuthenticators,
+			TokenStrategy:                    c.TokenStrategy,
+			Active:                           c.Active,
+			TenantID:                         c.TenantID,
+			RequirePKCE:                      c.RequirePKCE,
+			AllowedResources:                 c.AllowedResources,
+			PostLogoutRedirectURIs:           c.PostLogoutRedirectURIs,
+			AllowedAuthorizationDetailsTypes: c.AllowedAuthorizationDetailsTypes,
+			RefreshTokenTTL:                  c.RefreshTokenTTL,
+			AccessTokenTTL:                   c.AccessTokenTTL,
+			AllowedPKCEMethods:               c.AllowedPKCEMethods,
+			RequireSignedRequestObject:       c.RequireSignedRequestObject,
+			RequirePAR:                       c.RequirePAR,
+			AllowedRequestURIs:               c.AllowedRequestURIs,
+			DeviceCodeTTL:                    c.DeviceCodeTTL,
+			DeviceCodePollInterval:           c.DeviceCodePollInterval,
+			UserinfoSignedResponseAlg:        c.UserinfoSignedResponseAlg,
+			BackchannelLogoutURI:             c.BackchannelLogoutURI,
+			SubjectType:                      c.SubjectType,
+			SectorIdentifierURI:              c.SectorIdentifierURI,
+			FrontchannelLogoutURI:            c.FrontchannelLogoutURI,
+			JWKS:                             convertClientJWKs(c.JWKS),
 		}
 		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
 			return nil, fmt.Errorf("seed client %q: %w", c.ID, err)

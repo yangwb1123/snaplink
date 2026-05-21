@@ -655,9 +655,17 @@ audit:         # enabled, api_enabled, memory_capacity, hash_chain
 permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
 network:       # enabled, api_enabled, store, policies[]
 clients:       # id, secret, allowed_authenticators, token_strategy,
-               # redirect_uris, post_logout_redirect_uris, allowed_resources,
-               # require_pkce, tenant_id, allowed_request_uris, jwks,
-               # require_signed_request_object, ...
+               # redirect_uris, post_logout_redirect_uris, allowed_scopes,
+               # allowed_resources, allowed_authorization_details_types,
+               # allowed_pkce_methods, require_pkce, require_par,
+               # require_signed_request_object, allowed_request_uris,
+               # tenant_id, refresh_token_ttl, access_token_ttl,
+               # device_code_ttl, device_code_poll_interval,
+               # userinfo_signed_response_alg, backchannel_logout_uri,
+               # frontchannel_logout_uri, subject_type, sector_identifier_uri,
+               # jwks (RFC 9101 JAR + RFC 7521/7523 private_key_jwt verifier)
+               #   every field maps 1:1 to the sso.Client SPI — cmd's YAML
+               #   surface used to drop ~15 of these silently; now full coverage
 authenticators: # per-method enable + tuning; oidc_federation[] lists upstream IdPs
 admin:         # enabled, api_rest_enabled
 bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code, admin_password_file

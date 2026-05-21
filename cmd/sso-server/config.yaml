@@ -292,6 +292,47 @@ clients:
     token_strategy: jwt
     active: true
 
+  # fapi-app: high-security RP — example showing the extended per-
+  # client fields. Every field below maps 1:1 to the sso.Client SPI;
+  # omit any block to fall back to server-wide defaults.
+  #
+  # Uncomment + tweak when an actual RP needs these features.
+  # - id: fapi-app
+  #   secret: ""                         # leave empty for public clients (PKCE-only)
+  #   name: High Security RP
+  #   redirect_uris:
+  #     - https://rp.example/cb
+  #   post_logout_redirect_uris:
+  #     - https://rp.example/logout
+  #   allowed_scopes: [openid, profile]
+  #   allowed_resources:                 # RFC 8707 — every `resource` MUST appear here
+  #     - https://api.example/v1
+  #   allowed_authorization_details_types: # RFC 9396 — every `type` MUST appear here
+  #     - payment_initiation
+  #   token_strategy: jwt
+  #   active: true
+  #   tenant_id: acme                    # multi-tenant: only serve from "acme"
+  #   require_pkce: true                 # public client tightening
+  #   allowed_pkce_methods: [S256]       # reject "plain"
+  #   require_signed_request_object: true # FAPI 2.0: every authorize wrapped in JAR
+  #   require_par: true                  # FAPI 2.0: every authorize pushed via /par
+  #   allowed_request_uris:              # JAR fetcher SSRF defense — exact-match URLs
+  #     - https://rp.example/jar
+  #   refresh_token_ttl: 24h             # override server-wide refresh TTL
+  #   access_token_ttl: 15m              # override TokenIssuer.tokenTTL
+  #   device_code_ttl: 30m               # RFC 8628 §3.2 expires_in
+  #   device_code_poll_interval: 5s      # RFC 8628 §3.2 interval
+  #   userinfo_signed_response_alg: EdDSA # OIDC Core §5.3.2 — signed /userinfo
+  #   backchannel_logout_uri: https://rp.example/bcl  # OIDC BCL 1.0
+  #   frontchannel_logout_uri: https://rp.example/fcl # OIDC FCL 1.0
+  #   subject_type: pairwise             # OIDC Core §8 — opaque per-sector sub
+  #   sector_identifier_uri: https://sector.example   # pairwise grouping host
+  #   jwks:                              # RFC 9101 JAR / RFC 7521+7523 verifier
+  #     - kty: OKP
+  #       crv: Ed25519
+  #       kid: rp-1
+  #       x: <base64url-public-key>
+
 authenticators:
   password:
     enabled: true
