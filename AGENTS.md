@@ -597,6 +597,7 @@ tenant:        # enabled, backend, lookup_timeout, include_suspended,
                # tenants[], domains[],
                # suspension_check: { enabled, cache_ttl }
 metrics:       # enabled — mounts /metrics; auto-registers audit AsyncSink collector when audit.async is on
+oauth:         # auth_code, refresh_token, device_code, par — each {enabled, ttl}; cmd wires memory backends
 ```
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens

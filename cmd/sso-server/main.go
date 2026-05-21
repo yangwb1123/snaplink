@@ -1026,6 +1026,23 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithDPoPNonceProvider(provider))
 	}
+	if cfg.OAuth.AuthCode.Enabled {
+		opts = append(opts, sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), cfg.OAuth.AuthCode.TTL))
+	}
+	if cfg.OAuth.RefreshToken.Enabled {
+		opts = append(opts, sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), cfg.OAuth.RefreshToken.TTL))
+	}
+	if cfg.OAuth.DeviceCode.Enabled {
+		opts = append(opts, sso.WithDeviceCodeStore(
+			defaultimpl.NewMemoryDeviceCodeStore(),
+			cfg.OAuth.DeviceCode.TTL,
+			cfg.OAuth.DeviceCode.PollInterval,
+			cfg.OAuth.DeviceCode.VerificationBaseURL,
+		))
+	}
+	if cfg.OAuth.PAR.Enabled {
+		opts = append(opts, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), cfg.OAuth.PAR.TTL))
+	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
 		opts = append(opts, sso.WithSupportedACRValues(cfg.Server.SupportedACRValues...))
 	}

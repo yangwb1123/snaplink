@@ -257,3 +257,23 @@ security:
 # registry automatically (no extra config).
 metrics:
   enabled: true
+
+# OAuth/OIDC grant stores. Each block opts into one grant; without
+# any of these flags the corresponding /token branch (or /par) returns
+# 501. Memory backends only — production multi-replica deployments
+# need shared backends (SQLite / Redis).
+oauth:
+  auth_code:
+    enabled: true       # grant_type=authorization_code (RFC 6749 §4.1)
+    ttl: 10m            # SDK default when <=0 (also 10m)
+  refresh_token:
+    enabled: true       # grant_type=refresh_token, single-use rotation
+    ttl: 720h           # 30d; SDK default when <=0
+  device_code:
+    enabled: false      # grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
+    ttl: 10m
+    poll_interval: 5s   # minimum allowed poll cadence; faster→slow_down
+    verification_base_url: ""   # empty: derive from request
+  par:
+    enabled: false      # POST /par + request_uri (RFC 9126)
+    ttl: 90s

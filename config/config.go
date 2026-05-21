@@ -40,6 +40,46 @@ type Config struct {
 	Tenant         TenantConfig         `yaml:"tenant"`
 	Security       SecurityConfig       `yaml:"security"`
 	Metrics        MetricsConfig        `yaml:"metrics"`
+	OAuth          OAuthConfig          `yaml:"oauth"`
+}
+
+// OAuthConfig opts into the OAuth/OIDC grant stores that cmd's binary
+// wires. Each sub-block independently enables one grant:
+//
+//   - AuthCode  → grant_type=authorization_code (RFC 6749 §4.1)
+//   - Refresh   → grant_type=refresh_token (RFC 6749 §6 — single-use rotation)
+//   - Device    → grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
+//   - PAR       → /par + request_uri (RFC 9126)
+//
+// Without these flags the corresponding endpoints return 501. Memory
+// backends are wired today; SQLite / Redis can be plugged in by
+// embedding apps.
+//
+// Each block's TTL is optional; <=0 falls back to the SDK default
+// constants (DefaultAuthCodeTTL, DefaultRefreshTokenTTL, DefaultDeviceCodeTTL,
+// DefaultPARTTL).
+type OAuthConfig struct {
+	AuthCode     OAuthStoreConfig       `yaml:"auth_code"`
+	RefreshToken OAuthStoreConfig       `yaml:"refresh_token"`
+	DeviceCode   OAuthDeviceCodeConfig  `yaml:"device_code"`
+	PAR          OAuthStoreConfig       `yaml:"par"`
+}
+
+// OAuthStoreConfig is the shared shape for the simple TTL-only stores.
+type OAuthStoreConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	TTL     time.Duration `yaml:"ttl"`
+}
+
+// OAuthDeviceCodeConfig adds device-code-specific tunables on top of
+// the shared TTL: poll_interval (minimum allowed poll cadence, slower
+// devices get back slow_down) and verification_base_url (what the
+// server tells devices to display; empty derives from the request).
+type OAuthDeviceCodeConfig struct {
+	Enabled             bool          `yaml:"enabled"`
+	TTL                 time.Duration `yaml:"ttl"`
+	PollInterval        time.Duration `yaml:"poll_interval"`
+	VerificationBaseURL string        `yaml:"verification_base_url"`
 }
 
 // MetricsConfig toggles Prometheus instrumentation. When Enabled,
