@@ -58,6 +58,51 @@ exact emission site.
 |---------------------------------|------|--------------------------------------------------------------|
 | `session_id_or_bearer_required` | 400  | Logout call has neither a `session_id` body nor a bearer hdr |
 
+### Account lockout
+
+| Code             | HTTP | Emitted when                                                                          | Client should                         |
+|------------------|------|---------------------------------------------------------------------------------------|---------------------------------------|
+| `account_locked` | 423  | `AccountLockout` reports the (client_id, identifier) key is past the failure threshold | Wait until the lock expires, then retry |
+
+### Authorization (`/auth/login`, `/par`)
+
+These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary so off-the-shelf RP libraries (e.g. AppAuth, oauth4webapi, MSAL) recognize them without remapping.
+
+| Code                         | HTTP | Emitted when                                                                            | Client should                                       |
+|------------------------------|------|-----------------------------------------------------------------------------------------|-----------------------------------------------------|
+| `access_denied`              | 400  | RFC 6749 §4.1.2.1 — the resource owner / AS refused the authorization request           | Surface to the user; do not auto-retry              |
+| `invalid_redirect_uri`       | 400  | `redirect_uri` parameter doesn't match any of the client's registered values            | Operator fixes the client config or RP             |
+| `invalid_scope`              | 400  | Requested scope set is not a subset of the client's `AllowedScopes`                     | Drop the disallowed scopes, retry                   |
+| `unsupported_response_type`  | 400  | `response_type` not in the AS-supported set (or implicit blocked by OAuth 2.1 strict)   | Use a supported value (`code`)                      |
+| `invalid_pkce_method`        | 400  | `code_challenge_method` not in `S256` or `plain` (or blocked by strict mode)            | Use S256                                            |
+| `pkce_required`              | 400  | Client has `RequirePKCE` set (or OAuth 2.1 strict) and the request omitted PKCE         | Add `code_challenge` + `code_challenge_method`      |
+| `invalid_request_uri`        | 400  | RFC 9126 PAR — `request_uri` is unknown, expired, consumed, or bound to a different RP  | Re-POST `/par` for a fresh one                      |
+| `par_not_configured`         | 501  | `/par` hit but no `WithPARStore` wired                                                  | Operator wires the store                            |
+
+### Token endpoint (`/token`)
+
+| Code                          | HTTP | Emitted when                                                                            | Client should                                 |
+|-------------------------------|------|-----------------------------------------------------------------------------------------|-----------------------------------------------|
+| `invalid_grant`               | 400  | Auth code / refresh / device / PAR / PKCE failure — collapses every cause into one wire response (oracle-leak hardening, AGENTS.md) | Treat as terminal for that grant; restart flow |
+| `invalid_target`              | 400  | RFC 8693 — `resource` / `audience` not in the client's `AllowedResources`              | Drop or correct the resource indicator        |
+| `authorization_code_not_configured` | 501 | `grant_type=authorization_code` hit but no `WithAuthCodeStore` wired               | Operator wires the store                      |
+| `refresh_token_not_configured` | 501 | `grant_type=refresh_token` hit but no `WithRefreshTokenStore` wired                    | Operator wires the store                      |
+| `device_code_not_configured`  | 501  | `grant_type=urn:ietf:params:oauth:grant-type:device_code` hit but no `WithDeviceCodeStore` wired | Operator wires the store              |
+
+### Device flow (`/device/code`, `/device/verify`, `/token`)
+
+| Code                    | HTTP | Emitted when                                                              | Client should                                            |
+|-------------------------|------|---------------------------------------------------------------------------|----------------------------------------------------------|
+| `authorization_pending` | 400  | RFC 8628 §3.5 — user hasn't approved the device yet; poll again at `interval` | Keep polling, respect the AS-supplied interval         |
+| `slow_down`             | 400  | RFC 8628 §3.5 — caller polled faster than the AS-supplied interval         | Add 5 seconds to the interval, then keep polling         |
+| `expired_token`         | 400  | RFC 8628 §3.5 — `user_code` / `device_code` TTL elapsed before approval    | Restart the device flow with a fresh `/device/code` request |
+
+### Client lookup
+
+| Code                | HTTP | Emitted when                                                                            |
+|---------------------|------|-----------------------------------------------------------------------------------------|
+| `client_not_found`  | 404  | Direct client lookup (admin RPC, DCR management) returned `ErrNoSuchClient`            |
+
 ---
 
 ## Tokens (`/userinfo`, `/permissions/me`, `/roles/me`, `/menus/me`)
