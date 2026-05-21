@@ -306,6 +306,41 @@ func TestAsyncSink_StartIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestAsyncSink_DropCountersTrackEachReason(t *testing.T) {
+	// queue full → DropsQueueFull
+	full := newBlockingSink()
+	a := audit.NewAsyncSink(full, audit.WithAsyncBuffer(2))
+	a.Start()
+	// Block the worker on the first event, fill the queue with the
+	// next 2, then send 5 more that must drop.
+	for i := 0; i < 8; i++ {
+		_ = a.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
+	}
+	if got := a.DropsQueueFull(); got < 5 {
+		t.Errorf("DropsQueueFull = %d want >= 5", got)
+	}
+	// Release the blocked worker BEFORE Close so the drain completes
+	// without hitting a deadline.
+	close(full.release)
+	// closed → DropsClosed
+	_ = a.Close(context.Background())
+	before := a.DropsClosed()
+	_ = a.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
+	if got := a.DropsClosed(); got != before+1 {
+		t.Errorf("DropsClosed = %d want %d", got, before+1)
+	}
+
+	// inner error → DropsInnerError
+	bad := &countingSink{recErr: errors.New("nope")}
+	b := audit.NewAsyncSink(bad)
+	b.Start()
+	_ = b.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
+	_ = b.Close(context.Background())
+	if got := b.DropsInnerError(); got != 1 {
+		t.Errorf("DropsInnerError = %d want 1", got)
+	}
+}
+
 func TestAsyncSink_PendingAndCapacityGauges(t *testing.T) {
 	inner := newBlockingSink()
 	a := audit.NewAsyncSink(inner, audit.WithAsyncBuffer(8))

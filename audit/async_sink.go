@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -52,6 +53,14 @@ type AsyncSink struct {
 	startedMu sync.Mutex
 	started   bool
 	wg        sync.WaitGroup
+
+	// Monotonic counters operators can scrape into a Prometheus gauge
+	// (DropsQueueFull + DropsClosed + DropsInnerError as separate
+	// labels). All updates are atomic so reads are safe concurrent
+	// with worker activity.
+	dropsQueueFull  atomic.Int64
+	dropsClosed     atomic.Int64
+	dropsInnerError atomic.Int64
 }
 
 // AsyncOption configures an AsyncSink at construction.
@@ -139,8 +148,11 @@ func (a *AsyncSink) deliver(e *Event) {
 		ctx, cancel = context.WithTimeout(ctx, a.timeout)
 		defer cancel()
 	}
-	if err := a.inner.Record(ctx, e); err != nil && a.onDrop != nil {
-		a.onDrop(e, err)
+	if err := a.inner.Record(ctx, e); err != nil {
+		a.dropsInnerError.Add(1)
+		if a.onDrop != nil {
+			a.onDrop(e, err)
+		}
 	}
 }
 
@@ -156,6 +168,7 @@ func (a *AsyncSink) Record(_ context.Context, e *Event) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.closed {
+		a.dropsClosed.Add(1)
 		if a.onDrop != nil {
 			a.onDrop(e, ErrAsyncSinkClosed)
 		}
@@ -165,6 +178,7 @@ func (a *AsyncSink) Record(_ context.Context, e *Event) error {
 	case a.queue <- e:
 		return nil
 	default:
+		a.dropsQueueFull.Add(1)
 		if a.onDrop != nil {
 			a.onDrop(e, ErrAsyncQueueFull)
 		}
@@ -212,3 +226,21 @@ func (a *AsyncSink) Pending() int { return len(a.queue) }
 
 // Capacity returns the configured buffer size.
 func (a *AsyncSink) Capacity() int { return cap(a.queue) }
+
+// DropsQueueFull is the monotonic count of events dropped because
+// the buffer was full when Record was called. A growing counter
+// means the inner sink can't keep up — increase buffer / workers,
+// or look upstream for an event-storm.
+func (a *AsyncSink) DropsQueueFull() int64 { return a.dropsQueueFull.Load() }
+
+// DropsClosed is the monotonic count of events dropped because
+// Record was called after Close. A non-zero counter typically only
+// surfaces during a fleet restart; persistent growth means an SDK
+// caller is missing a shutdown ordering hook.
+func (a *AsyncSink) DropsClosed() int64 { return a.dropsClosed.Load() }
+
+// DropsInnerError is the monotonic count of events the worker
+// successfully dequeued but the inner sink rejected (network error,
+// HTTP 4xx, validation failure). Inspect via the AsyncDropHandler
+// for the raw error.
+func (a *AsyncSink) DropsInnerError() int64 { return a.dropsInnerError.Load() }

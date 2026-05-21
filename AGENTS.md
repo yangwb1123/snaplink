@@ -311,6 +311,9 @@ INTEGER.
   context is intentionally dropped (TraceID rides on the Event, not
   ctx) so request-goroutine cancellation can't abort delivery. Use
   this for `WebhookSink`; skip for `MemorySink` / `WriterSink`.
+  Observability: `Pending()` / `Capacity()` for queue depth gauge;
+  `DropsQueueFull()` / `DropsClosed()` / `DropsInnerError()` for
+  monotonic drop counters operators scrape into Prometheus.
 
 ### Permissions (`permissions/`)
 `MemoryProvider` gives per-APP role registries, wildcard matcher
