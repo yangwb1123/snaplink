@@ -44,8 +44,10 @@ type Server struct {
 	netAPI               bool
 	geoProvider          geo.Provider
 	geoMiddlewareOpts    GeoMiddlewareOptions
-	tenantStore          tenant.Store
-	tenantMiddlewareOpts TenantMiddlewareOptions
+	tenantStore             tenant.Store
+	tenantMiddlewareOpts    TenantMiddlewareOptions
+	tenantSuspensionEnabled bool
+	tenantSuspensionCache   *suspensionCache
 	riskScorer           RiskScorer
 	metrics              *metrics.Metrics
 	rateLimitPolicy      *ratelimit.Policy
@@ -1019,6 +1021,14 @@ func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClai
 		}
 		claims, err := ti.Validate(ctx, token)
 		if err == nil {
+			// Post-validation tenant suspension gate.
+			// No-op when WithTenantSuspensionCheck wasn't passed; otherwise
+			// hard-fails tokens whose owning client belongs to a now-
+			// suspended tenant so an admin's Suspended flip cuts off
+			// already-issued bearers, not just future issuance.
+			if tsErr := s.checkTenantNotSuspended(ctx, claims); tsErr != nil {
+				return nil, "", tsErr
+			}
 			return claims, name, nil
 		}
 		lastErr = err

@@ -427,6 +427,17 @@ Empty = served from any tenant (single-tenant + platform-admin clients).
 admin UIs. Suspended tenants resolve to "no tenant" by default. Every
 Event gets `tenant.*` keys.
 
+**Active suspension** (opt-in): `WithTenantSuspensionCheck(ttl)`
+installs a post-validation gate — every token whose
+`Client.TenantID` is set has its tenant Status looked up; tokens whose
+tenant is `Suspended` fail with `ErrTenantSuspended` (→ `invalid_token`
+at resource paths, `inactive` at introspect). Without this option,
+existing tokens continue to work after suspension (only new issuance
+is blocked). Lookups cached for `ttl` (default 30s); admin SetStatus
+handlers MUST call `(*Server).InvalidateTenantSuspensionCache(id)` so
+the flip takes effect on the next validate. Tenant store outage is
+fail-open by design — don't 401 the world during a partition.
+
 ### ssoclient
 ```go
 // Embedded:
