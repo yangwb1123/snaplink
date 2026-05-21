@@ -3,6 +3,7 @@ package ratelimit_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,5 +175,39 @@ func TestKeyByClientIP_FallsBackToRemoteAddr(t *testing.T) {
 	r.RemoteAddr = "192.0.2.1:9999"
 	if got := ratelimit.KeyByClientIP(r); got != "192.0.2.1" {
 		t.Errorf("RemoteAddr fallback = %q, want 192.0.2.1", got)
+	}
+}
+
+func TestKeyByClientIDOrIP_HonorsBasicAuthClientID(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/token", nil)
+	r.RemoteAddr = "10.0.0.1:5555"
+	r.SetBasicAuth("acme-app", "secret")
+	if got := ratelimit.KeyByClientIDOrIP(r); got != "client:acme-app" {
+		t.Errorf("Basic-auth keying = %q, want client:acme-app", got)
+	}
+}
+
+func TestKeyByClientIDOrIP_FallsBackToIPWithoutBasicAuth(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/token", nil)
+	r.RemoteAddr = "192.0.2.5:5555"
+	if got := ratelimit.KeyByClientIDOrIP(r); got != "192.0.2.5" {
+		t.Errorf("no Basic-auth → IP fallback = %q, want 192.0.2.5", got)
+	}
+}
+
+func TestKeyByClientIDOrIP_DoesNotConsumeBody(t *testing.T) {
+	// Per-client keying MUST NOT read r.Body, or downstream handlers
+	// can't parse it. Verify by setting a body and confirming it's
+	// still readable end-to-end.
+	r := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader("client_id=in-body&client_secret=x"))
+	r.RemoteAddr = "10.0.0.2:5555"
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	_ = ratelimit.KeyByClientIDOrIP(r)
+
+	buf := make([]byte, 64)
+	n, _ := r.Body.Read(buf)
+	if n == 0 {
+		t.Fatal("KeyByClientIDOrIP consumed r.Body — downstream handlers will see empty input")
 	}
 }

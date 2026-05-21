@@ -520,8 +520,13 @@ Per-endpoint breakdowns come from traces, not labels.
 
 **Ratelimit**: `Default` + ordered `Prefixes`. `KeyByClientIP`
 honors XFF/X-Real-IP/RemoteAddr — **trust an edge or wrap in
-TrustedProxies upstream**. Composes with `RiskScorer` (limiter
-rejects bots before scoring).
+TrustedProxies upstream**. `KeyByClientIDOrIP` keys by `client_id`
+when an HTTP Basic-authed /token-style request supplies one, falling
+back to IP — sensible for /token, /par, /token/introspect, /token/revoke
+where the natural noisy-neighbor is the client (not a NAT'd source IP).
+Body-supplied credentials (client_secret_post) intentionally hit the
+IP fallback to avoid consuming r.Body. Composes with `RiskScorer`
+(limiter rejects bots before scoring).
 
 **ReadyCheck**: pluggable SPI; any failing check → 503. Bounded by
 3s context deadline.

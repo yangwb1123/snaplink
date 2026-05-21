@@ -38,6 +38,26 @@ type PrefixRule struct {
 // KeyFunc extracts a bucket key from a request.
 type KeyFunc func(*http.Request) string
 
+// KeyByClientIDOrIP keys the limiter by `client_id` when an
+// authenticated /token-style request supplies one via HTTP Basic
+// (RFC 6749 §2.3.1's mandated method); otherwise falls back to
+// [KeyByClientIP]. Useful on /token, /par, /token/introspect and
+// /token/revoke where the appropriate noisy-neighbor blast radius
+// is the client, not the source IP (which may be shared by
+// thousands of users behind a NAT or corporate proxy).
+//
+// Body-supplied credentials (client_secret_post) are NOT inspected
+// because doing so would consume r.Body and break downstream
+// handlers that depend on parsing it themselves. The IP fallback
+// kicks in for those requests — operators who need per-client
+// rate-limiting MUST require client_secret_basic for those endpoints.
+func KeyByClientIDOrIP(r *http.Request) string {
+	if cid, _, ok := r.BasicAuth(); ok && cid != "" {
+		return "client:" + cid
+	}
+	return KeyByClientIP(r)
+}
+
 // KeyByClientIP keys the limiter per request source IP. Respects the
 // usual reverse-proxy headers (X-Forwarded-For first hop, X-Real-IP)
 // before falling back to RemoteAddr. Operators behind an untrusted
