@@ -81,6 +81,23 @@ func TestBuildApp_BodyLimitWired(t *testing.T) {
 	}
 }
 
+func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
+	// Smoke test: just confirm buildApp doesn't panic and the option
+	// chain is reachable when the flag is on. End-to-end JAR replay
+	// behavior is covered by SDK-level tests.
+	cfg := &config.Config{}
+	cfg.Security.JTIReplay.Enabled = true
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	if a.server == nil {
+		t.Fatal("server nil")
+	}
+}
+
 func TestBuildApp_CORSWiredWhenOriginsSet(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Security.CORS.Enabled = true

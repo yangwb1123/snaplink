@@ -1082,6 +1082,10 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			"default_burst", rl.DefaultBurst,
 			"prefix_rules", len(rl.Prefixes))
 	}
+	if cfg.Security.JTIReplay.Enabled {
+		opts = append(opts, sso.WithJTIReplayStore(defaultimpl.NewMemoryJTIReplayStore()))
+		logger.Info("security: jti replay protection enabled (memory backend — single-replica only)")
+	}
 	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(cors.Policy{
 			AllowedOrigins:   c.AllowedOrigins,

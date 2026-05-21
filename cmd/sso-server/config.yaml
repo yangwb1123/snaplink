@@ -241,6 +241,13 @@ security:
         per_sec: 0.167       # 10/min
         burst: 10
 
+  # JTI-based replay protection on JAR request objects + DPoP proofs.
+  # Memory backend only — multi-replica setups MUST wire a shared store
+  # (Redis, Memcached) via the SDK directly, otherwise the defense is
+  # defeated by cross-replica replay.
+  jti_replay:
+    enabled: false
+
   cors:
     enabled: false           # flip to true + list allowed_origins for SPAs
     allowed_origins: []      # exact-match origins; "*" wildcards

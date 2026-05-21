@@ -105,6 +105,21 @@ type SecurityConfig struct {
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	CORS      CORSConfig      `yaml:"cors"`
 	DPoPNonce DPoPNonceConfig `yaml:"dpop_nonce"`
+	JTIReplay JTIReplayConfig `yaml:"jti_replay"`
+}
+
+// JTIReplayConfig opts into RFC 9101 §10.8 + RFC 9449 §11.1 jti-based
+// replay protection on JWTs the server consumes (JAR request objects;
+// DPoP proofs and JWT bearer client assertions follow the same store).
+// Without it, signature-valid JWTs are accepted once per validation —
+// the spec-permitted but weaker fallback.
+//
+// The wired backend is in-memory and single-replica only — a jti
+// seen by replica A is unknown to replica B, defeating the defense.
+// Multi-replica deployments MUST plug a shared backend (Redis,
+// Memcached) via sso.WithJTIReplayStore directly.
+type JTIReplayConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // DPoPNonceConfig opts into RFC 9449 §8 server-issued nonces. When
