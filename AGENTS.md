@@ -694,7 +694,12 @@ directly and query their own store inside `Score` — don't pad
 `cmd/sso-server/config.yaml` is the reference. Top-level keys:
 
 ```yaml
-server:        # listen, issuer, TTLs, default_token_strategy, max_clock_skew,
+server:        # listen, issuer (REQUIRED to differ from sso.DefaultIssuer
+               # sentinel; cmd default is "sso-server"; production SHOULD
+               # set the canonical public URL — the same value is stamped
+               # into the JWT iss claim, the discovery doc's issuer field,
+               # and every RFC 9207 iss param so they cannot diverge),
+               # TTLs, default_token_strategy, max_clock_skew,
                # discovery_doc_cache_ttl, discovery_cache_ttl, jwks_cache_ttl,
                # signed_metadata, oauth_21_strict_mode,
                # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}

@@ -1319,9 +1319,23 @@ func LoadFromSources(ctx context.Context, sources ...Source) (*Config, error) {
 	return NewLoader(sources...).Load(ctx)
 }
 
+// DefaultServerIssuer is the cmd-side default for server.issuer when
+// operators omit it. Intentionally NOT [sso.DefaultIssuer]: the SDK's
+// DefaultIssuer is a sentinel that resolveIssuer + the OIDC discovery
+// renderer treat as "fall back to requestBaseURL", while the
+// Ed25519JWTIssuer always stamps the literal value into the JWT iss
+// claim. Setting the SDK sentinel as cmd's default would produce a
+// discovery doc whose `issuer` field is the requestBaseURL (e.g.
+// http://localhost:9090) but JWTs whose `iss` claim is "snaplink-sso"
+// — a wire-contract divergence that breaks every RFC 9068 access
+// token validator. Using a non-sentinel default ("sso-server") keeps
+// every path agreeing on the same string. Operators should set a
+// canonical URL via `server.issuer` for production deployments.
+const DefaultServerIssuer = "sso-server"
+
 func (c *Config) applyDefaults() {
 	if c.Server.Issuer == "" {
-		c.Server.Issuer = sso.DefaultIssuer
+		c.Server.Issuer = DefaultServerIssuer
 	}
 	if c.Server.SessionTTL == 0 {
 		c.Server.SessionTTL = sso.DefaultSessionDuration
@@ -1361,6 +1375,16 @@ func (c *Config) validate() error {
 	case "debug", "info", "error":
 	default:
 		return fmt.Errorf("config: invalid logging.level %q", c.Logging.Level)
+	}
+	// Reject the SDK's internal sentinel. resolveIssuer + the OIDC
+	// discovery renderer treat sso.DefaultIssuer as "fall back to
+	// requestBaseURL", while Ed25519JWTIssuer stamps it literally
+	// into the JWT iss claim — the resulting discovery doc and
+	// access tokens then disagree on the issuer string, which
+	// breaks every spec-compliant RFC 9068 validator. See
+	// DefaultServerIssuer above.
+	if c.Server.Issuer == sso.DefaultIssuer {
+		return fmt.Errorf("config: server.issuer must not equal the SDK sentinel %q — set it to your canonical public URL (e.g. https://sso.example.com) or accept the cmd default %q", sso.DefaultIssuer, DefaultServerIssuer)
 	}
 	for _, cl := range c.Clients {
 		if cl.ID == "" {

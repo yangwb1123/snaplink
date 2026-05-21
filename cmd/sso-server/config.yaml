@@ -1,5 +1,20 @@
 server:
-  issuer: snaplink-sso
+  # Operator-chosen issuer identifier. Used everywhere consistently:
+  # the JWT `iss` claim on every access / id / refresh / logout token,
+  # the OIDC discovery doc's `issuer` field, and the RFC 9207 `iss`
+  # parameter in every /auth/login response. Production deployments
+  # SHOULD set this to the canonical public URL the SSO server serves
+  # under (e.g. https://sso.example.com); the cmd default ("sso-server")
+  # is a non-sentinel value that keeps every code path agreeing on the
+  # same string when operators haven't picked a real URL yet.
+  #
+  # Do NOT set this to the SDK's internal sentinel "snaplink-sso" —
+  # that value triggers the resolveIssuer fall-back to requestBaseURL
+  # for the discovery doc + RFC 9207 path, while the JWT iss claim
+  # keeps the literal sentinel — a wire-contract divergence that
+  # breaks every RFC 9068 access-token validator. Config validation
+  # refuses it.
+  issuer: sso-server
   # base_url is currently informational only — the SDK derives absolute
   # URLs (callback redirects, JWKS) from incoming request headers and
   # reverse-proxy hints, not from this constant. Keeping it for future
