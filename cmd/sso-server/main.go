@@ -757,6 +757,52 @@ func appendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
 	return append(opts, sso.WithReadyCheck(name, p.Ping))
 }
 
+// appendRateLimitReadyChecks registers a /readyz check for the
+// policy's Default limiter and every prefix-rule limiter. Memory
+// limiters silently no-op (no Ping method); the SQLite limiter
+// exposes its database handle here so a wedged cluster-shared
+// token-bucket trips /readyz before requests start failing.
+//
+// Per-prefix check names sanitize the prefix into kebab case so they
+// surface readably in the /readyz JSON payload — `/token/revoke`
+// becomes `sqlite-ratelimit-token-revoke`. Empty / unrecognized
+// prefixes fall back to a positional `rule-N` name so two
+// configurations can't collide.
+func appendRateLimitReadyChecks(opts []sso.Option, p ratelimit.Policy) []sso.Option {
+	opts = appendReadyCheck(opts, "sqlite-ratelimit-default", p.Default)
+	for i, rule := range p.Prefixes {
+		name := sanitizeReadyCheckSuffix(rule.Prefix)
+		if name == "" {
+			name = fmt.Sprintf("rule-%d", i)
+		}
+		opts = appendReadyCheck(opts, "sqlite-ratelimit-"+name, rule.Limiter)
+	}
+	return opts
+}
+
+// sanitizeReadyCheckSuffix turns an arbitrary string into a kebab-
+// safe suffix for a ReadyCheck name. Alphanumerics pass through;
+// every other rune collapses into a single `-` separator. Used by
+// appendRateLimitReadyChecks to derive stable, JSON-payload-friendly
+// names from operator-supplied URL prefixes.
+func sanitizeReadyCheckSuffix(s string) string {
+	var b strings.Builder
+	dashOK := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dashOK = true
+		default:
+			if dashOK {
+				b.WriteByte('-')
+				dashOK = false
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
+}
+
 func convertClientJWKs(in []config.ClientJWK) []sso.JWK {
 	if len(in) == 0 {
 		return nil
@@ -1680,6 +1726,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			return nil, fmt.Errorf("rate limit policy: %w", err)
 		}
 		opts = append(opts, sso.WithRateLimit(policy))
+		opts = appendRateLimitReadyChecks(opts, policy)
 		backend := rl.Backend
 		if backend == "" {
 			backend = "memory"

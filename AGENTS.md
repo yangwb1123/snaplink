@@ -632,11 +632,16 @@ after the subsystem (`sqlite-identity-clients`,
 `sqlite-oauth-refresh-tokens`, `sqlite-jti-replay`,
 `sqlite-account-lockout`, `sqlite-pairwise-subjects`,
 `sqlite-bcl-subject-client-index`, `sqlite-webauthn-{users,sessions}`,
-etc.). Memory backends don't implement Ping, so the type assertion
-silently no-ops — exactly the right cadence (no readiness signal
-from a process-local map). The check payload is
-`{"status":"ready|unready","checks":{name: "ok"|err}}` so kubelet +
-operators see exactly which dependency tripped the 503.
+etc.). The SQLite rate limiter participates too — when
+`security.rate_limit.backend: sqlite`, cmd registers
+`sqlite-ratelimit-default` for the policy's default bucket and
+`sqlite-ratelimit-<prefix>` for each declared prefix (slashes
+collapse to hyphens, so `/token/revoke` surfaces as
+`sqlite-ratelimit-token-revoke`). Memory backends don't implement
+Ping, so the type assertion silently no-ops — exactly the right
+cadence (no readiness signal from a process-local map). The check
+payload is `{"status":"ready|unready","checks":{name: "ok"|err}}` so
+kubelet + operators see exactly which dependency tripped the 503.
 
 ### Risk scoring (`risk.go`)
 `RiskScorer` runs on `/auth/login` AFTER credential validation,

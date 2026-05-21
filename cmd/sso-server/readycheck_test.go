@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/ratelimit"
 )
 
 // TestAppendReadyCheck_MemoryNoOps proves the type-assertion gate
@@ -134,4 +136,89 @@ func (p pingerStub) Ping(ctx context.Context) error {
 		return errors.New("pingerStub: no fn")
 	}
 	return p.fn(ctx)
+}
+
+// pingerLimiter is a ratelimit.Limiter that also implements Ping —
+// mirrors the shape of *ratelimit.SQLiteLimiter so tests for the
+// appendRateLimitReadyChecks wiring don't need a real SQLite DSN.
+type pingerLimiter struct{ pingerStub }
+
+func (p pingerLimiter) Allow(_ string) (bool, time.Duration) { return true, 0 }
+
+// TestSanitizeReadyCheckSuffix_Paths verifies the kebab conversion
+// for the URL prefixes operators typically supply in YAML — these
+// names surface in the /readyz payload so they need to stay
+// readable, stable, and collision-resistant across rule sets.
+func TestSanitizeReadyCheckSuffix_Paths(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/token", "token"},
+		{"/token/revoke", "token-revoke"},
+		{"/api/v1/admin/", "api-v1-admin"},
+		{"", ""},
+		{"///", ""},
+		{"a.b_c", "a-b-c"},
+		{"FOO/bar", "FOO-bar"},
+	}
+	for _, c := range cases {
+		if got := sanitizeReadyCheckSuffix(c.in); got != c.want {
+			t.Errorf("sanitizeReadyCheckSuffix(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestAppendRateLimitReadyChecks_MixedBackends proves the helper
+// registers a Ready check for every Ping-implementing limiter (the
+// SQLite case) and silently skips memory-backed peers. The
+// resulting /readyz body MUST surface the SQLite limiters by their
+// sanitized prefix name and MUST NOT surface the memory ones.
+func TestAppendRateLimitReadyChecks_MixedBackends(t *testing.T) {
+	okPing := func(context.Context) error { return nil }
+	policy := ratelimit.Policy{
+		Default: pingerLimiter{pingerStub: pingerStub{fn: okPing}}, // pretend-SQLite default
+		Prefixes: []ratelimit.PrefixRule{
+			{Prefix: "/token", Limiter: pingerLimiter{pingerStub: pingerStub{fn: okPing}}},
+			{Prefix: "/par", Limiter: ratelimit.NewMemoryLimiter(1, 1)}, // memory, no Ping
+			{Prefix: "/token/revoke", Limiter: pingerLimiter{pingerStub: pingerStub{fn: okPing}}},
+		},
+	}
+	opts := appendRateLimitReadyChecks(nil, policy)
+	if got, want := len(opts), 3; got != want {
+		t.Fatalf("appendRateLimitReadyChecks returned %d opts; want %d (default + /token + /token/revoke)", got, want)
+	}
+
+	srv := sso.NewServer(opts...)
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/readyz code=%d body=%s; want 200", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode /readyz: %v body=%s", err, rec.Body.String())
+	}
+	for _, name := range []string{"sqlite-ratelimit-default", "sqlite-ratelimit-token", "sqlite-ratelimit-token-revoke"} {
+		if got, ok := body.Checks[name]; !ok || got != "ok" {
+			t.Errorf("check %q = %q present=%v; want ok / present", name, got, ok)
+		}
+	}
+	for _, name := range []string{"sqlite-ratelimit-par"} {
+		if _, ok := body.Checks[name]; ok {
+			t.Errorf("memory limiter incorrectly registered: %q present in /readyz checks=%v", name, body.Checks)
+		}
+	}
+}
+
+// TestAppendRateLimitReadyChecks_EmptyPolicy proves the helper is a
+// no-op when neither a Default nor any Prefixes are configured —
+// guards against a startup regression that would register a stray
+// failing check for an unwired rate limiter.
+func TestAppendRateLimitReadyChecks_EmptyPolicy(t *testing.T) {
+	opts := appendRateLimitReadyChecks(nil, ratelimit.Policy{})
+	if len(opts) != 0 {
+		t.Fatalf("empty policy produced %d opts; want 0", len(opts))
+	}
 }
