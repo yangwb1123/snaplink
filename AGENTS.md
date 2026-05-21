@@ -597,7 +597,11 @@ security:      # body_limit, rate_limit, cors
                # dpop_nonce: { enabled, key_file, ttl }
                # jti_replay: { enabled } — memory backend, single-replica only
                # account_lockout: { enabled, max_failures, lockout_duration, failure_window }
-               # mtls: { enabled } — RFC 8705 with DefaultTLSPeerCertExtractor (in-process TLS only)
+               # mtls: { enabled, backend(tls|header), header.{name, encoding(url-pem|pem|base64-der)} }
+               #   tls    — DefaultTLSPeerCertExtractor (in-process TLS termination)
+               #   header — HeaderClientCertExtractor for reverse-proxy edges (nginx X-SSL-Client-Cert,
+               #            AWS ALB X-Amzn-Mtls-Clientcert, Apache mod_ssl Ssl-Client-Cert). Edge MUST
+               #            strip the header from untrusted traffic — same threat model as XFF
 tenant:        # enabled, backend, lookup_timeout, include_suspended,
                # tenants[], domains[],
                # suspension_check: { enabled, cache_ttl }

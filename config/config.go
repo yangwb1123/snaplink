@@ -208,19 +208,42 @@ type SecurityConfig struct {
 	MTLS           MTLSConfig           `yaml:"mtls"`
 }
 
-// MTLSConfig opts into RFC 8705 mTLS-bound access tokens. The
-// built-in extractor pulls the client cert from r.TLS.PeerCertificates
-// — works when the binary terminates TLS itself (--tls-cert/--tls-key).
-// Behind a reverse proxy that terminates TLS, operators MUST plug
-// their own header-based extractor via sso.WithClientCertExtractor
-// (typical shape: read X-Client-Cert/X-SSL-Client-Cert, PEM-decode).
+// MTLSConfig opts into RFC 8705 mTLS-bound access tokens.
+//
+// Backend choice:
+//   - "" / "tls" (default) — DefaultTLSPeerCertExtractor; reads
+//     r.TLS.PeerCertificates[0]. Works only when the binary
+//     terminates TLS itself (--tls-cert/--tls-key).
+//   - "header" — HeaderClientCertExtractor; parses the forwarded
+//     client cert out of an HTTP header set by a TLS-terminating
+//     reverse proxy. Pair with Header.Name + Header.Encoding.
+//     SECURITY: the header MUST be stripped from public traffic at
+//     the edge; otherwise an attacker can mint mTLS-bound tokens
+//     for any cert without holding the matching key. Treat the
+//     header like X-Forwarded-For — trusted-edge only.
 //
 // With the extractor wired, /token binds cnf.x5t#S256 onto issued
 // tokens when the request presents a client cert, and resource
 // endpoints (/userinfo) enforce the binding. Discovery doc flips
 // mtls_endpoint_aliases on automatically.
 type MTLSConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool             `yaml:"enabled"`
+	Backend string           `yaml:"backend"`
+	Header  MTLSHeaderConfig `yaml:"header"`
+}
+
+// MTLSHeaderConfig configures the header-backend extractor. Common
+// edges:
+//   - nginx ($ssl_client_escaped_cert):  X-SSL-Client-Cert / url-pem
+//   - AWS ALB mTLS:                      X-Amzn-Mtls-Clientcert / url-pem
+//   - Apache mod_ssl (SSL_CLIENT_CERT):  Ssl-Client-Cert / pem
+//   - custom base64-DER edge:                            / base64-der
+//
+// Encoding values: "url-pem" (default), "pem", "base64-der". Empty
+// string is treated as "url-pem".
+type MTLSHeaderConfig struct {
+	Name     string `yaml:"name"`
+	Encoding string `yaml:"encoding"`
 }
 
 // AccountLockoutConfig opts into per-account lockout on /auth/login.

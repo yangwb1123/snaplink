@@ -566,6 +566,45 @@ var _ = lockNoop.New
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
+// buildClientCertExtractor picks the RFC 8705 mTLS extractor backend.
+//   - "" / "tls" — DefaultTLSPeerCertExtractor (in-process TLS only)
+//   - "header"   — HeaderClientCertExtractor (reverse-proxy edge)
+//
+// The second return value is a human-readable mode label suitable
+// for the boot log so operators can confirm the wiring matches the
+// surrounding network topology.
+func buildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, string, error) {
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "", "tls", "peer":
+		return sso.DefaultTLSPeerCertExtractor, "DefaultTLSPeerCertExtractor (in-process TLS termination)", nil
+	case "header", "proxy":
+		if cfg.Header.Name == "" {
+			return nil, "", fmt.Errorf("security.mtls.header.name required when backend=%q", backend)
+		}
+		enc, err := parseHeaderCertEncoding(cfg.Header.Encoding)
+		if err != nil {
+			return nil, "", err
+		}
+		return &sso.HeaderClientCertExtractor{HeaderName: cfg.Header.Name, Encoding: enc}, fmt.Sprintf("HeaderClientCertExtractor (header=%q encoding=%q — TRUST EDGE MUST STRIP HEADER)", cfg.Header.Name, cfg.Header.Encoding), nil
+	default:
+		return nil, "", fmt.Errorf("security.mtls.backend %q (want tls|header)", cfg.Backend)
+	}
+}
+
+func parseHeaderCertEncoding(s string) (sso.HeaderCertEncoding, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "url-pem", "urlpem", "url_pem":
+		return sso.HeaderCertEncodingURLPEM, nil
+	case "pem":
+		return sso.HeaderCertEncodingPEM, nil
+	case "base64-der", "base64der", "base64_der":
+		return sso.HeaderCertEncodingBase64DER, nil
+	default:
+		return 0, fmt.Errorf("security.mtls.header.encoding %q (want url-pem|pem|base64-der)", s)
+	}
+}
+
 func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.DPoPNonceProvider, error) {
 	if cfg.KeyFile != "" {
 		raw, err := os.ReadFile(cfg.KeyFile)
@@ -1288,12 +1327,12 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		logger.Info("security: jti replay protection enabled (memory backend — single-replica only)")
 	}
 	if cfg.Security.MTLS.Enabled {
-		// Default extractor reads r.TLS.PeerCertificates — only works
-		// when the binary terminates TLS itself. Behind a reverse proxy
-		// that terminates TLS, this is silently a no-op; operators
-		// MUST plug a header-based extractor via the SDK directly.
-		opts = append(opts, sso.WithClientCertExtractor(sso.DefaultTLSPeerCertExtractor))
-		logger.Info("security: mTLS bound tokens enabled (DefaultTLSPeerCertExtractor — TLS must terminate in-process)")
+		extractor, mode, err := buildClientCertExtractor(cfg.Security.MTLS)
+		if err != nil {
+			return nil, fmt.Errorf("mtls extractor: %w", err)
+		}
+		opts = append(opts, sso.WithClientCertExtractor(extractor))
+		logger.Info("security: mTLS bound tokens enabled", "extractor", mode)
 	}
 	if al := cfg.Security.AccountLockout; al.Enabled {
 		lockout := sso.NewMemoryAccountLockout()

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	sso "github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/ratelimit"
 )
@@ -151,6 +153,118 @@ func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 	n, _ := resp.Body.Read(body)
 	if !bytes.Contains(body[:n], []byte("mtls_endpoint_aliases")) {
 		t.Errorf("mtls_endpoint_aliases missing from discovery doc: %s", body[:n])
+	}
+}
+
+func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
+	ex, mode, err := buildClientCertExtractor(config.MTLSConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("default backend: %v", err)
+	}
+	if ex == nil {
+		t.Fatal("extractor nil")
+	}
+	if !strings.Contains(mode, "TLS") {
+		t.Fatalf("expected TLS in mode label, got %q", mode)
+	}
+}
+
+func TestBuildClientCertExtractor_HeaderRequiresName(t *testing.T) {
+	_, _, err := buildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"})
+	if err == nil {
+		t.Fatal("expected error when header backend has empty name")
+	}
+}
+
+func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
+	ex, mode, err := buildClientCertExtractor(config.MTLSConfig{
+		Enabled: true,
+		Backend: "header",
+		Header:  config.MTLSHeaderConfig{Name: "X-SSL-Client-Cert", Encoding: "url-pem"},
+	})
+	if err != nil {
+		t.Fatalf("header build: %v", err)
+	}
+	h, ok := ex.(*sso.HeaderClientCertExtractor)
+	if !ok {
+		t.Fatalf("expected *HeaderClientCertExtractor, got %T", ex)
+	}
+	if h.HeaderName != "X-SSL-Client-Cert" {
+		t.Fatalf("header name mismatch: %q", h.HeaderName)
+	}
+	if h.Encoding != sso.HeaderCertEncodingURLPEM {
+		t.Fatalf("encoding mismatch: %v", h.Encoding)
+	}
+	if !strings.Contains(mode, "TRUST EDGE MUST STRIP HEADER") {
+		t.Fatalf("expected trust-edge warning in mode label, got %q", mode)
+	}
+}
+
+func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
+	cases := []struct {
+		in   string
+		want sso.HeaderCertEncoding
+	}{
+		{"", sso.HeaderCertEncodingURLPEM},
+		{"url-pem", sso.HeaderCertEncodingURLPEM},
+		{"pem", sso.HeaderCertEncodingPEM},
+		{"base64-der", sso.HeaderCertEncodingBase64DER},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := parseHeaderCertEncoding(c.in)
+			if err != nil {
+				t.Fatalf("parse %q: %v", c.in, err)
+			}
+			if got != c.want {
+				t.Fatalf("encoding %q: got %v want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestBuildClientCertExtractor_UnknownBackend(t *testing.T) {
+	_, _, err := buildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "spiffe"})
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
+	}
+}
+
+func TestBuildClientCertExtractor_UnknownEncoding(t *testing.T) {
+	_, _, err := buildClientCertExtractor(config.MTLSConfig{
+		Enabled: true,
+		Backend: "header",
+		Header:  config.MTLSHeaderConfig{Name: "X-Client-Cert", Encoding: "asn1"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown encoding")
+	}
+}
+
+func TestBuildApp_MTLSHeaderBackendWires(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.MTLS.Enabled = true
+	cfg.Security.MTLS.Backend = "header"
+	cfg.Security.MTLS.Header.Name = "X-SSL-Client-Cert"
+	cfg.Security.MTLS.Header.Encoding = "url-pem"
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body := make([]byte, 8192)
+	n, _ := resp.Body.Read(body)
+	if !bytes.Contains(body[:n], []byte("mtls_endpoint_aliases")) {
+		t.Errorf("header backend must still flip mtls_endpoint_aliases on: %s", body[:n])
 	}
 }
 

@@ -332,12 +332,21 @@ security:
     failure_window: 1h
 
   # RFC 8705 mTLS-bound access tokens. The built-in extractor reads
-  # r.TLS.PeerCertificates — only works when the binary terminates TLS
-  # directly (--tls-cert/--tls-key). Behind a reverse-proxy edge,
-  # operators MUST plug their own header-based extractor (X-Client-Cert
-  # or similar) via the SDK; this flag becomes a no-op in that case.
+  # backend:
+  #   tls (default)   r.TLS.PeerCertificates — TLS terminates in-process
+  #   header          parse cert from a header set by a TLS-terminating
+  #                   reverse proxy. SECURITY: the edge MUST strip the
+  #                   header from public traffic, otherwise an attacker
+  #                   can mint mTLS-bound tokens for any cert without
+  #                   holding the matching key (X-Forwarded-For class).
+  # header.encoding values: url-pem (nginx $ssl_client_escaped_cert,
+  # AWS ALB X-Amzn-Mtls-Clientcert), pem (Apache mod_ssl), base64-der.
   mtls:
     enabled: false
+    backend: tls             # tls | header
+    header:
+      name: ""               # e.g. X-SSL-Client-Cert, X-Amzn-Mtls-Clientcert
+      encoding: url-pem      # url-pem | pem | base64-der
 
   cors:
     enabled: false           # flip to true + list allowed_origins for SPAs
