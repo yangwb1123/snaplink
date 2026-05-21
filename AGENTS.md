@@ -299,13 +299,19 @@ can't enumerate registered users.
 **Token-issuance integration**: `/webauthn/login/finish` accepts an
 optional `?client_id=` query parameter. When supplied, cmd looks up
 the Client + the configured `TokenIssuer` for its `token_strategy`
-and mints an access token for the WebAuthn-authenticated subject
+and mints tokens for the WebAuthn-authenticated subject
 (AMR=`["webauthn"]`, Provider=`"webauthn"`, scopes default to the
 client's `AllowedScopes`). The Finish response carries
 `access_token`, `token_type`, `expires_in`, `scope` alongside
-`username` + `credential_id`. Without `client_id` the v1
-credential-verification response is unchanged — embedders that
-integrate their own token path aren't disturbed.
+`username` + `credential_id`. The same emission rules /auth/login
+uses apply: `id_token` rides along when the client's scopes contain
+`openid` AND `WithIDTokenIssuer` is wired; `refresh_token` rides
+along when `WithRefreshTokenStore` is wired (cmd's `oauth.refresh_token.enabled`).
+Either dep missing degrades silently — the response just omits that
+field. Per-client `RefreshTokenTTL` beats the global TTL when set.
+Without `client_id` the v1 credential-verification response is
+unchanged — embedders that integrate their own token path aren't
+disturbed.
 
 Pluggable `UserStore` + `SessionStore` with memory implementations
 included; SQLite-backed peers ship at

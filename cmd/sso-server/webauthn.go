@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,11 +111,22 @@ const (
 // authenticated user against that client (turning WebAuthn into a
 // real first-class login method instead of just credential
 // verification).
+//
+// RefreshTokenStore + IDTokenIssuer are independently optional. When
+// the resolved client's AllowedScopes contains `offline_access`
+// AND a RefreshTokenStore is wired, the response carries a
+// refresh_token. When the scopes contain `openid` AND an
+// IDTokenIssuer is wired, the response carries an id_token. Either
+// missing dep silently degrades to the next-lower disclosure (just
+// like /auth/login when those backends aren't configured).
 type webauthnDeps struct {
-	Helper       *webauthn.Helper
-	ClientStore  sso.ClientStore
-	TokenIssuers map[string]sso.TokenIssuer
-	DefaultStrat string
+	Helper            *webauthn.Helper
+	ClientStore       sso.ClientStore
+	TokenIssuers      map[string]sso.TokenIssuer
+	DefaultStrat      string
+	RefreshTokenStore sso.RefreshTokenStore
+	RefreshTokenTTL   time.Duration
+	IDTokenIssuer     sso.IDTokenIssuer
 }
 
 // mountWebAuthnRoutes registers the four ceremony endpoints on the
@@ -173,10 +187,18 @@ type webauthnFinishLoginResponse struct {
 	// Without client_id the handler stays in v1 credential-
 	// verification mode so embedders that integrate their own token
 	// path aren't disturbed.
-	AccessToken string `json:"access_token,omitempty"`
-	TokenType   string `json:"token_type,omitempty"`
-	ExpiresIn   int    `json:"expires_in,omitempty"`
-	Scope       string `json:"scope,omitempty"`
+	//
+	// RefreshToken populates only when the client's AllowedScopes
+	// contains `offline_access` AND a RefreshTokenStore is wired.
+	// IDToken populates only when the AllowedScopes contains `openid`
+	// AND an IDTokenIssuer is wired. Either dep missing leaves the
+	// field empty (omitted from the JSON).
+	AccessToken  string `json:"access_token,omitempty"`
+	TokenType    string `json:"token_type,omitempty"`
+	ExpiresIn    int    `json:"expires_in,omitempty"`
+	Scope        string `json:"scope,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	IDToken      string `json:"id_token,omitempty"`
 }
 
 func webauthnBeginRegistrationHandler(h *webauthn.Helper) http.HandlerFunc {
@@ -280,16 +302,18 @@ func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 		// disturbed.
 		clientID := r.URL.Query().Get("client_id")
 		if clientID != "" && deps.ClientStore != nil && len(deps.TokenIssuers) > 0 {
-			token, err := issueWebAuthnToken(r, deps, clientID, user.Name)
+			result, err := issueWebAuthnToken(r, deps, clientID, user.Name)
 			if err != nil {
 				status, code := webauthnIssueErrorStatus(err)
 				writeWebAuthnError(w, status, code, err.Error())
 				return
 			}
-			resp.AccessToken = token.AccessToken
-			resp.TokenType = token.TokenType
-			resp.ExpiresIn = token.ExpiresIn
-			resp.Scope = token.Scope
+			resp.AccessToken = result.AccessToken
+			resp.TokenType = result.TokenType
+			resp.ExpiresIn = result.ExpiresIn
+			resp.Scope = result.Scope
+			resp.RefreshToken = result.RefreshToken
+			resp.IDToken = result.IDToken
 		}
 		writeWebAuthnJSON(w, http.StatusOK, resp)
 	}
@@ -309,13 +333,42 @@ var errWebAuthnClientInactive = errors.New("webauthn: client inactive")
 // doesn't have a registered issuer. Server misconfiguration; 500.
 var errWebAuthnNoIssuer = errors.New("webauthn: no token issuer for client strategy")
 
+// errWebAuthnIDToken is returned when IDTokenIssuer.IssueIDToken
+// fails for a client that wanted openid scope. Surfaced as 500 since
+// the configured IDTokenIssuer should be healthy.
+var errWebAuthnIDToken = errors.New("webauthn: id_token issuance failed")
+
+// errWebAuthnRefreshToken is returned when RefreshTokenStore.Issue
+// fails for a client that wanted offline_access. Surfaced as 500.
+var errWebAuthnRefreshToken = errors.New("webauthn: refresh_token issuance failed")
+
+// webauthnIssueResult is the projection of every issuance the
+// /webauthn/login/finish handler can emit. Bringing access /
+// refresh / id together keeps the handler response shape stable
+// while letting the issuer logic branch on what's wired.
+type webauthnIssueResult struct {
+	AccessToken  string
+	TokenType    string
+	ExpiresIn    int
+	Scope        string
+	RefreshToken string
+	IDToken      string
+}
+
 // issueWebAuthnToken builds a sso.Subject for the WebAuthn-
 // authenticated user + mints an access token via the client's
 // configured TokenIssuer. AMR carries "webauthn" so resource
 // servers can branch on auth strength. Scopes default to the
 // client's full AllowedScopes — the WebAuthn ceremony has no
 // scope-selection step.
-func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID string) (*sso.Token, error) {
+//
+// When the client's scopes include `offline_access` AND deps.
+// RefreshTokenStore is wired, a refresh_token rides along; when
+// `openid` is in scope AND deps.IDTokenIssuer is wired, an
+// id_token does. Either dep missing degrades silently — same
+// shape /auth/login uses when the corresponding backend isn't
+// configured.
+func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID string) (*webauthnIssueResult, error) {
 	ctx := r.Context()
 	client, err := deps.ClientStore.Get(ctx, clientID)
 	if err != nil {
@@ -336,21 +389,99 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
 	}
 	scopes := client.AllowedScopes
+	authTime := time.Now()
 	subject := &sso.Subject{
 		ID:       userID,
 		Provider: "webauthn",
 		ClientID: client.ID,
-		AuthTime: time.Now(),
+		AuthTime: authTime,
 		AMR:      []string{"webauthn"},
 	}
-	return issuer.Issue(ctx, subject, scopes)
+	token, err := issuer.Issue(ctx, subject, scopes)
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: issue access token: %w", err)
+	}
+	result := &webauthnIssueResult{
+		AccessToken: token.AccessToken,
+		TokenType:   token.TokenType,
+		ExpiresIn:   token.ExpiresIn,
+		Scope:       token.Scope,
+	}
+	// id_token: gated on openid scope AND a wired IDTokenIssuer.
+	// Mirrors the contract /auth/login implements — clients that
+	// request openid get an id_token; clients that don't, don't.
+	if slices.Contains(scopes, sso.ScopeOpenID) && deps.IDTokenIssuer != nil {
+		idToken, err := deps.IDTokenIssuer.IssueIDToken(ctx, &sso.IDTokenRequest{
+			Subject:  userID,
+			Audience: client.ID,
+			AuthTime: authTime,
+			AMR:      []string{"webauthn"},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, err)
+		}
+		result.IDToken = idToken
+	}
+	// refresh_token: gated on a wired RefreshTokenStore — matches
+	// /auth/login + /token authorization_code which both issue
+	// unconditionally when the store is present (RFC 6749 leaves it
+	// to AS discretion; the SDK's contract is "wired → emit"). Same
+	// shape /token grant=authorization_code produces, so existing
+	// refresh-token rotation handlers work against a WebAuthn-issued
+	// token unchanged.
+	if deps.RefreshTokenStore != nil {
+		refresh, err := mintWebAuthnRefreshToken(ctx, deps, client, userID, scopes)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", errWebAuthnRefreshToken, err)
+		}
+		result.RefreshToken = refresh
+	}
+	return result, nil
+}
+
+// mintWebAuthnRefreshToken generates a cryptographically random
+// refresh token + persists it. TTL preference: per-client override
+// > deps.RefreshTokenTTL > sso.DefaultRefreshTokenTTL.
+func mintWebAuthnRefreshToken(ctx context.Context, deps *webauthnDeps, client *sso.Client, userID string, scopes []string) (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("random: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+	ttl := client.RefreshTokenTTL
+	if ttl <= 0 {
+		ttl = deps.RefreshTokenTTL
+	}
+	if ttl <= 0 {
+		ttl = sso.DefaultRefreshTokenTTL
+	}
+	familyBuf := make([]byte, 32)
+	if _, err := rand.Read(familyBuf); err != nil {
+		return "", fmt.Errorf("random family id: %w", err)
+	}
+	now := time.Now()
+	entry := &sso.RefreshToken{
+		UserID:    userID,
+		ClientID:  client.ID,
+		Provider:  "webauthn",
+		Scopes:    append([]string(nil), scopes...),
+		IssuedAt:  now,
+		ExpiresAt: now.Add(ttl),
+		FamilyID:  base64.RawURLEncoding.EncodeToString(familyBuf),
+	}
+	if err := deps.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
+		return "", fmt.Errorf("store: %w", err)
+	}
+	return token, nil
 }
 
 func webauthnIssueErrorStatus(err error) (int, string) {
 	switch {
 	case errors.Is(err, errWebAuthnClientNotFound), errors.Is(err, errWebAuthnClientInactive):
 		return http.StatusBadRequest, "invalid_client"
-	case errors.Is(err, errWebAuthnNoIssuer):
+	case errors.Is(err, errWebAuthnNoIssuer),
+		errors.Is(err, errWebAuthnIDToken),
+		errors.Is(err, errWebAuthnRefreshToken):
 		return http.StatusInternalServerError, "server_error"
 	default:
 		return http.StatusInternalServerError, "server_error"

@@ -449,6 +449,187 @@ func TestWebAuthnHTTP_FinishLoginWithoutClientIDStaysCredentialOnly(t *testing.T
 	}
 }
 
+func TestIssueWebAuthnToken_IssuesIDTokenWhenOpenIDScopeAndIssuerWired(t *testing.T) {
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(context.Background(), &sso.Client{
+		ID:            "wa-app",
+		Active:        true,
+		TokenStrategy: "jwt",
+		AllowedScopes: []string{"openid", "profile"},
+	})
+	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
+	deps := &webauthnDeps{
+		ClientStore:   store,
+		TokenIssuers:  map[string]sso.TokenIssuer{"jwt": jwtIssuer},
+		DefaultStrat:  "jwt",
+		IDTokenIssuer: jwtIssuer, // Ed25519JWTIssuer implements both SPIs.
+	}
+	req, _ := http.NewRequest("POST", "http://x/", nil)
+	result, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if result.IDToken == "" {
+		t.Fatal("IDToken empty — openid scope + wired IDTokenIssuer must mint id_token")
+	}
+	if result.AccessToken == "" {
+		t.Fatal("AccessToken empty — id_token path must not block access_token")
+	}
+}
+
+func TestIssueWebAuthnToken_NoIDTokenWithoutOpenIDScope(t *testing.T) {
+	// Client scopes don't include openid — id_token must NOT be emitted
+	// even when IDTokenIssuer is wired. Matches /auth/login's contract.
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(context.Background(), &sso.Client{
+		ID:            "wa-app",
+		Active:        true,
+		TokenStrategy: "jwt",
+		AllowedScopes: []string{"profile"},
+	})
+	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
+	deps := &webauthnDeps{
+		ClientStore:   store,
+		TokenIssuers:  map[string]sso.TokenIssuer{"jwt": jwtIssuer},
+		DefaultStrat:  "jwt",
+		IDTokenIssuer: jwtIssuer,
+	}
+	req, _ := http.NewRequest("POST", "http://x/", nil)
+	result, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if result.IDToken != "" {
+		t.Fatalf("IDToken = %q without openid scope; must be empty", result.IDToken)
+	}
+}
+
+func TestIssueWebAuthnToken_NoIDTokenWithoutIssuer(t *testing.T) {
+	// openid in scope but no IDTokenIssuer wired — id_token field
+	// stays empty rather than 500. Mirrors how /auth/login silently
+	// omits id_token when WithIDTokenIssuer wasn't supplied.
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(context.Background(), &sso.Client{
+		ID:            "wa-app",
+		Active:        true,
+		TokenStrategy: "jwt",
+		AllowedScopes: []string{"openid"},
+	})
+	deps := &webauthnDeps{
+		ClientStore:  store,
+		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
+		DefaultStrat: "jwt",
+	}
+	req, _ := http.NewRequest("POST", "http://x/", nil)
+	result, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if result.IDToken != "" {
+		t.Fatalf("IDToken populated without wired IDTokenIssuer: %q", result.IDToken)
+	}
+}
+
+func TestIssueWebAuthnToken_IssuesRefreshTokenWhenStoreWired(t *testing.T) {
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(context.Background(), &sso.Client{
+		ID:            "wa-app",
+		Active:        true,
+		TokenStrategy: "jwt",
+		AllowedScopes: []string{"openid"},
+	})
+	refreshStore := defaultimpl.NewMemoryRefreshTokenStore()
+	deps := &webauthnDeps{
+		ClientStore:       store,
+		TokenIssuers:      map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
+		DefaultStrat:      "jwt",
+		RefreshTokenStore: refreshStore,
+		RefreshTokenTTL:   24 * time.Hour,
+	}
+	req, _ := http.NewRequest("POST", "http://x/", nil)
+	result, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if result.RefreshToken == "" {
+		t.Fatal("RefreshToken empty — wired RefreshTokenStore must mint a refresh token")
+	}
+	// The minted token MUST be redeemable by the same store — proves
+	// it was actually persisted and the rotation path will work.
+	got, err := refreshStore.Consume(context.Background(), result.RefreshToken)
+	if err != nil {
+		t.Fatalf("consume refresh token: %v", err)
+	}
+	if got.UserID != "alice" {
+		t.Fatalf("refresh token user_id = %q want alice", got.UserID)
+	}
+	if got.ClientID != "wa-app" {
+		t.Fatalf("refresh token client_id = %q want wa-app", got.ClientID)
+	}
+	if got.FamilyID == "" {
+		t.Fatal("FamilyID empty — webauthn refresh tokens must seed a family for OAuth BCP §4.13 rotation tracking")
+	}
+}
+
+func TestIssueWebAuthnToken_NoRefreshTokenWithoutStore(t *testing.T) {
+	// Without RefreshTokenStore the field stays empty regardless of
+	// scope — matches /auth/login's "wired → emit" contract.
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(context.Background(), &sso.Client{
+		ID:            "wa-app",
+		Active:        true,
+		TokenStrategy: "jwt",
+		AllowedScopes: []string{"openid"},
+	})
+	deps := &webauthnDeps{
+		ClientStore:  store,
+		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
+		DefaultStrat: "jwt",
+	}
+	req, _ := http.NewRequest("POST", "http://x/", nil)
+	result, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if result.RefreshToken != "" {
+		t.Fatalf("RefreshToken populated without store: %q", result.RefreshToken)
+	}
+}
+
+func TestIssueWebAuthnToken_ClientRefreshTTLOverride(t *testing.T) {
+	// Per-client RefreshTokenTTL beats deps.RefreshTokenTTL when set.
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(context.Background(), &sso.Client{
+		ID:              "wa-app",
+		Active:          true,
+		TokenStrategy:   "jwt",
+		AllowedScopes:   []string{"openid"},
+		RefreshTokenTTL: 30 * time.Minute,
+	})
+	refreshStore := defaultimpl.NewMemoryRefreshTokenStore()
+	deps := &webauthnDeps{
+		ClientStore:       store,
+		TokenIssuers:      map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
+		DefaultStrat:      "jwt",
+		RefreshTokenStore: refreshStore,
+		RefreshTokenTTL:   24 * time.Hour,
+	}
+	req, _ := http.NewRequest("POST", "http://x/", nil)
+	before := time.Now()
+	result, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	got, _ := refreshStore.Consume(context.Background(), result.RefreshToken)
+	// 30m client override should beat 24h deps fallback. Allow a
+	// little slack for clock movement during the call.
+	expectedUpper := before.Add(35 * time.Minute)
+	if got.ExpiresAt.After(expectedUpper) {
+		t.Fatalf("ExpiresAt %v overshot 30m client override (upper=%v) — fallback to deps TTL leaked through",
+			got.ExpiresAt, expectedUpper)
+	}
+}
+
 // Sanity: confirm the error mapping respects the sentinel set.
 func TestWebAuthnErrorStatus_Mapping(t *testing.T) {
 	cases := []struct {

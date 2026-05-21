@@ -190,6 +190,15 @@ type app struct {
 	tempStore    authenticators.TempTokenStore // may be nil when temp_token disabled
 	tokenIssuers map[string]sso.TokenIssuer
 
+	// idTokenIssuer + refreshTokenStore are held so the WebAuthn
+	// ceremony extension can issue id_token / refresh_token alongside
+	// access_token (matching /auth/login's emission shape). Both nil
+	// when the underlying SPI isn't wired — emission degrades silently
+	// instead of breaking the ceremony.
+	idTokenIssuer     sso.IDTokenIssuer
+	refreshTokenStore sso.RefreshTokenStore
+	refreshTokenTTL   time.Duration
+
 	adminMW *sso.AdminMiddleware // nil when admin disabled
 
 	// Snapshot subsystem (Phase D-2). All four nil when snapshot disabled.
@@ -392,10 +401,13 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 	// router has been initialized — Handle errors otherwise.
 	if a.webauthnHelper != nil {
 		deps := &webauthnDeps{
-			Helper:       a.webauthnHelper,
-			ClientStore:  a.clientStore,
-			TokenIssuers: a.tokenIssuers,
-			DefaultStrat: cfg.Server.DefaultTokenStrategy,
+			Helper:            a.webauthnHelper,
+			ClientStore:       a.clientStore,
+			TokenIssuers:      a.tokenIssuers,
+			DefaultStrat:      cfg.Server.DefaultTokenStrategy,
+			RefreshTokenStore: a.refreshTokenStore,
+			RefreshTokenTTL:   a.refreshTokenTTL,
+			IDTokenIssuer:     a.idTokenIssuer,
 		}
 		if err := mountWebAuthnRoutes(a.server, deps); err != nil {
 			return nil, fmt.Errorf("mount webauthn: %w", err)
@@ -1541,6 +1553,8 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-auth-codes", store)
 	}
+	var refreshTokenStore sso.RefreshTokenStore
+	var refreshTokenTTL time.Duration
 	if cfg.OAuth.RefreshToken.Enabled {
 		store, err := buildRefreshTokenStore(cfg.OAuth)
 		if err != nil {
@@ -1548,6 +1562,8 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-refresh-tokens", store)
+		refreshTokenStore = store
+		refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
 	}
 	if cfg.OAuth.DeviceCode.Enabled {
 		store, err := buildDeviceCodeStore(cfg.OAuth)
@@ -1790,28 +1806,31 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}
 	return &app{
-		server:           srv,
-		recorder:         recorder,
-		provider:         provider,
-		registry:         reg,
-		netStore:         netStore,
-		classifier:       classifier,
-		clientStore:      clientStore,
-		userProvider:     userProvider,
-		sessionMgr:       sessionMgr,
-		tempStore:        tempStore,
-		tokenIssuers:     tokenIssuers,
-		adminMW:          adminMW,
-		snapshotPipeline: pipeline,
-		snapshotStorage:  snapStorage,
-		snapshotter:      snapshotter,
-		snapshotRestorer: restorer,
-		releaseRegistry:  releaseRegistry,
-		releaseStore:     releaseStore,
-		tenantStore:      tenantStore,
-		webauthnHelper:   webauthnHelper,
-		auditAsyncSink:   asyncSink,
-		netStop:          netStop,
+		server:            srv,
+		recorder:          recorder,
+		provider:          provider,
+		registry:          reg,
+		netStore:          netStore,
+		classifier:        classifier,
+		clientStore:       clientStore,
+		userProvider:      userProvider,
+		sessionMgr:        sessionMgr,
+		tempStore:         tempStore,
+		tokenIssuers:      tokenIssuers,
+		idTokenIssuer:     jwtIssuer,
+		refreshTokenStore: refreshTokenStore,
+		refreshTokenTTL:   refreshTokenTTL,
+		adminMW:           adminMW,
+		snapshotPipeline:  pipeline,
+		snapshotStorage:   snapStorage,
+		snapshotter:       snapshotter,
+		snapshotRestorer:  restorer,
+		releaseRegistry:   releaseRegistry,
+		releaseStore:      releaseStore,
+		tenantStore:       tenantStore,
+		webauthnHelper:    webauthnHelper,
+		auditAsyncSink:    asyncSink,
+		netStop:           netStop,
 	}, nil
 }
 
