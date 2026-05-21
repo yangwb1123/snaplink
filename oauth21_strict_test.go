@@ -187,6 +187,55 @@ func TestOAuth21Strict_AllowsHTTPLocalhostForDev(t *testing.T) {
 	}
 }
 
+func TestOAuth21Strict_DiscoveryOmitsImplicitResponseType(t *testing.T) {
+	// Discovery advertisement must match runtime enforcement, otherwise
+	// an RP scanning openid-configuration sees response_type=token
+	// "supported", sends it, and trips unsupported_response_type at
+	// the AS — a real integration footgun.
+	srv := newStrictServer(t, true, strictRedirect)
+	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var doc map[string]any
+	_ = json.Unmarshal(body, &doc)
+	rts, _ := doc["response_types_supported"].([]any)
+	for _, v := range rts {
+		if s, _ := v.(string); s == "token" {
+			t.Fatalf("strict mode advertises response_type=token in discovery: %v", rts)
+		}
+	}
+	hasCode := false
+	for _, v := range rts {
+		if s, _ := v.(string); s == "code" {
+			hasCode = true
+		}
+	}
+	if !hasCode {
+		t.Errorf("strict mode discovery missing response_type=code: %v", rts)
+	}
+}
+
+func TestOAuth21Strict_DiscoveryAdvertisesImplicitWhenOff(t *testing.T) {
+	// Off mode keeps the legacy advertisement so OAuth 2.0 RPs
+	// scanning discovery don't lose visibility into supported types.
+	srv := newStrictServer(t, false, strictRedirect)
+	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var doc map[string]any
+	_ = json.Unmarshal(body, &doc)
+	rts, _ := doc["response_types_supported"].([]any)
+	hasToken := false
+	for _, v := range rts {
+		if s, _ := v.(string); s == "token" {
+			hasToken = true
+		}
+	}
+	if !hasToken {
+		t.Fatalf("non-strict discovery missing legacy response_type=token: %v", rts)
+	}
+}
+
 func TestOAuth21Strict_OffPreservesLegacyBehavior(t *testing.T) {
 	// With strict mode OFF: response_type=token + non-https redirect +
 	// client.RequirePKCE=false should all still work to prove zero

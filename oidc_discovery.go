@@ -241,6 +241,19 @@ func codeChallengeMethodsFor(s *Server) []string {
 	return []string{PKCEMethodS256, PKCEMethodPlain}
 }
 
+// responseTypesFor mirrors codeChallengeMethodsFor. OAuth 2.1 §1.1
+// retires the implicit grant (response_type=token), so strict mode
+// MUST omit it from the discovery advertisement — otherwise an RP
+// scanning discovery sees "token" supported, sends the request, and
+// gets unsupported_response_type at runtime. The mismatch is a real
+// integration footgun: lock the wire down to what we actually accept.
+func responseTypesFor(s *Server) []string {
+	if s.oauth21Strict {
+		return []string{"code"}
+	}
+	return []string{"code", "token"}
+}
+
 // Both `require_signed_request_object` (RFC 9101 §10.5) and
 // `require_pushed_authorization_requests` (RFC 9126 §5) derive from
 // scanning the client store. They share the cached
@@ -285,10 +298,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		EndSessionEndpoint:    base + PathEndSession,
 		RevocationEndpoint:    base + PathRevoke,
 		IntrospectionEndpoint: base + PathIntrospect,
-		ResponseTypesSupported: []string{
-			"code",
-			"token",
-		},
+		ResponseTypesSupported: responseTypesFor(s),
 		GrantTypesSupported:               append([]string(nil), SupportedGrants...),
 		SubjectTypesSupported:             []string{"public"},
 		TokenEndpointAuthMethodsSupported: []string{
