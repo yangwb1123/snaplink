@@ -104,6 +104,25 @@ type OAuthConfig struct {
 	RefreshToken OAuthStoreConfig       `yaml:"refresh_token"`
 	DeviceCode   OAuthDeviceCodeConfig  `yaml:"device_code"`
 	PAR          OAuthStoreConfig       `yaml:"par"`
+	JAR          OAuthJARConfig         `yaml:"jar"`
+}
+
+// OAuthJARConfig opts into RFC 9101 §5.2.2 — request_uri URL fetching.
+// Without Enabled, the AS still accepts the inline `request` parameter
+// (which doesn't need a fetcher); a JAR `request_uri` value would
+// be rejected with invalid_request_uri.
+//
+// HTTPS-only, redirects disabled (avoids 302-to-internal-IP SSRF),
+// body capped at MaxBytes (default 16KB). Timeout caps the entire
+// fetch — should stay well below the user's patience tolerance.
+//
+// Each client still needs AllowedRequestURIs set on its YAML entry —
+// the fetcher only delivers bodies; the AS-side allowlist gate runs
+// before the fetcher is even consulted.
+type OAuthJARConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Timeout  time.Duration `yaml:"timeout"`
+	MaxBytes int64         `yaml:"max_bytes"`
 }
 
 // OAuthStoreConfig is the shared shape for the simple TTL-only stores.

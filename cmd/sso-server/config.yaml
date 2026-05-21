@@ -295,6 +295,14 @@ oauth:
   par:
     enabled: false      # POST /par + request_uri (RFC 9126)
     ttl: 90s
+  # RFC 9101 §5.2.2 — JAR `request_uri` URL fetching. The inline
+  # `request=<jwt>` flow works without this; only the URL-fetched
+  # variant needs the HTTP fetcher. Each client also needs
+  # allowed_request_uris in its YAML entry.
+  jar:
+    enabled: false
+    timeout: 5s
+    max_bytes: 16384    # 16 KB ceiling for a signed JAR body
 
 # OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
 # POST a signed logout_token to every affected RP's backchannel_logout_uri

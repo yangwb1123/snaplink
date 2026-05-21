@@ -49,6 +49,24 @@ func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
 	}
 }
 
+func TestBuildApp_JARFetcherFlipsRequestURIParameterSupported(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.OAuth.JAR = config.OAuthJARConfig{Enabled: true}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	doc := fetchDiscovery(t, srv.URL)
+	if v, _ := doc["request_uri_parameter_supported"].(bool); !v {
+		t.Errorf("request_uri_parameter_supported = %v want true when JAR fetcher wired", doc["request_uri_parameter_supported"])
+	}
+}
+
 func TestBuildApp_PARStoreDisabledOmitsEndpoint(t *testing.T) {
 	cfg := &config.Config{}
 

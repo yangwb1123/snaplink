@@ -1043,6 +1043,16 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if cfg.OAuth.PAR.Enabled {
 		opts = append(opts, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), cfg.OAuth.PAR.TTL))
 	}
+	if jar := cfg.OAuth.JAR; jar.Enabled {
+		f := sso.NewHTTPJARFetcher()
+		if jar.Timeout > 0 {
+			f.Client.Timeout = jar.Timeout
+		}
+		if jar.MaxBytes > 0 {
+			f.MaxBytes = jar.MaxBytes
+		}
+		opts = append(opts, sso.WithJARFetcher(f))
+	}
 	if cr := cfg.ClientRegistration; cr.Enabled {
 		opts = append(opts, sso.WithDynamicClientRegistration(sso.DCRPolicy{
 			InitialAccessToken:    cr.InitialAccessToken,
