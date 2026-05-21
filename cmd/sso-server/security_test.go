@@ -14,7 +14,7 @@ import (
 )
 
 func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
-	p := buildRateLimitPolicy(config.RateLimitConfig{
+	p, err := buildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		DefaultPerSec: 5,
 		DefaultBurst:  10,
@@ -23,6 +23,9 @@ func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
 			{Prefix: "/auth/send-code", PerSec: 1, Burst: 2},
 		},
 	})
+	if err != nil {
+		t.Fatalf("buildRateLimitPolicy: %v", err)
+	}
 	if p.Default == nil {
 		t.Fatal("Default limiter unexpectedly nil")
 	}
@@ -42,13 +45,16 @@ func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
 func TestBuildRateLimitPolicy_ZeroDefaultLeavesDefaultLimiterNil(t *testing.T) {
 	// A zero DefaultPerSec means "no limit on unmatched paths" — only
 	// the prefix rules apply.
-	p := buildRateLimitPolicy(config.RateLimitConfig{
+	p, err := buildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		DefaultPerSec: 0,
 		Prefixes: []config.RateLimitPrefixConfig{
 			{Prefix: "/auth/login", PerSec: 1, Burst: 2},
 		},
 	})
+	if err != nil {
+		t.Fatalf("buildRateLimitPolicy: %v", err)
+	}
 	if p.Default != nil {
 		t.Errorf("Default limiter should be nil when DefaultPerSec=0")
 	}
@@ -98,6 +104,62 @@ func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
 	defer a.registry.Close()
 	if a.server == nil {
 		t.Fatal("server nil")
+	}
+}
+
+func TestBuildRateLimitPolicy_SQLiteRequiresDSN(t *testing.T) {
+	_, err := buildRateLimitPolicy(config.RateLimitConfig{
+		Enabled:       true,
+		Backend:       "sqlite",
+		DefaultPerSec: 1,
+		DefaultBurst:  1,
+	})
+	if err == nil {
+		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildRateLimitPolicy_SQLiteOpensFileForEachPrefix(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "ratelimit.db") + "?_journal=WAL"
+
+	p, err := buildRateLimitPolicy(config.RateLimitConfig{
+		Enabled:       true,
+		Backend:       "sqlite",
+		SQLite:        config.RateLimitSQLiteConfig{DSN: dsn},
+		DefaultPerSec: 5,
+		DefaultBurst:  10,
+		Prefixes: []config.RateLimitPrefixConfig{
+			{Prefix: "/auth/login", PerSec: 1, Burst: 3},
+			{Prefix: "/auth/send-code", PerSec: 0.1, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("sqlite build: %v", err)
+	}
+	if p.Default == nil {
+		t.Fatal("Default limiter nil")
+	}
+	if len(p.Prefixes) != 2 {
+		t.Fatalf("Prefixes: got %d want 2", len(p.Prefixes))
+	}
+	// Spot-check the bucket isolation: drain alice on /auth/login,
+	// confirm /auth/send-code still grants alice.
+	if ok, _ := p.Prefixes[0].Limiter.Allow("alice"); !ok {
+		t.Fatal("/auth/login first allow denied")
+	}
+	if ok, _ := p.Prefixes[1].Limiter.Allow("alice"); !ok {
+		t.Fatal("/auth/send-code allow denied — prefix isolation broken")
+	}
+}
+
+func TestBuildRateLimitPolicy_UnknownBackendErrors(t *testing.T) {
+	_, err := buildRateLimitPolicy(config.RateLimitConfig{
+		Enabled: true,
+		Backend: "redis",
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
 	}
 }
 

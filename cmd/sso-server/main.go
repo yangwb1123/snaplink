@@ -885,24 +885,57 @@ func resolvePIISalt(cfg config.AuditPIIRedactionConfig) (string, error) {
 }
 
 // buildRateLimitPolicy translates RateLimitConfig into a ratelimit.Policy.
-// Each prefix becomes a MemoryLimiter; Default kicks in for paths no
-// prefix matches. A zero DefaultPerSec leaves Default nil (no limit
-// on unmatched paths — useful when only a few hot endpoints need
-// throttling). KeyByClientIDOrIP is used so HTTP-Basic-authenticated
-// /token traffic buckets per-client, with IP as the fallback for
-// unauthenticated paths.
-func buildRateLimitPolicy(cfg config.RateLimitConfig) ratelimit.Policy {
+// Each prefix becomes its own Limiter (sized by per_sec + burst);
+// Default kicks in for paths no prefix matches. A zero DefaultPerSec
+// leaves Default nil (no limit on unmatched paths — useful when only
+// a few hot endpoints need throttling). KeyByClientIDOrIP is used so
+// HTTP-Basic-authenticated /token traffic buckets per-client, with
+// IP as the fallback for unauthenticated paths.
+//
+// Backend choice:
+//   - "" / "memory" — per-replica MemoryLimiter (default).
+//   - "sqlite" — SQLiteLimiter against cfg.SQLite.DSN; each prefix
+//     gets a distinct bucket_name so multiple rules can share one
+//     DSN file without colliding.
+func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) {
 	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
-	if cfg.DefaultPerSec > 0 {
-		p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "", "memory":
+		if cfg.DefaultPerSec > 0 {
+			p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
+		}
+		for _, r := range cfg.Prefixes {
+			p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
+				Prefix:  r.Prefix,
+				Limiter: ratelimit.NewMemoryLimiter(r.PerSec, r.Burst),
+			})
+		}
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return ratelimit.Policy{}, errors.New("security.rate_limit.sqlite.dsn required when backend=sqlite")
+		}
+		if cfg.DefaultPerSec > 0 {
+			lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
+			if err != nil {
+				return ratelimit.Policy{}, fmt.Errorf("rate_limit default sqlite: %w", err)
+			}
+			p.Default = lim
+		}
+		for _, r := range cfg.Prefixes {
+			lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, r.PerSec, r.Burst, r.Prefix)
+			if err != nil {
+				return ratelimit.Policy{}, fmt.Errorf("rate_limit prefix %q sqlite: %w", r.Prefix, err)
+			}
+			p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
+				Prefix:  r.Prefix,
+				Limiter: lim,
+			})
+		}
+	default:
+		return ratelimit.Policy{}, fmt.Errorf("unknown security.rate_limit.backend %q", cfg.Backend)
 	}
-	for _, r := range cfg.Prefixes {
-		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
-			Prefix:  r.Prefix,
-			Limiter: ratelimit.NewMemoryLimiter(r.PerSec, r.Burst),
-		})
-	}
-	return p
+	return p, nil
 }
 
 // buildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
@@ -1476,9 +1509,17 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		logger.Info("security: body limit", "max_bytes", n)
 	}
 	if rl := cfg.Security.RateLimit; rl.Enabled {
-		policy := buildRateLimitPolicy(rl)
+		policy, err := buildRateLimitPolicy(rl)
+		if err != nil {
+			return nil, fmt.Errorf("rate limit policy: %w", err)
+		}
 		opts = append(opts, sso.WithRateLimit(policy))
+		backend := rl.Backend
+		if backend == "" {
+			backend = "memory"
+		}
 		logger.Info("security: rate limit enabled",
+			"backend", backend,
 			"default_per_sec", rl.DefaultPerSec,
 			"default_burst", rl.DefaultBurst,
 			"prefix_rules", len(rl.Prefixes))

@@ -89,15 +89,14 @@ impl + optionally `sqlite` / `etcd` / `file`. New backends slot in
 via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 
 ### Storage today
-Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
-Client / AuthCode / RefreshToken (+ FamilyTracker) / DeviceCode /
-PAR / Session / JTIReplay / SubjectClientIndex / AccountLockout /
-PairwiseSubject. Only RateLimiter remains memory-only — high-write
-token-bucket math on every request is the one place SQLite
-contention costs more than the cross-replica defense gives back;
-operators wanting distributed limits should plug Redis via
-`sso.WithRateLimit` directly. Every other OAuth/OIDC + abuse-defense
-store works horizontally today.
+Memory (default) or SQLite (`defaultimpl/sqlite/` + `ratelimit/`)
+for User / Client / AuthCode / RefreshToken (+ FamilyTracker) /
+DeviceCode / PAR / Session / JTIReplay / SubjectClientIndex /
+AccountLockout / PairwiseSubject / RateLimiter. Every OAuth/OIDC
+issuance + redemption + reverse-lookup + abuse-defense flow works
+horizontally against a shared SQLite file. Redis remains the
+recommended next step for SaaS-scale auth-heavy workloads
+(low-thousands write/sec is SQLite's comfort zone on WAL+SSD).
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -608,7 +607,9 @@ snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
                # encryption: { backend(none|passphrase), passphrase, passphrase_file }
 releases:      # enabled, store, pinner, probe, snapshot_integration
 geo:           # enabled, backend(static), lookup_timeout, static.entries[]
-security:      # body_limit, rate_limit, cors
+security:      # body_limit, cors
+               # rate_limit: { enabled, backend(memory|sqlite), sqlite.dsn, default_per_sec, default_burst, prefixes[] }
+               #   sqlite shares token-bucket state across replicas
                # dpop_nonce: { enabled, key_file, ttl }
                # jti_replay: { enabled, backend(memory|sqlite), sqlite.dsn } — sqlite shares jti set across the cluster
                # account_lockout: { enabled, backend(memory|sqlite), sqlite.dsn, max_failures, lockout_duration, failure_window }

@@ -348,11 +348,25 @@ type BodyLimitConfig struct {
 // values apply to every path not matched by a Prefixes entry; per-
 // prefix overrides tighten the bucket for hot endpoints like
 // /auth/login.
+//
+// Backend choice:
+//   - "" / "memory" (default) — single-replica only.
+//   - "sqlite" — cluster-shared bucket state; a request that drained
+//     the bucket on replica A is visible to replica B before B
+//     grants the next request. SQLite handles low-thousands writes/sec
+//     comfortably; Redis is the recommended next step for SaaS-scale
+//     auth-heavy workloads.
 type RateLimitConfig struct {
 	Enabled       bool                    `yaml:"enabled"`
+	Backend       string                  `yaml:"backend"`
+	SQLite        RateLimitSQLiteConfig   `yaml:"sqlite"`
 	DefaultPerSec float64                 `yaml:"default_per_sec"`
 	DefaultBurst  int                     `yaml:"default_burst"`
 	Prefixes      []RateLimitPrefixConfig `yaml:"prefixes"`
+}
+
+type RateLimitSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // RateLimitPrefixConfig is one path-prefix rule inside RateLimitConfig.

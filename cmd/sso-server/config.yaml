@@ -317,6 +317,13 @@ security:
 
   rate_limit:
     enabled: true
+    # backend: memory (per-replica) or sqlite (cluster-shared bucket
+    # state — a request that drained the bucket on any replica is
+    # visible to the others). SQLite handles low-thousands writes/sec;
+    # Redis is the next step for SaaS-scale auth-heavy workloads.
+    backend: memory          # memory | sqlite
+    sqlite:
+      dsn: ""                # e.g. file:/var/lib/sso/ratelimit.db?_journal=WAL
     # Default bucket applied to every path not matched by a prefix
     # rule. 60 req/min sustained, burst 60 — generous for normal
     # browsers.
