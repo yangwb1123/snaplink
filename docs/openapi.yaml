@@ -12,11 +12,12 @@
 # 8693 token-exchange, RFC 7662 introspection, RFC 7009 revocation,
 # RFC 9449 DPoP, RFC 8705 mTLS binding, RFC 7521/7523 private_key_jwt)
 # + Pushed Authorization Requests (/par, RFC 9126) + device-flow
-# user-facing endpoints (/device/code, /device/verify, RFC 8628).
-# Dynamic Client Registration (/register*), the admin REST surface
-# (/api/v1/admin/*), the audit query API, and the netpolicy CRUD
-# surface are deferred to v2 — additive layering only, no schema
-# rewrites needed.
+# user-facing endpoints (/device/code, /device/verify, RFC 8628)
+# + Dynamic Client Registration (/register, /register/{client_id};
+# RFC 7591 + 7592).
+# The admin REST surface (/api/v1/admin/*), the audit query API,
+# and the netpolicy CRUD surface are deferred to v2 — additive
+# layering only, no schema rewrites needed.
 #
 # Validate locally:    make docs-validate
 # Serve swagger-ui:    make docs-serve   (then open http://localhost:8088)
@@ -631,6 +632,164 @@ paths:
             Device-code store not wired — operator hasn't called
             `WithDeviceCodeStore`. Wire code:
             `device_code_not_configured`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /register:
+    post:
+      tags: [auth]
+      summary: Dynamic Client Registration (RFC 7591).
+      description: |
+        Mints a new Client record from caller-supplied metadata.
+        Returns `client_id`, `client_secret` (omitted when
+        `token_endpoint_auth_method=none` per RFC 7591 §2),
+        `registration_access_token`, and `registration_client_uri`
+        for subsequent RFC 7592 self-management.
+
+        **Auth gate** — by default, callers MUST present
+        `Authorization: Bearer <initial_access_token>`. The token is
+        operator-provisioned and distributed out-of-band.
+        `AllowOpenRegistration: true` on the policy disables the
+        gate (every public DCR endpoint in the wild eventually gets
+        used for resource exhaustion — leave it off unless you have
+        a rate-limit + admin-cleanup story).
+
+        Requires `WithDynamicClientRegistration` at boot; otherwise
+        returns 501 `registration_disabled`.
+      operationId: postRegister
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DCRRequest"
+      responses:
+        "201":
+          description: Client registered.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DCRResponse"
+        "400":
+          description: |
+            invalid_client_metadata — DCR metadata validation
+            failed (unknown grant type, bad redirect URI, etc.).
+            The description carries the specific cause.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: |
+            Missing / wrong initial access token. Wire code:
+            `invalid_token`. WWW-Authenticate: Bearer challenge
+            included.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: DCR not enabled. Wire code `registration_disabled`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /register/{client_id}:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [auth]
+      summary: Read current DCR metadata (RFC 7592 §2.1).
+      description: |
+        Authenticates with the `registration_access_token` issued
+        at /register time. The token MUST match exactly
+        (constant-time compare); unknown / wrong-token / unknown
+        client_id all collapse to the same `401 invalid_token`
+        response per the anti-enumeration rule in AGENTS.md.
+      operationId: getRegistration
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current registration metadata.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DCRResponse"
+        "401":
+          description: Missing / wrong registration_access_token (or unknown client_id).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [auth]
+      summary: Update DCR metadata (RFC 7592 §2.2).
+      description: |
+        Same validation rules as POST /register. The
+        client_secret stays unchanged across updates — operators
+        rotate secrets out-of-band via admin tooling, not via
+        this self-service surface.
+      operationId: putRegistration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DCRRequest"
+      responses:
+        "200":
+          description: Registration updated.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DCRResponse"
+        "400":
+          description: Validation failed. Wire code `invalid_client_metadata`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Auth failed (anti-enumeration collapse).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [auth]
+      summary: Deregister the client (RFC 7592 §2.3).
+      description: |
+        Permanently removes the client record. Idempotent — a
+        repeat call returns the same 401 collapse as if the
+        client never existed.
+      operationId: deleteRegistration
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Client deregistered.
+        "401":
+          description: Auth failed (anti-enumeration collapse).
           content:
             application/json:
               schema:
@@ -1676,6 +1835,115 @@ components:
           description: |
             `true` to authorize; `false` to deny (device's next
             /token poll returns `access_denied`).
+
+    DCRRequest:
+      type: object
+      properties:
+        redirect_uris:
+          type: array
+          items: { type: string }
+        token_endpoint_auth_method:
+          type: string
+          enum:
+            - client_secret_basic
+            - client_secret_post
+            - private_key_jwt
+            - none
+          description: |
+            `none` opts out of secret issuance (public client / PKCE
+            mandatory).
+        grant_types:
+          type: array
+          items: { type: string }
+          example: [authorization_code, refresh_token]
+        response_types:
+          type: array
+          items: { type: string }
+          example: [code]
+        client_name:
+          type: string
+        scope:
+          type: string
+          description: Space-delimited scope list.
+        contacts:
+          type: array
+          items: { type: string }
+        token_strategy:
+          type: string
+          enum: [jwt, session]
+          description: |
+            Names the registered TokenIssuer this client uses;
+            empty falls back to the server's default strategy.
+        allowed_authenticators:
+          type: array
+          items: { type: string }
+        allowed_resources:
+          type: array
+          items: { type: string }
+        post_logout_redirect_uris:
+          type: array
+          items: { type: string }
+        tenant_id:
+          type: string
+        require_pkce:
+          type: boolean
+
+    DCRResponse:
+      type: object
+      required: [client_id, client_id_issued_at, client_secret_expires_at]
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          description: Omitted when token_endpoint_auth_method=none.
+        client_id_issued_at:
+          type: integer
+          description: Unix seconds.
+        client_secret_expires_at:
+          type: integer
+          description: |
+            Unix seconds; `0` means "never expires" per RFC 7591
+            §3.2.1. Operators rotating secrets manage expiry
+            externally.
+        registration_access_token:
+          type: string
+          description: |
+            RFC 7592 management bearer — authenticates subsequent
+            GET / PUT / DELETE /register/{client_id} calls.
+        registration_client_uri:
+          type: string
+        redirect_uris:
+          type: array
+          items: { type: string }
+        token_endpoint_auth_method:
+          type: string
+        grant_types:
+          type: array
+          items: { type: string }
+        response_types:
+          type: array
+          items: { type: string }
+        client_name:
+          type: string
+        scope:
+          type: string
+        contacts:
+          type: array
+          items: { type: string }
+        token_strategy:
+          type: string
+        allowed_authenticators:
+          type: array
+          items: { type: string }
+        allowed_resources:
+          type: array
+          items: { type: string }
+        post_logout_redirect_uris:
+          type: array
+          items: { type: string }
+        require_pkce:
+          type: boolean
 
     User:
       type: object
