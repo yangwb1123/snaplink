@@ -616,6 +616,8 @@ logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity, hash_chain
                # async: { enabled, buffer_size, workers, record_timeout_ms }
                # pii_redaction: { enabled, salt, salt_file } — DefaultPIIRedactor (actor hash, ip truncate, ua strip)
+               # webhook: { enabled, url, timeout, headers, retry.{max_attempts, initial_backoff, max_backoff} }
+               #   composed as AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))) — fan-out to a downstream collector
 permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
 network:       # enabled, api_enabled, store, policies[]
 clients:       # id, secret, allowed_authenticators, token_strategy,

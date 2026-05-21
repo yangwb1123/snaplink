@@ -1277,7 +1277,43 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	var recorder *audit.Recorder
 	var asyncSink *audit.AsyncSink
 	if cfg.Audit.Enabled {
-		var sink audit.Sink = audit.NewMemorySink(cfg.Audit.MemoryCapacity)
+		memSink := audit.NewMemorySink(cfg.Audit.MemoryCapacity)
+		var sink audit.Sink = memSink
+		// Webhook fan-out wraps the memory sink so in-process /audit
+		// query reads still see every event. Wrapped in RetryingSink
+		// so transient collector failures don't drop events; combined
+		// via MultiSink for fan-out. AGENTS.md compose order:
+		// AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))).
+		if w := cfg.Audit.Webhook; w.Enabled {
+			if w.URL == "" {
+				return nil, errors.New("audit.webhook.url required when audit.webhook.enabled")
+			}
+			webhookOpts := []audit.WebhookOption{}
+			if w.Timeout > 0 {
+				webhookOpts = append(webhookOpts, audit.WithWebhookTimeout(w.Timeout))
+			}
+			for k, v := range w.Headers {
+				webhookOpts = append(webhookOpts, audit.WithWebhookHeader(k, v))
+			}
+			webhook := audit.NewWebhookSink(w.URL, webhookOpts...)
+			retryOpts := []audit.RetryOption{}
+			if w.Retry.MaxAttempts > 0 {
+				retryOpts = append(retryOpts, audit.WithRetryMaxAttempts(w.Retry.MaxAttempts))
+			}
+			if w.Retry.InitialBackoff > 0 {
+				retryOpts = append(retryOpts, audit.WithRetryInitialBackoff(w.Retry.InitialBackoff))
+			}
+			if w.Retry.MaxBackoff > 0 {
+				retryOpts = append(retryOpts, audit.WithRetryMaxBackoff(w.Retry.MaxBackoff))
+			}
+			retrying := audit.NewRetryingSink(webhook, retryOpts...)
+			sink = audit.NewMultiSink(memSink, retrying)
+			logger.Info("audit: webhook fan-out enabled",
+				"url", w.URL,
+				"max_attempts", w.Retry.MaxAttempts,
+				"header_count", len(w.Headers),
+			)
+		}
 		// Async wrap when configured. The buffered hot path keeps slow
 		// (e.g. webhook) sinks from blocking request latency. Memory
 		// sink benefits little — the wrap is opt-in per operator.

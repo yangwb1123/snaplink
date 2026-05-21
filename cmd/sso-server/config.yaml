@@ -126,6 +126,23 @@ audit:
     enabled: false
     salt: ""
     salt_file: ""
+  # Webhook fan-out sibling to the memory sink. POSTs each event as
+  # JSON to the configured URL inside a RetryingSink so transient 5xx
+  # / connection failures don't drop events. Combine with async.enabled
+  # so the network roundtrip stays off the request hot path. Worst-
+  # case latency is bounded by retry.max_attempts * retry.max_backoff
+  # — keep async.record_timeout_ms tighter than that to bound a
+  # stalled worker.
+  webhook:
+    enabled: false
+    url: "https://collector.internal/audit"
+    timeout: 5s
+    headers:
+      Authorization: "Bearer <collector-token>"
+    retry:
+      max_attempts: 3
+      initial_backoff: 100ms
+      max_backoff: 5s
 
 permissions:
   enabled: true

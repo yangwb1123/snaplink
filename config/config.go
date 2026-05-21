@@ -749,12 +749,43 @@ func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
 // AuditConfig configures security audit logging. When Enabled is false, no
 // audit Recorder is wired and the API endpoints are not mounted.
 type AuditConfig struct {
-	Enabled        bool                  `yaml:"enabled"`
-	APIEnabled     bool                  `yaml:"api_enabled"`
-	MemoryCapacity int                   `yaml:"memory_capacity"`
-	Async          AuditAsyncConfig      `yaml:"async"`
-	HashChain      bool                  `yaml:"hash_chain"`
+	Enabled        bool                    `yaml:"enabled"`
+	APIEnabled     bool                    `yaml:"api_enabled"`
+	MemoryCapacity int                     `yaml:"memory_capacity"`
+	Async          AuditAsyncConfig        `yaml:"async"`
+	HashChain      bool                    `yaml:"hash_chain"`
 	PIIRedaction   AuditPIIRedactionConfig `yaml:"pii_redaction"`
+	Webhook        AuditWebhookConfig      `yaml:"webhook"`
+}
+
+// AuditWebhookConfig enables a [audit.WebhookSink] sibling to the
+// MemorySink so every recorded event is POSTed as JSON to URL. Sits
+// inside a RetryingSink so transient downstream failures don't drop
+// events on the floor; AsyncSink (when audit.async.enabled) wraps the
+// composite so the network roundtrip stays off the request hot path.
+//
+// Headers maps to a static Authorization / API-key header set the
+// downstream collector requires. Timeout, Retry.* fall back to
+// audit-package defaults when zero. Compose order matches AGENTS.md:
+// AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))).
+type AuditWebhookConfig struct {
+	Enabled bool              `yaml:"enabled"`
+	URL     string            `yaml:"url"`
+	Timeout time.Duration     `yaml:"timeout"`
+	Headers map[string]string `yaml:"headers"`
+	Retry   AuditWebhookRetryConfig `yaml:"retry"`
+}
+
+// AuditWebhookRetryConfig tunes the retry wrapper around the webhook
+// sink. MaxAttempts is the total tries (initial + retries); zero =
+// library default. Backoff doubles after each failure, capped at
+// MaxBackoff. Total worst-case latency is bounded by MaxAttempts *
+// MaxBackoff — set [AuditAsyncConfig.RecordTimeoutMs] tighter than
+// that to give the AsyncSink worker a fallback cap when retry stalls.
+type AuditWebhookRetryConfig struct {
+	MaxAttempts    int           `yaml:"max_attempts"`
+	InitialBackoff time.Duration `yaml:"initial_backoff"`
+	MaxBackoff     time.Duration `yaml:"max_backoff"`
 }
 
 // AuditPIIRedactionConfig enables conservative PII redaction on every
