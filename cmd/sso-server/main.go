@@ -2086,6 +2086,23 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 		auths = append(auths, authenticators.NewCertificateAuthenticator(x509.NewCertPool()))
 	}
 
+	if a := cfg.Authenticators.TOTP; a != nil && a.Enabled {
+		// MemoryTOTPStore is the dev / demo tier — secrets are
+		// MUST-encrypt material in production, so operators with
+		// durable needs should fork cmd and supply their own
+		// TOTPStore implementation. Leaving the store empty here
+		// means /auth/login?provider=totp returns a generic
+		// "invalid code" until enrollment populates a secret.
+		var totpOpts []authenticators.TOTPOption
+		if a.SkewSteps > 0 {
+			totpOpts = append(totpOpts, authenticators.WithTOTPSkew(a.SkewSteps))
+		}
+		auths = append(auths, authenticators.NewTOTPAuthenticator(
+			authenticators.NewMemoryTOTPStore(), totpOpts...,
+		))
+		logger.Info("totp authenticator enabled (memory store; supply your own TOTPStore for production)")
+	}
+
 	for _, fed := range cfg.Authenticators.OIDCFederation {
 		if fed == nil {
 			continue

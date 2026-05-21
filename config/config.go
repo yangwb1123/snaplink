@@ -1123,6 +1123,7 @@ type AuthenticatorsConfig struct {
 	KeyPair        *KeyPairConfig              `yaml:"keypair,omitempty"`
 	APIKey         *APIKeyConfig               `yaml:"apikey,omitempty"`
 	Certificate    *CertificateConfig          `yaml:"certificate,omitempty"`
+	TOTP           *TOTPConfig                 `yaml:"totp,omitempty"`
 	OIDCFederation []*OIDCFederationAuthConfig `yaml:"oidc_federation,omitempty"`
 }
 
@@ -1179,6 +1180,18 @@ type CertificateConfig struct {
 	Enabled           bool     `yaml:"enabled"`
 	TrustedCAFiles    []string `yaml:"trusted_ca_files"`
 	IntermediateFiles []string `yaml:"intermediate_files"`
+}
+
+// TOTPConfig wires the RFC 6238 TOTP authenticator. Enabled=true
+// constructs an in-process MemoryTOTPStore (operators wanting
+// durable secret storage should fork cmd and supply their own
+// TOTPStore — the secrets are MUST-encrypt material and the
+// in-memory store is a demo / dev tier). SkewSteps tolerates ±N
+// 30-second step windows of clock drift between caller and server;
+// defaults to 1 (≈±30s) when zero.
+type TOTPConfig struct {
+	Enabled   bool `yaml:"enabled"`
+	SkewSteps int  `yaml:"skew_steps"`
 }
 
 // Load reads and parses a YAML config file, then applies defaults.
