@@ -12,6 +12,7 @@ const (
 	MethodAPIKey      = "apikey"
 	MethodCertificate = "certificate"
 	MethodTOTP        = "totp"
+	MethodOIDCFed     = "oidc_federation"
 )
 
 // AuthMethod tags placed on AuthResult.AuthMethods (used by relying parties to
@@ -25,6 +26,7 @@ const (
 	AuthMethodAPIKey   = "api_key"
 	AuthMethodX509     = "x509"
 	AuthMethodOTP      = "otp" // RFC 8176 §2: generic OTP (TOTP / HOTP)
+	AuthMethodFed      = "fed" // upstream IdP federation (Google / Microsoft / GitHub / generic OIDC)
 )
 
 // CodeStore key prefixes — kept distinct so a single shared store can hold

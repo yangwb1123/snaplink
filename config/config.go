@@ -941,13 +941,33 @@ type ClientConfig struct {
 // AuthenticatorsConfig toggles and tunes each available authenticator.
 // All sub-sections are nullable — omit a section to disable that method.
 type AuthenticatorsConfig struct {
-	Password    *PasswordConfig    `yaml:"password,omitempty"`
-	Phone       *CodeAuthConfig    `yaml:"phone,omitempty"`
-	Email       *CodeAuthConfig    `yaml:"email,omitempty"`
-	TempToken   *TempTokenConfig   `yaml:"temp_token,omitempty"`
-	KeyPair     *KeyPairConfig     `yaml:"keypair,omitempty"`
-	APIKey      *APIKeyConfig      `yaml:"apikey,omitempty"`
-	Certificate *CertificateConfig `yaml:"certificate,omitempty"`
+	Password       *PasswordConfig             `yaml:"password,omitempty"`
+	Phone          *CodeAuthConfig             `yaml:"phone,omitempty"`
+	Email          *CodeAuthConfig             `yaml:"email,omitempty"`
+	TempToken      *TempTokenConfig            `yaml:"temp_token,omitempty"`
+	KeyPair        *KeyPairConfig              `yaml:"keypair,omitempty"`
+	APIKey         *APIKeyConfig               `yaml:"apikey,omitempty"`
+	Certificate    *CertificateConfig          `yaml:"certificate,omitempty"`
+	OIDCFederation []*OIDCFederationAuthConfig `yaml:"oidc_federation,omitempty"`
+}
+
+// OIDCFederationAuthConfig describes one upstream OAuth 2.0 / OIDC
+// IdP the AS delegates authentication to. Multiple entries supported
+// — each yields a separate authenticator name accessible via
+// /auth/login?provider=<name>. Bootstrap from a provider's OIDC
+// Discovery 1.0 metadata at .well-known/openid-configuration to fill
+// the endpoint fields.
+type OIDCFederationAuthConfig struct {
+	Name                  string        `yaml:"name"`
+	AuthorizationEndpoint string        `yaml:"authorization_endpoint"`
+	TokenEndpoint         string        `yaml:"token_endpoint"`
+	UserinfoEndpoint      string        `yaml:"userinfo_endpoint"`
+	ClientID              string        `yaml:"client_id"`
+	ClientSecret          string        `yaml:"client_secret"`
+	RedirectURI           string        `yaml:"redirect_uri"`
+	Scopes                []string      `yaml:"scopes"`
+	SubjectFieldOverride  string        `yaml:"subject_field"`
+	Timeout               time.Duration `yaml:"timeout"`
 }
 
 // PasswordConfig is presently a marker — verifier comes from code.

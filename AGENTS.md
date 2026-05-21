@@ -271,10 +271,14 @@ Register via `sso.WithTokenIssuer(name, issuer)`.
 ## Subsystems
 
 ### Authenticators (`authenticators/`)
-8 pluggable: `password`, `phone`, `email`, `temp_token`, `keypair`,
-`apikey`, `certificate`, `totp` (RFC 6238). `allowed_authenticators:`
-on a client gates which methods are permitted. WebAuthn + upstream
-IdP federation remain on the roadmap.
+9 pluggable: `password`, `phone`, `email`, `temp_token`, `keypair`,
+`apikey`, `certificate`, `totp` (RFC 6238), and `oidc_federation`
+(upstream OAuth 2.0 / OIDC IdP delegation — Google, Microsoft,
+GitHub, Auth0, Keycloak; configured per-provider, accessible at
+`/auth/login?provider=<name>`). `allowed_authenticators:` on a
+client gates which methods are permitted. WebAuthn (CTAP/FIDO2)
+remains on the roadmap — needs CBOR + attestation verification not
+in stdlib.
 
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
@@ -598,7 +602,7 @@ clients:       # id, secret, allowed_authenticators, token_strategy,
                # redirect_uris, post_logout_redirect_uris, allowed_resources,
                # require_pkce, tenant_id, allowed_request_uris, jwks,
                # require_signed_request_object, ...
-authenticators: # per-method enable + tuning
+authenticators: # per-method enable + tuning; oidc_federation[] lists upstream IdPs
 admin:         # enabled, api_rest_enabled
 bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code, admin_password_file
                # lock: { backend, key, ttl, blocking, file.dir, etcd.endpoints }

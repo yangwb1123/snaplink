@@ -1716,6 +1716,30 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 	if a := cfg.Authenticators.Certificate; a != nil && a.Enabled {
 		auths = append(auths, authenticators.NewCertificateAuthenticator(x509.NewCertPool()))
 	}
+
+	for _, fed := range cfg.Authenticators.OIDCFederation {
+		if fed == nil {
+			continue
+		}
+		auth, err := authenticators.NewOIDCFederationAuthenticator(authenticators.OIDCFederationConfig{
+			Name:                  fed.Name,
+			AuthorizationEndpoint: fed.AuthorizationEndpoint,
+			TokenEndpoint:         fed.TokenEndpoint,
+			UserinfoEndpoint:      fed.UserinfoEndpoint,
+			ClientID:              fed.ClientID,
+			ClientSecret:          fed.ClientSecret,
+			RedirectURI:           fed.RedirectURI,
+			Scopes:                fed.Scopes,
+			SubjectFieldOverride:  fed.SubjectFieldOverride,
+			Timeout:               fed.Timeout,
+		})
+		if err != nil {
+			logger.Error("oidc_federation skipped (bad config)", "name", fed.Name, "error", err)
+			continue
+		}
+		auths = append(auths, auth)
+		logger.Info("oidc_federation enabled", "provider", fed.Name, "authorization_endpoint", fed.AuthorizationEndpoint)
+	}
 	return auths, tempStore
 }
 
