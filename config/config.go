@@ -1183,9 +1183,32 @@ type OIDCFederationAuthConfig struct {
 	Timeout               time.Duration `yaml:"timeout"`
 }
 
-// PasswordConfig is presently a marker — verifier comes from code.
+// PasswordConfig configures the password authenticator + the seed
+// list of known (username -> bcrypt hash file -> subject_id) tuples
+// the reference cmd verifier uses. Production installs typically
+// fork cmd to plug in a custom PasswordVerifier that talks to their
+// own user store; the file-seeded reference path lets a small
+// deployment work out of the box without holding plaintext secrets
+// in YAML.
 type PasswordConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool                 `yaml:"enabled"`
+	Users   []PasswordUserConfig `yaml:"users,omitempty"`
+}
+
+// PasswordUserConfig seeds one known user into cmd's bcrypt
+// verifier. BcryptHashFile is a path to a file whose first line is
+// the bcrypt hash (matches the output of
+// `htpasswd -bnBC 12 "" pw | tr -d ':\n'` or
+// `python -c 'import bcrypt; print(bcrypt.hashpw(b"pw",
+// bcrypt.gensalt()).decode())'`). The file pattern keeps hashes
+// out of YAML — even though bcrypt hashes are not directly
+// reversible, leaking them gives an attacker an offline cracking
+// target. SubjectID is the sso.Subject.ID returned on a successful
+// match; the username is also surfaced as ExternalID.
+type PasswordUserConfig struct {
+	Username       string `yaml:"username"`
+	BcryptHashFile string `yaml:"bcrypt_hash_file"`
+	SubjectID      string `yaml:"subject_id"`
 }
 
 // CodeAuthConfig configures phone (SMS) and email OTP flows.

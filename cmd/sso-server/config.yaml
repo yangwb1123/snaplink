@@ -334,8 +334,26 @@ clients:
   #       x: <base64url-public-key>
 
 authenticators:
+  # Username + password authentication. cmd's reference wiring uses a
+  # bcrypt verifier closed over the `users` seed list — each entry
+  # maps a username to a bcrypt hash on disk and the sso.Subject
+  # returned on success. Hashes stay out of YAML (matches
+  # apikey.keys.secret_file). Unknown-user and wrong-password both
+  # run one bcrypt compare so /auth/login response time doesn't leak
+  # which usernames are registered.
+  #
+  # Generate hashes with one of:
+  #   htpasswd -bnBC 12 "" 'mypassword' | tr -d ':\n'  # bcrypt cost 12
+  #   python -c 'import bcrypt; print(bcrypt.hashpw(b"mypassword", bcrypt.gensalt()).decode())'
+  #
+  # Production installs typically fork cmd to plug in a custom
+  # PasswordVerifier against their own user store.
   password:
-    enabled: true
+    enabled: false
+    users: []
+    # - username: alice
+    #   bcrypt_hash_file: /etc/sso/users/alice.bcrypt
+    #   subject_id: user-alice
 
   phone:
     enabled: true

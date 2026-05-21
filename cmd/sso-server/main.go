@@ -72,6 +72,7 @@ import (
 	"github.com/snaplink/sso/tenant"
 	tenantmemory "github.com/snaplink/sso/tenant/memory"
 	"github.com/snaplink/sso/tracing"
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 )
 
@@ -2163,6 +2164,99 @@ func loadCertPool(paths []string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
+// passwordSeed stores one cmd-side username->bcrypt-hash entry.
+type passwordSeed struct {
+	hash      []byte
+	subjectID string
+}
+
+// buildBcryptPasswordVerifier returns a PasswordVerifier closed over
+// an in-memory username->bcrypt-hash map seeded from YAML. Bad
+// entries (missing field, unreadable file, malformed hash) log + skip
+// at boot rather than crashing; an empty map yields a verifier that
+// rejects every credential.
+//
+// Unknown-username and wrong-password paths both run one bcrypt
+// compare so wall-clock response time can't enumerate the seed
+// list. The dummy hash is generated at verifier-build time at the
+// cost of the FIRST loaded seed (or bcrypt.DefaultCost when no
+// seeds are present), so the dummy and real-hash bcrypt compares
+// sit in the same order of magnitude — without that, an attacker
+// could split "real cost-10 user" from "dummy cost-12 unknown user"
+// by latency.
+func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger sso.Logger) (authenticators.PasswordVerifier, int) {
+	seeds := make(map[string]passwordSeed, len(users))
+	dummyCost := bcrypt.DefaultCost
+	seeded := 0
+	for _, u := range users {
+		if u.Username == "" || u.BcryptHashFile == "" || u.SubjectID == "" {
+			logger.Error("password seed skipped (missing field)",
+				"username", u.Username, "subject_id", u.SubjectID)
+			continue
+		}
+		hash, err := loadBcryptHashFile(u.BcryptHashFile)
+		if err != nil {
+			logger.Error("password seed skipped (load hash)",
+				"username", u.Username, "file", u.BcryptHashFile, "error", err)
+			continue
+		}
+		if seeded == 0 {
+			if c, err := bcrypt.Cost(hash); err == nil {
+				dummyCost = c
+			}
+		}
+		seeds[u.Username] = passwordSeed{hash: hash, subjectID: u.SubjectID}
+		seeded++
+	}
+	dummy, err := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), dummyCost)
+	if err != nil {
+		panic(fmt.Sprintf("bcrypt dummy hash gen: %v", err))
+	}
+	verifier := authenticators.PasswordVerifierFunc(func(_ context.Context, user, pass string) (*sso.AuthResult, error) {
+		entry, ok := seeds[user]
+		hash := dummy
+		if ok {
+			hash = entry.hash
+		}
+		// Run bcrypt unconditionally so unknown-user and wrong-password
+		// take the same wall-clock time. The error is collapsed to a
+		// single string regardless of which branch failed.
+		if err := bcrypt.CompareHashAndPassword(hash, []byte(pass)); err != nil || !ok {
+			return nil, errors.New("password: invalid credentials")
+		}
+		return &sso.AuthResult{UserID: entry.subjectID, ExternalID: user}, nil
+	})
+	return verifier, seeded
+}
+
+// loadBcryptHashFile reads a bcrypt hash from disk. The file's first
+// line (newline-stripped) is the hash. Refuses anything that doesn't
+// start with the bcrypt format prefix so a misconfigured file
+// (plaintext password, sha256 hash, accidentally swapped file) fails
+// at boot rather than producing an authenticator that silently never
+// matches.
+func loadBcryptHashFile(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	// Bcrypt hashes are single-line ASCII; tolerate trailing newline
+	// from `echo` and strip any leading/trailing whitespace from
+	// hand-edited files. Reject internal newlines to catch the
+	// "wrote the wrong file" case.
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return nil, fmt.Errorf("%s: empty file", path)
+	}
+	if strings.ContainsAny(s, "\r\n") {
+		return nil, fmt.Errorf("%s: multi-line content; expected a single bcrypt hash", path)
+	}
+	if !strings.HasPrefix(s, "$2a$") && !strings.HasPrefix(s, "$2b$") && !strings.HasPrefix(s, "$2y$") {
+		return nil, fmt.Errorf("%s: not a bcrypt hash (must start with $2a$/$2b$/$2y$)", path)
+	}
+	return []byte(s), nil
+}
+
 // buildAuthenticators returns the configured authenticators and the temp
 // token store, when one is wired. The store is returned separately so the
 // admin TokenAdminService can issue tokens against the same backing store.
@@ -2172,15 +2266,9 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 	codeStore := authenticators.NewMemoryCodeStore()
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
-		auths = append(auths, authenticators.NewPasswordAuthenticator(
-			authenticators.PasswordVerifierFunc(func(_ context.Context, user, pass string) (*sso.AuthResult, error) {
-				// Replace with bcrypt/argon2 against your user store.
-				if user == "alice" && pass == "secret" {
-					return &sso.AuthResult{UserID: "user-alice", ExternalID: user}, nil
-				}
-				return nil, errors.New("bad credentials")
-			}),
-		))
+		verifier, seeded := buildBcryptPasswordVerifier(a.Users, logger)
+		auths = append(auths, authenticators.NewPasswordAuthenticator(verifier))
+		logger.Info("password authenticator enabled", "seeded_users", seeded)
 	}
 
 	if a := cfg.Authenticators.Phone; a != nil && a.Enabled {
