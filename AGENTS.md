@@ -25,7 +25,7 @@ sso.go / handler.go / router.go     Server, HandlerContext, routing
 consts.go                           Paths, headers, error codes (no literal leaks)
 handle_*.go                         Per-endpoint HTTP handlers
 oauth_bind.go                       form+JSON dispatcher
-authenticators/                     8 pluggable AuthN impls
+authenticators/                     9 pluggable AuthN impls + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)
 adapters/{echo,gin}/                Router adapters
@@ -276,9 +276,18 @@ Register via `sso.WithTokenIssuer(name, issuer)`.
 (upstream OAuth 2.0 / OIDC IdP delegation — Google, Microsoft,
 GitHub, Auth0, Keycloak; configured per-provider, accessible at
 `/auth/login?provider=<name>`). `allowed_authenticators:` on a
-client gates which methods are permitted. WebAuthn (CTAP/FIDO2)
-remains on the roadmap — needs CBOR + attestation verification not
-in stdlib.
+client gates which methods are permitted.
+
+WebAuthn (CTAP/FIDO2) ships separately at
+`authenticators/webauthn/` — the four-call begin/finish ceremony
+doesn't fit the single-step Authenticator interface, so the
+package exposes `Helper.{BeginRegistration, FinishRegistration,
+BeginLogin, FinishLogin}` for embedders to mount on their own
+routes. Pluggable `UserStore` + `SessionStore` with memory
+implementations included; production multi-replica deployments
+wire shared backends (SQLite / Redis). Built on
+`github.com/go-webauthn/webauthn` for the CBOR + attestation
+heavy-lifting.
 
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
