@@ -519,6 +519,9 @@ tracing → ratelimit → bodyLimit → metrics → CORS → router
 ```
 
 Wire each with `sso.With{Tracing, RateLimit, BodyLimit, Metrics, CORS}`.
+In `cmd/sso-server`, `security.{body_limit,rate_limit,cors}` + `metrics.enabled`
+configure these from YAML — rate-limit keys per HTTP-Basic `client_id` first,
+falling back to IP (see [ratelimit.KeyByClientIDOrIP]).
 
 **Metrics** are bounded by design (no per-path / per-user labels):
 

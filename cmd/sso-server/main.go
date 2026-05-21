@@ -37,6 +37,7 @@ import (
 	lockNoop "github.com/snaplink/sso/bootstrap/lock/noop"
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
+	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/defaultimpl"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
@@ -48,6 +49,7 @@ import (
 	"github.com/snaplink/sso/grpcserver"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
+	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
 	"github.com/snaplink/sso/registry/memory"
@@ -583,6 +585,27 @@ func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.
 	return sso.NewHMACNonceProvider(cfg.TTL)
 }
 
+// buildRateLimitPolicy translates RateLimitConfig into a ratelimit.Policy.
+// Each prefix becomes a MemoryLimiter; Default kicks in for paths no
+// prefix matches. A zero DefaultPerSec leaves Default nil (no limit
+// on unmatched paths — useful when only a few hot endpoints need
+// throttling). KeyByClientIDOrIP is used so HTTP-Basic-authenticated
+// /token traffic buckets per-client, with IP as the fallback for
+// unauthenticated paths.
+func buildRateLimitPolicy(cfg config.RateLimitConfig) ratelimit.Policy {
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	if cfg.DefaultPerSec > 0 {
+		p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
+	}
+	for _, r := range cfg.Prefixes {
+		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
+			Prefix:  r.Prefix,
+			Limiter: ratelimit.NewMemoryLimiter(r.PerSec, r.Burst),
+		})
+	}
+	return p
+}
+
 // buildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
 // SnapshotConfig. Returns (nil, nil, nil) when snapshot.enabled=false. The
 // Snapshotter / Restorer that depend on the runtime stores are wired
@@ -1017,6 +1040,29 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithMetrics(m))
 		logger.Info("metrics: prometheus /metrics enabled")
+	}
+	if n := cfg.Security.BodyLimit.MaxBytes; n > 0 {
+		opts = append(opts, sso.WithBodyLimit(n))
+		logger.Info("security: body limit", "max_bytes", n)
+	}
+	if rl := cfg.Security.RateLimit; rl.Enabled {
+		policy := buildRateLimitPolicy(rl)
+		opts = append(opts, sso.WithRateLimit(policy))
+		logger.Info("security: rate limit enabled",
+			"default_per_sec", rl.DefaultPerSec,
+			"default_burst", rl.DefaultBurst,
+			"prefix_rules", len(rl.Prefixes))
+	}
+	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
+		opts = append(opts, sso.WithCORS(cors.Policy{
+			AllowedOrigins:   c.AllowedOrigins,
+			AllowedMethods:   c.AllowedMethods,
+			AllowedHeaders:   c.AllowedHeaders,
+			ExposedHeaders:   c.ExposedHeaders,
+			AllowCredentials: c.AllowCredentials,
+			MaxAge:           c.MaxAge,
+		}))
+		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
 	}
 
 	srv := sso.NewServer(opts...)
