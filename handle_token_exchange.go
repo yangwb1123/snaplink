@@ -191,8 +191,21 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	// the requesting (downstream) client, NOT the original; that's
 	// the canonical RFC 8693 semantic ("on behalf of the same
 	// subject, scoped to me").
+	// OIDC §8 pairwise: the inbound subject_token's `sub` may be
+	// pairwise (issued for the originating client's sector); resolve to
+	// the local sub, then re-apply pairwise for the new (downstream)
+	// client's sector. The exchange does not change the principal but
+	// the wire sub differs whenever the downstream client lives in a
+	// different sector. Non-pairwise deployments are a no-op pair.
+	localSub, perr := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		s.logger.Error("pairwise resolve failed at token-exchange", "error", perr, "subject", claims.Subject)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, localSub)
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID:        claims.Subject,
+		ID:        issuedSub,
 		Claims:    claims.Extra,
 		Resources: resources,
 		ClientID:  client.ID,

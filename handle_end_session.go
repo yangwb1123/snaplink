@@ -68,6 +68,12 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 			return
 		}
 		userID = claims.Subject
+		// OIDC §8 pairwise: translate the per-sector sub back to the
+		// local one so downstream session bookkeeping finds the
+		// right user. Non-pairwise deployments no-op.
+		if local, perr := s.resolveLocalSubject(ctx.Request().Context(), userID); perr == nil {
+			userID = local
+		}
 		sid = claims.SID
 		// Resolve the client by RFC 9068 client_id claim (preferred,
 		// first-class) or fall back to the first audience entry (the

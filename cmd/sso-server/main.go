@@ -585,6 +585,21 @@ func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.
 	return sso.NewHMACNonceProvider(cfg.TTL)
 }
 
+// resolvePairwiseSalt reads the pairwise hash salt with the same
+// file-wins-over-inline precedence the PII redactor uses. Empty
+// salt falls back to sso.DefaultPairwiseSalt — fine for tests, not
+// fine for production (publicly known).
+func resolvePairwiseSalt(cfg config.PairwiseSubjectsConfig) (string, error) {
+	if cfg.SaltFile != "" {
+		b, err := os.ReadFile(cfg.SaltFile)
+		if err != nil {
+			return "", fmt.Errorf("read salt file: %w", err)
+		}
+		return strings.TrimRight(string(b), "\r\n"), nil
+	}
+	return cfg.Salt, nil
+}
+
 // resolvePIISalt reads the redaction salt from inline YAML or a file
 // (file wins when both set — operators typically use file for prod).
 // Returns an error when both are empty so a misconfiguration becomes
@@ -1113,6 +1128,17 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if cfg.Server.OAuth21StrictMode {
 		opts = append(opts, sso.WithOAuth21StrictMode(true))
 		logger.Info("oauth2.1 strict mode: implicit grant disabled, S256-only PKCE, PKCE required for every login")
+	}
+	if cfg.Server.PairwiseSubjects.Enabled {
+		salt, err := resolvePairwiseSalt(cfg.Server.PairwiseSubjects)
+		if err != nil {
+			return nil, fmt.Errorf("pairwise_subjects salt: %w", err)
+		}
+		opts = append(opts,
+			sso.WithPairwiseSubjectStore(sso.NewMemoryPairwiseSubjectStore()),
+			sso.WithPairwiseSalt(salt),
+		)
+		logger.Info("oidc pairwise subjects: enabled (memory store — single-replica only)")
 	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
 		opts = append(opts, sso.WithSupportedACRValues(cfg.Server.SupportedACRValues...))

@@ -186,6 +186,27 @@ type Client struct {
 	// access-token expiry or a polling check).
 	BackchannelLogoutURI string `json:"backchannel_logout_uri,omitempty" yaml:"backchannel_logout_uri,omitempty"`
 
+	// SubjectType selects the OIDC Core §8 sub-claim shape for
+	// tokens minted on behalf of this client. Empty or "public"
+	// (default) → the `sub` claim is the user's local identifier
+	// shared across every client. "pairwise" → an opaque per-
+	// sector identifier so colluding clients can't correlate
+	// users by comparing sub values. Requires
+	// [WithPairwiseSubjectStore] at server boot; otherwise the
+	// flag is silently ignored.
+	SubjectType string `json:"subject_type,omitempty" yaml:"subject_type,omitempty"`
+
+	// SectorIdentifierURI groups multiple clients into one
+	// "sector" — all clients sharing the same SectorIdentifierURI
+	// host receive the same pairwise sub for the same user (the
+	// designed-in colluding-clients story for OIDC §8.1). Empty
+	// falls back to the first redirect_uri's host as the sector
+	// identifier. Only consulted when SubjectType=="pairwise".
+	// Note: this v1 does NOT fetch the URI to validate redirect
+	// membership; operators MUST ensure clients with the same
+	// SectorIdentifierURI actually belong together.
+	SectorIdentifierURI string `json:"sector_identifier_uri,omitempty" yaml:"sector_identifier_uri,omitempty"`
+
 	// FrontchannelLogoutURI is the OIDC Front-Channel Logout 1.0
 	// §2 endpoint embedded in a hidden iframe on /end_session's
 	// HTML response when this client is logged out. The browser

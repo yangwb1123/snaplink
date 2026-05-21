@@ -653,8 +653,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrNoTokenStrategy))
 		return
 	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID:                   result.UserID,
+		ID:                   issuedSub,
 		Provider:             result.Provider,
 		Claims:               result.Attributes,
 		Resources:            append([]string(nil), req.Resource...),
@@ -728,7 +729,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// id_token in the response.
 	if hasOpenIDScope(req.Scope) && s.idTokenIssuer != nil {
 		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
-			Subject:  result.UserID,
+			Subject:  issuedSub,
 			Audience: client.ID,
 			Nonce:    req.Nonce,
 			AuthTime: time.Now(),
@@ -1293,8 +1294,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		if len(resources) == 0 {
 			resources = req.Resource
 		}
+		issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
-			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
+			ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
 			Resources:            resources,
 			ClientID:             client.ID,
 			AuthTime:             time.Now(),
@@ -1335,7 +1337,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// what we captured at issue time, not from the exchange body.
 		if hasOpenIDScope(info.Scopes) && s.idTokenIssuer != nil {
 			idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
-				Subject:  info.UserID,
+				Subject:  issuedSub,
 				Audience: client.ID,
 				Nonce:    info.Nonce,
 				AuthTime: time.Now(),
@@ -1409,8 +1411,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
 			return
 		}
+		issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
-			ID: info.UserID, Provider: info.Provider, Claims: info.Attributes,
+			ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
 			Resources: info.Resources,
 			ClientID:  client.ID,
 			// Refresh rotations don't reset auth_time per RFC 9068
@@ -1569,7 +1572,19 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		return
 	}
 
-	user, err := s.userProvider.GetByID(ctx.Request().Context(), claims.Subject)
+	// OIDC §8 pairwise: the inbound claims.Subject may be the per-
+	// sector opaque identifier rather than a local UserProvider key.
+	// Resolve to the local sub before the GetByID — but keep
+	// claims.Subject untouched for the projected response so the RP
+	// sees the same sub it was given at issuance.
+	lookupSub, perr := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		s.logger.Error("pairwise resolve failed at /userinfo", "error", perr, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Subject mapping unavailable")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+	user, err := s.userProvider.GetByID(ctx.Request().Context(), lookupSub)
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, errorBody(ErrUserNotFound))
 		return
@@ -1582,6 +1597,14 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// for non-OIDC tokens — pre-OIDC integrations keep working unchanged.
 	if hasOpenIDScope(claims.Scopes) {
 		body := projectUserInfoForOIDC(user, claims.Scopes)
+		// OIDC §8 pairwise: the projected `sub` is u.ID (local), but
+		// the RP knows the user by the pairwise sub from its token.
+		// Restore the inbound sub so the response matches the RP's
+		// view (RPs MUST verify `sub` here matches the id_token sub
+		// per §5.3.2; mismatch would fail that check).
+		if claims.Subject != "" && claims.Subject != user.ID {
+			body["sub"] = claims.Subject
+		}
 		// RFC 9068 §2.2 claims passthrough on the OIDC profile: when
 		// the access token carries auth_time / acr / amr (because it
 		// was minted via /auth/login with a fresh user-auth event),

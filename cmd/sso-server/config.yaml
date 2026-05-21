@@ -23,6 +23,17 @@ server:
   # Discovery doc adjusts to match.
   oauth_21_strict_mode: false
 
+  # OIDC Core §8 pairwise subject identifiers. Clients with
+  # subject_type=pairwise get an opaque per-sector sub instead of
+  # the local user id, so colluding clients can't correlate users.
+  # Memory store only — multi-replica deployments need a shared
+  # backend. Salt MUST be deployment-stable; prefer salt_file so it
+  # doesn't end up in YAML/git.
+  pairwise_subjects:
+    enabled: false
+    salt: ""
+    salt_file: ""
+
   # Discovery doc informational hints (OIDC Discovery §3). RPs surface
   # these on consent screens / integrator docs. Each field is
   # independently optional — leave blank to omit from the response.

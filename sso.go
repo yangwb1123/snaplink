@@ -101,6 +101,13 @@ type Server struct {
 	// served lock-free; misses fall through to the snapshot path.
 	discoveryDocCacheTTL time.Duration
 	discoveryDocCache    sync.Map
+
+	// OIDC Core §8 pairwise subject identifiers. Nil pairwiseStore
+	// disables the feature entirely — every client receives a public
+	// (local) sub regardless of subject_type. Salt mixes into the
+	// hash; empty falls back to DefaultPairwiseSalt.
+	pairwiseStore PairwiseSubjectStore
+	pairwiseSalt  string
 }
 
 // Option configures the Server.

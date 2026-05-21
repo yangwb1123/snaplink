@@ -263,6 +263,19 @@ func responseTypesFor(s *Server) []string {
 	return []string{"code", "token"}
 }
 
+// subjectTypesFor reflects WithPairwiseSubjectStore — every server
+// advertises "public" (the default), and "pairwise" only when an
+// operator wired the store so the AS can actually resolve pairwise
+// subs at resource time. Advertising pairwise without the store
+// would be a footgun: RPs registering with subject_type=pairwise
+// would silently get public subs.
+func subjectTypesFor(s *Server) []string {
+	if s.pairwiseStore != nil {
+		return []string{"public", "pairwise"}
+	}
+	return []string{"public"}
+}
+
 // signDiscoveryMetadata marshals cfg to JSON with SignedMetadata
 // cleared, re-parses as a claim map, and asks the wired
 // MetadataSigner to JWS it. The signed payload must equal the
@@ -334,7 +347,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		IntrospectionEndpoint: base + PathIntrospect,
 		ResponseTypesSupported: responseTypesFor(s),
 		GrantTypesSupported:               append([]string(nil), SupportedGrants...),
-		SubjectTypesSupported:             []string{"public"},
+		SubjectTypesSupported:             subjectTypesFor(s),
 		TokenEndpointAuthMethodsSupported: []string{
 			"client_secret_basic",
 			"client_secret_post",

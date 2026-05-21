@@ -49,6 +49,30 @@ func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
 	}
 }
 
+func TestBuildApp_PairwiseSubjectsFlipsDiscovery(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.PairwiseSubjects.Enabled = true
+	cfg.Server.PairwiseSubjects.Salt = "test-salt"
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	doc := fetchDiscovery(t, srv.URL)
+	types, _ := doc["subject_types_supported"].([]any)
+	saw := map[string]bool{}
+	for _, t := range types {
+		saw[t.(string)] = true
+	}
+	if !saw["public"] || !saw["pairwise"] {
+		t.Errorf("subject_types_supported = %v want both public and pairwise", types)
+	}
+}
+
 func TestBuildApp_OAuth21StrictModeFlipsDiscovery(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Server.OAuth21StrictMode = true

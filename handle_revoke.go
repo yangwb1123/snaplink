@@ -152,9 +152,19 @@ func (s *Server) handleRevokeAll(ctx HandlerContext) {
 		clientID = claims.Audience[0]
 	}
 
-	deleted, err := idx.DeleteAllForSubject(ctx.Request().Context(), claims.Subject, clientID)
+	// OIDC §8 pairwise: refresh tokens are stored by local sub.
+	// Translate pairwise → local before the bulk delete so the
+	// caller's revoke-all actually finds anything.
+	lookupSub, perr := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		s.logger.Error("pairwise resolve failed at revoke-all", "error", perr, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Subject mapping unavailable")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+	deleted, err := idx.DeleteAllForSubject(ctx.Request().Context(), lookupSub, clientID)
 	if err != nil {
-		s.logger.Error("revoke-all failed", "error", err, "subject", claims.Subject)
+		s.logger.Error("revoke-all failed", "error", err, "subject", lookupSub)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 		return
 	}

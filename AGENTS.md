@@ -573,6 +573,7 @@ Scorers needing richer signals query their own store inside
 server:        # listen, issuer, TTLs, default_token_strategy,
                # discovery_doc_cache_ttl, signed_metadata, oauth_21_strict_mode,
                # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}
+               # pairwise_subjects: { enabled, salt, salt_file } — OIDC §8 per-sector opaque subs
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity, hash_chain
                # async: { enabled, buffer_size, workers, record_timeout_ms }

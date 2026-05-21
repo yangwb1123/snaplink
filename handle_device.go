@@ -293,8 +293,9 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
 		return
 	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, dc.UserID)
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID: dc.UserID, Provider: dc.Provider, Claims: dc.Attributes,
+		ID: issuedSub, Provider: dc.Provider, Claims: dc.Attributes,
 		Resources: dc.Resources,
 		ClientID:  client.ID,
 		AuthTime:  time.Now(),
@@ -328,7 +329,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	}
 	if hasOpenIDScope(dc.Scopes) && s.idTokenIssuer != nil {
 		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
-			Subject:  dc.UserID,
+			Subject:  issuedSub,
 			Audience: client.ID,
 			Nonce:    dc.Nonce,
 			AuthTime: time.Now(),

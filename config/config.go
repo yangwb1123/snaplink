@@ -728,6 +728,13 @@ type ServerConfig struct {
 	// posture and don't request features they'd fail.
 	OAuth21StrictMode bool `yaml:"oauth_21_strict_mode"`
 
+	// PairwiseSubjects opts into OIDC Core §8 pairwise subject
+	// identifiers. Per-client subject_type metadata gates use:
+	// SubjectType="pairwise" on a Client makes the AS mint an opaque
+	// per-sector sub instead of the local one. Memory backend only;
+	// multi-replica deployments need a shared backend.
+	PairwiseSubjects PairwiseSubjectsConfig `yaml:"pairwise_subjects"`
+
 	// SupportedACRValues advertises the OIDC `acr_values_supported`
 	// claim on the discovery doc. RPs use it to know which Authentication
 	// Context Class References they can demand via `acr_values` /
@@ -739,6 +746,17 @@ type ServerConfig struct {
 	// from consent screens / integrator docs. Each field is
 	// independently optional — empty values are omitted.
 	OperatorMetadata OperatorMetadataConfig `yaml:"operator_metadata"`
+}
+
+// PairwiseSubjectsConfig wires WithPairwiseSubjectStore +
+// WithPairwiseSalt. Salt MUST be deployment-stable; prefer SaltFile
+// so it doesn't end up in YAML/git. Empty salt at enable time falls
+// back to sso.DefaultPairwiseSalt (publicly known — fine for tests
+// only).
+type PairwiseSubjectsConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Salt     string `yaml:"salt"`
+	SaltFile string `yaml:"salt_file"`
 }
 
 // OperatorMetadataConfig groups the three Discovery §3 informational
