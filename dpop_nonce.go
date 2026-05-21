@@ -109,8 +109,16 @@ func (p *HMACNonceProvider) Issue() (string, error) {
 // Verify rejects a nonce that is malformed, tag-invalid, or expired.
 // Returned errors are descriptive for logs but the wire response only
 // cares whether the call returned nil.
+//
+// Strict() decoding rejects encodings whose trailing 2 unused bits
+// of the final base64 char are non-zero. The standard encoder always
+// emits zero there, so issued nonces decode fine; the strictness
+// blocks the trivial mutation where a tamperer flips only the unused
+// bits of the last char — that would decode to the same payload and
+// pass the MAC check, breaking the one-string-one-nonce invariant
+// this primitive depends on.
 func (p *HMACNonceProvider) Verify(nonce string) error {
-	raw, err := base64.RawURLEncoding.DecodeString(nonce)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(nonce)
 	if err != nil {
 		return errors.New("dpop nonce: base64 decode")
 	}

@@ -67,13 +67,51 @@ func TestHMACNonceProvider_IssueVerifyRoundtrip(t *testing.T) {
 func TestHMACNonceProvider_RejectsTampered(t *testing.T) {
 	p, _ := sso.NewHMACNonceProvider(time.Minute)
 	n, _ := p.Issue()
-	// flip the last char — invalidates the MAC.
-	bad := n[:len(n)-1] + "A"
+	// Flip the first char so the random-prefix byte changes — any
+	// alternative base64url char at index 0 invalidates the MAC.
+	// (Avoid flipping the LAST char: in base64url without padding,
+	// the final char's two trailing bits are unused, so a flip
+	// affecting only those bits decodes to the same byte sequence.
+	// The Verify-side Strict() decoder catches that case, but the
+	// test stays cleaner if it mutates a position whose every bit
+	// is significant.)
+	bad := "B" + n[1:]
 	if bad == n {
-		bad = n[:len(n)-1] + "B"
+		bad = "C" + n[1:]
 	}
 	if err := p.Verify(bad); err == nil {
 		t.Fatal("Verify accepted tampered nonce")
+	}
+}
+
+// TestHMACNonceProvider_RejectsLastCharTrailingBitMutation locks in
+// the Strict() guard on the wire — flipping the last char to one
+// that decodes to the same byte (only the unused trailing bits
+// differ) must NOT pass Verify, even though the recomputed MAC
+// would match. The original non-Strict decoder had this hole and
+// allowed a tamperer to trivially mutate one char without
+// detection, making the nonce string non-canonical.
+func TestHMACNonceProvider_RejectsLastCharTrailingBitMutation(t *testing.T) {
+	p, _ := sso.NewHMACNonceProvider(time.Minute)
+	// Loop until we issue a nonce ending in 'A' (low-4-bits-of-last-
+	// byte = 0). Then 'B' as the substitute decodes to the same
+	// byte (low 4 bits unchanged) but with the unused trailing bits
+	// non-zero. Strict() must reject. The loop cap is generous —
+	// 1/16 chance per Issue means we hit one quickly.
+	var n string
+	for i := 0; i < 256; i++ {
+		candidate, _ := p.Issue()
+		if candidate[len(candidate)-1] == 'A' {
+			n = candidate
+			break
+		}
+	}
+	if n == "" {
+		t.Skip("could not issue a nonce ending in 'A' within 256 tries; vanishingly rare but acceptable to skip")
+	}
+	bad := n[:len(n)-1] + "B"
+	if err := p.Verify(bad); err == nil {
+		t.Fatal("Verify accepted mutation that flipped only unused trailing bits — Strict() guard regressed")
 	}
 }
 
