@@ -79,6 +79,7 @@ type Server struct {
 	jarFetcher           JARFetcher
 	clientCertExtractor  ClientCertExtractor
 	dpopNonceProvider    DPoPNonceProvider
+	metadataSigner       MetadataSigner
 	supportedACRValues   []string
 	opPolicyURI          string
 	opTosURI             string

@@ -584,6 +584,28 @@ func (j *Ed25519JWTIssuer) SignUserInfo(_ context.Context, audience string, clai
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
+// SignMetadata implements [sso.MetadataSigner]. Wraps the discovery
+// document claims in a JWS using the same key as access + ID +
+// userinfo tokens. Header includes `kid` so an RP that's already
+// fetched JWKS can pick the right key for verification.
+func (j *Ed25519JWTIssuer) SignMetadata(_ context.Context, claims map[string]any) (string, error) {
+	if claims == nil {
+		return "", nil
+	}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	pb, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
+	sig := ed25519.Sign(j.privateKey, []byte(signingInput))
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
 // idTokenSigningInput is the ID-token mirror of jwtSigningInput — same
 // JOSE encoding, but parametrized on the ID payload shape.
 func idTokenSigningInput(header ed25519Header, payload ed25519IDPayload) ([]byte, error) {

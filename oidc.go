@@ -67,3 +67,17 @@ type IDTokenIssuer interface {
 type UserinfoSigner interface {
 	SignUserInfo(ctx context.Context, audience string, claims map[string]any) (string, error)
 }
+
+// MetadataSigner is the optional extension a TokenIssuer / IDTokenIssuer
+// MAY implement to enable RFC 8414 §2.1 signed metadata. When wired
+// via [WithMetadataSigner], discovery emits an additional
+// `signed_metadata` field whose value is a JWS of the metadata claim
+// set — RPs verify the signature against JWKS before trusting
+// endpoints, defending against a tampering proxy.
+//
+// The default Ed25519JWTIssuer implements this; the same signing key
+// the issuer uses for access / id / userinfo tokens signs the
+// metadata, so one JWKS entry covers everything.
+type MetadataSigner interface {
+	SignMetadata(ctx context.Context, claims map[string]any) (string, error)
+}

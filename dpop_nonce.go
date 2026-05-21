@@ -143,6 +143,22 @@ func (p *HMACNonceProvider) Verify(nonce string) error {
 // `use_dpop_nonce` error code at the appropriate HTTP status.
 var ErrDPoPNonceRequired = errors.New("dpop: nonce required")
 
+// WithMetadataSigner enables RFC 8414 §2.1 signed_metadata on the
+// discovery document. When wired, every /.well-known/openid-configuration
+// response carries a `signed_metadata` field whose value is a JWS over
+// the same claims as the surrounding document; RPs verify the
+// signature against JWKS before trusting any endpoint. Defends
+// against a tampering proxy substituting endpoints — a security
+// improvement that's a one-line opt-in.
+//
+// Both the default Ed25519JWTIssuer and IDTokenIssuer satisfy
+// MetadataSigner — pass either, typically the same instance already
+// wired as TokenIssuer / IDTokenIssuer so JWKS continues to cover
+// metadata signing with one key.
+func WithMetadataSigner(s MetadataSigner) Option {
+	return func(srv *Server) { srv.metadataSigner = s }
+}
+
 // WithDPoPNonceProvider enables RFC 9449 §8 nonce-bound DPoP proofs.
 // When set, /token rejects DPoP-bearing requests that lack a fresh
 // `nonce` claim with 400 `use_dpop_nonce` + a `DPoP-Nonce` response

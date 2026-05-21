@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -211,6 +212,14 @@ type oidcConfiguration struct {
 	// RequestObjectSigningAlgValuesSupported lists the alg values
 	// the JAR verifier accepts on the request JWT. EdDSA today.
 	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
+
+	// RFC 8414 §2.1 — when set, contains a JWS over the same
+	// metadata claims as the surrounding document. RPs MUST verify
+	// the signature with JWKS before trusting any endpoint; if the
+	// signed_metadata fields disagree with the plaintext, the
+	// signed payload wins. Wired via `WithMetadataSigner` — left
+	// empty (and field omitted) when no signer is plugged in.
+	SignedMetadata string `json:"signed_metadata,omitempty"`
 }
 
 // MTLSEndpointAliases is the RFC 8705 §5 alias map. Only endpoints
@@ -252,6 +261,31 @@ func responseTypesFor(s *Server) []string {
 		return []string{"code"}
 	}
 	return []string{"code", "token"}
+}
+
+// signDiscoveryMetadata marshals cfg to JSON with SignedMetadata
+// cleared, re-parses as a claim map, and asks the wired
+// MetadataSigner to JWS it. The signed payload must equal the
+// plaintext fields per RFC 8414 §2.1; we enforce that by sourcing
+// the claims from the same struct, with one round-trip through
+// json (Marshal + Unmarshal) to get the map shape the signer
+// expects.
+func (s *Server) signDiscoveryMetadata(ctx context.Context, cfg *oidcConfiguration) (string, error) {
+	if s.metadataSigner == nil {
+		return "", nil
+	}
+	saved := cfg.SignedMetadata
+	cfg.SignedMetadata = ""
+	defer func() { cfg.SignedMetadata = saved }()
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", err
+	}
+	return s.metadataSigner.SignMetadata(ctx, claims)
 }
 
 // Both `require_signed_request_object` (RFC 9101 §10.5) and
@@ -446,6 +480,19 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	// the wire.
 	cfg.ResponseModesSupported = []string{
 		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
+	}
+
+	// RFC 8414 §2.1 signed_metadata MUST be produced AFTER every
+	// other field is finalized so the signed claims match what RPs
+	// see in the plaintext fields. The signing itself excludes the
+	// signed_metadata field (chicken-and-egg) — claims are sourced
+	// from the cfg struct via json round-trip.
+	if s.metadataSigner != nil {
+		if jws, err := s.signDiscoveryMetadata(ctx.Request().Context(), &cfg); err != nil {
+			s.logger.Error("signed_metadata generation failed", "error", err)
+		} else {
+			cfg.SignedMetadata = jws
+		}
 	}
 
 	// ttl <= 0 disables both in-process caching AND the response-side

@@ -249,6 +249,7 @@ every grant.
 | RFC 8705 mTLS-bound tokens + endpoint aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `mtls_bound.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `step_up_auth.go` |
 | RFC 9449 DPoP | `/token` + `/userinfo` | always when header present; replay via `WithJTIReplayStore`; §8 nonce via `WithDPoPNonceProvider` | `dpop.go` + `dpop_nonce.go` |
+| RFC 8414 §2.1 signed_metadata | `/.well-known/openid-configuration` | `WithMetadataSigner` (Ed25519JWTIssuer satisfies the interface) | `oidc_discovery.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
 | RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch via `WithJARFetcher` + `AllowedRequestURIs`; require via `Client.RequireSignedRequestObject` | `jar.go` + `jar_fetch.go` |
