@@ -619,7 +619,18 @@ IP fallback to avoid consuming r.Body. Composes with `RiskScorer`
 (limiter rejects bots before scoring).
 
 **ReadyCheck**: pluggable SPI; any failing check → 503. Bounded by
-3s context deadline.
+3s context deadline. Every SQLite-backed store ships a `Ping(ctx)`
+method (`db.PingContext`); cmd auto-registers one `WithReadyCheck`
+per wired SQLite store via `appendReadyCheck`, naming each check
+after the subsystem (`sqlite-identity-clients`,
+`sqlite-oauth-refresh-tokens`, `sqlite-jti-replay`,
+`sqlite-account-lockout`, `sqlite-pairwise-subjects`,
+`sqlite-bcl-subject-client-index`, `sqlite-webauthn-{users,sessions}`,
+etc.). Memory backends don't implement Ping, so the type assertion
+silently no-ops — exactly the right cadence (no readiness signal
+from a process-local map). The check payload is
+`{"status":"ready|unready","checks":{name: "ok"|err}}` so kubelet +
+operators see exactly which dependency tripped the 503.
 
 ### Risk scoring (`risk.go`)
 `RiskScorer` runs on `/auth/login` AFTER credential validation,

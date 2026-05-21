@@ -71,6 +71,15 @@ func (s *SessionStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *SessionStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: webauthn session store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // Put implements [webauthn.SessionStore].
 func (s *SessionStore) Put(ctx context.Context, sessionID string, data *gw.SessionData, ttl time.Duration) error {
 	payload, err := json.Marshal(data)

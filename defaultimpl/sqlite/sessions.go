@@ -86,6 +86,15 @@ func (s *SessionManager) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *SessionManager) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: session manager closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Session, error) {
 	id, err := randomSessionID()
 	if err != nil {

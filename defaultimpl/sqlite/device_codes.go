@@ -72,6 +72,15 @@ func (s *DeviceCodeStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *DeviceCodeStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: device code store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 func (s *DeviceCodeStore) Issue(ctx context.Context, dc *sso.DeviceCode) error {
 	if dc == nil || dc.DeviceCode == "" || dc.UserCode == "" {
 		return sso.ErrDeviceCodeNotFound

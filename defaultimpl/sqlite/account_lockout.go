@@ -88,6 +88,15 @@ func (a *AccountLockout) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (a *AccountLockout) Ping(ctx context.Context) error {
+	if a == nil || a.db == nil {
+		return errors.New("sqlite: account lockout closed")
+	}
+	return a.db.PingContext(ctx)
+}
+
 // IsLocked reports the lock state. Lazy-expires past locks by
 // nulling locked_until — same auto-unlock semantics the memory
 // backend gives. Hot-path read for /auth/login so it stays on a

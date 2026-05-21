@@ -92,6 +92,15 @@ func (s *UserStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *UserStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: webauthn user store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // GetByName implements [webauthn.UserStore].
 func (s *UserStore) GetByName(ctx context.Context, name string) (*webauthn.User, error) {
 	row := s.db.QueryRowContext(ctx, `

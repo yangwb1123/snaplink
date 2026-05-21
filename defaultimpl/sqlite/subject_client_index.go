@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -70,6 +71,15 @@ func (s *SubjectClientIndex) Close() error {
 	err := s.db.Close()
 	s.db = nil
 	return err
+}
+
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *SubjectClientIndex) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: subject_client_index closed")
+	}
+	return s.db.PingContext(ctx)
 }
 
 // RecordAccess upserts (subject, client_id). Refreshes last_seen so

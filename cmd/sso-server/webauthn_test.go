@@ -19,7 +19,7 @@ import (
 )
 
 func TestBuildWebAuthnHelper_Disabled(t *testing.T) {
-	h, err := buildWebAuthnHelper(config.WebAuthnConfig{}, quietLogger())
+	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("buildWebAuthnHelper disabled: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestBuildWebAuthnHelper_Disabled(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_RequiresRPID(t *testing.T) {
-	_, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	_, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPOrigins: []string{"https://sso.example.com"},
 	}, quietLogger())
@@ -39,7 +39,7 @@ func TestBuildWebAuthnHelper_RequiresRPID(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_RequiresAtLeastOneOrigin(t *testing.T) {
-	_, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	_, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled: true,
 		RPID:    "example.com",
 	}, quietLogger())
@@ -49,7 +49,7 @@ func TestBuildWebAuthnHelper_RequiresAtLeastOneOrigin(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_DefaultsMemoryBackends(t *testing.T) {
-	h, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -85,7 +85,7 @@ func TestBuildWebAuthnUserStore_UnknownBackend(t *testing.T) {
 
 func TestBuildWebAuthnHelper_SQLiteBackends(t *testing.T) {
 	dir := t.TempDir()
-	h, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},

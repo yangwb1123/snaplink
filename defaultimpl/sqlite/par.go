@@ -92,6 +92,15 @@ func (s *PARStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *PARStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: par store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // Issue persists the request and returns the opaque request_uri the
 // client passes to /auth/login. Caller-supplied slices + raw JSON
 // are marshaled here so subsequent caller mutations don't leak into

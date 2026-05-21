@@ -730,6 +730,21 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (sso.JTIReplayStore, string
 //
 // convertClientJWKs maps cmd-config JWK entries to sso.JWK. Drops
 // nothing — every parameter the SDK consumes is exposed in YAML.
+// appendReadyCheck registers v as a /readyz dependency when it
+// implements Ping(ctx). All SQLite-backed stores satisfy this via
+// the corresponding sqlite package; memory backends don't, so the
+// type assertion silently no-ops for them — exactly the cadence we
+// want (no readiness signal from a process-local map). name shows up
+// in the /readyz response so operators can tell which dependency
+// failed.
+func appendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
+	p, ok := v.(interface{ Ping(context.Context) error })
+	if !ok {
+		return opts
+	}
+	return append(opts, sso.WithReadyCheck(name, p.Ping))
+}
+
 func convertClientJWKs(in []config.ClientJWK) []sso.JWK {
 	if len(in) == 0 {
 		return nil
@@ -1341,6 +1356,9 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		// default for a binary called "sso-server".
 		sso.WithIDTokenIssuer(jwtIssuer),
 	)
+	opts = appendReadyCheck(opts, "sqlite-identity-clients", clientStore)
+	opts = appendReadyCheck(opts, "sqlite-identity-users", userProvider)
+	opts = appendReadyCheck(opts, "sqlite-identity-sessions", sessionMgr)
 
 	var recorder *audit.Recorder
 	var asyncSink *audit.AsyncSink
@@ -1521,6 +1539,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			return nil, fmt.Errorf("oauth.auth_code: %w", err)
 		}
 		opts = append(opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
+		opts = appendReadyCheck(opts, "sqlite-oauth-auth-codes", store)
 	}
 	if cfg.OAuth.RefreshToken.Enabled {
 		store, err := buildRefreshTokenStore(cfg.OAuth)
@@ -1528,6 +1547,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			return nil, fmt.Errorf("oauth.refresh_token: %w", err)
 		}
 		opts = append(opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
+		opts = appendReadyCheck(opts, "sqlite-oauth-refresh-tokens", store)
 	}
 	if cfg.OAuth.DeviceCode.Enabled {
 		store, err := buildDeviceCodeStore(cfg.OAuth)
@@ -1540,6 +1560,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			cfg.OAuth.DeviceCode.PollInterval,
 			cfg.OAuth.DeviceCode.VerificationBaseURL,
 		))
+		opts = appendReadyCheck(opts, "sqlite-oauth-device-codes", store)
 	}
 	if cfg.OAuth.PAR.Enabled {
 		store, err := buildPARStore(cfg.OAuth)
@@ -1547,6 +1568,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			return nil, fmt.Errorf("par store: %w", err)
 		}
 		opts = append(opts, sso.WithPARStore(store, cfg.OAuth.PAR.TTL))
+		opts = appendReadyCheck(opts, "sqlite-oauth-par", store)
 	}
 	if jar := cfg.OAuth.JAR; jar.Enabled {
 		f := sso.NewHTTPJARFetcher()
@@ -1579,6 +1601,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			sso.WithBackchannelLogout(jwtIssuer, sso.NewHTTPLogoutNotifier()),
 			sso.WithSubjectClientIndex(idx),
 		)
+		opts = appendReadyCheck(opts, "sqlite-bcl-subject-client-index", idx)
 		if n := cfg.BackchannelLogout.MaxConcurrent; n > 0 {
 			opts = append(opts, sso.WithBackchannelLogoutMaxConcurrent(n))
 		}
@@ -1601,6 +1624,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			sso.WithPairwiseSubjectStore(store),
 			sso.WithPairwiseSalt(salt),
 		)
+		opts = appendReadyCheck(opts, "sqlite-pairwise-subjects", store)
 		logger.Info("oidc pairwise subjects: enabled", "store", mode)
 	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
@@ -1656,6 +1680,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			return nil, fmt.Errorf("jti replay store: %w", err)
 		}
 		opts = append(opts, sso.WithJTIReplayStore(store))
+		opts = appendReadyCheck(opts, "sqlite-jti-replay", store)
 		logger.Info("security: jti replay protection enabled", "backend", mode)
 	}
 	if cfg.Security.MTLS.Enabled {
@@ -1672,6 +1697,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			return nil, fmt.Errorf("account lockout: %w", err)
 		}
 		opts = append(opts, sso.WithAccountLockout(lockout))
+		opts = appendReadyCheck(opts, "sqlite-account-lockout", lockout)
 		logger.Info("security: account lockout enabled",
 			"backend", mode,
 			"max_failures", al.MaxFailures,
@@ -1690,16 +1716,22 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
 	}
 
+	// WebAuthn is built before NewServer so its underlying stores
+	// can opt into the same /readyz wiring as the rest of the SQLite
+	// substrate. Ceremony routes mount on the server later via
+	// Server.Handle so this ordering is invisible to embedders.
+	webauthnHelper, webauthnUsers, webauthnSessions, err := buildWebAuthnHelper(cfg.WebAuthn, logger)
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: %w", err)
+	}
+	opts = appendReadyCheck(opts, "sqlite-webauthn-users", webauthnUsers)
+	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
+
 	srv := sso.NewServer(opts...)
 
 	var adminMW *sso.AdminMiddleware
 	if cfg.Admin.Enabled {
 		adminMW = sso.NewAdminMiddleware(srv, provider)
-	}
-
-	webauthnHelper, err := buildWebAuthnHelper(cfg.WebAuthn, logger)
-	if err != nil {
-		return nil, fmt.Errorf("webauthn: %w", err)
 	}
 
 	pipeline, snapStorage, err := buildSnapshotSubsystem(cfg, logger)

@@ -106,6 +106,16 @@ func (p *UserProvider) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring. cmd registers this so /readyz flips to 503 on connection
+// loss (mount went read-only, file deleted underneath us, etc.).
+func (p *UserProvider) Ping(ctx context.Context) error {
+	if p == nil || p.db == nil {
+		return errors.New("sqlite: user provider closed")
+	}
+	return p.db.PingContext(ctx)
+}
+
 // GetByID implements [sso.UserProvider].
 func (p *UserProvider) GetByID(ctx context.Context, id string) (*sso.User, error) {
 	row := p.db.QueryRowContext(ctx, `

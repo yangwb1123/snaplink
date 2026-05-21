@@ -74,6 +74,15 @@ func (s *ClientStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *ClientStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: client store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 func (s *ClientStore) Get(ctx context.Context, clientID string) (*sso.Client, error) {
 	row := s.db.QueryRowContext(ctx, clientSelectByCol("id"), clientID)
 	c, err := scanClient(row)

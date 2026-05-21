@@ -152,6 +152,15 @@ func (s *RefreshTokenStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *RefreshTokenStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: refresh token store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *sso.RefreshToken) error {
 	if token == "" || info == nil {
 		return sso.ErrRefreshTokenNotFound

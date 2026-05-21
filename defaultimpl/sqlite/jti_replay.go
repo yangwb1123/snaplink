@@ -71,6 +71,15 @@ func (s *JTIReplayStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *JTIReplayStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: jti replay store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // MarkSeen implements [sso.JTIReplayStore]. A first sighting inserts
 // the row + returns (true, nil); a replay finds the row already
 // present + returns (false, nil).

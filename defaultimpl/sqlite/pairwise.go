@@ -67,6 +67,15 @@ func (s *PairwiseSubjectStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *PairwiseSubjectStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: pairwise subject store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // MapPairwise upserts the (pairwise_sub → local_sub) mapping.
 // Idempotent per the SPI contract — calling twice for the same pair
 // just overwrites the same value.

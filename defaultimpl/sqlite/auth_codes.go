@@ -78,6 +78,15 @@ func (s *AuthCodeStore) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for [sso.WithReadyCheck]
+// wiring.
+func (s *AuthCodeStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: auth code store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // Issue persists the auth code. Caller-supplied slices / maps are
 // JSON-marshaled at this point so subsequent caller mutations don't
 // leak into stored state.

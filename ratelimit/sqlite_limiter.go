@@ -117,6 +117,15 @@ func (s *SQLiteLimiter) Close() error {
 	return err
 }
 
+// Ping reports SQLite connection health for sso.WithReadyCheck
+// wiring.
+func (s *SQLiteLimiter) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: rate limiter closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // Allow implements [Limiter]. Fails open on any SQL error — the
 // rate limiter is a defense layer, not a correctness layer, and
 // 503-ing during a DB partition would block real users while

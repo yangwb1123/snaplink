@@ -17,26 +17,26 @@ import (
 )
 
 // buildWebAuthnHelper assembles the helper + stores from YAML.
-// Returns (nil, nil) when the subsystem is disabled — caller skips
-// the wiring. Errors only on misconfiguration that would silently
-// fail later (missing RPID, missing DSN with sqlite backend).
-func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger sso.Logger) (*webauthn.Helper, error) {
+// Returns (nil, nil, nil, nil) when the subsystem is disabled — the
+// caller skips the wiring. Returns the underlying stores so cmd can
+// register their Ping method as a /readyz dependency.
+func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger sso.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
 	if !cfg.Enabled {
-		return nil, nil
+		return nil, nil, nil, nil
 	}
 	if cfg.RPID == "" {
-		return nil, errors.New("webauthn.rp_id required when webauthn.enabled")
+		return nil, nil, nil, errors.New("webauthn.rp_id required when webauthn.enabled")
 	}
 	if len(cfg.RPOrigins) == 0 {
-		return nil, errors.New("webauthn.rp_origins must list at least one origin")
+		return nil, nil, nil, errors.New("webauthn.rp_origins must list at least one origin")
 	}
 	users, userDesc, err := buildWebAuthnUserStore(cfg.Storage.Users)
 	if err != nil {
-		return nil, fmt.Errorf("webauthn users: %w", err)
+		return nil, nil, nil, fmt.Errorf("webauthn users: %w", err)
 	}
 	sessions, sessionDesc, err := buildWebAuthnSessionStore(cfg.Storage.Sessions)
 	if err != nil {
-		return nil, fmt.Errorf("webauthn sessions: %w", err)
+		return nil, nil, nil, fmt.Errorf("webauthn sessions: %w", err)
 	}
 	h, err := webauthn.NewHelper(webauthn.Config{
 		RPID:          cfg.RPID,
@@ -45,7 +45,7 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger sso.Logger) (*webauth
 		SessionTTL:    cfg.SessionTTL,
 	}, users, sessions)
 	if err != nil {
-		return nil, fmt.Errorf("webauthn helper: %w", err)
+		return nil, nil, nil, fmt.Errorf("webauthn helper: %w", err)
 	}
 	logger.Info("webauthn enabled",
 		"rp_id", cfg.RPID,
@@ -53,7 +53,7 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger sso.Logger) (*webauth
 		"users", userDesc,
 		"sessions", sessionDesc,
 	)
-	return h, nil
+	return h, users, sessions, nil
 }
 
 func buildWebAuthnUserStore(cfg config.WebAuthnBackendConfig) (webauthn.UserStore, string, error) {
