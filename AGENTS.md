@@ -91,10 +91,11 @@ via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 ### Storage today
 Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
 Client / AuthCode / RefreshToken (+ FamilyTracker) / DeviceCode /
-PAR / Session. RateLimiter / AccountLockout / JTIReplay are
-memory-only. **Multi-replica deployments lose cross-replica abuse
-detection** until those grow shared backends — but every flow that
-issues or redeems persistent state now works horizontally.
+PAR / Session / JTIReplay. RateLimiter / AccountLockout remain
+memory-only — both need a shared counter for cross-replica abuse
+detection, and SQLite's lock contention on write-hot endpoints
+makes Redis/Memcached the better backend. Every flow that issues
+or redeems persistent state works horizontally today.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -277,10 +278,11 @@ IdP federation remain on the roadmap.
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
 AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
-PAR, Session. Single-use stores (AuthCode, DeviceCode, RefreshToken,
-PAR) use `DELETE … RETURNING` for race-free consumption; Session
-uses `UPDATE … RETURNING` on Refresh for the same one-roundtrip
-existence check.
+PAR, Session, JTIReplay. Single-use stores (AuthCode, DeviceCode,
+RefreshToken, PAR) use `DELETE … RETURNING` for race-free
+consumption; Session uses `UPDATE … RETURNING` on Refresh; JTIReplay
+uses `INSERT … ON CONFLICT DO NOTHING` + RowsAffected for atomic
+first-sighting detection.
 
 DSN cookbook:
 | DSN | Use |
@@ -599,7 +601,7 @@ releases:      # enabled, store, pinner, probe, snapshot_integration
 geo:           # enabled, backend(static), lookup_timeout, static.entries[]
 security:      # body_limit, rate_limit, cors
                # dpop_nonce: { enabled, key_file, ttl }
-               # jti_replay: { enabled } — memory backend, single-replica only
+               # jti_replay: { enabled, backend(memory|sqlite), sqlite.dsn } — sqlite shares jti set across the cluster
                # account_lockout: { enabled, max_failures, lockout_duration, failure_window }
                # mtls: { enabled, backend(tls|header), header.{name, encoding(url-pem|pem|base64-der)} }
                #   tls    — DefaultTLSPeerCertExtractor (in-process TLS termination)

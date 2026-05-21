@@ -272,12 +272,22 @@ type AccountLockoutConfig struct {
 // Without it, signature-valid JWTs are accepted once per validation —
 // the spec-permitted but weaker fallback.
 //
-// The wired backend is in-memory and single-replica only — a jti
-// seen by replica A is unknown to replica B, defeating the defense.
-// Multi-replica deployments MUST plug a shared backend (Redis,
-// Memcached) via sso.WithJTIReplayStore directly.
+// Backend choice:
+//   - "" / "memory" (default) — single-replica only; a jti seen on
+//     replica A is unknown to replica B and the defense forks.
+//   - "sqlite" — shared file; multi-replica safe. Requires SQLite.DSN.
+//
+// For Redis or other shared backends, operators wire their own
+// implementation via sso.WithJTIReplayStore directly.
 type JTIReplayConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool              `yaml:"enabled"`
+	Backend string            `yaml:"backend"`
+	SQLite  JTIReplaySQLiteCfg `yaml:"sqlite"`
+}
+
+// JTIReplaySQLiteCfg configures the SQLite-backed jti replay store.
+type JTIReplaySQLiteCfg struct {
+	DSN string `yaml:"dsn"`
 }
 
 // DPoPNonceConfig opts into RFC 9449 §8 server-issued nonces. When

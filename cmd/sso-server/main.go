@@ -566,6 +566,28 @@ var _ = lockNoop.New
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
+// buildJTIReplayStore picks the JTI replay backend. memory keeps
+// the single-replica defense story; sqlite shares the seen-set
+// across the cluster so a replay routed to a different replica still
+// gets rejected.
+func buildJTIReplayStore(cfg config.JTIReplayConfig) (sso.JTIReplayStore, string, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "memory":
+		return defaultimpl.NewMemoryJTIReplayStore(), "memory (single-replica only)", nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, "", errors.New("security.jti_replay.sqlite.dsn required when backend=sqlite")
+		}
+		store, err := sqlitestores.NewJTIReplayStore(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, "", err
+		}
+		return store, "sqlite (cluster-shared)", nil
+	default:
+		return nil, "", fmt.Errorf("unknown security.jti_replay.backend %q", cfg.Backend)
+	}
+}
+
 // buildClientCertExtractor picks the RFC 8705 mTLS extractor backend.
 //   - "" / "tls" — DefaultTLSPeerCertExtractor (in-process TLS only)
 //   - "header"   — HeaderClientCertExtractor (reverse-proxy edge)
@@ -1362,8 +1384,12 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			"prefix_rules", len(rl.Prefixes))
 	}
 	if cfg.Security.JTIReplay.Enabled {
-		opts = append(opts, sso.WithJTIReplayStore(defaultimpl.NewMemoryJTIReplayStore()))
-		logger.Info("security: jti replay protection enabled (memory backend — single-replica only)")
+		store, mode, err := buildJTIReplayStore(cfg.Security.JTIReplay)
+		if err != nil {
+			return nil, fmt.Errorf("jti replay store: %w", err)
+		}
+		opts = append(opts, sso.WithJTIReplayStore(store))
+		logger.Info("security: jti replay protection enabled", "backend", mode)
 	}
 	if cfg.Security.MTLS.Enabled {
 		extractor, mode, err := buildClientCertExtractor(cfg.Security.MTLS)

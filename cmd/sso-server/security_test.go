@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,6 +98,51 @@ func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
 	defer a.registry.Close()
 	if a.server == nil {
 		t.Fatal("server nil")
+	}
+}
+
+func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
+	s, mode, err := buildJTIReplayStore(config.JTIReplayConfig{})
+	if err != nil {
+		t.Fatalf("memory build: %v", err)
+	}
+	if s == nil {
+		t.Fatal("store nil")
+	}
+	if !strings.Contains(mode, "memory") {
+		t.Fatalf("mode label: got %q want memory variant", mode)
+	}
+}
+
+func TestBuildJTIReplayStore_SQLiteNeedsDSN(t *testing.T) {
+	_, _, err := buildJTIReplayStore(config.JTIReplayConfig{Backend: "sqlite"})
+	if err == nil {
+		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "jti.db") + "?_journal=WAL"
+	s, mode, err := buildJTIReplayStore(config.JTIReplayConfig{
+		Backend: "sqlite",
+		SQLite:  config.JTIReplaySQLiteCfg{DSN: dsn},
+	})
+	if err != nil {
+		t.Fatalf("sqlite build: %v", err)
+	}
+	if s == nil {
+		t.Fatal("store nil")
+	}
+	if !strings.Contains(mode, "sqlite") {
+		t.Fatalf("mode label: got %q want sqlite variant", mode)
+	}
+}
+
+func TestBuildJTIReplayStore_UnknownBackendErrors(t *testing.T) {
+	_, _, err := buildJTIReplayStore(config.JTIReplayConfig{Backend: "redis"})
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
 	}
 }
 

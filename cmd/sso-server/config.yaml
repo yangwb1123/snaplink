@@ -316,11 +316,14 @@ security:
         burst: 10
 
   # JTI-based replay protection on JAR request objects + DPoP proofs.
-  # Memory backend only — multi-replica setups MUST wire a shared store
-  # (Redis, Memcached) via the SDK directly, otherwise the defense is
-  # defeated by cross-replica replay.
+  # backend: memory (single-replica only) or sqlite (cluster-shared
+  # file — a jti seen on any replica is rejected on all). Redis /
+  # Memcached backends still need to be wired via the SDK directly.
   jti_replay:
     enabled: false
+    backend: memory       # memory | sqlite
+    sqlite:
+      dsn: ""             # e.g. file:/var/lib/sso/jti.db?_journal=WAL
 
   # Per-account lockout. After max_failures bad login attempts within
   # failure_window, the account is locked for lockout_duration —
