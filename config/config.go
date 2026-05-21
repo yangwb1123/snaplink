@@ -1202,9 +1202,30 @@ type TempTokenConfig struct {
 }
 
 // KeyPairConfig configures Ed25519 signature verification.
+//
+// PublicKeys seeds the in-process MemoryPublicKeyStore at boot so
+// known service identities can authenticate immediately without an
+// admin RPC. Each entry maps a key_id (the credential the client
+// posts) to a PEM-encoded Ed25519 public key on disk and the
+// sso.Subject the authenticator returns on success. Production
+// installations rotate by re-emitting YAML + reloading; runtime
+// rotation needs an admin RPC the SDK doesn't ship today.
 type KeyPairConfig struct {
-	Enabled      bool          `yaml:"enabled"`
-	MaxClockSkew time.Duration `yaml:"max_clock_skew"`
+	Enabled      bool                     `yaml:"enabled"`
+	MaxClockSkew time.Duration            `yaml:"max_clock_skew"`
+	PublicKeys   []KeyPairPublicKeyConfig `yaml:"public_keys,omitempty"`
+}
+
+// KeyPairPublicKeyConfig seeds a single Ed25519 verifier into the
+// MemoryPublicKeyStore. PublicKeyFile MUST be a PEM-encoded
+// "PUBLIC KEY" block (the output of `openssl pkey -pubout`); the
+// raw 32-byte form is intentionally not accepted to keep operators
+// from accidentally swapping public/private material at the YAML
+// layer.
+type KeyPairPublicKeyConfig struct {
+	KeyID          string `yaml:"key_id"`
+	PublicKeyFile  string `yaml:"public_key_file"`
+	SubjectID      string `yaml:"subject_id"`
 }
 
 // APIKeyConfig is presently a marker — keys come from a runtime store.

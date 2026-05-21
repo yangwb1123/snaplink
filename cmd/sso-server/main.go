@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -2073,6 +2072,33 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}, nil
 }
 
+// loadEd25519PublicKeyPEM reads a PEM file containing a "PUBLIC KEY"
+// block and returns the parsed Ed25519 key. Refuses any other key
+// type to keep operators from accidentally feeding RSA/ECDSA pubkeys
+// that the verifier would silently reject at signature time.
+func loadEd25519PublicKeyPEM(path string) (ed25519.PublicKey, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return nil, fmt.Errorf("%s: no PEM block found", path)
+	}
+	if block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("%s: PEM type %q; want PUBLIC KEY", path, block.Type)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse pub key in %s: %w", path, err)
+	}
+	pub, ok := parsed.(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("%s: parsed key is %T; want ed25519.PublicKey", path, parsed)
+	}
+	return pub, nil
+}
+
 // loadCertPool reads one or more PEM files and returns an x509.CertPool
 // containing every CERTIFICATE block found across them. Empty paths
 // list returns an empty (but non-nil) pool — the certificate
@@ -2169,9 +2195,24 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 
 	if a := cfg.Authenticators.KeyPair; a != nil && a.Enabled {
 		store := authenticators.NewMemoryPublicKeyStore()
-		pub, _, _ := ed25519.GenerateKey(rand.Reader)
-		store.Register("svc-001", pub, &sso.Subject{ID: "service-001"})
+		seeded := 0
+		for _, k := range a.PublicKeys {
+			if k.KeyID == "" || k.PublicKeyFile == "" || k.SubjectID == "" {
+				logger.Error("keypair seed skipped (missing field)",
+					"key_id", k.KeyID, "subject_id", k.SubjectID)
+				continue
+			}
+			pub, err := loadEd25519PublicKeyPEM(k.PublicKeyFile)
+			if err != nil {
+				logger.Error("keypair seed skipped (load pub key)",
+					"key_id", k.KeyID, "file", k.PublicKeyFile, "error", err)
+				continue
+			}
+			store.Register(k.KeyID, pub, &sso.Subject{ID: k.SubjectID})
+			seeded++
+		}
 		auths = append(auths, authenticators.NewKeyPairAuthenticator(store, a.MaxClockSkew))
+		logger.Info("keypair authenticator enabled", "seeded_keys", seeded)
 	}
 
 	if a := cfg.Authenticators.APIKey; a != nil && a.Enabled {

@@ -351,10 +351,26 @@ authenticators:
     enabled: true
     ttl: 15m
 
+  # Ed25519 signature authentication for service-to-service callers.
+  # public_keys seeds the in-process PublicKeyStore at boot: each entry
+  # registers one (key_id -> ed25519 pubkey -> subject) tuple the
+  # authenticator resolves at /auth/login?provider=keypair time. Files
+  # MUST be PEM "PUBLIC KEY" blocks (openssl pkey -pubout). Operators
+  # rotate by re-emitting YAML + reloading; runtime rotation requires
+  # an admin RPC the SDK doesn't ship today.
   keypair:
-    enabled: true
+    enabled: false
     max_clock_skew: 5m
+    public_keys: []
+    # - key_id: svc-001
+    #   public_key_file: /etc/sso/keys/svc-001.pub.pem
+    #   subject_id: service-001
 
+  # API-key authentication. The cmd reference wiring registers a single
+  # demo key — operators with real services patch buildAuthenticators
+  # to register their own keys against MemoryAPIKeyStore. Production
+  # installs typically run a sidecar admin tool that seeds keys from
+  # secret storage rather than hardcoding them here.
   apikey:
     enabled: true
 
