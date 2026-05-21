@@ -69,6 +69,11 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 }
 
 func (s *Server) handleLogin(ctx HandlerContext) {
+	// RFC 6749 §5.1: token responses MUST stamp Cache-Control:
+	// no-store + Pragma: no-cache. /auth/login bodies carry
+	// access_token + refresh_token (and PKCE-flow code values
+	// that an intermediary cache must not retain).
+	tokenNoStoreHeaders(ctx)
 	var req struct {
 		Provider             string            `json:"provider"`
 		Credential           map[string]string `json:"credential"`
@@ -1512,6 +1517,12 @@ func (s *Server) handleToken(ctx HandlerContext) {
 }
 
 func (s *Server) handleUserInfo(ctx HandlerContext) {
+	// /userinfo carries the subject's profile (sub, name, email,
+	// custom claims). Per RFC 6749 §5.1 cache-prevention pattern
+	// applied to /token, the response must never be retained by
+	// intermediaries — a stale cached body would leak across
+	// users if served from a different bearer.
+	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(depTokenIssuer, depUserProvider); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return

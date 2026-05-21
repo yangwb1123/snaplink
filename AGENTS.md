@@ -207,9 +207,13 @@ libraries told not to cache).
 
 ### Cache headers on credential endpoints (RFC 6749 §5.1)
 `/token`, `/token/introspect`, `/token/revoke`, `/token/revoke-all`,
-`/par` all stamp `Cache-Control: no-store` + `Pragma: no-cache` at
-handler entry via `tokenNoStoreHeaders(ctx)`. New credential
-endpoints opt in with one line.
+`/par`, `/auth/login`, `/userinfo`, and `/register*` (RFC 7591 +
+7592 DCR) all stamp `Cache-Control: no-store` + `Pragma: no-cache`
+at handler entry via `tokenNoStoreHeaders(ctx)`. Same rule applies
+to error responses, not just successes — a 401 from /userinfo or a
+400 from /register without the headers would let an intermediary
+cache the body and serve it cross-user / cross-tenant. New
+credential endpoints opt in with one line.
 
 ### WWW-Authenticate on 401 (RFC 6750 §3)
 Resource endpoints (`/userinfo`, `/token/revoke-all`, admin REST,

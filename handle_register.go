@@ -66,6 +66,10 @@ type dcrResponse struct {
 // the echoed metadata. Public clients (token_endpoint_auth_method
 // = "none") skip secret generation per §2.
 func (s *Server) handleRegister(ctx HandlerContext) {
+	// DCR responses ship client_secret + registration_access_token —
+	// credential-shaped bodies that intermediaries must not cache.
+	// Same RFC 6749 §5.1 pattern as /token.
+	tokenNoStoreHeaders(ctx)
 	if s.dcrPolicy == nil {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRegistrationDisabled))
 		return
@@ -191,6 +195,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 // itself reads its current registration metadata. Auth: bearer
 // matching the registration_access_token issued at /register.
 func (s *Server) handleRegistrationGet(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	client, ok := s.authorizeRegistrationMgmt(ctx)
 	if !ok {
 		return
@@ -205,6 +210,7 @@ func (s *Server) handleRegistrationGet(ctx HandlerContext) {
 // (rotation is a separate admin RPC). The registration_access_token
 // is also preserved so the caller can keep managing the registration.
 func (s *Server) handleRegistrationPut(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	client, ok := s.authorizeRegistrationMgmt(ctx)
 	if !ok {
 		return
@@ -254,6 +260,7 @@ func (s *Server) handleRegistrationPut(ctx HandlerContext) {
 // registration_access_token. Successful response: 204 No Content
 // per §2.3.
 func (s *Server) handleRegistrationDelete(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
 	client, ok := s.authorizeRegistrationMgmt(ctx)
 	if !ok {
 		return
