@@ -89,13 +89,14 @@ impl + optionally `sqlite` / `etcd` / `file`. New backends slot in
 via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 
 ### Storage today
-Memory (default) or SQLite (`defaultimpl/sqlite/` + `ratelimit/`)
-for User / Client / AuthCode / RefreshToken (+ FamilyTracker) /
-DeviceCode / PAR / Session / JTIReplay / SubjectClientIndex /
-AccountLockout / PairwiseSubject / RateLimiter. Every OAuth/OIDC
-issuance + redemption + reverse-lookup + abuse-defense flow works
-horizontally against a shared SQLite file. Redis remains the
-recommended next step for SaaS-scale auth-heavy workloads
+Memory (default) or SQLite (`defaultimpl/sqlite/` + `ratelimit/` +
+`authenticators/webauthn/sqlite/`) for User / Client / AuthCode /
+RefreshToken (+ FamilyTracker) / DeviceCode / PAR / Session /
+JTIReplay / SubjectClientIndex / AccountLockout / PairwiseSubject /
+RateLimiter / WebAuthn (User + Session). Every OAuth/OIDC issuance +
+redemption + reverse-lookup + abuse-defense + WebAuthn ceremony
+flow works horizontally against a shared SQLite file. Redis remains
+the recommended next step for SaaS-scale auth-heavy workloads
 (low-thousands write/sec is SQLite's comfort zone on WAL+SSD).
 
 ### Form + JSON via `bindOAuthParams`
@@ -284,10 +285,13 @@ doesn't fit the single-step Authenticator interface, so the
 package exposes `Helper.{BeginRegistration, FinishRegistration,
 BeginLogin, FinishLogin}` for embedders to mount on their own
 routes. Pluggable `UserStore` + `SessionStore` with memory
-implementations included; production multi-replica deployments
-wire shared backends (SQLite / Redis). Built on
-`github.com/go-webauthn/webauthn` for the CBOR + attestation
-heavy-lifting.
+implementations included; SQLite-backed peers ship at
+`authenticators/webauthn/sqlite/` for multi-replica deployments
+(`UserStore` upserts credentials inside `BEGIN IMMEDIATE` so two
+concurrent registrations across replicas can't drop one of the
+appends; `SessionStore` uses `DELETE … RETURNING` for single-use
+ceremony state). Built on `github.com/go-webauthn/webauthn` for the
+CBOR + attestation heavy-lifting.
 
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
