@@ -283,15 +283,22 @@ WebAuthn (CTAP/FIDO2) ships separately at
 `authenticators/webauthn/` — the four-call begin/finish ceremony
 doesn't fit the single-step Authenticator interface, so the
 package exposes `Helper.{BeginRegistration, FinishRegistration,
-BeginLogin, FinishLogin}` for embedders to mount on their own
-routes. Pluggable `UserStore` + `SessionStore` with memory
-implementations included; SQLite-backed peers ship at
-`authenticators/webauthn/sqlite/` for multi-replica deployments
-(`UserStore` upserts credentials inside `BEGIN IMMEDIATE` so two
-concurrent registrations across replicas can't drop one of the
-appends; `SessionStore` uses `DELETE … RETURNING` for single-use
-ceremony state). Built on `github.com/go-webauthn/webauthn` for the
-CBOR + attestation heavy-lifting.
+BeginLogin, FinishLogin}` that embedders mount on their own routes.
+`cmd/sso-server` does this automatically when `webauthn.enabled` is
+set: four POST routes mount on the SSO router via the public
+`Server.Handle(method, path, http.HandlerFunc)` extension API —
+`/webauthn/{registration,login}/{begin,finish}` — sharing the same
+middleware stack the built-in endpoints use. Unknown sessions and
+unknown users both collapse to `404 session_invalid` so probes
+can't enumerate registered users. Pluggable `UserStore` +
+`SessionStore` with memory implementations included; SQLite-backed
+peers ship at `authenticators/webauthn/sqlite/` for multi-replica
+deployments (`UserStore` upserts credentials inside `BEGIN
+IMMEDIATE` so two concurrent registrations across replicas can't
+drop one of the appends; `SessionStore` uses `DELETE … RETURNING`
+for single-use ceremony state). Built on
+`github.com/go-webauthn/webauthn` for the CBOR + attestation
+heavy-lifting.
 
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
@@ -646,6 +653,10 @@ oauth:         # backend(memory|sqlite), sqlite.dsn
 identity:      # backend(memory|sqlite), sqlite.dsn — User + Client + Session store substrate
 backchannel_logout:  # enabled, max_concurrent, index.{backend(memory|sqlite), sqlite.dsn} — OIDC BCL 1.0; sqlite index shares fan-out set across the cluster
 client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults
+webauthn:      # CTAP/FIDO2 — enabled, rp_id, rp_display_name, rp_origins[], session_ttl
+               # storage.users: { backend(memory|sqlite), sqlite.dsn }
+               # storage.sessions: { backend(memory|sqlite), sqlite.dsn }
+               #   cmd mounts /webauthn/{registration,login}/{begin,finish} on the SSO router
 ```
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens

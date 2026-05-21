@@ -44,6 +44,53 @@ type Config struct {
 	BackchannelLogout  BackchannelLogoutConfig  `yaml:"backchannel_logout"`
 	ClientRegistration ClientRegistrationConfig `yaml:"client_registration"`
 	Identity           IdentityConfig           `yaml:"identity"`
+	WebAuthn           WebAuthnConfig           `yaml:"webauthn"`
+}
+
+// WebAuthnConfig opts into CTAP/FIDO2 ceremony endpoints
+// (/webauthn/{registration,login}/{begin,finish}). Without Enabled
+// the routes aren't mounted and the subsystem is dark — no goroutines,
+// no DB, no transitive go-webauthn dependency at runtime.
+//
+// RPID must be the registrable domain suffix of the origin the user
+// agent will report (e.g. "example.com" for an SSO server at
+// sso.example.com). RPOrigins MUST be fully qualified including the
+// scheme. Misconfiguring either breaks attestation verification at
+// finish time.
+//
+// Storage chooses where credentials + ceremony sessions live. memory
+// is single-replica only; sqlite shares both across the cluster.
+// Sessions and credentials use independent DSNs so operators can
+// retain a short-lived in-memory session store while still persisting
+// credentials.
+type WebAuthnConfig struct {
+	Enabled       bool                  `yaml:"enabled"`
+	RPID          string                `yaml:"rp_id"`
+	RPDisplayName string                `yaml:"rp_display_name"`
+	RPOrigins     []string              `yaml:"rp_origins"`
+	SessionTTL    time.Duration         `yaml:"session_ttl"`
+	Storage       WebAuthnStorageConfig `yaml:"storage"`
+}
+
+// WebAuthnStorageConfig selects the substrate for the WebAuthn
+// UserStore + SessionStore. Both default to memory; operators
+// running multi-replica turn on sqlite for each (independent DSNs
+// so a fast-disk credential store can coexist with an in-memory
+// session store on the same host).
+type WebAuthnStorageConfig struct {
+	Users    WebAuthnBackendConfig `yaml:"users"`
+	Sessions WebAuthnBackendConfig `yaml:"sessions"`
+}
+
+// WebAuthnBackendConfig is the memory|sqlite selector + DSN for a
+// single WebAuthn store.
+type WebAuthnBackendConfig struct {
+	Backend string                      `yaml:"backend"` // memory | sqlite
+	SQLite  WebAuthnBackendSQLiteConfig `yaml:"sqlite"`
+}
+
+type WebAuthnBackendSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // IdentityConfig selects the substrate for User + Client persistence

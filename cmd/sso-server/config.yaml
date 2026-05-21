@@ -478,3 +478,33 @@ client_registration:
   default_active: true
   default_token_strategy: "jwt"
   allowed_authenticators: []
+
+# WebAuthn (CTAP/FIDO2) ceremony endpoints. Mounts four POST routes on
+# the SSO router when enabled:
+#   /webauthn/registration/begin   {"username", "display_name"}
+#   /webauthn/registration/finish  ?session_id=<sid> + attestation body
+#   /webauthn/login/begin          {"username"}
+#   /webauthn/login/finish         ?session_id=<sid> + assertion body
+#
+# RPID must match the registrable domain suffix of the origin the
+# browser will report; RPOrigins MUST be fully qualified including
+# the scheme. Multi-replica setups MUST flip both storage backends to
+# sqlite (independent DSNs) so a credential registered on replica A
+# is visible on replica B at login time and a ceremony Begin on A
+# can be consumed by a Finish on B.
+webauthn:
+  enabled: false
+  rp_id: "example.com"
+  rp_display_name: "Example AS"
+  rp_origins:
+    - "https://sso.example.com"
+  session_ttl: 5m
+  storage:
+    users:
+      backend: "memory"  # memory | sqlite
+      sqlite:
+        dsn: "file:/var/lib/sso/webauthn_users.db?_journal=WAL&_busy_timeout=5000"
+    sessions:
+      backend: "memory"  # memory | sqlite
+      sqlite:
+        dsn: "file:/var/lib/sso/webauthn_sessions.db?_journal=WAL&_busy_timeout=5000"

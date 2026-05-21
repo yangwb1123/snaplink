@@ -28,6 +28,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/authenticators"
+	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/bootstrap"
 	"github.com/snaplink/sso/bootstrap/builtin"
 	bootstrapfile "github.com/snaplink/sso/bootstrap/file"
@@ -209,6 +210,12 @@ type app struct {
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
 
+	// webauthnHelper is non-nil when webauthn.enabled. Ceremony routes
+	// hang off the same SSO router via Server.Handle. The helper holds
+	// references to the UserStore + SessionStore — Close lives on those
+	// stores directly when the backend is SQLite.
+	webauthnHelper *webauthn.Helper
+
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
 }
@@ -375,6 +382,21 @@ func newGRPCServer(a *app) *grpc.Server {
 // /api/v1/admin/ and gated by AdminMiddleware (bearer + admin scope).
 func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handler, error) {
 	base := a.server.Handler()
+	// WebAuthn ceremony routes mount on the SSO router itself so they
+	// share the same middleware stack (tracing, metrics, rate-limit,
+	// CORS) the built-in endpoints use. Mount AFTER Handler() so the
+	// router has been initialized — Handle errors otherwise.
+	if a.webauthnHelper != nil {
+		if err := mountWebAuthnRoutes(a.server, a.webauthnHelper); err != nil {
+			return nil, fmt.Errorf("mount webauthn: %w", err)
+		}
+		logger.Info("webauthn routes mounted",
+			"register_begin", pathWebAuthnRegistrationBegin,
+			"register_finish", pathWebAuthnRegistrationFinish,
+			"login_begin", pathWebAuthnLoginBegin,
+			"login_finish", pathWebAuthnLoginFinish,
+		)
+	}
 	if a.adminMW == nil || !cfg.Admin.APIRESTEnabled {
 		return base, nil
 	}
@@ -1571,6 +1593,11 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		adminMW = sso.NewAdminMiddleware(srv, provider)
 	}
 
+	webauthnHelper, err := buildWebAuthnHelper(cfg.WebAuthn, logger)
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: %w", err)
+	}
+
 	pipeline, snapStorage, err := buildSnapshotSubsystem(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot subsystem: %w", err)
@@ -1646,6 +1673,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		releaseRegistry:  releaseRegistry,
 		releaseStore:     releaseStore,
 		tenantStore:      tenantStore,
+		webauthnHelper:   webauthnHelper,
 		auditAsyncSink:   asyncSink,
 		netStop:          netStop,
 	}, nil
