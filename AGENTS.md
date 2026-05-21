@@ -496,6 +496,12 @@ assignments, menus, netpolicies, bootstrap high-water).
 - `snapshot/loader.FromURI` parses `file:///abs/path` +
   `inline:<base64>`.
 - Admin RPCs at `admin.v1.SnapshotAdminService` (admin:* gate).
+- Offline CLI: `sso-snapshotctl` (`cmd/sso-snapshotctl`) — `list` /
+  `inspect` / `verify` against a storage dir without running a
+  server. Useful for backup-pipeline integrity checks and
+  disaster-recovery drills where the admin RPC isn't reachable.
+  `verify` accepts `--passphrase` / `--passphrase-file` for the
+  encrypted-snapshot case.
 
 **First-boot auto-restore**: `snapshot.restore_from` YAML key +
 `--bootstrap-restore-from` CLI (CLI wins). Runs in `bootstrap/builtin`
