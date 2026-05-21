@@ -566,6 +566,7 @@ snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
 releases:      # enabled, store, pinner, probe, snapshot_integration
 geo:           # enabled, backend(static), lookup_timeout, static.entries[]
 security:      # body_limit, rate_limit, cors
+               # dpop_nonce: { enabled, key_file, ttl }
 tenant:        # enabled, backend, lookup_timeout, include_suspended,
                # tenants[], domains[],
                # suspension_check: { enabled, cache_ttl }

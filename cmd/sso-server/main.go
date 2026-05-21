@@ -10,6 +10,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -554,6 +555,33 @@ func buildBootstrapLock(cfg *config.Config, logger sso.Logger) (lock.Lock, func(
 // instantiate it explicitly because nil-Lock has the same effect.
 var _ = lockNoop.New
 
+// buildDPoPNonceProvider materializes the RFC 9449 §8 nonce
+// provider from config. When KeyFile is set, the file's contents
+// (raw bytes or hex-encoded — both shapes are accepted, hex first)
+// seed the HMAC. Without a file, a process-local 32-byte secret is
+// generated — fine for single-replica or dev, but DOES break nonce
+// continuity across replicas, so multi-replica deployments MUST
+// supply a key file.
+func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.DPoPNonceProvider, error) {
+	if cfg.KeyFile != "" {
+		raw, err := os.ReadFile(cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read key file: %w", err)
+		}
+		// Trim any trailing whitespace/newline the operator likely
+		// included when echo-ing the key.
+		trimmed := strings.TrimSpace(string(raw))
+		// Prefer hex when the file looks like hex; otherwise treat
+		// as raw bytes. Hex is easier to inspect + copy.
+		if key, err := hex.DecodeString(trimmed); err == nil && len(key) >= 16 {
+			return sso.NewHMACNonceProviderWithKey(key, cfg.TTL)
+		}
+		return sso.NewHMACNonceProviderWithKey([]byte(trimmed), cfg.TTL)
+	}
+	logger.Info("dpop nonce: no key_file configured — generating process-local key (NOT safe for multi-replica)")
+	return sso.NewHMACNonceProvider(cfg.TTL)
+}
+
 // buildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
 // SnapshotConfig. Returns (nil, nil, nil) when snapshot.enabled=false. The
 // Snapshotter / Restorer that depend on the runtime stores are wired
@@ -960,6 +988,13 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		// "disable body cache" so operators can flip caching off
 		// from config without removing the field entirely.
 		opts = append(opts, sso.WithDiscoveryDocCacheTTL(cfg.Server.DiscoveryDocCacheTTL))
+	}
+	if cfg.Security.DPoPNonce.Enabled {
+		provider, err := buildDPoPNonceProvider(cfg.Security.DPoPNonce, logger)
+		if err != nil {
+			return nil, fmt.Errorf("dpop nonce provider: %w", err)
+		}
+		opts = append(opts, sso.WithDPoPNonceProvider(provider))
 	}
 
 	srv := sso.NewServer(opts...)

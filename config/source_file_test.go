@@ -139,6 +139,24 @@ func TestLoad_DiscoveryDocCacheTTLWiring(t *testing.T) {
 	}
 }
 
+func TestLoad_DPoPNonceWiring(t *testing.T) {
+	body := "server:\n  listen: :9090\nsecurity:\n  dpop_nonce:\n    enabled: true\n    key_file: /etc/sso/dpop-nonce.key\n    ttl: 2m\n"
+	p := writeTemp(t, "dpop-nonce.yaml", body)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Security.DPoPNonce.Enabled {
+		t.Error("DPoPNonce.Enabled = false")
+	}
+	if cfg.Security.DPoPNonce.KeyFile != "/etc/sso/dpop-nonce.key" {
+		t.Errorf("KeyFile = %q", cfg.Security.DPoPNonce.KeyFile)
+	}
+	if cfg.Security.DPoPNonce.TTL.String() != "2m0s" {
+		t.Errorf("TTL = %s want 2m0s", cfg.Security.DPoPNonce.TTL)
+	}
+}
+
 func TestLoad_MissingFile_StillErrors(t *testing.T) {
 	_, err := Load("/no/such/path/config.yaml")
 	if err == nil {

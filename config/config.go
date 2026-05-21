@@ -51,6 +51,28 @@ type SecurityConfig struct {
 	BodyLimit BodyLimitConfig `yaml:"body_limit"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	CORS      CORSConfig      `yaml:"cors"`
+	DPoPNonce DPoPNonceConfig `yaml:"dpop_nonce"`
+}
+
+// DPoPNonceConfig opts into RFC 9449 §8 server-issued nonces. When
+// Enabled, every DPoP-bearing request must echo a fresh nonce in
+// the proof JWT — the AS/RS challenges with `use_dpop_nonce` and
+// delivers a nonce via the `DPoP-Nonce` response header on each
+// rejection.
+//
+// KeyFile points at a file containing the HMAC signing key. Required
+// in multi-replica deployments so nonces issued by one replica
+// verify on every other; single-replica setups may leave it empty
+// to auto-generate a 32-byte process-local secret on boot. The
+// file's first 64 hex chars (or first 32 raw bytes) seed the key;
+// anything beyond that is ignored.
+//
+// TTL bounds nonce freshness; <= 0 falls back to the SDK default
+// (5 minutes).
+type DPoPNonceConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	KeyFile string        `yaml:"key_file"`
+	TTL     time.Duration `yaml:"ttl"`
 }
 
 // BodyLimitConfig caps request body size. MaxBytes=0 disables the
