@@ -1043,6 +1043,16 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if cfg.OAuth.PAR.Enabled {
 		opts = append(opts, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), cfg.OAuth.PAR.TTL))
 	}
+	if cfg.BackchannelLogout.Enabled {
+		opts = append(opts,
+			sso.WithBackchannelLogout(jwtIssuer, sso.NewHTTPLogoutNotifier()),
+			sso.WithSubjectClientIndex(defaultimpl.NewMemorySubjectClientIndex()),
+		)
+		if n := cfg.BackchannelLogout.MaxConcurrent; n > 0 {
+			opts = append(opts, sso.WithBackchannelLogoutMaxConcurrent(n))
+		}
+		logger.Info("backchannel logout: enabled (memory subject-client index — single-replica only)")
+	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
 		opts = append(opts, sso.WithSupportedACRValues(cfg.Server.SupportedACRValues...))
 	}

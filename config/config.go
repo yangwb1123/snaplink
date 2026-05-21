@@ -37,10 +37,31 @@ type Config struct {
 	Snapshot       SnapshotConfig       `yaml:"snapshot"`
 	Releases       ReleasesConfig       `yaml:"releases"`
 	Geo            GeoConfig            `yaml:"geo"`
-	Tenant         TenantConfig         `yaml:"tenant"`
-	Security       SecurityConfig       `yaml:"security"`
-	Metrics        MetricsConfig        `yaml:"metrics"`
-	OAuth          OAuthConfig          `yaml:"oauth"`
+	Tenant             TenantConfig             `yaml:"tenant"`
+	Security           SecurityConfig           `yaml:"security"`
+	Metrics            MetricsConfig            `yaml:"metrics"`
+	OAuth              OAuthConfig              `yaml:"oauth"`
+	BackchannelLogout  BackchannelLogoutConfig  `yaml:"backchannel_logout"`
+}
+
+// BackchannelLogoutConfig opts into OIDC Back-Channel Logout 1.0.
+// When Enabled, /logout + /end_session POST a signed logout_token to
+// each affected RP's backchannel_logout_uri so they can drop the
+// matching session. SessionManager is required for session-scoped
+// (`sid` claim) emission — cmd wires the memory SessionManager by
+// default, so this flag is sufficient.
+//
+// Backed by:
+//   - Ed25519JWTIssuer (reused from access tokens) as LogoutTokenIssuer
+//   - HTTPLogoutNotifier with the SDK default 5s timeout
+//   - MemorySubjectClientIndex so a logout reaches every other RP the
+//     subject has active sessions on (single-replica only; multi-
+//     replica needs a shared index)
+//
+// MaxConcurrent caps the fan-out parallelism per logout (default 8).
+type BackchannelLogoutConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	MaxConcurrent int  `yaml:"max_concurrent"`
 }
 
 // OAuthConfig opts into the OAuth/OIDC grant stores that cmd's binary

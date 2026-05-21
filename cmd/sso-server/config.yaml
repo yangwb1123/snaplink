@@ -284,3 +284,13 @@ oauth:
   par:
     enabled: false      # POST /par + request_uri (RFC 9126)
     ttl: 90s
+
+# OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
+# POST a signed logout_token to every affected RP's backchannel_logout_uri
+# so server-side sessions get torn down without depending on a browser
+# round-trip. SDK uses HTTPLogoutNotifier (5s timeout, no proxy) + the
+# memory SubjectClientIndex for multi-RP fan-out. Multi-replica
+# deployments need a shared index plugged via the SDK directly.
+backchannel_logout:
+  enabled: false
+  max_concurrent: 0     # 0 = SDK default (8)
