@@ -80,6 +80,7 @@ type Server struct {
 	clientCertExtractor  ClientCertExtractor
 	dpopNonceProvider    DPoPNonceProvider
 	metadataSigner       MetadataSigner
+	jwksCacheTTL         time.Duration
 	supportedACRValues   []string
 	opPolicyURI          string
 	opTosURI             string

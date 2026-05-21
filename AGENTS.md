@@ -184,9 +184,10 @@ discovery doc's `issuer` field. New authorization-flow handlers
 MUST use `s.authzErrorBody(ctx, code)` — not plain `errorBody`.
 
 ### JWKS caching
-`/.well-known/jwks.json`: `Cache-Control: public, max-age=300` +
-`ETag = sha256(body)[:8]`. During rotation, both outgoing and
-incoming keys are served so pre-rotation tokens still verify.
+`/.well-known/jwks.json`: `Cache-Control: public, max-age=<ttl>` +
+`ETag = sha256(body)[:8]`. Default TTL is 5 minutes; tune via
+`WithJWKSCacheTTL(d)`. During rotation, both outgoing and incoming
+keys are served so pre-rotation tokens still verify.
 
 ### Discovery doc caching
 `/.well-known/openid-configuration` is double-cached:

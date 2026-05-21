@@ -143,6 +143,20 @@ func (p *HMACNonceProvider) Verify(nonce string) error {
 // `use_dpop_nonce` error code at the appropriate HTTP status.
 var ErrDPoPNonceRequired = errors.New("dpop: nonce required")
 
+// WithJWKSCacheTTL overrides the Cache-Control max-age advertised
+// on /.well-known/jwks.json. Default is [DefaultJWKSCacheMaxAge]
+// (5 minutes). Lower this when key rotation must propagate faster;
+// raise it when RP traffic strains the JWKS endpoint.
+//
+// Note: many RP libraries cache the JWKS in-process past the
+// max-age signal, so the practical lower bound depends on the RP
+// fleet's behavior. Validating-side ETag + 304 keeps the round
+// trips cheap, so an aggressive low value (30s-60s) is usually
+// safe without flooding origins.
+func WithJWKSCacheTTL(ttl time.Duration) Option {
+	return func(s *Server) { s.jwksCacheTTL = ttl }
+}
+
 // WithMetadataSigner enables RFC 8414 §2.1 signed_metadata on the
 // discovery document. When wired, every /.well-known/openid-configuration
 // response carries a `signed_metadata` field whose value is a JWS over

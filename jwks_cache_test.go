@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
@@ -98,6 +99,40 @@ func TestJWKS_IfNoneMatchMismatchReturns200(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d want 200 (stale ETag should fall through)", resp.StatusCode)
+	}
+}
+
+func TestJWKS_CacheTTLOverrideHonored(t *testing.T) {
+	// 30-second override must appear in the Cache-Control header
+	// instead of the 300-second default.
+	srv := sso.NewServer(
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithJWKSCacheTTL(30*time.Second),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+	resp, err := http.Get(httpSrv.URL + "/.well-known/jwks.json")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	cc := resp.Header.Get("Cache-Control")
+	if !strings.Contains(cc, "max-age=30") {
+		t.Errorf("Cache-Control = %q want max-age=30", cc)
+	}
+}
+
+func TestJWKS_DefaultTTLAppliesWithoutOverride(t *testing.T) {
+	srv := newJWKSServer(t)
+	resp, err := http.Get(srv.URL + "/.well-known/jwks.json")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	cc := resp.Header.Get("Cache-Control")
+	if !strings.Contains(cc, "max-age=300") {
+		t.Errorf("Cache-Control = %q want default max-age=300", cc)
 	}
 }
 

@@ -39,14 +39,15 @@ type JWKSProvider interface {
 	JWKS(ctx context.Context) ([]JWK, error)
 }
 
-// jwksCacheMaxAge is the freshness window advertised in Cache-Control
-// for the JWKS response. 5 minutes balances key-rotation responsiveness
-// against avoiding per-request hits from heavily-deployed RPs.
+// DefaultJWKSCacheMaxAge is the freshness window advertised in
+// Cache-Control for the JWKS response. 5 minutes balances key-
+// rotation responsiveness against avoiding per-request hits from
+// heavily-deployed RPs.
 //
 // Operators who rotate keys faster MUST lower this AND set
 // `kid` rotation expectations on RPs — JWKS caches stick around in
 // libraries past this timeout in some cases.
-const jwksCacheMaxAge = 5 * time.Minute
+const DefaultJWKSCacheMaxAge = 5 * time.Minute
 
 func (s *Server) handleJWKS(ctx HandlerContext) {
 	keys := make([]JWK, 0)
@@ -82,7 +83,7 @@ func (s *Server) handleJWKS(ctx HandlerContext) {
 	w := ctx.ResponseWriter()
 	r := ctx.Request()
 	w.Header().Set(HeaderContentType, ContentTypeJSON)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(jwksCacheMaxAge.Seconds())))
+	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(s.jwksCacheMaxAge().Seconds())))
 	w.Header().Set("ETag", etag)
 
 	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
@@ -91,4 +92,11 @@ func (s *Server) handleJWKS(ctx HandlerContext) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+func (s *Server) jwksCacheMaxAge() time.Duration {
+	if s.jwksCacheTTL > 0 {
+		return s.jwksCacheTTL
+	}
+	return DefaultJWKSCacheMaxAge
 }
