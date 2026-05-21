@@ -236,3 +236,11 @@ security:
     exposed_headers: []      # e.g. [X-Request-ID, Retry-After]
     allow_credentials: false
     max_age: 1h
+
+# Prometheus instrumentation. Enables HTTP request count + latency
+# histograms, login / token / risk-decision counters, and exposes the
+# scrape endpoint at /metrics. When audit.async.enabled is also true,
+# the async-sink drop counters + queue gauges land on the same
+# registry automatically (no extra config).
+metrics:
+  enabled: true

@@ -46,6 +46,7 @@ import (
 	"github.com/snaplink/sso/geo"
 	geostatic "github.com/snaplink/sso/geo/static"
 	"github.com/snaplink/sso/grpcserver"
+	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
@@ -1006,6 +1007,17 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			logger.Info("signed_metadata enabled but the configured JWT issuer does not implement MetadataSigner — discovery doc will not be signed")
 		}
 	}
+	if cfg.Metrics.Enabled {
+		m := metrics.New()
+		// When the audit async wrapper is active, expose its drop
+		// counters + queue gauges on the same registry so a single
+		// scrape job covers HTTP + auth + audit-backpressure signals.
+		if asyncSink != nil {
+			m.Registry.MustRegister(metrics.NewAsyncSinkCollector(asyncSink))
+		}
+		opts = append(opts, sso.WithMetrics(m))
+		logger.Info("metrics: prometheus /metrics enabled")
+	}
 
 	srv := sso.NewServer(opts...)
 
@@ -1171,6 +1183,9 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 		sso.PathMyPermissions, sso.PathMyMenus, sso.PathMyRoles,
 	} {
 		fmt.Printf("  %s\n", p)
+	}
+	if cfg.Metrics.Enabled {
+		fmt.Printf("  %s\n", "/metrics")
 	}
 	if cfg.Audit.Enabled && cfg.Audit.APIEnabled {
 		fmt.Printf("  %s%s\n", sso.PathAPIPrefix, sso.PathAuditEvents)

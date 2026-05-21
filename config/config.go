@@ -39,6 +39,19 @@ type Config struct {
 	Geo            GeoConfig            `yaml:"geo"`
 	Tenant         TenantConfig         `yaml:"tenant"`
 	Security       SecurityConfig       `yaml:"security"`
+	Metrics        MetricsConfig        `yaml:"metrics"`
+}
+
+// MetricsConfig toggles Prometheus instrumentation. When Enabled,
+// cmd/sso-server constructs a metrics.Metrics with its own Registry,
+// wires sso.WithMetrics so request count / latency / login / token /
+// risk counters all fire, and exposes /metrics for scraping.
+//
+// When an audit AsyncSink is also wired (audit.async.enabled), the
+// matching metrics.AsyncSinkCollector is registered automatically so
+// drop counters and queue depth land on the same registry.
+type MetricsConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // SecurityConfig groups operator-facing security tunables that hook
