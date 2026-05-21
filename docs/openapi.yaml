@@ -4,9 +4,10 @@
 # Stoplight / swagger-ui — every mainstream third-party API doc platform
 # accepts this file directly.
 #
-# Coverage scope (v1): core auth flow + self-service endpoints +
-# operational probes + OIDC discovery + RP-initiated logout + the
-# WebAuthn (CTAP/FIDO2) ceremony. The OAuth /token grant endpoints
+# Coverage scope (v1): core auth flow (including upstream IdP
+# federation return URL) + self-service endpoints + operational probes
+# + OIDC discovery + RP-initiated logout + the WebAuthn (CTAP/FIDO2)
+# ceremony. The OAuth /token grant endpoints
 # (/token, /token/introspect, /token/revoke, /par, /device/*,
 # /register*), the admin REST surface (/api/v1/admin/*), the audit
 # query API, and the netpolicy CRUD surface are deferred to v2 —
@@ -191,6 +192,74 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           description: Delivery failed (downstream SMS / email error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/callback:
+    get:
+      tags: [auth]
+      summary: Upstream IdP federation return URL.
+      description: |
+        Where upstream OIDC / OAuth 2.0 providers (Google, Microsoft,
+        GitHub, Auth0, Keycloak, ...) redirect after a federated login
+        kicked off by `/auth/login?provider=<name>`. This endpoint
+        finishes the redirect leg of the upstream flow: it pops the
+        per-provider `state`, exchanges `code` for tokens at the
+        upstream IdP, materializes a local `User` via `UserProvider`,
+        and mints a single-use `session_id` the SPA can carry into
+        subsequent calls.
+
+        The `provider` query is optional — when omitted, every wired
+        `oidc_federation` authenticator is tried in registration order
+        until one accepts the `(code, state)` pair. Missing or
+        unparseable `code` / `state` returns `400 invalid_callback`;
+        an unknown / mismatched `state` collapses to
+        `401 callback_failed` to keep state-binding probes from
+        leaking which provider issued the original kickoff (one of the
+        oracle-leak hardening rules in AGENTS.md).
+      operationId: getAuthCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+          description: Authorization code returned by the upstream IdP.
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+          description: Opaque CSRF binding minted at `/auth/login` kickoff.
+        - name: provider
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Federation provider name (matches the `provider:` value in
+            the cmd `authenticators.oidc_federation[]` block). When
+            omitted, every wired federation authenticator is probed.
+      responses:
+        "200":
+          description: Federation succeeded; session minted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallbackResponse"
+        "400":
+          description: Missing / malformed `code` or `state`, or unknown provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Upstream exchange or state validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Local session storage failed after upstream succeeded.
           content:
             application/json:
               schema:
@@ -847,6 +916,24 @@ components:
       properties:
         session_id:
           type: string
+
+    CallbackResponse:
+      type: object
+      required: [session_id, status]
+      properties:
+        session_id:
+          type: string
+          description: |
+            Single-use server-side session handle the SPA exchanges
+            for a bearer or carries on subsequent /logout / /userinfo
+            calls.
+        status:
+          type: string
+          example: authenticated
+          description: |
+            Always `authenticated` on the 200 path — the constant lives
+            in `consts.go` (`StatusAuthenticated`). Future statuses
+            (e.g. `mfa_required`) would extend this enum.
 
     User:
       type: object
