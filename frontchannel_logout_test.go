@@ -260,6 +260,117 @@ func TestFCL_DiscoveryOmitsWhenNoClientOptsIn(t *testing.T) {
 	}
 }
 
+// TestFCL_MultiRPFanOut proves the SubjectClientIndex-driven multi-
+// RP variant: when the subject is signed into multiple FCL-capable
+// clients, /end_session renders one hidden iframe per such client
+// so every RP gets a chance to clear its own session. Without the
+// index this would degrade to the single-iframe primary-only path
+// — but the harness wires WithSubjectClientIndex so we exercise
+// the fan-out branch.
+func TestFCL_MultiRPFanOut(t *testing.T) {
+	const (
+		clientA      = "fcl-multi-a"
+		clientB      = "fcl-multi-b"
+		secretShared = "fcl-multi-secret"
+		userID       = "u-multi"
+		fcLogoutA    = "https://a.example/oidc/frontchannel-logout"
+		fcLogoutB    = "https://b.example/oidc/frontchannel-logout"
+		postLogout   = "https://a.example/post-logout"
+	)
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: userID})
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: clientA, Secret: secretShared, Active: true,
+		AllowedAuthenticators:  []string{"password"},
+		TokenStrategy:          "jwt",
+		AllowedScopes:          []string{"openid"},
+		PostLogoutRedirectURIs: []string{postLogout},
+		FrontchannelLogoutURI:  fcLogoutA,
+	})
+	clients.AddSeed(&sso.Client{
+		ID: clientB, Secret: secretShared, Active: true,
+		AllowedAuthenticators: []string{"password"},
+		TokenStrategy:         "jwt",
+		AllowedScopes:         []string{"openid"},
+		FrontchannelLogoutURI: fcLogoutB,
+	})
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
+			return &sso.AuthResult{UserID: userID, Provider: "password"}, nil
+		},
+	))
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	idx := defaultimpl.NewMemorySubjectClientIndex()
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), time.Hour),
+		sso.WithIDTokenIssuer(issuer),
+		sso.WithSubjectClientIndex(idx),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+
+	// Log into both clients so the SubjectClientIndex records each.
+	login := func(cid string) string {
+		body, _ := json.Marshal(map[string]any{
+			"provider":   "password",
+			"client_id":  cid,
+			"credential": map[string]string{"username": "x", "password": "y"},
+			"scope":      []string{"openid"},
+		})
+		resp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("login %s: %v", cid, err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(raw, &out)
+		id, _ := out["id_token"].(string)
+		if id == "" {
+			t.Fatalf("login %s no id_token: %s", cid, raw)
+		}
+		return id
+	}
+	idTokenA := login(clientA)
+	_ = login(clientB)
+
+	// /end_session with id_token_hint for client A. Expectation:
+	// the rendered HTML carries BOTH iframes (A from the hint, B
+	// from the index fan-out) so the user logs out everywhere.
+	resp, err := nonFollowingClient().Get(httpSrv.URL + "/end_session?id_token_hint=" + idTokenA)
+	if err != nil {
+		t.Fatalf("end_session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	s := string(body)
+	if !strings.Contains(s, fcLogoutA) {
+		t.Errorf("primary iframe (client A) missing from FCL page: %s", s)
+	}
+	if !strings.Contains(s, fcLogoutB) {
+		t.Errorf("fan-out iframe (client B) missing from FCL page — SubjectClientIndex not consulted: %s", s)
+	}
+	// Primary carries sid+iss; fan-out target carries iss only (sid
+	// omitted because the SubjectClientIndex doesn't track per-
+	// client session IDs).
+	if !strings.Contains(s, `src="`+fcLogoutA+`?sid=`) {
+		t.Errorf("primary iframe missing sid query: %s", s)
+	}
+	if strings.Contains(s, `src="`+fcLogoutB+`?sid=`) {
+		t.Errorf("fan-out iframe should NOT carry sid: %s", s)
+	}
+}
+
 func TestFCL_EscapesUntrustedRedirectComponents(t *testing.T) {
 	srv := newFrontchannelHarness(t, true)
 	idToken := fclLogin(t, srv)

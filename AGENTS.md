@@ -247,7 +247,7 @@ every grant.
 | OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `oidc_discovery.go` |
 | OIDC RP-Initiated Logout | `/end_session` | always | `handle_end_session.go` |
 | OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP via `WithSubjectClientIndex` | `backchannel_logout.go` |
-| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `frontchannel_logout.go` |
+| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI`; multi-RP via `WithSubjectClientIndex` | `frontchannel_logout.go` |
 | OIDC `sid` claim | access + id + logout tokens | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
 | OIDC `login_hint` | `/auth/login`, `/par`, JAR | always accepted | `handler.go` + `par.go` + `jar.go` |
 | OIDC Form Post Response Mode 1.0 | `/auth/login`, `/par`, JAR | always (`response_mode=form_post`) | `form_post_response_mode.go` |

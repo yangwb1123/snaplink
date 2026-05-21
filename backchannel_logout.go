@@ -25,15 +25,17 @@ import (
 // invalidates its session.
 //
 // Scope of THIS implementation:
-//   - Single-RP notification: the client whose ID matches the
-//     bearer token's aud / client_id claim. Multi-RP fan-out
-//     (notify every RP the user is signed into) requires a
-//     subject→clients index that is NOT in scope here — revisit
-//     when the session store gains that pivot.
-//   - sid claim NOT included. Per OIDC BCL §2.4 the sid claim
-//     is REQUIRED only when the server supports session IDs;
-//     this server does not yet stamp sid in access tokens, so
-//     it's legitimately absent from logout tokens too.
+//   - Single-RP notification is the default; multi-RP fan-out
+//     (notify every RP the user is signed into) engages when
+//     [WithSubjectClientIndex] is wired — fanOutBackchannelLogout
+//     walks the index for the subject and posts a logout_token to
+//     every BCL-capable client.
+//   - sid claim is included on the logout_token when the issuer
+//     has a session id for the subject (Server-side SessionManager
+//     populates one; the access-token issuer stamps it via the
+//     RFC 9068 `sid` claim). Fan-out targets keep their original
+//     sid when one is recorded; missing-sid targets omit the
+//     claim per OIDC BCL §2.4.
 
 // LogoutTokenIssuer mints OIDC Back-Channel Logout 1.0 §2.4
 // logout tokens. Same signing key as the access-token issuer is

@@ -112,6 +112,18 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 		}
 	}
 
+	// Capture FCL fan-out targets BEFORE the BCL fan-out runs.
+	// BCL's Forget-on-non-BCL behavior trims the SubjectClientIndex
+	// of clients without a BackchannelLogoutURI; if FCL gathered
+	// AFTER, those FCL-only peers would be missing from the index
+	// by the time we walked it and silently dropped from the
+	// iframe list. Render happens later — this just snapshots the
+	// targets while the index is still complete.
+	var fclIframes []string
+	if userID != "" {
+		fclIframes = s.gatherFrontchannelLogoutIframes(ctx, userID, client, sid)
+	}
+
 	// OIDC Back-Channel Logout 1.0 — mirror of the /logout
 	// behavior. When the user logs out via the redirect-style
 	// /end_session, the RP whose id_token_hint was presented
@@ -142,15 +154,17 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 		}
 	}
 
-	// OIDC Front-Channel Logout 1.0 — when the client opts in via
-	// FrontchannelLogoutURI, render an HTML page with a hidden
-	// iframe pointing at the RP's logout URL. The browser fires
-	// the iframe request (clearing RP cookies); a meta-refresh
-	// then navigates to post_logout_redirect_uri if one was
-	// allowlisted. FCL is purely additive to the existing
-	// revoke/BCL pipeline above — those still ran.
-	if client != nil && client.FrontchannelLogoutURI != "" {
-		s.renderFrontchannelLogout(ctx, client.FrontchannelLogoutURI, target, sid)
+	// OIDC Front-Channel Logout 1.0 — when any client (the primary
+	// from id_token_hint, or any other the subject is signed into
+	// via the SubjectClientIndex) opts in via FrontchannelLogoutURI,
+	// render an HTML page with one hidden iframe per such client.
+	// The browser fires each iframe request (clearing RP cookies);
+	// a meta-refresh then navigates to post_logout_redirect_uri if
+	// one was allowlisted. FCL is purely additive to the
+	// revoke/BCL pipeline above — those still ran. Iframe targets
+	// were snapshotted above before BCL pruned the index.
+	if len(fclIframes) > 0 {
+		s.renderFrontchannelLogout(ctx, fclIframes, target)
 		return
 	}
 
