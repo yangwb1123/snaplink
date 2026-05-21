@@ -61,6 +61,41 @@ func TestBuildDeviceCodeStore_UnknownBackendErrors(t *testing.T) {
 	}
 }
 
+func TestBuildClientStore_MemoryDefault(t *testing.T) {
+	s, err := buildClientStore(config.IdentityConfig{})
+	if err != nil {
+		t.Fatalf("memory build: %v", err)
+	}
+	if s == nil {
+		t.Fatal("store nil")
+	}
+}
+
+func TestBuildClientStore_SQLiteNeedsDSN(t *testing.T) {
+	_, err := buildClientStore(config.IdentityConfig{Backend: "sqlite"})
+	if err == nil {
+		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildApp_IdentitySQLiteEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "identity.db") + "?_journal=WAL"
+
+	cfg := &config.Config{}
+	cfg.Identity.Backend = "sqlite"
+	cfg.Identity.SQLite.DSN = dsn
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	if a.clientStore == nil || a.userProvider == nil {
+		t.Fatal("identity stores not wired")
+	}
+}
+
 func TestBuildApp_SQLiteEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "sso.db") + "?_journal=WAL&_busy_timeout=5000"

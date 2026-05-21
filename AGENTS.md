@@ -605,6 +605,7 @@ metrics:       # enabled — mounts /metrics; auto-registers audit AsyncSink col
 oauth:         # backend(memory|sqlite), sqlite.dsn
                # auth_code, refresh_token, device_code, par — each {enabled, ttl}
                # jar: { enabled, timeout, max_bytes } — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect)
+identity:      # backend(memory|sqlite), sqlite.dsn — User + Client store substrate
 backchannel_logout:  # enabled, max_concurrent — OIDC BCL 1.0; HTTPLogoutNotifier + memory SubjectClientIndex
 client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults
 ```

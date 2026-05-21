@@ -54,6 +54,15 @@ server:
 logging:
   level: info
 
+# Identity-domain persistence (User + Client stores). memory keeps the
+# simple bootstrap story but loses DCR-registered clients + password
+# authenticator users on restart. sqlite persists across restarts;
+# DSN can be shared with oauth.sqlite.dsn for a single-file install.
+identity:
+  backend: memory       # memory | sqlite
+  sqlite:
+    dsn: ""             # e.g. file:/var/lib/sso/sso.db?_journal=WAL
+
 # First-boot init. The Runner applies pending Steps (seed admin role +
 # user + client + default netpolicy) idempotently — already-applied
 # steps are skipped via the state_path tracker. Set Disabled=true when

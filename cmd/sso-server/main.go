@@ -586,6 +586,39 @@ func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.
 	return sso.NewHMACNonceProvider(cfg.TTL)
 }
 
+// buildClientStore / buildUserProvider pick the identity-domain
+// backend. Memory keeps the simple-bootstrap story; SQLite persists
+// DCR registrations + password users across restarts. Same DSN can
+// be shared with OAuth.SQLite — SQLite OS-file-lock handles
+// cross-pool coordination.
+func buildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemoryClientStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("identity.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewClientStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown identity.backend %q", cfg.Backend)
+	}
+}
+
+func buildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemoryUserProvider(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("identity.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewUserProvider(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown identity.backend %q", cfg.Backend)
+	}
+}
+
 // buildAuthCodeStore / buildRefreshTokenStore / buildDeviceCodeStore
 // pick between memory + sqlite per cfg.Backend. SQLite needs a DSN;
 // memory needs nothing. Each SQLite call opens its own connection
@@ -947,9 +980,12 @@ func (b bootstrapLogger) Error(msg string, kv ...any) { b.inner.Error(msg, kv...
 // buildApp wires every SDK component the config asks for and returns them
 // as a bundle so HTTP and gRPC entrypoints can share instances.
 func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
-	clientStore := defaultimpl.NewMemoryClientStore()
+	clientStore, err := buildClientStore(cfg.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("identity client_store: %w", err)
+	}
 	for _, c := range cfg.Clients {
-		clientStore.AddSeed(&sso.Client{
+		seeded := &sso.Client{
 			ID:                    c.ID,
 			Secret:                c.Secret,
 			Name:                  c.Name,
@@ -959,10 +995,16 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			TokenStrategy:         c.TokenStrategy,
 			Active:                c.Active,
 			TenantID:              c.TenantID,
-		})
+		}
+		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
+			return nil, fmt.Errorf("seed client %q: %w", c.ID, err)
+		}
 	}
 
-	userProvider := defaultimpl.NewMemoryUserProvider()
+	userProvider, err := buildUserProvider(cfg.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("identity user_provider: %w", err)
+	}
 	sessionMgr := defaultimpl.NewMemorySessionManager(cfg.Server.SessionTTL)
 	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),

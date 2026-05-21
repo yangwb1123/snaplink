@@ -43,6 +43,26 @@ type Config struct {
 	OAuth              OAuthConfig              `yaml:"oauth"`
 	BackchannelLogout  BackchannelLogoutConfig  `yaml:"backchannel_logout"`
 	ClientRegistration ClientRegistrationConfig `yaml:"client_registration"`
+	Identity           IdentityConfig           `yaml:"identity"`
+}
+
+// IdentityConfig selects the substrate for User + Client persistence
+// (the two long-lived identity-domain stores). Default memory keeps
+// the simple-bootstrap story but loses every DCR-registered client
+// and every password-authenticator user on restart. SQLite persists
+// across restarts and (with shared DSN) across replicas via OS file
+// locking.
+//
+// Independent of [OAuthConfig.Backend] — the two domains can be
+// mixed (e.g. SQLite identity + memory OAuth state for low-traffic
+// CLI deployments) by setting backends separately.
+type IdentityConfig struct {
+	Backend string             `yaml:"backend"` // memory | sqlite
+	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
+}
+
+type IdentitySQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // ClientRegistrationConfig opts into RFC 7591 Dynamic Client Registration
