@@ -316,12 +316,26 @@ type GeoStaticEntry struct {
 // running an admin-managed setup can leave both empty and
 // populate via the (forthcoming) admin TenantService RPCs.
 type TenantConfig struct {
-	Enabled          bool                 `yaml:"enabled"`
-	Backend          string               `yaml:"backend"` // "memory" (default)
-	LookupTimeout    time.Duration        `yaml:"lookup_timeout"`
-	IncludeSuspended bool                 `yaml:"include_suspended"`
-	Tenants          []TenantSeedConfig   `yaml:"tenants"`
-	Domains          []TenantDomainConfig `yaml:"domains"`
+	Enabled          bool                       `yaml:"enabled"`
+	Backend          string                     `yaml:"backend"` // "memory" (default)
+	LookupTimeout    time.Duration              `yaml:"lookup_timeout"`
+	IncludeSuspended bool                       `yaml:"include_suspended"`
+	Tenants          []TenantSeedConfig         `yaml:"tenants"`
+	Domains          []TenantDomainConfig       `yaml:"domains"`
+	SuspensionCheck  TenantSuspensionCheckConfig `yaml:"suspension_check"`
+}
+
+// TenantSuspensionCheckConfig opts the server into the active
+// post-validation gate: tokens whose owning client.TenantID maps to
+// a now-Suspended tenant fail validation. Without this, a
+// suspension only blocks NEW issuance — bearers minted before the
+// flip keep working until natural expiry.
+//
+// CacheTTL bounds how long a tenant's status may be cached between
+// lookups; <= 0 falls back to the SDK default (30s).
+type TenantSuspensionCheckConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	CacheTTL time.Duration `yaml:"cache_ttl"`
 }
 
 // TenantSeedConfig declares a tenant to PutTenant on boot.
@@ -488,6 +502,12 @@ type ServerConfig struct {
 	SessionTTL           time.Duration `yaml:"session_ttl"`
 	TokenTTL             time.Duration `yaml:"token_ttl"`
 	DefaultTokenStrategy string        `yaml:"default_token_strategy"`
+	// DiscoveryDocCacheTTL caches the marshaled discovery document
+	// + its ETag for this long, keyed by base URL. Set to 0 to
+	// disable both the cache and the response Cache-Control / ETag
+	// headers (useful when an upstream CDN owns caching). Defaults
+	// to the SDK constant when unset (5s).
+	DiscoveryDocCacheTTL time.Duration `yaml:"discovery_doc_cache_ttl"`
 }
 
 // LoggingConfig controls the embedded logger.

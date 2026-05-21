@@ -112,6 +112,33 @@ func TestLoad_AuditAsyncWiring(t *testing.T) {
 	}
 }
 
+func TestLoad_TenantSuspensionCheckWiring(t *testing.T) {
+	body := "server:\n  listen: :9090\ntenant:\n  enabled: true\n  suspension_check:\n    enabled: true\n    cache_ttl: 1m\n"
+	p := writeTemp(t, "suspension.yaml", body)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Tenant.SuspensionCheck.Enabled {
+		t.Error("SuspensionCheck.Enabled = false")
+	}
+	if cfg.Tenant.SuspensionCheck.CacheTTL.String() != "1m0s" {
+		t.Errorf("CacheTTL = %s want 1m0s", cfg.Tenant.SuspensionCheck.CacheTTL)
+	}
+}
+
+func TestLoad_DiscoveryDocCacheTTLWiring(t *testing.T) {
+	body := "server:\n  listen: :9090\n  discovery_doc_cache_ttl: 15s\n"
+	p := writeTemp(t, "discovery.yaml", body)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.DiscoveryDocCacheTTL.String() != "15s" {
+		t.Errorf("DiscoveryDocCacheTTL = %s want 15s", cfg.Server.DiscoveryDocCacheTTL)
+	}
+}
+
 func TestLoad_MissingFile_StillErrors(t *testing.T) {
 	_, err := Load("/no/such/path/config.yaml")
 	if err == nil {

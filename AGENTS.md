@@ -545,7 +545,8 @@ Scorers needing richer signals query their own store inside
 `cmd/sso-server/config.yaml` is the reference. Top-level keys:
 
 ```yaml
-server:        # listen, issuer, TTLs, default_token_strategy
+server:        # listen, issuer, TTLs, default_token_strategy,
+               # discovery_doc_cache_ttl
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity
                # async: { enabled, buffer_size, workers, record_timeout_ms }
@@ -566,7 +567,8 @@ releases:      # enabled, store, pinner, probe, snapshot_integration
 geo:           # enabled, backend(static), lookup_timeout, static.entries[]
 security:      # body_limit, rate_limit, cors
 tenant:        # enabled, backend, lookup_timeout, include_suspended,
-               # tenants[], domains[]
+               # tenants[], domains[],
+               # suspension_check: { enabled, cache_ttl }
 ```
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens

@@ -951,6 +951,15 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 				IncludeSuspended: cfg.Tenant.IncludeSuspended,
 			}))
 		}
+		if cfg.Tenant.SuspensionCheck.Enabled {
+			opts = append(opts, sso.WithTenantSuspensionCheck(cfg.Tenant.SuspensionCheck.CacheTTL))
+		}
+	}
+	if cfg.Server.DiscoveryDocCacheTTL != 0 {
+		// Negative TTL also passes through — the SDK treats <= 0 as
+		// "disable body cache" so operators can flip caching off
+		// from config without removing the field entirely.
+		opts = append(opts, sso.WithDiscoveryDocCacheTTL(cfg.Server.DiscoveryDocCacheTTL))
 	}
 
 	srv := sso.NewServer(opts...)
