@@ -2072,6 +2072,25 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}, nil
 }
 
+// loadSecretFile reads a secret material file and returns the content
+// with a trailing newline (if any) stripped. Empty contents fail so
+// operators see the misconfiguration at boot rather than shipping
+// with an authenticator that admits the empty string as a credential.
+// Matches the file-based secret pattern bootstrap.admin_password_file
+// uses — keeps secrets out of YAML where readers + version control
+// would expose them.
+func loadSecretFile(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	s := strings.TrimRight(string(raw), "\r\n")
+	if s == "" {
+		return "", fmt.Errorf("%s: empty secret", path)
+	}
+	return s, nil
+}
+
 // loadEd25519PublicKeyPEM reads a PEM file containing a "PUBLIC KEY"
 // block and returns the parsed Ed25519 key. Refuses any other key
 // type to keep operators from accidentally feeding RSA/ECDSA pubkeys
@@ -2217,8 +2236,24 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 
 	if a := cfg.Authenticators.APIKey; a != nil && a.Enabled {
 		store := authenticators.NewMemoryAPIKeyStore()
-		store.Register("ak_demo", "sk_demo_secret_value", &sso.Subject{ID: "service-demo"})
+		seeded := 0
+		for _, k := range a.Keys {
+			if k.KeyID == "" || k.SecretFile == "" || k.SubjectID == "" {
+				logger.Error("apikey seed skipped (missing field)",
+					"key_id", k.KeyID, "subject_id", k.SubjectID)
+				continue
+			}
+			secret, err := loadSecretFile(k.SecretFile)
+			if err != nil {
+				logger.Error("apikey seed skipped (load secret)",
+					"key_id", k.KeyID, "file", k.SecretFile, "error", err)
+				continue
+			}
+			store.Register(k.KeyID, secret, &sso.Subject{ID: k.SubjectID})
+			seeded++
+		}
 		auths = append(auths, authenticators.NewAPIKeyAuthenticator(store))
+		logger.Info("apikey authenticator enabled", "seeded_keys", seeded)
 	}
 
 	if a := cfg.Authenticators.Certificate; a != nil && a.Enabled {

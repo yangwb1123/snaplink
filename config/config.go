@@ -1228,9 +1228,23 @@ type KeyPairPublicKeyConfig struct {
 	SubjectID      string `yaml:"subject_id"`
 }
 
-// APIKeyConfig is presently a marker — keys come from a runtime store.
+// APIKeyConfig configures the API-key authenticator + optional seed
+// entries that pre-populate the in-process MemoryAPIKeyStore at
+// boot. Production rotation needs an admin RPC the SDK doesn't ship
+// today — operators rotate by re-emitting YAML + reloading.
 type APIKeyConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool                `yaml:"enabled"`
+	Keys    []APIKeyConfigEntry `yaml:"keys,omitempty"`
+}
+
+// APIKeyConfigEntry seeds a single key into the MemoryAPIKeyStore.
+// SecretFile is a path to a file whose contents (one line, trailing
+// newline tolerated) form the shared secret — keeping secrets out of
+// YAML is the same pattern bootstrap.admin_password_file uses.
+type APIKeyConfigEntry struct {
+	KeyID      string `yaml:"key_id"`
+	SecretFile string `yaml:"secret_file"`
+	SubjectID  string `yaml:"subject_id"`
 }
 
 // CertificateConfig configures X.509 certificate authentication.

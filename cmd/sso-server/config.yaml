@@ -366,13 +366,19 @@ authenticators:
     #   public_key_file: /etc/sso/keys/svc-001.pub.pem
     #   subject_id: service-001
 
-  # API-key authentication. The cmd reference wiring registers a single
-  # demo key — operators with real services patch buildAuthenticators
-  # to register their own keys against MemoryAPIKeyStore. Production
-  # installs typically run a sidecar admin tool that seeds keys from
-  # secret storage rather than hardcoding them here.
+  # API-key authentication. keys seeds the in-process
+  # MemoryAPIKeyStore at boot — each entry maps a key_id to the
+  # contents of a secret file on disk and the sso.Subject the
+  # authenticator returns on success. Secrets stay out of YAML
+  # (matches bootstrap.admin_password_file); operators rotate by
+  # re-emitting the file + reloading. Production rotation needs an
+  # admin RPC the SDK doesn't ship today.
   apikey:
-    enabled: true
+    enabled: false
+    keys: []
+    # - key_id: ak_corp
+    #   secret_file: /etc/sso/keys/ak_corp.secret
+    #   subject_id: service-corp
 
   # X.509 client-certificate authentication. The client posts a PEM-
   # encoded cert as credential.certificate; the server verifies against
