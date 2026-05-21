@@ -89,6 +89,29 @@ func TestLoad_BackwardCompat(t *testing.T) {
 	}
 }
 
+func TestLoad_AuditAsyncWiring(t *testing.T) {
+	// Lock the wire shape so cmd/sso-server's read of
+	// cfg.Audit.Async.* keeps working as the config layer evolves.
+	body := "server:\n  listen: :9090\naudit:\n  enabled: true\n  async:\n    enabled: true\n    buffer_size: 2048\n    workers: 4\n    record_timeout_ms: 1500\n"
+	p := writeTemp(t, "async.yaml", body)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Audit.Async.Enabled {
+		t.Error("Async.Enabled = false")
+	}
+	if cfg.Audit.Async.BufferSize != 2048 {
+		t.Errorf("BufferSize = %d want 2048", cfg.Audit.Async.BufferSize)
+	}
+	if cfg.Audit.Async.Workers != 4 {
+		t.Errorf("Workers = %d want 4", cfg.Audit.Async.Workers)
+	}
+	if cfg.Audit.Async.RecordTimeoutMs != 1500 {
+		t.Errorf("RecordTimeoutMs = %d want 1500", cfg.Audit.Async.RecordTimeoutMs)
+	}
+}
+
 func TestLoad_MissingFile_StillErrors(t *testing.T) {
 	_, err := Load("/no/such/path/config.yaml")
 	if err == nil {

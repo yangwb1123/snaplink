@@ -391,9 +391,25 @@ func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
 // AuditConfig configures security audit logging. When Enabled is false, no
 // audit Recorder is wired and the API endpoints are not mounted.
 type AuditConfig struct {
-	Enabled        bool `yaml:"enabled"`
-	APIEnabled     bool `yaml:"api_enabled"`
-	MemoryCapacity int  `yaml:"memory_capacity"`
+	Enabled        bool             `yaml:"enabled"`
+	APIEnabled     bool             `yaml:"api_enabled"`
+	MemoryCapacity int              `yaml:"memory_capacity"`
+	Async          AuditAsyncConfig `yaml:"async"`
+}
+
+// AuditAsyncConfig wraps the configured audit sink with an
+// audit.AsyncSink so Record calls return on a buffered hot path
+// instead of waiting for the inner sink. Critical when the sink is
+// network-bound (webhook); pointless overhead for MemorySink.
+//
+// BufferSize and Workers fall back to library defaults when <= 0.
+// RecordTimeoutMs caps a single inner Record call so a hung
+// downstream doesn't pin a worker indefinitely (0 = no timeout).
+type AuditAsyncConfig struct {
+	Enabled         bool `yaml:"enabled"`
+	BufferSize      int  `yaml:"buffer_size"`
+	Workers         int  `yaml:"workers"`
+	RecordTimeoutMs int  `yaml:"record_timeout_ms"`
 }
 
 // NetworkConfig configures the network-classification control plane.

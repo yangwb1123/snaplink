@@ -548,6 +548,7 @@ Scorers needing richer signals query their own store inside
 server:        # listen, issuer, TTLs, default_token_strategy
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity
+               # async: { enabled, buffer_size, workers, record_timeout_ms }
 permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
 network:       # enabled, api_enabled, store, policies[]
 clients:       # id, secret, allowed_authenticators, token_strategy,

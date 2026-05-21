@@ -196,6 +196,10 @@ type app struct {
 	releaseRegistry *releases.Registry
 	releaseStore    releases.ReleaseStore
 
+	// auditAsyncSink is non-nil when audit.async.enabled wraps the
+	// configured sink; Close drains the buffer during shutdown.
+	auditAsyncSink *audit.AsyncSink
+
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
@@ -307,6 +311,16 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 		select {
 		case <-a.netStop:
 		case <-ctx.Done():
+		}
+	}
+	// Drain the audit AsyncSink queue under the same shutdown
+	// deadline. Events queued during the final ~milliseconds before
+	// SIGTERM matter — they're typically the shutdown events
+	// themselves (admin logout, snapshot rotation). Best-effort:
+	// remaining events are silently dropped when the deadline fires.
+	if a.auditAsyncSink != nil {
+		if err := a.auditAsyncSink.Close(ctx); err != nil {
+			logger.Error("audit async drain timed out", "error", err)
 		}
 	}
 	logger.Info("server stopped cleanly")
@@ -836,9 +850,33 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	)
 
 	var recorder *audit.Recorder
+	var asyncSink *audit.AsyncSink
 	if cfg.Audit.Enabled {
+		var sink audit.Sink = audit.NewMemorySink(cfg.Audit.MemoryCapacity)
+		// Async wrap when configured. The buffered hot path keeps slow
+		// (e.g. webhook) sinks from blocking request latency. Memory
+		// sink benefits little — the wrap is opt-in per operator.
+		if cfg.Audit.Async.Enabled {
+			asyncOpts := []audit.AsyncOption{
+				audit.WithAsyncDropHandler(func(_ *audit.Event, err error) {
+					logger.Error("audit async drop", "error", err)
+				}),
+			}
+			if n := cfg.Audit.Async.BufferSize; n > 0 {
+				asyncOpts = append(asyncOpts, audit.WithAsyncBuffer(n))
+			}
+			if n := cfg.Audit.Async.Workers; n > 0 {
+				asyncOpts = append(asyncOpts, audit.WithAsyncWorkers(n))
+			}
+			if ms := cfg.Audit.Async.RecordTimeoutMs; ms > 0 {
+				asyncOpts = append(asyncOpts, audit.WithAsyncRecordTimeout(time.Duration(ms)*time.Millisecond))
+			}
+			asyncSink = audit.NewAsyncSink(sink, asyncOpts...)
+			asyncSink.Start()
+			sink = asyncSink
+		}
 		recorder = audit.New(
-			audit.NewMemorySink(cfg.Audit.MemoryCapacity),
+			sink,
 			audit.WithErrorHandler(func(err error) { logger.Error("audit sink", "error", err) }),
 		)
 		opts = append(opts, sso.WithAuditRecorder(recorder))
@@ -997,6 +1035,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		releaseRegistry:  releaseRegistry,
 		releaseStore:     releaseStore,
 		tenantStore:      tenantStore,
+		auditAsyncSink:   asyncSink,
 		netStop:          netStop,
 	}, nil
 }
