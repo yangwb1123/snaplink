@@ -139,6 +139,18 @@ func TestLoad_DiscoveryDocCacheTTLWiring(t *testing.T) {
 	}
 }
 
+func TestLoad_SignedMetadataWiring(t *testing.T) {
+	body := "server:\n  listen: :9090\n  signed_metadata: true\n"
+	p := writeTemp(t, "signed-metadata.yaml", body)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Server.SignedMetadata {
+		t.Error("SignedMetadata = false")
+	}
+}
+
 func TestLoad_DPoPNonceWiring(t *testing.T) {
 	body := "server:\n  listen: :9090\nsecurity:\n  dpop_nonce:\n    enabled: true\n    key_file: /etc/sso/dpop-nonce.key\n    ttl: 2m\n"
 	p := writeTemp(t, "dpop-nonce.yaml", body)

@@ -567,7 +567,7 @@ Scorers needing richer signals query their own store inside
 
 ```yaml
 server:        # listen, issuer, TTLs, default_token_strategy,
-               # discovery_doc_cache_ttl
+               # discovery_doc_cache_ttl, signed_metadata
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity
                # async: { enabled, buffer_size, workers, record_timeout_ms }

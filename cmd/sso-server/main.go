@@ -996,6 +996,16 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithDPoPNonceProvider(provider))
 	}
+	if cfg.Server.SignedMetadata {
+		// jwtIssuer satisfies sso.MetadataSigner — reuse the same
+		// signing key as access + id + userinfo so JWKS continues to
+		// cover everything with one entry.
+		if signer, ok := any(jwtIssuer).(sso.MetadataSigner); ok {
+			opts = append(opts, sso.WithMetadataSigner(signer))
+		} else {
+			logger.Info("signed_metadata enabled but the configured JWT issuer does not implement MetadataSigner — discovery doc will not be signed")
+		}
+	}
 
 	srv := sso.NewServer(opts...)
 

@@ -530,6 +530,13 @@ type ServerConfig struct {
 	// headers (useful when an upstream CDN owns caching). Defaults
 	// to the SDK constant when unset (5s).
 	DiscoveryDocCacheTTL time.Duration `yaml:"discovery_doc_cache_ttl"`
+
+	// SignedMetadata adds an RFC 8414 §2.1 signed_metadata field
+	// to /.well-known/openid-configuration. The configured default
+	// TokenIssuer must satisfy the MetadataSigner interface (the
+	// built-in Ed25519JWTIssuer does); otherwise this flag is a
+	// no-op and an info log is emitted at startup.
+	SignedMetadata bool `yaml:"signed_metadata"`
 }
 
 // LoggingConfig controls the embedded logger.
