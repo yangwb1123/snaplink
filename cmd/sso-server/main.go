@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -2072,6 +2073,51 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}, nil
 }
 
+// loadCertPool reads one or more PEM files and returns an x509.CertPool
+// containing every CERTIFICATE block found across them. Empty paths
+// list returns an empty (but non-nil) pool — the certificate
+// authenticator refuses to validate against an empty trust store anyway,
+// so the caller can surface that as a config error if it cares.
+//
+// A single bad file (missing, unparseable, no PEM blocks) fails the
+// whole load so operators see the misconfiguration at boot instead of
+// silently shipping with a partial trust store that admits some
+// expected certs but rejects others.
+func loadCertPool(paths []string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
+		appended := 0
+		rest := raw
+		for {
+			var block *pem.Block
+			block, rest = pem.Decode(rest)
+			if block == nil {
+				break
+			}
+			if block.Type != "CERTIFICATE" {
+				continue
+			}
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("parse cert in %s: %w", p, err)
+			}
+			pool.AddCert(cert)
+			appended++
+		}
+		if appended == 0 {
+			return nil, fmt.Errorf("%s: no CERTIFICATE PEM blocks found", p)
+		}
+	}
+	return pool, nil
+}
+
 // buildAuthenticators returns the configured authenticators and the temp
 // token store, when one is wired. The store is returned separately so the
 // admin TokenAdminService can issue tokens against the same backing store.
@@ -2135,7 +2181,24 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 	}
 
 	if a := cfg.Authenticators.Certificate; a != nil && a.Enabled {
-		auths = append(auths, authenticators.NewCertificateAuthenticator(x509.NewCertPool()))
+		roots, err := loadCertPool(a.TrustedCAFiles)
+		if err != nil {
+			logger.Error("certificate authenticator skipped (trusted_ca_files)", "error", err)
+		} else {
+			var certOpts []authenticators.CertOption
+			if len(a.IntermediateFiles) > 0 {
+				inter, err := loadCertPool(a.IntermediateFiles)
+				if err != nil {
+					logger.Error("certificate authenticator: intermediate_files", "error", err)
+				} else {
+					certOpts = append(certOpts, authenticators.WithCertIntermediates(inter))
+				}
+			}
+			auths = append(auths, authenticators.NewCertificateAuthenticator(roots, certOpts...))
+			logger.Info("certificate authenticator enabled",
+				"trusted_cas", len(a.TrustedCAFiles),
+				"intermediates", len(a.IntermediateFiles))
+		}
 	}
 
 	if a := cfg.Authenticators.TOTP; a != nil && a.Enabled {

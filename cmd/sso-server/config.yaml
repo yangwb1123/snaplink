@@ -358,10 +358,20 @@ authenticators:
   apikey:
     enabled: true
 
+  # X.509 client-certificate authentication. The client posts a PEM-
+  # encoded cert as credential.certificate; the server verifies against
+  # trusted_ca_files (roots) + intermediate_files (chain). Both lists
+  # accept multi-cert PEM bundles (cat ca1.pem ca2.pem > bundle.pem).
+  # Bad / missing / empty PEM files fail loud at boot rather than
+  # silently shipping with an empty trust store. Disabled by default in
+  # production stances — set enabled: true once you've supplied at
+  # least one CA in trusted_ca_files.
   certificate:
-    enabled: true
+    enabled: false
     trusted_ca_files: []
+    # - /etc/sso/pki/corp-root-ca.pem
     intermediate_files: []
+    # - /etc/sso/pki/corp-intermediate.pem
 
   # RFC 6238 TOTP — the same primitive Google Authenticator / 1Password /
   # Authy speak. cmd's wiring uses an in-process MemoryTOTPStore (demo /
