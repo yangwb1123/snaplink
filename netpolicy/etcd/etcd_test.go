@@ -10,13 +10,30 @@ package etcd
 //   * unmarshalPolicy stamps Version from ModRevision
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/netpolicy"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+// TestPing_NilReceiverAndClient covers the defensive guards on the
+// /readyz wire — a Store whose client wasn't constructed (zero
+// value) and a nil *Store both surface a typed closed-error rather
+// than panic.
+func TestPing_NilReceiverAndClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := (*Store)(nil).Ping(ctx); err == nil {
+		t.Error("nil receiver: expected closed-error, got nil")
+	}
+	if err := (&Store{}).Ping(ctx); err == nil {
+		t.Error("nil client: expected closed-error, got nil")
+	}
+}
 
 func TestKey(t *testing.T) {
 	s := &Store{prefix: "/snaplink/netpolicy"}

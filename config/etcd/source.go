@@ -152,6 +152,32 @@ func (s *Source) Close() error {
 	return s.client.Close()
 }
 
+// Ping reports etcd reachability for [sso.WithReadyCheck] wiring.
+// Config etcd is loaded once at startup, but operators running the
+// loader against a live etcd cluster (e.g. for env-overlay reloads)
+// still benefit from a readiness signal that catches a disappeared
+// keyspace before a reload silently leaves stale config in place.
+// Returns nil as soon as one configured endpoint responds; only
+// fails when every endpoint is unreachable.
+func (s *Source) Ping(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		return errors.New("config/etcd: closed")
+	}
+	endpoints := s.client.Endpoints()
+	if len(endpoints) == 0 {
+		return errors.New("config/etcd: no endpoints configured")
+	}
+	var lastErr error
+	for _, ep := range endpoints {
+		if _, err := s.client.Status(ctx, ep); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("config/etcd: all endpoints unreachable: %w", lastErr)
+}
+
 // kv is the thin internal shape used by buildConfigMap so the pure-logic
 // projection doesn't pull etcd types into its signature.
 type kv struct {

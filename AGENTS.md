@@ -435,6 +435,16 @@ holds a hot snapshot subscribed to `Store.Watch` via `Start`
 `/api/v1/netpolicy/{policies,classify,resolve-me}`. Server helper:
 `(*sso.Server).ClassifyRequest(r)`.
 
+Backends: `memory` (single-replica, in-process) and `etcd`
+(cluster-shared). cmd's `buildNetworkStore` selects on
+`network.store`; the etcd path is materialized in cmd (not in
+`config`) so the config package keeps the etcd transitive dep out
+of its SPI. Both paths funnel seed policies through
+`config.ApplyNetworkPolicySeeds` so semantics + error wrapping stay
+identical. The etcd Store exposes `Ping(ctx)` that walks every
+configured endpoint and succeeds as soon as one responds — cmd
+registers it as `etcd-netpolicy` on /readyz.
+
 ### Bootstrap (`bootstrap/`)
 Versioned first-run init. `Step = Name()/Version()/Run(ctx)`; Runner
 re-runs only `Version > high-water`. Trackers: `memory` (tests),
@@ -637,11 +647,13 @@ etc.). The SQLite rate limiter participates too — when
 `sqlite-ratelimit-default` for the policy's default bucket and
 `sqlite-ratelimit-<prefix>` for each declared prefix (slashes
 collapse to hyphens, so `/token/revoke` surfaces as
-`sqlite-ratelimit-token-revoke`). Memory backends don't implement
-Ping, so the type assertion silently no-ops — exactly the right
-cadence (no readiness signal from a process-local map). The check
-payload is `{"status":"ready|unready","checks":{name: "ok"|err}}` so
-kubelet + operators see exactly which dependency tripped the 503.
+`sqlite-ratelimit-token-revoke`). The etcd-backed netpolicy Store
+participates as `etcd-netpolicy` when wired. Memory backends don't
+implement Ping, so the type assertion silently no-ops — exactly the
+right cadence (no readiness signal from a process-local map). The
+check payload is `{"status":"ready|unready","checks":{name:
+"ok"|err}}` so kubelet + operators see exactly which dependency
+tripped the 503.
 
 ### Risk scoring (`risk.go`)
 `RiskScorer` runs on `/auth/login` AFTER credential validation,
@@ -675,7 +687,9 @@ audit:         # enabled, api_enabled, memory_capacity, hash_chain
                # webhook: { enabled, url, timeout, headers, retry.{max_attempts, initial_backoff, max_backoff} }
                #   composed as AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))) — fan-out to a downstream collector
 permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
-network:       # enabled, api_enabled, store, policies[]
+network:       # enabled, api_enabled, store(memory|etcd), policies[]
+               # etcd_endpoints[], etcd_prefix, etcd_dial_timeout, etcd_username, etcd_password
+               #   etcd backend constructed in cmd; cluster-shared classifier state survives replica churn
 clients:       # id, secret, allowed_authenticators, token_strategy,
                # redirect_uris, post_logout_redirect_uris, allowed_scopes,
                # allowed_resources, allowed_authorization_details_types,

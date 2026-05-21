@@ -824,16 +824,21 @@ type AuditAsyncConfig struct {
 //   - APIEnabled=true additionally mounts the REST endpoints
 //     (/api/v1/netpolicy/...).
 //   - Store selects the backend; "memory" (default) is in-process, "etcd"
-//     reads from an etcd cluster (see EtcdEndpoints below).
+//     reads from an etcd cluster (see EtcdEndpoints below). The etcd
+//     backend is materialized by cmd/sso-server, NOT by [Config.BuildNetworkStore]
+//     — the config package keeps the etcd transitive dep out of the SPI.
 //   - Policies is the seed list applied at startup. Operators can also add /
 //     update / delete policies live via the API.
 type NetworkConfig struct {
-	Enabled       bool                `yaml:"enabled"`
-	APIEnabled    bool                `yaml:"api_enabled"`
-	Store         string              `yaml:"store"` // "memory" | "etcd"
-	EtcdEndpoints []string            `yaml:"etcd_endpoints"`
-	EtcdPrefix    string              `yaml:"etcd_prefix"`
-	Policies      []NetworkPolicySeed `yaml:"policies"`
+	Enabled         bool                `yaml:"enabled"`
+	APIEnabled      bool                `yaml:"api_enabled"`
+	Store           string              `yaml:"store"` // "memory" | "etcd"
+	EtcdEndpoints   []string            `yaml:"etcd_endpoints"`
+	EtcdPrefix      string              `yaml:"etcd_prefix"`
+	EtcdDialTimeout time.Duration       `yaml:"etcd_dial_timeout"`
+	EtcdUsername    string              `yaml:"etcd_username"`
+	EtcdPassword    string              `yaml:"etcd_password"`
+	Policies        []NetworkPolicySeed `yaml:"policies"`
 }
 
 // NetworkPolicySeed is the YAML projection of netpolicy.Policy with only the
@@ -853,6 +858,11 @@ type NetworkPolicySeed struct {
 // and seeds it with the declared policies. Returns nil when network is
 // disabled. Callers own the returned store's lifetime — Close it at
 // shutdown.
+//
+// The etcd backend intentionally errors here so the config package stays
+// free of the etcd transitive dep. Operators wiring network.store=etcd
+// MUST construct the [netpolicy/etcd.Store] inside cmd/sso-server (or
+// any embedder) and feed seeds through [ApplyNetworkPolicySeeds].
 func (c *Config) BuildNetworkStore() (netpolicy.Store, error) {
 	if !c.Network.Enabled {
 		return nil, nil
@@ -862,14 +872,29 @@ func (c *Config) BuildNetworkStore() (netpolicy.Store, error) {
 	case "", "memory":
 		store = memory.New()
 	case "etcd":
-		// Lazy import: only construct when actually asked for, so unit tests
-		// that exercise memory mode don't need etcd reachable.
 		return nil, errors.New("config: network.store=etcd: construct via cmd/sso-server directly (needs endpoints + dial timeout)")
 	default:
 		return nil, fmt.Errorf("config: unknown network.store %q", c.Network.Store)
 	}
-	for _, seed := range c.Network.Policies {
-		if _, err := store.Apply(context.Background(), &netpolicy.Policy{
+	if err := ApplyNetworkPolicySeeds(context.Background(), store, c.Network.Policies); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+// ApplyNetworkPolicySeeds applies declarative NetworkPolicySeed entries
+// to any netpolicy.Store via its [netpolicy.Store.Apply] method. Used
+// by [Config.BuildNetworkStore] for the memory path and by cmd
+// directly for the etcd path so both stay in lockstep on seed
+// semantics + error wrapping.
+//
+// Returns a wrapped error identifying the offending policy on the
+// first failure; the caller is responsible for closing the partially
+// populated store.
+func ApplyNetworkPolicySeeds(ctx context.Context, store netpolicy.Store, seeds []NetworkPolicySeed) error {
+	for _, seed := range seeds {
+		if _, err := store.Apply(ctx, &netpolicy.Policy{
 			Name:                seed.Name,
 			CIDRs:               seed.CIDRs,
 			Hostnames:           seed.Hostnames,
@@ -879,11 +904,10 @@ func (c *Config) BuildNetworkStore() (netpolicy.Store, error) {
 			AdvertisedLogoutURL: seed.AdvertisedLogoutURL,
 			Metadata:            seed.Metadata,
 		}); err != nil {
-			_ = store.Close()
-			return nil, fmt.Errorf("config: seed policy %q: %w", seed.Name, err)
+			return fmt.Errorf("config: seed policy %q: %w", seed.Name, err)
 		}
 	}
-	return store, nil
+	return nil
 }
 
 // ServerConfig holds top-level Server tunables.

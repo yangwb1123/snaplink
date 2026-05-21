@@ -51,6 +51,7 @@ import (
 	"github.com/snaplink/sso/grpcserver"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
+	netpolicyetcd "github.com/snaplink/sso/netpolicy/etcd"
 	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
@@ -1083,6 +1084,59 @@ func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) 
 	return p, nil
 }
 
+// buildNetworkStore materializes the netpolicy.Store for cmd.
+//
+// Memory backend defers to [config.Config.BuildNetworkStore] (which
+// applies seeds itself). The etcd backend is constructed here so the
+// config package keeps the etcd transitive dep out of its SPI; seeds
+// flow through [config.ApplyNetworkPolicySeeds] so both paths share
+// identical seed semantics + error wrapping.
+//
+// Returns (nil, "", nil) when network is disabled. The returned kind
+// is "memory" or "etcd"; cmd uses it to decide whether to register a
+// /readyz check (memory has no backend health signal to report).
+func buildNetworkStore(cfg *config.NetworkConfig, logger sso.Logger) (netpolicy.Store, string, error) {
+	if !cfg.Enabled {
+		return nil, "", nil
+	}
+	backend := strings.ToLower(strings.TrimSpace(cfg.Store))
+	switch backend {
+	case "", "memory":
+		store, err := (&config.Config{Network: *cfg}).BuildNetworkStore()
+		if err != nil {
+			return nil, "", err
+		}
+		logger.Info("network policy store", "backend", "memory", "seed_policies", len(cfg.Policies))
+		return store, "memory", nil
+	case "etcd":
+		if len(cfg.EtcdEndpoints) == 0 {
+			return nil, "", errors.New("network.etcd_endpoints required when network.store=etcd")
+		}
+		store, err := netpolicyetcd.New(netpolicyetcd.Config{
+			Endpoints:   cfg.EtcdEndpoints,
+			Prefix:      cfg.EtcdPrefix,
+			DialTimeout: cfg.EtcdDialTimeout,
+			Username:    cfg.EtcdUsername,
+			Password:    cfg.EtcdPassword,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("netpolicy/etcd: %w", err)
+		}
+		if err := config.ApplyNetworkPolicySeeds(context.Background(), store, cfg.Policies); err != nil {
+			_ = store.Close()
+			return nil, "", err
+		}
+		logger.Info("network policy store",
+			"backend", "etcd",
+			"endpoints", cfg.EtcdEndpoints,
+			"prefix", cfg.EtcdPrefix,
+			"seed_policies", len(cfg.Policies))
+		return store, "etcd", nil
+	default:
+		return nil, "", fmt.Errorf("unknown network.store %q", cfg.Store)
+	}
+}
+
 // buildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
 // SnapshotConfig. Returns (nil, nil, nil) when snapshot.enabled=false. The
 // Snapshotter / Restorer that depend on the runtime stores are wired
@@ -1518,7 +1572,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithPermissionProvider(provider))
 	}
 
-	netStore, err := cfg.BuildNetworkStore()
+	netStore, netStoreKind, err := buildNetworkStore(&cfg.Network, logger)
 	if err != nil {
 		return nil, fmt.Errorf("network policy store: %w", err)
 	}
@@ -1535,6 +1589,9 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithNetworkPolicy(netStore, classifier))
 		if cfg.Network.APIEnabled {
 			opts = append(opts, sso.WithNetworkPolicyAPI())
+		}
+		if netStoreKind == "etcd" {
+			opts = appendReadyCheck(opts, "etcd-netpolicy", netStore)
 		}
 	}
 

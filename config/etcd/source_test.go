@@ -11,9 +11,26 @@ package etcd
 //   * NewWithClient honors empty prefix → DefaultPrefix
 
 import (
+	"context"
 	"reflect"
 	"testing"
+	"time"
 )
+
+// TestPing_NilReceiverAndClient covers the defensive guards on the
+// /readyz wire — a Source whose client wasn't constructed (zero
+// value) and a nil *Source both surface a typed closed-error rather
+// than panic.
+func TestPing_NilReceiverAndClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := (*Source)(nil).Ping(ctx); err == nil {
+		t.Error("nil receiver: expected closed-error, got nil")
+	}
+	if err := (&Source{}).Ping(ctx); err == nil {
+		t.Error("nil client: expected closed-error, got nil")
+	}
+}
 
 func TestParseKey_BasicNested(t *testing.T) {
 	got := parseKey("/snaplink/config", "/snaplink/config/server/listen")

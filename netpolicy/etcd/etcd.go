@@ -176,6 +176,31 @@ func (s *Store) Close() error {
 	return s.client.Close()
 }
 
+// Ping reports etcd reachability for [sso.WithReadyCheck] wiring.
+// Issues a Maintenance.Status RPC against each configured endpoint
+// in turn and returns nil as soon as one responds. Returns an
+// aggregate error only when every endpoint is unreachable so a
+// single down member doesn't trip /readyz on an otherwise healthy
+// cluster.
+func (s *Store) Ping(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		return errors.New("netpolicy/etcd: closed")
+	}
+	endpoints := s.client.Endpoints()
+	if len(endpoints) == 0 {
+		return errors.New("netpolicy/etcd: no endpoints configured")
+	}
+	var lastErr error
+	for _, ep := range endpoints {
+		if _, err := s.client.Status(ctx, ep); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("netpolicy/etcd: all endpoints unreachable: %w", lastErr)
+}
+
 func (s *Store) key(name string) string {
 	return path.Join(s.prefix, name)
 }

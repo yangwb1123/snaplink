@@ -10,8 +10,10 @@ package etcd
 //   * translateEvent's three branches (Put-add, Put-modify, Delete)
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/registry"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
@@ -108,6 +110,21 @@ func TestTranslateEvent_Delete_WithPrevKV(t *testing.T) {
 	}
 	if got.Service == nil || got.Service.Address != "host" {
 		t.Errorf("expected previous-kv body to be preserved; got %+v", got.Service)
+	}
+}
+
+// TestPing_NilReceiverAndClient covers the defensive guards on the
+// /readyz wire — a Registry whose client wasn't constructed (zero
+// value) and a nil *Registry both surface a typed closed-error
+// rather than panic.
+func TestPing_NilReceiverAndClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := (*Registry)(nil).Ping(ctx); err == nil {
+		t.Error("nil receiver: expected closed-error, got nil")
+	}
+	if err := (&Registry{}).Ping(ctx); err == nil {
+		t.Error("nil client: expected closed-error, got nil")
 	}
 }
 

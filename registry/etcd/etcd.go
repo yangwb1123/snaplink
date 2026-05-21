@@ -204,6 +204,31 @@ func (r *Registry) Watch(ctx context.Context, serviceName string) (<-chan regist
 	return out, nil
 }
 
+// Ping reports etcd reachability for [sso.WithReadyCheck] wiring.
+// Issues a Maintenance.Status RPC against each configured endpoint
+// in turn and returns nil as soon as one responds. Returns an
+// aggregate error only when every endpoint is unreachable so a
+// single down member doesn't trip /readyz on an otherwise healthy
+// cluster.
+func (r *Registry) Ping(ctx context.Context) error {
+	if r == nil || r.client == nil {
+		return errors.New("registry/etcd: closed")
+	}
+	endpoints := r.client.Endpoints()
+	if len(endpoints) == 0 {
+		return errors.New("registry/etcd: no endpoints configured")
+	}
+	var lastErr error
+	for _, ep := range endpoints {
+		if _, err := r.client.Status(ctx, ep); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("registry/etcd: all endpoints unreachable: %w", lastErr)
+}
+
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	if r.closed {
