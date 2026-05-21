@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/config"
 )
@@ -114,6 +115,38 @@ func TestBuildClientStore_SQLiteNeedsDSN(t *testing.T) {
 	_, err := buildClientStore(config.IdentityConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildSessionManager_MemoryDefault(t *testing.T) {
+	m, err := buildSessionManager(config.IdentityConfig{}, time.Hour)
+	if err != nil {
+		t.Fatalf("memory build: %v", err)
+	}
+	if m == nil {
+		t.Fatal("session manager nil")
+	}
+}
+
+func TestBuildSessionManager_SQLiteNeedsDSN(t *testing.T) {
+	_, err := buildSessionManager(config.IdentityConfig{Backend: "sqlite"}, time.Hour)
+	if err == nil {
+		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildSessionManager_SQLiteOpensFile(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL"
+	m, err := buildSessionManager(config.IdentityConfig{
+		Backend: "sqlite",
+		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
+	}, time.Hour)
+	if err != nil {
+		t.Fatalf("sqlite build: %v", err)
+	}
+	if m == nil {
+		t.Fatal("session manager nil")
 	}
 }
 

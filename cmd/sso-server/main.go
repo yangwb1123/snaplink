@@ -658,6 +658,24 @@ func buildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 	}
 }
 
+// buildSessionManager picks the SessionManager backend. Same memory|
+// sqlite selector as the rest of identity-domain stores so operators
+// running TokenStrategySession across multiple replicas get cross-
+// replica session redemption against a shared SQLite file.
+func buildSessionManager(cfg config.IdentityConfig, ttl time.Duration) (sso.SessionManager, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemorySessionManager(ttl), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("identity.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewSessionManager(cfg.SQLite.DSN, ttl)
+	default:
+		return nil, fmt.Errorf("unknown identity.backend %q", cfg.Backend)
+	}
+}
+
 // buildAuthCodeStore / buildRefreshTokenStore / buildDeviceCodeStore
 // pick between memory + sqlite per cfg.Backend. SQLite needs a DSN;
 // memory needs nothing. Each SQLite call opens its own connection
@@ -1058,7 +1076,10 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity user_provider: %w", err)
 	}
-	sessionMgr := defaultimpl.NewMemorySessionManager(cfg.Server.SessionTTL)
+	sessionMgr, err := buildSessionManager(cfg.Identity, cfg.Server.SessionTTL)
+	if err != nil {
+		return nil, fmt.Errorf("identity session_manager: %w", err)
+	}
 	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
 		defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),

@@ -54,10 +54,12 @@ server:
 logging:
   level: info
 
-# Identity-domain persistence (User + Client stores). memory keeps the
-# simple bootstrap story but loses DCR-registered clients + password
-# authenticator users on restart. sqlite persists across restarts;
-# DSN can be shared with oauth.sqlite.dsn for a single-file install.
+# Identity-domain persistence (User + Client + Session stores). memory
+# keeps the simple bootstrap story but loses DCR-registered clients +
+# password authenticator users + opaque session-strategy tokens on
+# restart. sqlite persists across restarts and lets multiple replicas
+# share session state for TokenStrategySession clients. DSN can be
+# shared with oauth.sqlite.dsn for a single-file install.
 identity:
   backend: memory       # memory | sqlite
   sqlite:

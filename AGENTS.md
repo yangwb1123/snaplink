@@ -90,10 +90,11 @@ via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 
 ### Storage today
 Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
-Client / AuthCode / RefreshToken / DeviceCode / PAR. Session /
-RateLimiter / RefreshTokenFamily are memory-only. **Multi-replica
-deployments break Session-strategy + lockout/family-reuse signals**
-until those grow distributed backends.
+Client / AuthCode / RefreshToken (+ FamilyTracker) / DeviceCode /
+PAR / Session. RateLimiter / AccountLockout / JTIReplay are
+memory-only. **Multi-replica deployments lose cross-replica abuse
+detection** until those grow shared backends — but every flow that
+issues or redeems persistent state now works horizontally.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -276,8 +277,10 @@ IdP federation remain on the roadmap.
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
 AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
-PAR. Single-use stores (AuthCode, DeviceCode, RefreshToken, PAR)
-use `DELETE … RETURNING` for race-free consumption.
+PAR, Session. Single-use stores (AuthCode, DeviceCode, RefreshToken,
+PAR) use `DELETE … RETURNING` for race-free consumption; Session
+uses `UPDATE … RETURNING` on Refresh for the same one-roundtrip
+existence check.
 
 DSN cookbook:
 | DSN | Use |
@@ -610,7 +613,7 @@ metrics:       # enabled — mounts /metrics; auto-registers audit AsyncSink col
 oauth:         # backend(memory|sqlite), sqlite.dsn
                # auth_code, refresh_token, device_code, par — each {enabled, ttl}
                # jar: { enabled, timeout, max_bytes } — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect)
-identity:      # backend(memory|sqlite), sqlite.dsn — User + Client store substrate
+identity:      # backend(memory|sqlite), sqlite.dsn — User + Client + Session store substrate
 backchannel_logout:  # enabled, max_concurrent — OIDC BCL 1.0; HTTPLogoutNotifier + memory SubjectClientIndex
 client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults
 ```
