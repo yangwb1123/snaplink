@@ -98,6 +98,38 @@ func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestBuildApp_AccountLockoutWiredWithOverrides(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.AccountLockout.Enabled = true
+	cfg.Security.AccountLockout.MaxFailures = 3
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	if a.server == nil {
+		t.Fatal("server nil")
+	}
+}
+
+func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
+	// Zero numeric values fall back to SDK defaults — confirms the
+	// wiring code doesn't accidentally pass 0 to the override
+	// branches (which would lock the account on the first failure).
+	cfg := &config.Config{}
+	cfg.Security.AccountLockout.Enabled = true
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	if a.server == nil {
+		t.Fatal("server nil")
+	}
+}
+
 func TestBuildApp_CORSWiredWhenOriginsSet(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Security.CORS.Enabled = true

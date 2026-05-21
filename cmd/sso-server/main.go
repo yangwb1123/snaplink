@@ -1096,6 +1096,23 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithJTIReplayStore(defaultimpl.NewMemoryJTIReplayStore()))
 		logger.Info("security: jti replay protection enabled (memory backend — single-replica only)")
 	}
+	if al := cfg.Security.AccountLockout; al.Enabled {
+		lockout := sso.NewMemoryAccountLockout()
+		if al.MaxFailures > 0 {
+			lockout.MaxFailures = al.MaxFailures
+		}
+		if al.LockoutDuration > 0 {
+			lockout.LockoutDuration = al.LockoutDuration
+		}
+		if al.FailureWindow > 0 {
+			lockout.FailureWindow = al.FailureWindow
+		}
+		opts = append(opts, sso.WithAccountLockout(lockout))
+		logger.Info("security: account lockout enabled (memory backend — single-replica only)",
+			"max_failures", lockout.MaxFailures,
+			"lockout_duration", lockout.LockoutDuration,
+			"failure_window", lockout.FailureWindow)
+	}
 	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(cors.Policy{
 			AllowedOrigins:   c.AllowedOrigins,

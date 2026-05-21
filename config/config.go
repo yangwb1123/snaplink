@@ -122,11 +122,32 @@ type MetricsConfig struct {
 // overhead. See AGENTS.md §8d / §8f / §8g for the runtime behavior
 // of each.
 type SecurityConfig struct {
-	BodyLimit BodyLimitConfig `yaml:"body_limit"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	CORS      CORSConfig      `yaml:"cors"`
-	DPoPNonce DPoPNonceConfig `yaml:"dpop_nonce"`
-	JTIReplay JTIReplayConfig `yaml:"jti_replay"`
+	BodyLimit      BodyLimitConfig      `yaml:"body_limit"`
+	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
+	CORS           CORSConfig           `yaml:"cors"`
+	DPoPNonce      DPoPNonceConfig      `yaml:"dpop_nonce"`
+	JTIReplay      JTIReplayConfig      `yaml:"jti_replay"`
+	AccountLockout AccountLockoutConfig `yaml:"account_lockout"`
+}
+
+// AccountLockoutConfig opts into per-account lockout on /auth/login.
+// After MaxFailures bad attempts within FailureWindow, the account is
+// locked for LockoutDuration — subsequent logins return immediately
+// without consulting authenticators (mitigates credential stuffing
+// and bcrypt-CPU starvation attacks).
+//
+// All three numeric fields fall back to SDK defaults (5 failures,
+// 15min lockout, 1h sliding window) when <= 0.
+//
+// Memory backend is single-replica only — multi-replica deployments
+// MUST plug a shared backend via sso.WithAccountLockout directly,
+// otherwise an attacker just rotates targets across replicas to
+// stay below each replica's local threshold.
+type AccountLockoutConfig struct {
+	Enabled         bool          `yaml:"enabled"`
+	MaxFailures     int           `yaml:"max_failures"`
+	LockoutDuration time.Duration `yaml:"lockout_duration"`
+	FailureWindow   time.Duration `yaml:"failure_window"`
 }
 
 // JTIReplayConfig opts into RFC 9101 §10.8 + RFC 9449 §11.1 jti-based

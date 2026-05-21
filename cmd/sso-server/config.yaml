@@ -248,6 +248,17 @@ security:
   jti_replay:
     enabled: false
 
+  # Per-account lockout. After max_failures bad login attempts within
+  # failure_window, the account is locked for lockout_duration —
+  # subsequent attempts return immediately without consulting the
+  # authenticator. Mitigates credential stuffing + bcrypt-CPU starvation
+  # attacks. Memory backend only; multi-replica needs a shared backend.
+  account_lockout:
+    enabled: false
+    max_failures: 5
+    lockout_duration: 15m
+    failure_window: 1h
+
   cors:
     enabled: false           # flip to true + list allowed_origins for SPAs
     allowed_origins: []      # exact-match origins; "*" wildcards
