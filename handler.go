@@ -1193,8 +1193,19 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ctx.Request().Method,
 			requestURLForDPoP(ctx.Request()),
 			s.jtiReplayStore,
+			s.dpopNonceProvider,
 		)
 		if err != nil {
+			// RFC 9449 §8 — nonce required: stamp a fresh nonce on
+			// the response and respond with use_dpop_nonce instead
+			// of invalid_dpop_proof so clients can retry. AS-side
+			// uses HTTP 400 (vs 401 for RS-side).
+			if errors.Is(err, ErrDPoPNonceRequired) {
+				s.stampDPoPNonce(ctx)
+				s.logger.Info("dpop nonce challenge", "method", ctx.Request().Method)
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrUseDPoPNonce))
+				return
+			}
 			s.logger.Error("dpop proof failed", "error", err)
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidDPoPProof))
 			return
@@ -1532,6 +1543,16 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// attackers can't tell DPoP-bound from unbound tokens via
 	// response probing.
 	if err := s.verifyDPoPBearer(ctx, claims); err != nil {
+		// RFC 9449 §8 — RS-side nonce challenge: 401 + DPoP-Nonce header.
+		// Distinct from the AS-side challenge (400 at /token) so a
+		// resource server sees the standard 401-with-WWW-Authenticate
+		// pattern it already implements for bearer failures.
+		if errors.Is(err, ErrDPoPNonceRequired) {
+			s.stampDPoPNonce(ctx)
+			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrUseDPoPNonce))
+			return
+		}
 		s.logger.Error("dpop bearer verification failed", "error", err, "subject", claims.Subject)
 		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))

@@ -64,10 +64,12 @@ exact emission site.
 
 | Code             | HTTP | Emitted when                                          | Client should                       |
 |------------------|------|-------------------------------------------------------|-------------------------------------|
-| `missing_token`  | 401  | `Authorization: Bearer ...` header absent             | Send the bearer                     |
-| `invalid_token`  | 401  | Token signature invalid / expired / revoked           | Re-authenticate                     |
-| `user_not_found` | 404  | Token is valid but the subject id has no User record  | Recreate the user (admin) or rebind |
-| `unauthorized`   | 401  | Generic auth check failure (admin middleware)         | Re-authenticate                     |
+| `missing_token`    | 401  | `Authorization: Bearer ...` header absent                                                          | Send the bearer                                            |
+| `invalid_token`    | 401  | Token signature invalid / expired / revoked / tenant suspended                                     | Re-authenticate                                            |
+| `invalid_dpop_proof` | 400  | DPoP header present but proof JWT fails verification (bad sig, htm/htu/iat/jti)                  | Regenerate the proof                                       |
+| `use_dpop_nonce`   | 400 (AS) / 401 (RS) | DPoP nonce required but missing / invalid; fresh nonce delivered via `DPoP-Nonce` header | Retry with the new nonce embedded in the proof's `nonce` claim |
+| `user_not_found`   | 404  | Token is valid but the subject id has no User record                                               | Recreate the user (admin) or rebind                        |
+| `unauthorized`     | 401  | Generic auth check failure (admin middleware)                                                      | Re-authenticate                                            |
 
 ---
 

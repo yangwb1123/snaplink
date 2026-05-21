@@ -170,6 +170,13 @@ const (
 	// `DPoP` header is present but fails verification (bad
 	// signature, mismatched htm / htu / iat, replayed jti).
 	ErrInvalidDPoPProof = "invalid_dpop_proof"
+
+	// RFC 9449 §8 — use_dpop_nonce signals the client must include
+	// a server-issued nonce claim in subsequent DPoP proofs. The
+	// fresh nonce is delivered to the client via the `DPoP-Nonce`
+	// response header; the client repeats the request with that
+	// nonce embedded in the proof JWT's `nonce` claim.
+	ErrUseDPoPNonce = "use_dpop_nonce"
 )
 
 // OIDC Core §3.1.2.1 prompt values. Space-separated combinations are

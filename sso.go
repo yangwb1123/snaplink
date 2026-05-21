@@ -78,6 +78,7 @@ type Server struct {
 	subjectClientIndex   SubjectClientIndex
 	jarFetcher           JARFetcher
 	clientCertExtractor  ClientCertExtractor
+	dpopNonceProvider    DPoPNonceProvider
 	supportedACRValues   []string
 	opPolicyURI          string
 	opTosURI             string

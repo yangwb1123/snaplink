@@ -84,6 +84,7 @@ func verifyDPoPProof(
 	requestMethod string,
 	requestURL string,
 	replay JTIReplayStore,
+	nonceProvider DPoPNonceProvider,
 ) (*DPoPBinding, error) {
 	parts := strings.Split(proof, ".")
 	if len(parts) != 3 {
@@ -138,10 +139,11 @@ func verifyDPoPProof(
 		return nil, fmt.Errorf("dpop: payload decode: %w", err)
 	}
 	var p struct {
-		HTM string `json:"htm"`
-		HTU string `json:"htu"`
-		IAT int64  `json:"iat"`
-		JTI string `json:"jti"`
+		HTM   string `json:"htm"`
+		HTU   string `json:"htu"`
+		IAT   int64  `json:"iat"`
+		JTI   string `json:"jti"`
+		Nonce string `json:"nonce,omitempty"`
 	}
 	if err := json.Unmarshal(praw, &p); err != nil {
 		return nil, fmt.Errorf("dpop: payload parse: %w", err)
@@ -164,6 +166,21 @@ func verifyDPoPProof(
 	}
 	if p.JTI == "" {
 		return nil, errors.New("dpop: missing jti")
+	}
+	// RFC 9449 §8 — when a nonce provider is wired, the proof MUST
+	// carry a `nonce` claim that Verify accepts. A missing or invalid
+	// nonce returns the ErrDPoPNonceRequired sentinel so handlers
+	// can stamp a fresh `DPoP-Nonce` header and respond with
+	// `use_dpop_nonce`. We do NOT distinguish missing-vs-invalid on
+	// the wire — both shapes look identical to the client, who just
+	// reads the new nonce header and retries.
+	if nonceProvider != nil {
+		if p.Nonce == "" {
+			return nil, ErrDPoPNonceRequired
+		}
+		if err := nonceProvider.Verify(p.Nonce); err != nil {
+			return nil, ErrDPoPNonceRequired
+		}
 	}
 	// Replay defense — when wired, refuse a second sighting of the
 	// same jti within the proof's max age. Without a store the
@@ -242,6 +259,7 @@ func (s *Server) verifyDPoPBearer(ctx HandlerContext, claims *TokenClaims) error
 		ctx.Request().Method,
 		requestURLForDPoP(ctx.Request()),
 		s.jtiReplayStore,
+		s.dpopNonceProvider,
 	)
 	if err != nil {
 		return fmt.Errorf("dpop: proof verification: %w", err)
