@@ -585,7 +585,7 @@ clients:       # id, secret, allowed_authenticators, token_strategy,
                # require_signed_request_object, ...
 authenticators: # per-method enable + tuning
 admin:         # enabled, api_rest_enabled
-bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code
+bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code, admin_password_file
                # lock: { backend, key, ttl, blocking, file.dir, etcd.endpoints }
 snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
                # storage: { backend(file|inline), file.dir }
