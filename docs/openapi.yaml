@@ -10,10 +10,10 @@
 # ceremony + the OAuth /token family (/token, /token/introspect,
 # /token/revoke — covers RFC 6749 grants, RFC 8628 device flow, RFC
 # 8693 token-exchange, RFC 7662 introspection, RFC 7009 revocation,
-# RFC 9449 DPoP, RFC 8705 mTLS binding, RFC 7521/7523 private_key_jwt).
-# The Pushed Authorization Request endpoint (/par), device-flow
-# user-facing endpoints (/device/code, /device/verify), Dynamic Client
-# Registration (/register*), the admin REST surface
+# RFC 9449 DPoP, RFC 8705 mTLS binding, RFC 7521/7523 private_key_jwt)
+# + Pushed Authorization Requests (/par, RFC 9126) + device-flow
+# user-facing endpoints (/device/code, /device/verify, RFC 8628).
+# Dynamic Client Registration (/register*), the admin REST surface
 # (/api/v1/admin/*), the audit query API, and the netpolicy CRUD
 # surface are deferred to v2 — additive layering only, no schema
 # rewrites needed.
@@ -495,6 +495,189 @@ paths:
               schema: { type: string, example: no-store }
         "401":
           description: Client authentication failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /par:
+    post:
+      tags: [auth]
+      summary: Pushed Authorization Request (RFC 9126).
+      description: |
+        Confidential clients POST their full authorization request
+        parameters here BEFORE redirecting the user agent, getting
+        back an opaque `request_uri` to pass to /auth/login. The
+        pre-registration pattern (1) authenticates the client
+        upstream of the redirect, (2) removes long auth-request
+        URLs from browser logs / proxies, (3) prevents tampering —
+        nothing beyond client_id + request_uri can be modified
+        without invalidating the lookup.
+
+        Client auth follows the same rules as /token: HTTP Basic >
+        body > private_key_jwt. PAR rejections happen at PAR time
+        rather than at the redirect (the whole point of the
+        pattern) — invalid_redirect_uri / invalid_target /
+        invalid_authorization_details / invalid_request all surface
+        as 400 here.
+
+        When a client has `Client.RequirePAR: true`, direct
+        /auth/login calls without request_uri are rejected with
+        `invalid_request`. Combine with private_key_jwt for FAPI
+        2.0-grade confidentiality.
+      operationId: postPAR
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/PARRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PARRequest"
+      responses:
+        "201":
+          description: PAR succeeded; request_uri minted.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PARResponse"
+        "400":
+          description: |
+            invalid_request / invalid_redirect_uri / invalid_target
+            / invalid_authorization_details — the parameter the
+            spec mandates for each respective rejection class.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Client authentication failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Client inactive or tenant mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            PAR store not wired — operator hasn't called
+            `WithPARStore`. Wire code: `par_not_configured`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /device/code:
+    post:
+      tags: [auth]
+      summary: Device-flow initiation (RFC 8628 §3.1).
+      description: |
+        The device POSTs its client_id (+ optional scope/resource).
+        Server returns a long-lived `device_code` (the device's
+        polling key) and a short `user_code` (the human types this
+        on a second device). The device displays
+        `verification_uri` + `user_code` (or scans
+        `verification_uri_complete` as a QR code) and starts
+        polling /token with `grant_type=urn:ietf:params:oauth:grant-type:device_code`.
+
+        Polling cadence: `interval` (seconds). Server may extend
+        the interval on subsequent /token polls by responding
+        `slow_down` — clients MUST respect.
+      operationId: postDeviceCode
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/DeviceCodeRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceCodeRequest"
+      responses:
+        "200":
+          description: Device code issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceCodeResponse"
+        "400":
+          description: invalid_request / invalid_target / missing client_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unknown client_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Inactive client or tenant mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            Device-code store not wired — operator hasn't called
+            `WithDeviceCodeStore`. Wire code:
+            `device_code_not_configured`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /device/verify:
+    post:
+      tags: [auth]
+      summary: User-side device-code approval (RFC 8628 §3.3).
+      description: |
+        The user (already authenticated via /auth/login on this
+        second device, holding a bearer) POSTs the `user_code` they
+        read off the first device plus `approve: true|false`. The
+        server flips the device code's state so the device's next
+        /token poll returns either success or `access_denied`.
+
+        user_code lookup is case-insensitive and dash-insensitive —
+        a user typing `WXYZ-1234`, `wxyz1234`, or `WXYZ1234` all
+        resolve to the same record. The device receives the
+        dashed form for display only.
+      operationId: postDeviceVerify
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/DeviceVerifyRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceVerifyRequest"
+      responses:
+        "200":
+          description: Approval / denial recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: invalid_request / invalid_grant (unknown user_code).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer.
           content:
             application/json:
               schema:
@@ -1371,6 +1554,128 @@ components:
           type: string
         client_secret:
           type: string
+
+    PARRequest:
+      type: object
+      required: [client_id]
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        response_type:
+          type: string
+          enum: [code]
+        redirect_uri:
+          type: string
+        scope:
+          type: string
+          description: Space-delimited scope list.
+        state:
+          type: string
+          description: |
+            Opaque CSRF token the RP later checks against the
+            /auth/login response.
+        nonce:
+          type: string
+          description: OIDC nonce binding (Core §3.1.2.1).
+        code_challenge:
+          type: string
+          description: RFC 7636 PKCE.
+        code_challenge_method:
+          type: string
+          enum: [S256, plain]
+        resource:
+          type: array
+          items: { type: string }
+        authorization_details:
+          description: |
+            RFC 9396 RAR — list of {type, ...} objects. JSON form
+            accepts an array directly; form-encoded body delivers
+            it as a single JSON string the server parses.
+          type: array
+          items:
+            type: object
+        login_hint:
+          type: string
+        response_mode:
+          type: string
+          enum: [query, fragment, form_post]
+        acr_values:
+          type: string
+        ui_locales:
+          type: string
+        claims:
+          type: object
+          description: OIDC Core §5.5 claims request.
+        client_assertion:
+          type: string
+        client_assertion_type:
+          type: string
+          enum:
+            - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+
+    PARResponse:
+      type: object
+      required: [request_uri, expires_in]
+      properties:
+        request_uri:
+          type: string
+          example: urn:ietf:params:oauth:request_uri:aWxiL3RoZXJlYWxh
+        expires_in:
+          type: integer
+          description: Seconds until the request_uri is consumed or expires.
+
+    DeviceCodeRequest:
+      type: object
+      required: [client_id]
+      properties:
+        client_id:
+          type: string
+        scope:
+          type: string
+        nonce:
+          type: string
+        resource:
+          type: array
+          items: { type: string }
+
+    DeviceCodeResponse:
+      type: object
+      required: [device_code, user_code, verification_uri, expires_in, interval]
+      properties:
+        device_code:
+          type: string
+          description: The device polls /token with this.
+        user_code:
+          type: string
+          example: WXYZ-1234
+        verification_uri:
+          type: string
+          example: https://sso.example.com/device/verify
+        verification_uri_complete:
+          type: string
+          description: Same URI with `?user_code=` pre-filled — QR-friendly.
+        expires_in:
+          type: integer
+        interval:
+          type: integer
+          description: Minimum seconds between /token polls.
+
+    DeviceVerifyRequest:
+      type: object
+      required: [user_code, approve]
+      properties:
+        user_code:
+          type: string
+          description: |
+            Case-insensitive and dash-insensitive. `WXYZ-1234`,
+            `wxyz1234`, `WXYZ1234` all resolve to the same code.
+        approve:
+          type: boolean
+          description: |
+            `true` to authorize; `false` to deny (device's next
+            /token poll returns `access_denied`).
 
     User:
       type: object
