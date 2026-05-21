@@ -566,6 +566,28 @@ var _ = lockNoop.New
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
+// buildPairwiseSubjectStore picks the pairwise reverse-lookup
+// backend. memory keeps the single-replica story; sqlite shares
+// (pairwise → local) so /userinfo + revoke + end_session on any
+// replica can resolve any in-flight bearer token.
+func buildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (sso.PairwiseSubjectStore, string, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "memory":
+		return sso.NewMemoryPairwiseSubjectStore(), "memory (single-replica only)", nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, "", errors.New("server.pairwise_subjects.sqlite.dsn required when backend=sqlite")
+		}
+		store, err := sqlitestores.NewPairwiseSubjectStore(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, "", err
+		}
+		return store, "sqlite (cluster-shared)", nil
+	default:
+		return nil, "", fmt.Errorf("unknown server.pairwise_subjects.backend %q", cfg.Backend)
+	}
+}
+
 // buildAccountLockout picks the lockout backend. memory keeps the
 // single-replica defense; sqlite shares the failure counter so an
 // attacker rotating across replicas can't stay under each replica's
@@ -1406,11 +1428,15 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		if err != nil {
 			return nil, fmt.Errorf("pairwise_subjects salt: %w", err)
 		}
+		store, mode, err := buildPairwiseSubjectStore(cfg.Server.PairwiseSubjects)
+		if err != nil {
+			return nil, fmt.Errorf("pairwise_subjects store: %w", err)
+		}
 		opts = append(opts,
-			sso.WithPairwiseSubjectStore(sso.NewMemoryPairwiseSubjectStore()),
+			sso.WithPairwiseSubjectStore(store),
 			sso.WithPairwiseSalt(salt),
 		)
-		logger.Info("oidc pairwise subjects: enabled (memory store — single-replica only)")
+		logger.Info("oidc pairwise subjects: enabled", "store", mode)
 	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
 		opts = append(opts, sso.WithSupportedACRValues(cfg.Server.SupportedACRValues...))

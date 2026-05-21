@@ -91,13 +91,13 @@ via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 ### Storage today
 Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
 Client / AuthCode / RefreshToken (+ FamilyTracker) / DeviceCode /
-PAR / Session / JTIReplay / SubjectClientIndex / AccountLockout.
-Only RateLimiter remains memory-only — high-write token-bucket
-math on every request is the one place SQLite contention costs
-more than the cross-replica defense gives back; operators wanting
-distributed limits should plug Redis via `sso.WithRateLimit`
-directly. Every other OAuth/OIDC + abuse-defense store works
-horizontally today.
+PAR / Session / JTIReplay / SubjectClientIndex / AccountLockout /
+PairwiseSubject. Only RateLimiter remains memory-only — high-write
+token-bucket math on every request is the one place SQLite
+contention costs more than the cross-replica defense gives back;
+operators wanting distributed limits should plug Redis via
+`sso.WithRateLimit` directly. Every other OAuth/OIDC + abuse-defense
+store works horizontally today.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -280,12 +280,12 @@ IdP federation remain on the roadmap.
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
 AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
-PAR, Session, JTIReplay, SubjectClientIndex, AccountLockout.
-Single-use stores (AuthCode, DeviceCode, RefreshToken, PAR) use
-`DELETE … RETURNING` for race-free consumption; Session uses
-`UPDATE … RETURNING` on Refresh; JTIReplay uses
-`INSERT … ON CONFLICT DO NOTHING` + RowsAffected for atomic
-first-sighting; SubjectClientIndex uses
+PAR, Session, JTIReplay, SubjectClientIndex, AccountLockout,
+PairwiseSubject. Single-use stores (AuthCode, DeviceCode,
+RefreshToken, PAR) use `DELETE … RETURNING` for race-free
+consumption; Session uses `UPDATE … RETURNING` on Refresh; JTIReplay
+uses `INSERT … ON CONFLICT DO NOTHING` + RowsAffected for atomic
+first-sighting; SubjectClientIndex + PairwiseSubject use
 `INSERT … ON CONFLICT … DO UPDATE` for idempotent upsert;
 AccountLockout wraps read-modify-write in `BEGIN IMMEDIATE` so
 concurrent failure increments across replicas can't both observe
@@ -586,7 +586,8 @@ Scorers needing richer signals query their own store inside
 server:        # listen, issuer, TTLs, default_token_strategy, max_clock_skew,
                # discovery_doc_cache_ttl, signed_metadata, oauth_21_strict_mode,
                # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}
-               # pairwise_subjects: { enabled, salt, salt_file } — OIDC §8 per-sector opaque subs
+               # pairwise_subjects: { enabled, salt, salt_file, backend(memory|sqlite), sqlite.dsn }
+               #   sqlite shares (pairwise → local) reverse lookup so /userinfo resolves on any replica
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity, hash_chain
                # async: { enabled, buffer_size, workers, record_timeout_ms }

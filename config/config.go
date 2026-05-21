@@ -856,10 +856,22 @@ type ServerConfig struct {
 // so it doesn't end up in YAML/git. Empty salt at enable time falls
 // back to sso.DefaultPairwiseSalt (publicly known — fine for tests
 // only).
+//
+// Backend choice:
+//   - "" / "memory" (default) — single-replica only; a pairwise sub
+//     minted on replica A is unknown to replica B at /userinfo time.
+//   - "sqlite" — cluster-shared file; reverse lookup works on every
+//     replica.
 type PairwiseSubjectsConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Salt     string `yaml:"salt"`
-	SaltFile string `yaml:"salt_file"`
+	Enabled  bool                       `yaml:"enabled"`
+	Salt     string                     `yaml:"salt"`
+	SaltFile string                     `yaml:"salt_file"`
+	Backend  string                     `yaml:"backend"`
+	SQLite   PairwiseSubjectsSQLiteCfg  `yaml:"sqlite"`
+}
+
+type PairwiseSubjectsSQLiteCfg struct {
+	DSN string `yaml:"dsn"`
 }
 
 // OperatorMetadataConfig groups the three Discovery §3 informational

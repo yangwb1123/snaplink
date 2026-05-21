@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +72,79 @@ func TestBuildApp_PairwiseSubjectsFlipsDiscovery(t *testing.T) {
 	}
 	if !saw["public"] || !saw["pairwise"] {
 		t.Errorf("subject_types_supported = %v want both public and pairwise", types)
+	}
+}
+
+func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
+	s, mode, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{})
+	if err != nil {
+		t.Fatalf("memory build: %v", err)
+	}
+	if s == nil {
+		t.Fatal("store nil")
+	}
+	if !strings.Contains(mode, "memory") {
+		t.Fatalf("mode label %q missing memory marker", mode)
+	}
+}
+
+func TestBuildPairwiseSubjectStore_SQLiteNeedsDSN(t *testing.T) {
+	_, _, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "sqlite"})
+	if err == nil {
+		t.Fatal("expected error when sqlite backend has empty DSN")
+	}
+}
+
+func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL"
+	s, mode, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{
+		Backend: "sqlite",
+		SQLite:  config.PairwiseSubjectsSQLiteCfg{DSN: dsn},
+	})
+	if err != nil {
+		t.Fatalf("sqlite build: %v", err)
+	}
+	if s == nil {
+		t.Fatal("store nil")
+	}
+	if !strings.Contains(mode, "sqlite") {
+		t.Fatalf("mode label %q missing sqlite marker", mode)
+	}
+}
+
+func TestBuildPairwiseSubjectStore_UnknownBackendErrors(t *testing.T) {
+	_, _, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "etcd"})
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
+	}
+}
+
+func TestBuildApp_PairwiseSubjectsSQLiteEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL"
+	cfg := &config.Config{}
+	cfg.Server.PairwiseSubjects.Enabled = true
+	cfg.Server.PairwiseSubjects.Salt = "test-salt"
+	cfg.Server.PairwiseSubjects.Backend = "sqlite"
+	cfg.Server.PairwiseSubjects.SQLite.DSN = dsn
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	doc := fetchDiscovery(t, srv.URL)
+	types, _ := doc["subject_types_supported"].([]any)
+	saw := map[string]bool{}
+	for _, ty := range types {
+		saw[ty.(string)] = true
+	}
+	if !saw["pairwise"] {
+		t.Errorf("sqlite-backed pairwise must still advertise pairwise in subject_types_supported, got %v", types)
 	}
 }
 
