@@ -601,6 +601,7 @@ tenant:        # enabled, backend, lookup_timeout, include_suspended,
 metrics:       # enabled — mounts /metrics; auto-registers audit AsyncSink collector when audit.async is on
 oauth:         # auth_code, refresh_token, device_code, par — each {enabled, ttl}; cmd wires memory backends
 backchannel_logout:  # enabled, max_concurrent — OIDC BCL 1.0; HTTPLogoutNotifier + memory SubjectClientIndex
+client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults
 ```
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens

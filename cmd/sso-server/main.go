@@ -1043,6 +1043,18 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if cfg.OAuth.PAR.Enabled {
 		opts = append(opts, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), cfg.OAuth.PAR.TTL))
 	}
+	if cr := cfg.ClientRegistration; cr.Enabled {
+		opts = append(opts, sso.WithDynamicClientRegistration(sso.DCRPolicy{
+			InitialAccessToken:    cr.InitialAccessToken,
+			AllowOpenRegistration: cr.AllowOpenRegistration,
+			DefaultActive:         cr.DefaultActive,
+			DefaultTokenStrategy:  cr.DefaultTokenStrategy,
+			AllowedAuthenticators: cr.AllowedAuthenticators,
+		}))
+		if cr.AllowOpenRegistration && cr.InitialAccessToken == "" {
+			logger.Info("client_registration: OPEN — no initial_access_token; production deployments SHOULD restrict")
+		}
+	}
 	if cfg.BackchannelLogout.Enabled {
 		opts = append(opts,
 			sso.WithBackchannelLogout(jwtIssuer, sso.NewHTTPLogoutNotifier()),

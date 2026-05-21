@@ -42,6 +42,26 @@ type Config struct {
 	Metrics            MetricsConfig            `yaml:"metrics"`
 	OAuth              OAuthConfig              `yaml:"oauth"`
 	BackchannelLogout  BackchannelLogoutConfig  `yaml:"backchannel_logout"`
+	ClientRegistration ClientRegistrationConfig `yaml:"client_registration"`
+}
+
+// ClientRegistrationConfig opts into RFC 7591 Dynamic Client Registration
+// (POST /register) and the matching RFC 7592 management endpoints
+// (GET/PUT/DELETE /register/:client_id). Without Enabled, /register
+// returns 501 and every RP must be operator-registered up front.
+//
+// Security: leave InitialAccessToken set in production. Operators
+// who set AllowOpenRegistration=true without an initial access token
+// open the endpoint to the world — every public DCR endpoint in the
+// wild eventually gets used for resource exhaustion / spam client
+// creation.
+type ClientRegistrationConfig struct {
+	Enabled               bool     `yaml:"enabled"`
+	InitialAccessToken    string   `yaml:"initial_access_token"`
+	AllowOpenRegistration bool     `yaml:"allow_open_registration"`
+	DefaultActive         bool     `yaml:"default_active"`
+	DefaultTokenStrategy  string   `yaml:"default_token_strategy"`
+	AllowedAuthenticators []string `yaml:"allowed_authenticators"`
 }
 
 // BackchannelLogoutConfig opts into OIDC Back-Channel Logout 1.0.

@@ -305,3 +305,17 @@ oauth:
 backchannel_logout:
   enabled: false
   max_concurrent: 0     # 0 = SDK default (8)
+
+# RFC 7591 Dynamic Client Registration + RFC 7592 management endpoints.
+# Without enabled, /register returns 501 and every RP must be operator-
+# registered via the YAML clients: block. Production deployments SHOULD
+# either keep this disabled OR set initial_access_token to a pre-shared
+# bearer distributed out-of-band — open registration without a token
+# is a known DoS vector.
+client_registration:
+  enabled: false
+  initial_access_token: ""
+  allow_open_registration: false
+  default_active: true
+  default_token_strategy: "jwt"
+  allowed_authenticators: []
