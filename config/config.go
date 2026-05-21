@@ -592,10 +592,27 @@ func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
 // AuditConfig configures security audit logging. When Enabled is false, no
 // audit Recorder is wired and the API endpoints are not mounted.
 type AuditConfig struct {
-	Enabled        bool             `yaml:"enabled"`
-	APIEnabled     bool             `yaml:"api_enabled"`
-	MemoryCapacity int              `yaml:"memory_capacity"`
-	Async          AuditAsyncConfig `yaml:"async"`
+	Enabled        bool                  `yaml:"enabled"`
+	APIEnabled     bool                  `yaml:"api_enabled"`
+	MemoryCapacity int                   `yaml:"memory_capacity"`
+	Async          AuditAsyncConfig      `yaml:"async"`
+	HashChain      bool                  `yaml:"hash_chain"`
+	PIIRedaction   AuditPIIRedactionConfig `yaml:"pii_redaction"`
+}
+
+// AuditPIIRedactionConfig enables conservative PII redaction on every
+// recorded event BEFORE the hash chain runs (so the chain validates
+// over the redacted form, with no "what was the pre-redaction value"
+// leak path). DefaultPIIRedactor hashes ActorID with Salt, truncates
+// IP, strips User-Agent.
+//
+// Salt MUST be deployment-stable and secret — leaking it re-enables
+// hash inversion attacks. Prefer SaltFile (loaded out-of-band) over
+// embedding the salt in YAML.
+type AuditPIIRedactionConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Salt     string `yaml:"salt"`
+	SaltFile string `yaml:"salt_file"`
 }
 
 // AuditAsyncConfig wraps the configured audit sink with an

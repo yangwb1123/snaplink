@@ -43,6 +43,19 @@ audit:
   enabled: true
   api_enabled: true       # mounts GET /api/v1/audit/events[/:id]
   memory_capacity: 10000  # ring buffer size for the in-memory sink
+  # Tamper-evident chaining: every Event carries PrevHash + Hash so a
+  # detached audit.VerifyChain(events) call detects any single insert,
+  # delete, or mutation. In-process only — the last event isn't
+  # detectable without an external attestation.
+  hash_chain: false
+  # Conservative PII redaction (DefaultPIIRedactor: actor hashed,
+  # ip truncated, user-agent stripped) before the chain runs. Salt
+  # MUST be deployment-stable and secret — prefer salt_file (out-of-
+  # band loaded) over inline YAML so it doesn't end up in git.
+  pii_redaction:
+    enabled: false
+    salt: ""
+    salt_file: ""
 
 permissions:
   enabled: true

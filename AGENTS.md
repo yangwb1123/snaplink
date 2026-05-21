@@ -574,8 +574,9 @@ server:        # listen, issuer, TTLs, default_token_strategy,
                # discovery_doc_cache_ttl, signed_metadata, oauth_21_strict_mode,
                # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}
 logging:       # level: debug|info|error
-audit:         # enabled, api_enabled, memory_capacity
+audit:         # enabled, api_enabled, memory_capacity, hash_chain
                # async: { enabled, buffer_size, workers, record_timeout_ms }
+               # pii_redaction: { enabled, salt, salt_file } — DefaultPIIRedactor (actor hash, ip truncate, ua strip)
 permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
 network:       # enabled, api_enabled, store, policies[]
 clients:       # id, secret, allowed_authenticators, token_strategy,

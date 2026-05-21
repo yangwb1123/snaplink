@@ -585,6 +585,29 @@ func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.
 	return sso.NewHMACNonceProvider(cfg.TTL)
 }
 
+// resolvePIISalt reads the redaction salt from inline YAML or a file
+// (file wins when both set — operators typically use file for prod).
+// Returns an error when both are empty so a misconfiguration becomes
+// loud at boot rather than silently degrading to an empty salt that
+// makes hash inversion trivial.
+func resolvePIISalt(cfg config.AuditPIIRedactionConfig) (string, error) {
+	if cfg.SaltFile != "" {
+		b, err := os.ReadFile(cfg.SaltFile)
+		if err != nil {
+			return "", fmt.Errorf("read salt file: %w", err)
+		}
+		s := strings.TrimRight(string(b), "\r\n")
+		if s == "" {
+			return "", fmt.Errorf("salt file %q is empty", cfg.SaltFile)
+		}
+		return s, nil
+	}
+	if cfg.Salt == "" {
+		return "", errors.New("salt or salt_file must be set when pii_redaction is enabled")
+	}
+	return cfg.Salt, nil
+}
+
 // buildRateLimitPolicy translates RateLimitConfig into a ratelimit.Policy.
 // Each prefix becomes a MemoryLimiter; Default kicks in for paths no
 // prefix matches. A zero DefaultPerSec leaves Default nil (no limit
@@ -933,10 +956,22 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			asyncSink.Start()
 			sink = asyncSink
 		}
-		recorder = audit.New(
-			sink,
+		recorderOpts := []audit.Option{
 			audit.WithErrorHandler(func(err error) { logger.Error("audit sink", "error", err) }),
-		)
+		}
+		if pii := cfg.Audit.PIIRedaction; pii.Enabled {
+			salt, err := resolvePIISalt(pii)
+			if err != nil {
+				return nil, fmt.Errorf("audit pii_redaction salt: %w", err)
+			}
+			recorderOpts = append(recorderOpts, audit.WithRedactor(audit.DefaultPIIRedactor(salt)))
+			logger.Info("audit: pii redaction enabled (actor hashed, ip truncated, user-agent stripped)")
+		}
+		if cfg.Audit.HashChain {
+			recorderOpts = append(recorderOpts, audit.WithHashChain())
+			logger.Info("audit: hash chain enabled — Events carry PrevHash + Hash for tamper-evidence")
+		}
+		recorder = audit.New(sink, recorderOpts...)
 		opts = append(opts, sso.WithAuditRecorder(recorder))
 		if cfg.Audit.APIEnabled {
 			opts = append(opts, sso.WithAuditAPI())
