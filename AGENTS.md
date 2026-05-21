@@ -357,7 +357,11 @@ INTEGER.
 - **Hash chain** (opt-in): `audit.WithHashChain()` stamps
   `PrevHash` + `Hash`; `audit.VerifyChain(events)` validates.
   In-process only, oldest-first required, last event not
-  detectable without external attestation.
+  detectable without external attestation. Operators verify the
+  live chain via the `sso-audit-verify` CLI
+  (`cmd/sso-audit-verify`) — pages through `/api/v1/audit/events`
+  (or reads a JSON file), reverses to chain order, runs
+  `VerifyChain`, exits non-zero on a break.
 - **PII redaction** (opt-in): `audit.WithRedactor(r)` runs BEFORE
   the chainer. Helpers: `RedactActorIDHash(salt)`, `RedactIPTruncate`,
   `RedactUserAgent`, `RedactMetadataKeys(...)`,
