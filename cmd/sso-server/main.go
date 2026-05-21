@@ -391,7 +391,13 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 	// CORS) the built-in endpoints use. Mount AFTER Handler() so the
 	// router has been initialized — Handle errors otherwise.
 	if a.webauthnHelper != nil {
-		if err := mountWebAuthnRoutes(a.server, a.webauthnHelper); err != nil {
+		deps := &webauthnDeps{
+			Helper:       a.webauthnHelper,
+			ClientStore:  a.clientStore,
+			TokenIssuers: a.tokenIssuers,
+			DefaultStrat: cfg.Server.DefaultTokenStrategy,
+		}
+		if err := mountWebAuthnRoutes(a.server, deps); err != nil {
 			return nil, fmt.Errorf("mount webauthn: %w", err)
 		}
 		logger.Info("webauthn routes mounted",

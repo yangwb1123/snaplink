@@ -294,15 +294,27 @@ set: four POST routes mount on the SSO router via the public
 `/webauthn/{registration,login}/{begin,finish}` — sharing the same
 middleware stack the built-in endpoints use. Unknown sessions and
 unknown users both collapse to `404 session_invalid` so probes
-can't enumerate registered users. Pluggable `UserStore` +
-`SessionStore` with memory implementations included; SQLite-backed
-peers ship at `authenticators/webauthn/sqlite/` for multi-replica
-deployments (`UserStore` upserts credentials inside `BEGIN
-IMMEDIATE` so two concurrent registrations across replicas can't
-drop one of the appends; `SessionStore` uses `DELETE … RETURNING`
-for single-use ceremony state). Built on
-`github.com/go-webauthn/webauthn` for the CBOR + attestation
-heavy-lifting.
+can't enumerate registered users.
+
+**Token-issuance integration**: `/webauthn/login/finish` accepts an
+optional `?client_id=` query parameter. When supplied, cmd looks up
+the Client + the configured `TokenIssuer` for its `token_strategy`
+and mints an access token for the WebAuthn-authenticated subject
+(AMR=`["webauthn"]`, Provider=`"webauthn"`, scopes default to the
+client's `AllowedScopes`). The Finish response carries
+`access_token`, `token_type`, `expires_in`, `scope` alongside
+`username` + `credential_id`. Without `client_id` the v1
+credential-verification response is unchanged — embedders that
+integrate their own token path aren't disturbed.
+
+Pluggable `UserStore` + `SessionStore` with memory implementations
+included; SQLite-backed peers ship at
+`authenticators/webauthn/sqlite/` for multi-replica deployments
+(`UserStore` upserts credentials inside `BEGIN IMMEDIATE` so two
+concurrent registrations across replicas can't drop one of the
+appends; `SessionStore` uses `DELETE … RETURNING` for single-use
+ceremony state). Built on `github.com/go-webauthn/webauthn` for
+the CBOR + attestation heavy-lifting.
 
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,

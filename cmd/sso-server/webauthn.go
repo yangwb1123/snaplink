@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators/webauthn"
@@ -100,6 +101,20 @@ const (
 	pathWebAuthnLoginFinish        = "/webauthn/login/finish"
 )
 
+// webauthnDeps bundles everything the ceremony handlers need.
+// Helper drives the WebAuthn protocol; ClientStore + TokenIssuers
+// are optional — when supplied, /webauthn/login/finish accepts a
+// `client_id` query parameter and issues a token for the
+// authenticated user against that client (turning WebAuthn into a
+// real first-class login method instead of just credential
+// verification).
+type webauthnDeps struct {
+	Helper       *webauthn.Helper
+	ClientStore  sso.ClientStore
+	TokenIssuers map[string]sso.TokenIssuer
+	DefaultStrat string
+}
+
 // mountWebAuthnRoutes registers the four ceremony endpoints on the
 // SSO router. Begin endpoints accept JSON {"username", "display_name"};
 // Finish endpoints take session_id from the ?session_id= query
@@ -109,18 +124,18 @@ const (
 // All four endpoints return JSON. Failure shape mirrors the OAuth
 // error envelope ({"error", "error_description"}) so client-side
 // integration is consistent across SSO surfaces.
-func mountWebAuthnRoutes(srv *sso.Server, h *webauthn.Helper) error {
-	if h == nil {
+func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
+	if deps == nil || deps.Helper == nil {
 		return nil
 	}
 	routes := []struct {
 		path    string
 		handler http.HandlerFunc
 	}{
-		{pathWebAuthnRegistrationBegin, webauthnBeginRegistrationHandler(h)},
-		{pathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(h)},
-		{pathWebAuthnLoginBegin, webauthnBeginLoginHandler(h)},
-		{pathWebAuthnLoginFinish, webauthnFinishLoginHandler(h)},
+		{pathWebAuthnRegistrationBegin, webauthnBeginRegistrationHandler(deps.Helper)},
+		{pathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(deps.Helper)},
+		{pathWebAuthnLoginBegin, webauthnBeginLoginHandler(deps.Helper)},
+		{pathWebAuthnLoginFinish, webauthnFinishLoginHandler(deps)},
 	}
 	for _, r := range routes {
 		if err := srv.Handle(http.MethodPost, r.path, r.handler); err != nil {
@@ -152,6 +167,16 @@ type webauthnFinishRegistrationResponse struct {
 type webauthnFinishLoginResponse struct {
 	Username     string `json:"username"`
 	CredentialID string `json:"credential_id"`
+
+	// Token-issuance fields — populated only when ?client_id= is
+	// supplied AND the cmd has a ClientStore + TokenIssuer wired.
+	// Without client_id the handler stays in v1 credential-
+	// verification mode so embedders that integrate their own token
+	// path aren't disturbed.
+	AccessToken string `json:"access_token,omitempty"`
+	TokenType   string `json:"token_type,omitempty"`
+	ExpiresIn   int    `json:"expires_in,omitempty"`
+	Scope       string `json:"scope,omitempty"`
 }
 
 func webauthnBeginRegistrationHandler(h *webauthn.Helper) http.HandlerFunc {
@@ -230,23 +255,105 @@ func webauthnBeginLoginHandler(h *webauthn.Helper) http.HandlerFunc {
 	}
 }
 
-func webauthnFinishLoginHandler(h *webauthn.Helper) http.HandlerFunc {
+func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("session_id")
 		if sessionID == "" {
 			writeWebAuthnError(w, http.StatusBadRequest, "invalid_request", "session_id required")
 			return
 		}
-		user, cred, err := h.FinishLogin(r.Context(), sessionID, r)
+		user, cred, err := deps.Helper.FinishLogin(r.Context(), sessionID, r)
 		if err != nil {
 			status, code := webauthnErrorStatus(err)
 			writeWebAuthnError(w, status, code, err.Error())
 			return
 		}
-		writeWebAuthnJSON(w, http.StatusOK, webauthnFinishLoginResponse{
+		resp := webauthnFinishLoginResponse{
 			Username:     user.Name,
 			CredentialID: base64.RawURLEncoding.EncodeToString(cred.ID),
-		})
+		}
+		// Optional token issuance: when client_id is supplied AND
+		// the cmd has a ClientStore + TokenIssuers wired, mint an
+		// access token for the authenticated subject. Missing
+		// client_id falls through to credential-only v1 behavior so
+		// embedders integrating their own token path aren't
+		// disturbed.
+		clientID := r.URL.Query().Get("client_id")
+		if clientID != "" && deps.ClientStore != nil && len(deps.TokenIssuers) > 0 {
+			token, err := issueWebAuthnToken(r, deps, clientID, user.Name)
+			if err != nil {
+				status, code := webauthnIssueErrorStatus(err)
+				writeWebAuthnError(w, status, code, err.Error())
+				return
+			}
+			resp.AccessToken = token.AccessToken
+			resp.TokenType = token.TokenType
+			resp.ExpiresIn = token.ExpiresIn
+			resp.Scope = token.Scope
+		}
+		writeWebAuthnJSON(w, http.StatusOK, resp)
+	}
+}
+
+// errWebAuthnClientNotFound is returned by issueWebAuthnToken when
+// the requested client_id isn't registered. Mapped to 400
+// invalid_client so the client surface mirrors the OAuth /token
+// endpoint shape.
+var errWebAuthnClientNotFound = errors.New("webauthn: client not found")
+
+// errWebAuthnClientInactive is returned when the client exists but
+// has Active=false — same disposition as login through /auth/login.
+var errWebAuthnClientInactive = errors.New("webauthn: client inactive")
+
+// errWebAuthnNoIssuer is returned when the client's token_strategy
+// doesn't have a registered issuer. Server misconfiguration; 500.
+var errWebAuthnNoIssuer = errors.New("webauthn: no token issuer for client strategy")
+
+// issueWebAuthnToken builds a sso.Subject for the WebAuthn-
+// authenticated user + mints an access token via the client's
+// configured TokenIssuer. AMR carries "webauthn" so resource
+// servers can branch on auth strength. Scopes default to the
+// client's full AllowedScopes — the WebAuthn ceremony has no
+// scope-selection step.
+func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID string) (*sso.Token, error) {
+	ctx := r.Context()
+	client, err := deps.ClientStore.Get(ctx, clientID)
+	if err != nil {
+		return nil, errWebAuthnClientNotFound
+	}
+	if !client.Active {
+		return nil, errWebAuthnClientInactive
+	}
+	strategy := client.TokenStrategy
+	if strategy == "" {
+		strategy = deps.DefaultStrat
+	}
+	if strategy == "" {
+		strategy = "jwt"
+	}
+	issuer, ok := deps.TokenIssuers[strategy]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
+	}
+	scopes := client.AllowedScopes
+	subject := &sso.Subject{
+		ID:       userID,
+		Provider: "webauthn",
+		ClientID: client.ID,
+		AuthTime: time.Now(),
+		AMR:      []string{"webauthn"},
+	}
+	return issuer.Issue(ctx, subject, scopes)
+}
+
+func webauthnIssueErrorStatus(err error) (int, string) {
+	switch {
+	case errors.Is(err, errWebAuthnClientNotFound), errors.Is(err, errWebAuthnClientInactive):
+		return http.StatusBadRequest, "invalid_client"
+	case errors.Is(err, errWebAuthnNoIssuer):
+		return http.StatusInternalServerError, "server_error"
+	default:
+		return http.StatusInternalServerError, "server_error"
 	}
 }
 
