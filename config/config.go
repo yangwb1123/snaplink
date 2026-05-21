@@ -814,14 +814,30 @@ func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
 
 // AuditConfig configures security audit logging. When Enabled is false, no
 // audit Recorder is wired and the API endpoints are not mounted.
+//
+// Backend selects the primary [audit.Sink] backend ("memory" or
+// "sqlite"). MemorySink is a process-local ring buffer that drops
+// events on restart; SQLite persists to a shared file so audit
+// survives restarts and replicates across replicas pointed at the
+// same DSN. Both still feed into the same MultiSink+Webhook
+// composition when audit.webhook.enabled.
 type AuditConfig struct {
 	Enabled        bool                    `yaml:"enabled"`
 	APIEnabled     bool                    `yaml:"api_enabled"`
+	Backend        string                  `yaml:"backend"` // memory | sqlite
+	Sqlite         AuditSqliteConfig       `yaml:"sqlite"`
 	MemoryCapacity int                     `yaml:"memory_capacity"`
 	Async          AuditAsyncConfig        `yaml:"async"`
 	HashChain      bool                    `yaml:"hash_chain"`
 	PIIRedaction   AuditPIIRedactionConfig `yaml:"pii_redaction"`
 	Webhook        AuditWebhookConfig      `yaml:"webhook"`
+}
+
+// AuditSqliteConfig is the SQLite backend's DSN. Production DSN
+// shape: file:/var/lib/sso/audit.db?_journal=WAL&_busy_timeout=5000
+// (matches the other SQLite backends in the SDK).
+type AuditSqliteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // AuditWebhookConfig enables a [audit.WebhookSink] sibling to the

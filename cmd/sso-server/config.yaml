@@ -127,7 +127,15 @@ bootstrap:
 audit:
   enabled: true
   api_enabled: true       # mounts GET /api/v1/audit/events[/:id]
-  memory_capacity: 10000  # ring buffer size for the in-memory sink
+  # Primary audit sink backend. memory = process-local ring buffer
+  # (loses every event on restart); sqlite = durable, cluster-shared
+  # storage when multiple replicas point at the same DSN. Both still
+  # feed the same webhook fan-out + async + redaction + hash-chain
+  # composition below.
+  backend: memory
+  # sqlite:
+  #   dsn: file:/var/lib/sso/audit.db?_journal=WAL&_busy_timeout=5000
+  memory_capacity: 10000  # ring buffer size when backend=memory
   # Tamper-evident chaining: every Event carries PrevHash + Hash so a
   # detached audit.VerifyChain(events) call detects any single insert,
   # delete, or mutation. In-process only — the last event isn't

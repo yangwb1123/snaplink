@@ -707,10 +707,13 @@ server:        # listen, issuer (REQUIRED to differ from sso.DefaultIssuer
                #   sqlite shares (pairwise → local) reverse lookup so /userinfo resolves on any replica
 logging:       # level: debug|info|error
 audit:         # enabled, api_enabled, memory_capacity, hash_chain
+               # backend(memory|sqlite), sqlite.dsn — primary sink under the
+               #   composition; sqlite persists across restarts + shares state
+               #   across replicas pointed at the same DSN (audit-sqlite ReadyCheck)
                # async: { enabled, buffer_size, workers, record_timeout_ms }
                # pii_redaction: { enabled, salt, salt_file } — DefaultPIIRedactor (actor hash, ip truncate, ua strip)
                # webhook: { enabled, url, timeout, headers, retry.{max_attempts, initial_backoff, max_backoff} }
-               #   composed as AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))) — fan-out to a downstream collector
+               #   composed as AsyncSink(MultiSink(Primary, RetryingSink(WebhookSink))) — fan-out to a downstream collector
 permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
 network:       # enabled, api_enabled, store(memory|etcd), policies[]
                # etcd_endpoints[], etcd_prefix, etcd_dial_timeout, etcd_username, etcd_password

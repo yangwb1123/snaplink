@@ -27,6 +27,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
+	auditsqlite "github.com/snaplink/sso/audit/sqlite"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/bootstrap"
@@ -1567,13 +1568,16 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	var recorder *audit.Recorder
 	var asyncSink *audit.AsyncSink
 	if cfg.Audit.Enabled {
-		memSink := audit.NewMemorySink(cfg.Audit.MemoryCapacity)
-		var sink audit.Sink = memSink
-		// Webhook fan-out wraps the memory sink so in-process /audit
+		primary, primaryName, err := buildPrimaryAuditSink(cfg.Audit, logger)
+		if err != nil {
+			return nil, fmt.Errorf("audit: build primary sink: %w", err)
+		}
+		var sink audit.Sink = primary
+		// Webhook fan-out wraps the primary sink so in-process /audit
 		// query reads still see every event. Wrapped in RetryingSink
 		// so transient collector failures don't drop events; combined
 		// via MultiSink for fan-out. AGENTS.md compose order:
-		// AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))).
+		// AsyncSink(MultiSink(Primary, RetryingSink(WebhookSink))).
 		if w := cfg.Audit.Webhook; w.Enabled {
 			if w.URL == "" {
 				return nil, errors.New("audit.webhook.url required when audit.webhook.enabled")
@@ -1597,7 +1601,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 				retryOpts = append(retryOpts, audit.WithRetryMaxBackoff(w.Retry.MaxBackoff))
 			}
 			retrying := audit.NewRetryingSink(webhook, retryOpts...)
-			sink = audit.NewMultiSink(memSink, retrying)
+			sink = audit.NewMultiSink(primary, retrying)
 			logger.Info("audit: webhook fan-out enabled",
 				"url", w.URL,
 				"max_attempts", w.Retry.MaxAttempts,
@@ -1646,6 +1650,10 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		if cfg.Audit.APIEnabled {
 			opts = append(opts, sso.WithAuditAPI())
 		}
+		// Register a readycheck for the primary sink if it satisfies
+		// the Ping interface — the SQLite sink does; MemorySink
+		// silently no-ops.
+		opts = appendReadyCheck(opts, "audit-"+primaryName, primary)
 	}
 
 	var provider permissions.Provider
@@ -2071,6 +2079,31 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		auditAsyncSink:    asyncSink,
 		netStop:           netStop,
 	}, nil
+}
+
+// buildPrimaryAuditSink constructs the [audit.Sink] cmd places at
+// the root of the sink composition (the one /audit query reads from
+// + that gets wrapped by MultiSink+Webhook+Async). Backend selects
+// between in-process MemorySink and the SQLite-backed Sink. Returns
+// the sink + a short identifier used as the ReadyCheck suffix.
+func buildPrimaryAuditSink(cfg config.AuditConfig, logger sso.Logger) (audit.Sink, string, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		logger.Info("audit: primary sink", "backend", "memory", "capacity", cfg.MemoryCapacity)
+		return audit.NewMemorySink(cfg.MemoryCapacity), "memory", nil
+	case "sqlite":
+		if cfg.Sqlite.DSN == "" {
+			return nil, "", errors.New("audit.sqlite.dsn required when audit.backend=sqlite")
+		}
+		sink, err := auditsqlite.New(cfg.Sqlite.DSN)
+		if err != nil {
+			return nil, "", fmt.Errorf("open sqlite audit sink: %w", err)
+		}
+		logger.Info("audit: primary sink", "backend", "sqlite", "dsn", cfg.Sqlite.DSN)
+		return sink, "sqlite", nil
+	default:
+		return nil, "", fmt.Errorf("audit.backend must be one of memory|sqlite, got %q", cfg.Backend)
+	}
 }
 
 // loadSecretFile reads a secret material file and returns the content
