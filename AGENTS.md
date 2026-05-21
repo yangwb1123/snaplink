@@ -302,6 +302,14 @@ INTEGER.
   the chainer. Helpers: `RedactActorIDHash(salt)`, `RedactIPTruncate`,
   `RedactUserAgent`, `RedactMetadataKeys(...)`,
   `DefaultPIIRedactor(salt)`.
+- **Retry wrapper** (opt-in): `audit.NewRetryingSink(inner, ...)` retries
+  Record on transient errors with exponential backoff + jitter.
+  Options: `WithRetryMaxAttempts(n)` (default 3), `WithRetryInitialBackoff(d)`,
+  `WithRetryMaxBackoff(d)`, `WithRetryClassifier(c)` to mark some
+  errors permanent (default: every error is transient). Compose as
+  `AsyncSink(RetryingSink(WebhookSink))` — retry runs inside the
+  AsyncSink worker so total backoff time must stay under the queue
+  capacity / arrival rate, or backpressure shows up as drops.
 - **Async wrapper** (opt-in): `audit.NewAsyncSink(inner, ...).Start()`
   drains a bounded buffer on a worker pool — Record never blocks the
   request path. Options: `WithAsyncBuffer(n)` (default 1024),
