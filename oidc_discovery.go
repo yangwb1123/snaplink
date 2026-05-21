@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -259,6 +260,16 @@ func codeChallengeMethodsFor(s *Server) []string {
 // not http — otherwise OIDC RPs refuse the issuer per §4.3.
 func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	base := requestBaseURL(ctx.Request())
+	// Body cache: skip the marshal + struct assembly when a recent
+	// rendering for this base URL is still fresh. Keyed by base URL
+	// so multi-host SSO doesn't conflate. Honors If-None-Match so
+	// well-behaved RP libraries can short-circuit to 304.
+	if s.discoveryDocCacheTTL > 0 {
+		if entry := s.lookupDiscoveryDocCache(base); entry != nil {
+			s.writeDiscoveryDoc(ctx, entry)
+			return
+		}
+	}
 	// Single client-store iteration powers every derived field below
 	// (scopes union, RequirePAR-any, RequireSignedRequestObject-all,
 	// frontchannel_logout_supported, authorization_details types
@@ -427,7 +438,22 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
 	}
 
-	ctx.JSON(http.StatusOK, cfg)
+	// ttl <= 0 disables both in-process caching AND the response-side
+	// ETag / Cache-Control headers — every request renders fresh and
+	// downstream caches (CDN, RP libraries) are told not to cache.
+	if s.discoveryDocCacheTTL <= 0 {
+		ctx.JSON(http.StatusOK, cfg)
+		return
+	}
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		s.logger.Error("discovery marshal failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	entry := buildDiscoveryDocEntry(body, s.discoveryDocCacheTTL)
+	s.storeDiscoveryDocCache(base, entry)
+	s.writeDiscoveryDoc(ctx, entry)
 }
 
 // requestBaseURL derives an absolute scheme://host base from the

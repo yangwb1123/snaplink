@@ -93,6 +93,12 @@ type Server struct {
 	discoveryCacheTTL time.Duration
 	discoveryCache    atomic.Pointer[clientDiscoverySnapshot]
 	discoveryCacheMu  sync.Mutex
+
+	// Body cache: the marshaled discovery doc + ETag, keyed by base
+	// URL (so multi-host SSO doesn't conflate). Reads are sync.Map-
+	// served lock-free; misses fall through to the snapshot path.
+	discoveryDocCacheTTL time.Duration
+	discoveryDocCache    sync.Map
 }
 
 // Option configures the Server.
@@ -101,11 +107,12 @@ type Option func(*Server)
 // NewServer creates a new SSO server.
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		authenticators:    make(map[string]Authenticator),
-		tokenIssuers:      make(map[string]TokenIssuer),
-		issuer:            DefaultIssuer,
-		logger:            NopLogger{},
-		discoveryCacheTTL: defaultDiscoveryCacheTTL,
+		authenticators:       make(map[string]Authenticator),
+		tokenIssuers:         make(map[string]TokenIssuer),
+		issuer:               DefaultIssuer,
+		logger:               NopLogger{},
+		discoveryCacheTTL:    defaultDiscoveryCacheTTL,
+		discoveryDocCacheTTL: DefaultDiscoveryDocCacheTTL,
 	}
 	for _, opt := range opts {
 		opt(s)

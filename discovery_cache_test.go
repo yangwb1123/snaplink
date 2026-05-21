@@ -40,6 +40,9 @@ func newDiscoveryCacheHarness(t *testing.T, ttl time.Duration) (*httptest.Server
 		sso.WithIDTokenIssuer(defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithPARStore(defaultimpl.NewMemoryPARStore(), time.Minute),
 		sso.WithDiscoveryCacheTTL(ttl),
+		// Body cache mirrors snapshot cache so "ttl=0 disables
+		// caching" tests below see real client-store fan-out.
+		sso.WithDiscoveryDocCacheTTL(ttl),
 	)
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)

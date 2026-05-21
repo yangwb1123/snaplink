@@ -188,6 +188,18 @@ MUST use `s.authzErrorBody(ctx, code)` — not plain `errorBody`.
 `ETag = sha256(body)[:8]`. During rotation, both outgoing and
 incoming keys are served so pre-rotation tokens still verify.
 
+### Discovery doc caching
+`/.well-known/openid-configuration` is double-cached:
+`WithDiscoveryCacheTTL(d)` (default 5s) caches the
+clientDiscoverySnapshot so projection fields don't re-iterate the
+client store on every hit; `WithDiscoveryDocCacheTTL(d)` (default 5s)
+caches the marshaled body + `ETag = sha256(body)[:8]` keyed by the
+request base URL (multi-host SSO safe) and honors `If-None-Match`
+→ 304. `Cache-Control: public, max-age=ttl` is stamped on every
+200. Setting body TTL to 0 disables both the in-process cache AND
+the response headers (every request renders fresh; CDNs / RP
+libraries told not to cache).
+
 ### Cache headers on credential endpoints (RFC 6749 §5.1)
 `/token`, `/token/introspect`, `/token/revoke`, `/token/revoke-all`,
 `/par` all stamp `Cache-Control: no-store` + `Pragma: no-cache` at
