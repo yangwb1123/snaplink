@@ -100,11 +100,29 @@ type BackchannelLogoutConfig struct {
 // constants (DefaultAuthCodeTTL, DefaultRefreshTokenTTL, DefaultDeviceCodeTTL,
 // DefaultPARTTL).
 type OAuthConfig struct {
+	// Backend selects the storage substrate for auth_code,
+	// refresh_token, and device_code. "memory" (default) is in-
+	// process; "sqlite" persists across restarts and shares state
+	// across processes that point at the same file. PAR remains
+	// memory-only (no SQLite backend yet). Each individually-enabled
+	// store inherits this choice unless the store's own Backend
+	// override is set.
+	Backend string                `yaml:"backend"`
+	SQLite  OAuthSQLiteConfig     `yaml:"sqlite"`
 	AuthCode     OAuthStoreConfig       `yaml:"auth_code"`
 	RefreshToken OAuthStoreConfig       `yaml:"refresh_token"`
 	DeviceCode   OAuthDeviceCodeConfig  `yaml:"device_code"`
 	PAR          OAuthStoreConfig       `yaml:"par"`
 	JAR          OAuthJARConfig         `yaml:"jar"`
+}
+
+// OAuthSQLiteConfig groups the SQLite-only knobs. DSN follows
+// modernc.org/sqlite syntax — typical production form:
+// `file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000`.
+// Each store opens its own *sql.DB pool against the same file;
+// SQLite's OS-level file lock coordinates writes.
+type OAuthSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // OAuthJARConfig opts into RFC 9101 §5.2.2 — request_uri URL fetching.

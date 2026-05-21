@@ -39,6 +39,7 @@ import (
 	configetcd "github.com/snaplink/sso/config/etcd"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/defaultimpl"
+	sqlitestores "github.com/snaplink/sso/defaultimpl/sqlite"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
 	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
@@ -585,6 +586,54 @@ func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.
 	return sso.NewHMACNonceProvider(cfg.TTL)
 }
 
+// buildAuthCodeStore / buildRefreshTokenStore / buildDeviceCodeStore
+// pick between memory + sqlite per cfg.Backend. SQLite needs a DSN;
+// memory needs nothing. Each SQLite call opens its own connection
+// pool — for SQLite that's fine (OS-level file lock coordinates),
+// for a future shared *sql.DB across stores a different abstraction
+// is needed.
+func buildAuthCodeStore(cfg config.OAuthConfig) (sso.AuthCodeStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemoryAuthCodeStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewAuthCodeStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+	}
+}
+
+func buildRefreshTokenStore(cfg config.OAuthConfig) (sso.RefreshTokenStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemoryRefreshTokenStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewRefreshTokenStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+	}
+}
+
+func buildDeviceCodeStore(cfg config.OAuthConfig) (sso.DeviceCodeStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		return defaultimpl.NewMemoryDeviceCodeStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewDeviceCodeStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+	}
+}
+
 // resolvePairwiseSalt reads the pairwise hash salt with the same
 // file-wins-over-inline precedence the PII redactor uses. Empty
 // salt falls back to sso.DefaultPairwiseSalt — fine for tests, not
@@ -1078,14 +1127,26 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithDPoPNonceProvider(provider))
 	}
 	if cfg.OAuth.AuthCode.Enabled {
-		opts = append(opts, sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), cfg.OAuth.AuthCode.TTL))
+		store, err := buildAuthCodeStore(cfg.OAuth)
+		if err != nil {
+			return nil, fmt.Errorf("oauth.auth_code: %w", err)
+		}
+		opts = append(opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
 	}
 	if cfg.OAuth.RefreshToken.Enabled {
-		opts = append(opts, sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), cfg.OAuth.RefreshToken.TTL))
+		store, err := buildRefreshTokenStore(cfg.OAuth)
+		if err != nil {
+			return nil, fmt.Errorf("oauth.refresh_token: %w", err)
+		}
+		opts = append(opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
 	}
 	if cfg.OAuth.DeviceCode.Enabled {
+		store, err := buildDeviceCodeStore(cfg.OAuth)
+		if err != nil {
+			return nil, fmt.Errorf("oauth.device_code: %w", err)
+		}
 		opts = append(opts, sso.WithDeviceCodeStore(
-			defaultimpl.NewMemoryDeviceCodeStore(),
+			store,
 			cfg.OAuth.DeviceCode.TTL,
 			cfg.OAuth.DeviceCode.PollInterval,
 			cfg.OAuth.DeviceCode.VerificationBaseURL,

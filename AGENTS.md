@@ -602,7 +602,8 @@ tenant:        # enabled, backend, lookup_timeout, include_suspended,
                # tenants[], domains[],
                # suspension_check: { enabled, cache_ttl }
 metrics:       # enabled — mounts /metrics; auto-registers audit AsyncSink collector when audit.async is on
-oauth:         # auth_code, refresh_token, device_code, par — each {enabled, ttl}; cmd wires memory backends
+oauth:         # backend(memory|sqlite), sqlite.dsn
+               # auth_code, refresh_token, device_code, par — each {enabled, ttl}
                # jar: { enabled, timeout, max_bytes } — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect)
 backchannel_logout:  # enabled, max_concurrent — OIDC BCL 1.0; HTTPLogoutNotifier + memory SubjectClientIndex
 client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults

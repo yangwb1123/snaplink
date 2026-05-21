@@ -349,9 +349,14 @@ metrics:
 
 # OAuth/OIDC grant stores. Each block opts into one grant; without
 # any of these flags the corresponding /token branch (or /par) returns
-# 501. Memory backends only — production multi-replica deployments
-# need shared backends (SQLite / Redis).
+# 501. backend: memory (default; in-process) or sqlite (persistent +
+# survives restart). PAR is memory-only regardless of backend (no
+# SQLite impl). Each SQLite-backed store opens its own *sql.DB pool
+# against the shared file — SQLite's OS-level file lock coordinates.
 oauth:
+  backend: memory        # memory | sqlite
+  sqlite:
+    dsn: ""              # e.g. file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000
   auth_code:
     enabled: true       # grant_type=authorization_code (RFC 6749 §4.1)
     ttl: 10m            # SDK default when <=0 (also 10m)
