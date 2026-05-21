@@ -899,6 +899,12 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		sso.WithUserProvider(userProvider),
 		sso.WithClientStore(clientStore),
 		sso.WithSessionManager(sessionMgr),
+		// Ed25519JWTIssuer satisfies sso.IDTokenIssuer — sharing one
+		// signing key keeps JWKS single-entry. Without this option the
+		// id_token field is omitted from every /token + /auth/login
+		// response and OIDC is silently disabled, which is the wrong
+		// default for a binary called "sso-server".
+		sso.WithIDTokenIssuer(jwtIssuer),
 	)
 
 	var recorder *audit.Recorder

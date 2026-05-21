@@ -79,6 +79,26 @@ func TestBuildApp_OperatorMetadataAppearsInDiscovery(t *testing.T) {
 	}
 }
 
+func TestBuildApp_IDTokenIssuerWiredByDefault(t *testing.T) {
+	cfg := &config.Config{}
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer a.registry.Close()
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	doc := fetchDiscovery(t, srv.URL)
+	algs, ok := doc["id_token_signing_alg_values_supported"].([]any)
+	if !ok {
+		t.Fatalf("id_token_signing_alg_values_supported missing — IDTokenIssuer not wired")
+	}
+	if len(algs) == 0 || algs[0] != "EdDSA" {
+		t.Errorf("id_token_signing_alg_values_supported = %v want [EdDSA]", algs)
+	}
+}
+
 func TestBuildApp_OperatorMetadataOmittedWhenAllEmpty(t *testing.T) {
 	cfg := &config.Config{}
 	// Leave OperatorMetadata zero-valued.
