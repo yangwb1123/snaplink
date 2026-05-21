@@ -1880,6 +1880,13 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithBodyLimit(n))
 		logger.Info("security: body limit", "max_bytes", n)
 	}
+	for _, ov := range cfg.Security.BodyLimit.Overrides {
+		if ov.Prefix == "" {
+			continue
+		}
+		opts = append(opts, sso.WithBodyLimitForPath(ov.Prefix, ov.MaxBytes))
+		logger.Info("security: body limit override", "prefix", ov.Prefix, "max_bytes", ov.MaxBytes)
+	}
 	if rl := cfg.Security.RateLimit; rl.Enabled {
 		policy, err := buildRateLimitPolicy(rl)
 		if err != nil {

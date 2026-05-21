@@ -435,11 +435,26 @@ type DPoPNonceConfig struct {
 }
 
 // BodyLimitConfig caps request body size. MaxBytes=0 disables the
-// limit (sso.WithBodyLimit is not wired). Typical production value:
-// 1048576 (1 MiB) — generous for any auth-flow payload, blocks
-// gigabyte-class DoS.
+// global limit (sso.WithBodyLimit is not wired). Typical production
+// value: 1048576 (1 MiB) — generous for any auth-flow payload,
+// blocks gigabyte-class DoS.
+//
+// Overrides applies a per-prefix override (longest-match wins). Use
+// a value of 0 in an override to mean "unlimited for this prefix"
+// — the escape hatch for endpoints that legitimately accept large
+// bodies (PAR request objects, WebAuthn attestation blobs) while
+// keeping a global cap on everything else.
 type BodyLimitConfig struct {
-	MaxBytes int64 `yaml:"max_bytes"`
+	MaxBytes  int64                      `yaml:"max_bytes"`
+	Overrides []BodyLimitOverrideConfig  `yaml:"overrides"`
+}
+
+// BodyLimitOverrideConfig is one entry in BodyLimitConfig.Overrides.
+// Prefix is matched against the request path; the longest matching
+// prefix's MaxBytes wins. Zero means "unlimited for this prefix".
+type BodyLimitOverrideConfig struct {
+	Prefix   string `yaml:"prefix"`
+	MaxBytes int64  `yaml:"max_bytes"`
 }
 
 // RateLimitConfig configures the token-bucket middleware. Default

@@ -399,6 +399,15 @@ security:
     # Cap request body size. Generous for any auth-flow payload,
     # blocks gigabyte-class DoS.
     max_bytes: 1048576       # 1 MiB
+    # Per-prefix overrides (longest-match wins). 0 = unlimited for
+    # that prefix — escape hatch for endpoints that legitimately
+    # accept large bodies (PAR request objects, WebAuthn
+    # attestation blobs) while the global cap stays in effect.
+    overrides: []
+    # - prefix: "/par"
+    #   max_bytes: 4194304     # 4 MiB for PAR JAR objects
+    # - prefix: "/webauthn/registration/finish"
+    #   max_bytes: 65536       # 64 KiB for attestation responses
 
   rate_limit:
     enabled: true
