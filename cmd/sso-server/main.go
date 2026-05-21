@@ -55,6 +55,7 @@ import (
 	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/registry"
+	registryetcd "github.com/snaplink/sso/registry/etcd"
 	"github.com/snaplink/sso/registry/memory"
 	"github.com/snaplink/sso/releases"
 	releasedocker "github.com/snaplink/sso/releases/pinner/docker"
@@ -1084,6 +1085,63 @@ func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) 
 	return p, nil
 }
 
+// buildRegistry materializes the service registry for cmd.
+//
+// Memory backend is per-process (no peer discovery, no TTL); etcd
+// is cluster-shared via lease + KeepAlive. The etcd path is
+// constructed here so the etcd transitive dep stays out of the
+// registry SPI. Returns the kind ("memory" or "etcd") so caller
+// can decide whether a /readyz check is meaningful (memory has no
+// backend state to probe).
+func buildRegistry(cfg *config.RegistryConfig, logger sso.Logger) (registry.Registry, string, error) {
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "", "memory":
+		logger.Info("service registry", "backend", "memory")
+		return memory.New(), "memory", nil
+	case "etcd":
+		if len(cfg.EtcdEndpoints) == 0 {
+			return nil, "", errors.New("registry.etcd_endpoints required when registry.backend=etcd")
+		}
+		reg, err := registryetcd.New(registryetcd.Config{
+			Endpoints:   cfg.EtcdEndpoints,
+			Prefix:      cfg.EtcdPrefix,
+			DialTimeout: cfg.EtcdDialTimeout,
+			Username:    cfg.EtcdUsername,
+			Password:    cfg.EtcdPassword,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("registry/etcd: %w", err)
+		}
+		logger.Info("service registry",
+			"backend", "etcd",
+			"endpoints", cfg.EtcdEndpoints,
+			"prefix", cfg.EtcdPrefix)
+		return reg, "etcd", nil
+	default:
+		return nil, "", fmt.Errorf("unknown registry.backend %q", cfg.Backend)
+	}
+}
+
+// resolveServiceID derives the registry Service.ID. Explicit YAML
+// wins; otherwise we synthesize from the issuer + the host's short
+// hostname so two replicas of the same issuer don't write the same
+// etcd key and clobber each other's lease. Hostname lookup failure
+// falls back to a fixed suffix — better stable-ish than panic.
+func resolveServiceID(explicit, issuer string) string {
+	if id := strings.TrimSpace(explicit); id != "" {
+		return id
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return issuer + "-1"
+	}
+	if idx := strings.IndexByte(host, '.'); idx > 0 {
+		host = host[:idx]
+	}
+	return issuer + "-" + host
+}
+
 // buildNetworkStore materializes the netpolicy.Store for cmd.
 //
 // Memory backend defers to [config.Config.BuildNetworkStore] (which
@@ -1847,6 +1905,17 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	opts = appendReadyCheck(opts, "sqlite-webauthn-users", webauthnUsers)
 	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
 
+	// Service registry built before NewServer so its etcd Ping can
+	// participate in /readyz alongside the SQLite peers. Self-
+	// registration happens later (needs cfg.Server.Listen resolved).
+	reg, regKind, err := buildRegistry(&cfg.Registry, logger)
+	if err != nil {
+		return nil, fmt.Errorf("service registry: %w", err)
+	}
+	if regKind == "etcd" {
+		opts = appendReadyCheck(opts, "etcd-registry", reg)
+	}
+
 	srv := sso.NewServer(opts...)
 
 	var adminMW *sso.AdminMiddleware
@@ -1894,18 +1963,31 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		logger.Info("release rollback wired with snapshot restore")
 	}
 
-	reg := memory.New()
-	addr := cfg.Server.Listen
-	if addr == "" || addr[0] == ':' {
-		addr = "127.0.0.1" + addr
+	addr := strings.TrimSpace(cfg.Registry.ServiceAddress)
+	if addr == "" {
+		addr = cfg.Server.Listen
+		if addr == "" || addr[0] == ':' {
+			addr = "127.0.0.1" + addr
+		}
 	}
-	// Self-registration into the in-process memory registry: no TTL
-	// because lifetime is bound to the process, not a separate broker.
+	tags := cfg.Registry.ServiceTags
+	if len(tags) == 0 {
+		tags = []string{"sso"}
+	}
+	// ServiceTTL only matters under etcd (lease lifetime + KeepAlive
+	// cadence). Memory ignores it; the registration's lifetime IS the
+	// process lifetime. Default to 30s so dead etcd-backed replicas
+	// fall off the discovery list within one TTL window.
+	ttl := cfg.Registry.ServiceTTL
+	if regKind == "etcd" && ttl <= 0 {
+		ttl = 30 * time.Second
+	}
 	if err := reg.Register(context.Background(), &registry.Service{
-		ID:      cfg.Server.Issuer + "-1",
+		ID:      resolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer),
 		Name:    "sso",
 		Address: addr,
-		Tags:    []string{"sso"},
+		Tags:    tags,
+		TTL:     ttl,
 	}); err != nil {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}

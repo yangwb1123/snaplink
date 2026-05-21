@@ -45,6 +45,35 @@ type Config struct {
 	ClientRegistration ClientRegistrationConfig `yaml:"client_registration"`
 	Identity           IdentityConfig           `yaml:"identity"`
 	WebAuthn           WebAuthnConfig           `yaml:"webauthn"`
+	Registry           RegistryConfig           `yaml:"registry"`
+}
+
+// RegistryConfig configures the service registry (etcd or in-process
+// memory). cmd self-registers under name "sso" so peers + dashboards
+// discovering the SSO cluster see every replica.
+//
+//   - Backend: "memory" (default, single-replica) or "etcd"
+//     (cluster-shared via TTL lease).
+//   - ServiceID: declarative override for the per-replica id; falls
+//     back to "<issuer>-<short-hostname>" so multiple replicas on
+//     the same etcd cluster don't collide on the same key.
+//   - ServiceAddress / ServiceTags / ServiceTTL tune what every
+//     replica advertises + how long its lease survives between
+//     KeepAlives. The TTL only matters under etcd — memory ignores it
+//     (process lifetime IS the registration lifetime).
+//   - Etcd* settings mirror NetworkConfig + LockEtcdConfig.
+type RegistryConfig struct {
+	Backend        string        `yaml:"backend"` // "memory" | "etcd"
+	ServiceID      string        `yaml:"service_id"`
+	ServiceAddress string        `yaml:"service_address"`
+	ServiceTags    []string      `yaml:"service_tags"`
+	ServiceTTL     time.Duration `yaml:"service_ttl"`
+
+	EtcdEndpoints   []string      `yaml:"etcd_endpoints"`
+	EtcdPrefix      string        `yaml:"etcd_prefix"`
+	EtcdDialTimeout time.Duration `yaml:"etcd_dial_timeout"`
+	EtcdUsername    string        `yaml:"etcd_username"`
+	EtcdPassword    string        `yaml:"etcd_password"`
 }
 
 // WebAuthnConfig opts into CTAP/FIDO2 ceremony endpoints

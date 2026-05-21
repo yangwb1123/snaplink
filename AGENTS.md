@@ -394,8 +394,17 @@ login response embedding via `WithEmbedPermissionsInLogin()`.
 `MenuLister` is the extension snapshots/admin RPCs use.
 
 ### Service registry (`registry/`)
-`memory` (TTL + Watch) and `etcd` (lease + KeepAlive).
-`cmd/sso-server` self-registers under `Name: "sso"`.
+`memory` (TTL + Watch) and `etcd` (lease + KeepAlive). cmd's
+`buildRegistry` selects on `registry.backend` (default `memory`);
+the etcd path is materialized in cmd (not in the SPI) so the etcd
+transitive dep stays out of the registry package's import surface.
+`cmd/sso-server` self-registers under `Name: "sso"` with
+`Service.ID = registry.service_id` (falls back to
+`<issuer>-<short-hostname>` so two replicas of the same issuer
+don't clobber each other's etcd key). Service.TTL defaults to 30s
+under etcd so a dead replica falls off discovery within one lease
+window; under memory the field is ignored. The etcd Registry's
+`Ping(ctx)` surfaces as `etcd-registry` on /readyz.
 
 ### gRPC (`proto/` + `grpcserver/`)
 
@@ -648,7 +657,8 @@ etc.). The SQLite rate limiter participates too — when
 `sqlite-ratelimit-<prefix>` for each declared prefix (slashes
 collapse to hyphens, so `/token/revoke` surfaces as
 `sqlite-ratelimit-token-revoke`). The etcd-backed netpolicy Store
-participates as `etcd-netpolicy` when wired. Memory backends don't
+participates as `etcd-netpolicy` when wired, and the etcd-backed
+service registry as `etcd-registry`. Memory backends don't
 implement Ping, so the type assertion silently no-ops — exactly the
 right cadence (no readiness signal from a process-local map). The
 check payload is `{"status":"ready|unready","checks":{name:
@@ -690,6 +700,9 @@ permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_lo
 network:       # enabled, api_enabled, store(memory|etcd), policies[]
                # etcd_endpoints[], etcd_prefix, etcd_dial_timeout, etcd_username, etcd_password
                #   etcd backend constructed in cmd; cluster-shared classifier state survives replica churn
+registry:      # backend(memory|etcd), service_id, service_address, service_tags[], service_ttl
+               # etcd_endpoints[], etcd_prefix, etcd_dial_timeout, etcd_username, etcd_password
+               #   etcd registry registers under a TTL lease; service_id defaults to <issuer>-<short-hostname>
 clients:       # id, secret, allowed_authenticators, token_strategy,
                # redirect_uris, post_logout_redirect_uris, allowed_scopes,
                # allowed_resources, allowed_authorization_details_types,
