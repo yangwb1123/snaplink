@@ -169,7 +169,7 @@ func (a *AdminMiddleware) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 // is under /api/v1/admin/. Other paths pass through.
 func (a *AdminMiddleware) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/v1/admin/") {
+		if !isAdminProtectedPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -218,6 +218,33 @@ func bearerFromHTTP(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimPrefix(h, BearerPrefix)
+}
+
+// isAdminProtectedPath returns true when path requires an admin-scope
+// bearer. Covers:
+//   - /api/v1/admin/*       — admin CRUD + audit-RPC gateway
+//   - /api/v1/audit/*       — event query API exposes subject IDs,
+//                             IPs, geo, outcomes for every login
+//                             attempt; PII-grade leak if open
+//   - /api/v1/netpolicy/policies* — list / get / apply / delete
+//                                   network classification topology
+//   - /api/v1/netpolicy/classify  — debug endpoint that resolves any
+//                                   IP against the current topology
+//
+// /api/v1/netpolicy/resolve-me stays open: it's the client-facing
+// "what network am I from" lookup, no privileged data leaves the
+// server (just the caller's own classification).
+func isAdminProtectedPath(path string) bool {
+	switch {
+	case strings.HasPrefix(path, "/api/v1/admin/"):
+		return true
+	case strings.HasPrefix(path, "/api/v1/audit/"):
+		return true
+	case path == "/api/v1/netpolicy/classify",
+		strings.HasPrefix(path, "/api/v1/netpolicy/policies"):
+		return true
+	}
+	return false
 }
 
 func bearerFromMetadata(ctx context.Context) string {

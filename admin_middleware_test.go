@@ -122,11 +122,58 @@ func TestAdminHTTP_ValidTokenWithScope_200(t *testing.T) {
 
 func TestAdminHTTP_NonAdminPathPassesThrough(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), nil)
-	// /api/v1/audit/events is NOT under /api/v1/admin/, so no auth needed.
+	// Truly non-admin paths (no /api/v1 prefix, or /api/v1/netpolicy/
+	// resolve-me) MUST pass through without auth.
+	resp := httpDo(t, "GET", srv.URL+"/api/v1/netpolicy/resolve-me", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		// httptest mux returns 404 for unmounted path — confirms the
+		// middleware short-circuited to next.ServeHTTP rather than
+		// 401-ing on a path it doesn't gate.
+		t.Fatalf("status = %d, want 404 (passthrough then mux miss)", resp.StatusCode)
+	}
+}
+
+func TestAdminHTTP_AuditEventsNowGated(t *testing.T) {
+	// Regression guard for the PII-leak fix: /api/v1/audit/events
+	// used to bypass admin auth entirely; now any unauthed GET
+	// returns 401 with the Bearer challenge so probes can't dump
+	// the audit log.
+	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/audit/events", "")
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (audit must require admin bearer)", resp.StatusCode)
+	}
+	if got := resp.Header.Get("WWW-Authenticate"); got == "" {
+		t.Fatal("missing WWW-Authenticate challenge on 401")
+	}
+}
+
+func TestAdminHTTP_AuditEventsWithValidScope_OK(t *testing.T) {
+	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
+	resp := httpDo(t, "GET", srv.URL+"/api/v1/audit/events", "good")
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (passthrough)", resp.StatusCode)
+		t.Fatalf("status = %d, want 200 (admin-scoped audit access)", resp.StatusCode)
+	}
+}
+
+func TestAdminHTTP_NetpolicyPoliciesGated(t *testing.T) {
+	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
+	resp := httpDo(t, "GET", srv.URL+"/api/v1/netpolicy/policies", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("netpolicy/policies unauthed: got %d want 401", resp.StatusCode)
+	}
+}
+
+func TestAdminHTTP_NetpolicyResolveMeStaysOpen(t *testing.T) {
+	srv := newAdminHTTPHarness(t, adminProvider(t), nil)
+	resp := httpDo(t, "GET", srv.URL+"/api/v1/netpolicy/resolve-me", "")
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatal("netpolicy/resolve-me must stay open (client-facing)")
 	}
 }
 

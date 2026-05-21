@@ -391,7 +391,15 @@ Admin auth: `sso.AdminMiddleware` validates Bearer via
 `(*sso.Server).ValidateToken`, requires `admin:read` for read /
 `admin:write` for mutations (`admin:*` matches both), stashes actor
 via `AdminActorFromContext`. 401s carry a `Bearer realm="admin"`
-challenge. Every mutation emits `admin_*` audit.
+challenge. Every mutation emits `admin_*` audit. The HTTP middleware
+gates more than just `/api/v1/admin/` — `isAdminProtectedPath` also
+covers `/api/v1/audit/*` (event query API leaks subject IDs / IPs /
+geo / outcomes; PII-grade) and `/api/v1/netpolicy/policies*` +
+`/classify` (network topology). `/netpolicy/resolve-me` stays open
+because it's the client-facing "what network am I from" lookup.
+cmd wraps the base SSO handler with the admin middleware so these
+gates fire even on the SSO router; when admin is disabled, audit +
+netpolicy stay open and cmd logs a startup warning.
 
 `Discovery.Watch` flushes initial headers via `SendHeader` so clients
 can block on `stream.Header()` before mutations.

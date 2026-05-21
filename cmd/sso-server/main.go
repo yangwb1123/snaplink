@@ -397,6 +397,18 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 			"login_finish", pathWebAuthnLoginFinish,
 		)
 	}
+	// Wrap base with the admin middleware so /api/v1/audit/* and
+	// /api/v1/netpolicy/policies* + /classify get the same Bearer +
+	// scope gate as /api/v1/admin/*. isAdminProtectedPath inside
+	// AdminMiddleware decides per-path; everything else passes
+	// through untouched. When admin is disabled, audit + netpolicy
+	// stay open (single-tenant / firewall-protected story) and we
+	// log a warning so the operator notices.
+	if a.adminMW != nil {
+		base = a.adminMW.HTTPMiddleware(base)
+	} else if cfg.Audit.APIEnabled || (cfg.Network.Enabled && cfg.Network.APIEnabled) {
+		logger.Error("admin disabled: /api/v1/audit and /api/v1/netpolicy/policies endpoints will be served UNAUTHENTICATED. Production deployments MUST enable admin so bearer auth is enforced.")
+	}
 	if a.adminMW == nil || !cfg.Admin.APIRESTEnabled {
 		return base, nil
 	}
