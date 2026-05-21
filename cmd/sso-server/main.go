@@ -373,6 +373,10 @@ func newGRPCServer(a *app) *grpc.Server {
 			adminv1.RegisterReleaseAdminServiceServer(s, grpcserver.NewReleaseAdminService(
 				a.releaseRegistry, a.releaseStore, a.recorder))
 		}
+		if a.tenantStore != nil {
+			adminv1.RegisterTenantAdminServiceServer(s, grpcserver.NewTenantAdminService(
+				a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache))
+		}
 	}
 	return s
 }
@@ -441,6 +445,12 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 		if err := adminv1.RegisterReleaseAdminServiceHandlerServer(ctx, gw, grpcserver.NewReleaseAdminService(
 			a.releaseRegistry, a.releaseStore, a.recorder)); err != nil {
 			return nil, fmt.Errorf("gateway releases: %w", err)
+		}
+	}
+	if a.tenantStore != nil {
+		if err := adminv1.RegisterTenantAdminServiceHandlerServer(ctx, gw, grpcserver.NewTenantAdminService(
+			a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache)); err != nil {
+			return nil, fmt.Errorf("gateway tenants: %w", err)
 		}
 	}
 	logger.Info("admin REST gateway mounted", "prefix", adminAPIPathPrefix)

@@ -387,6 +387,7 @@ login response embedding via `WithEmbedPermissionsInLogin()`.
 | B netpolicy | `netpolicy.v1.PolicyService` | `/api/v1/netpolicy/` |
 | C admin | `admin.v1.{Client,User,Token,Permission}AdminService` | `/api/v1/admin/` |
 | D | `admin.v1.{Snapshot,Release}AdminService` | `/api/v1/admin/{snapshots,releases}` |
+| E tenant | `admin.v1.TenantAdminService` | `/api/v1/admin/{tenants,domains}` |
 
 gRPC services **reuse the same** audit.Recorder / permissions.Provider
 / registry.Registry instances the HTTP layer uses.
@@ -514,6 +515,15 @@ is blocked). Lookups cached for `ttl` (default 30s); admin SetStatus
 handlers MUST call `(*Server).InvalidateTenantSuspensionCache(id)` so
 the flip takes effect on the next validate. Tenant store outage is
 fail-open by design — don't 401 the world during a partition.
+
+**Admin RPCs**: `admin.v1.TenantAdminService` ships CRUD on Tenants
++ Domains plus the surgical `SetTenantStatus(id, status)` flip.
+Update intentionally preserves the current Status so callers can't
+backdoor a suspension via UpdateTenant — the flip MUST go through
+SetStatus, which fires the cache invalidation callback wired in cmd
+to `(*Server).InvalidateTenantSuspensionCache`. DeleteTenant also
+fires the callback (deleted tenant must re-resolve as "no tenant"
+on the next request, not stay cached as Active until TTL expiry).
 
 ### ssoclient
 ```go

@@ -64,6 +64,13 @@ const (
 	EventAdminRoleAssigned        EventType = "admin_role_assigned"
 	EventAdminRoleUnassigned      EventType = "admin_role_unassigned"
 	EventAdminMenusUpdated        EventType = "admin_menus_updated"
+	EventAdminTenantCreated       EventType = "admin_tenant_created"
+	EventAdminTenantUpdated       EventType = "admin_tenant_updated"
+	EventAdminTenantDeleted       EventType = "admin_tenant_deleted"
+	EventAdminTenantStatusChanged EventType = "admin_tenant_status_changed"
+	EventAdminDomainCreated       EventType = "admin_domain_created"
+	EventAdminDomainUpdated       EventType = "admin_domain_updated"
+	EventAdminDomainDeleted       EventType = "admin_domain_deleted"
 
 	// Bootstrap framework events — one per Step run/skip on first boot
 	// (or whenever a new Step is added later).
