@@ -91,11 +91,12 @@ via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
 ### Storage today
 Memory (default) or SQLite (`defaultimpl/sqlite/`) for User /
 Client / AuthCode / RefreshToken (+ FamilyTracker) / DeviceCode /
-PAR / Session / JTIReplay. RateLimiter / AccountLockout remain
-memory-only — both need a shared counter for cross-replica abuse
-detection, and SQLite's lock contention on write-hot endpoints
-makes Redis/Memcached the better backend. Every flow that issues
-or redeems persistent state works horizontally today.
+PAR / Session / JTIReplay / SubjectClientIndex. RateLimiter /
+AccountLockout remain memory-only — both need a shared counter for
+cross-replica abuse detection, and SQLite's lock contention on
+write-hot endpoints makes Redis/Memcached the better backend. Every
+OAuth/OIDC issuance + redemption + BCL fan-out works horizontally
+today.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
@@ -278,11 +279,13 @@ IdP federation remain on the roadmap.
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
 AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
-PAR, Session, JTIReplay. Single-use stores (AuthCode, DeviceCode,
-RefreshToken, PAR) use `DELETE … RETURNING` for race-free
-consumption; Session uses `UPDATE … RETURNING` on Refresh; JTIReplay
-uses `INSERT … ON CONFLICT DO NOTHING` + RowsAffected for atomic
-first-sighting detection.
+PAR, Session, JTIReplay, SubjectClientIndex. Single-use stores
+(AuthCode, DeviceCode, RefreshToken, PAR) use `DELETE … RETURNING`
+for race-free consumption; Session uses `UPDATE … RETURNING` on
+Refresh; JTIReplay uses `INSERT … ON CONFLICT DO NOTHING` +
+RowsAffected for atomic first-sighting; SubjectClientIndex uses
+`INSERT … ON CONFLICT … DO UPDATE` for idempotent record-access
+with last_seen refresh.
 
 DSN cookbook:
 | DSN | Use |
@@ -616,7 +619,7 @@ oauth:         # backend(memory|sqlite), sqlite.dsn
                # auth_code, refresh_token, device_code, par — each {enabled, ttl}
                # jar: { enabled, timeout, max_bytes } — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect)
 identity:      # backend(memory|sqlite), sqlite.dsn — User + Client + Session store substrate
-backchannel_logout:  # enabled, max_concurrent — OIDC BCL 1.0; HTTPLogoutNotifier + memory SubjectClientIndex
+backchannel_logout:  # enabled, max_concurrent, index.{backend(memory|sqlite), sqlite.dsn} — OIDC BCL 1.0; sqlite index shares fan-out set across the cluster
 client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults
 ```
 

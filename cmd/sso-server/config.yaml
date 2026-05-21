@@ -407,12 +407,17 @@ oauth:
 # OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
 # POST a signed logout_token to every affected RP's backchannel_logout_uri
 # so server-side sessions get torn down without depending on a browser
-# round-trip. SDK uses HTTPLogoutNotifier (5s timeout, no proxy) + the
-# memory SubjectClientIndex for multi-RP fan-out. Multi-replica
-# deployments need a shared index plugged via the SDK directly.
+# round-trip. SDK uses HTTPLogoutNotifier (5s timeout, no proxy).
+# index.backend: memory (single-replica) or sqlite (cluster-shared);
+# the sqlite index lets a logout reaching any replica fan out to every
+# client a subject has touched cluster-wide.
 backchannel_logout:
   enabled: false
   max_concurrent: 0     # 0 = SDK default (8)
+  index:
+    backend: memory     # memory | sqlite
+    sqlite:
+      dsn: ""           # e.g. file:/var/lib/sso/bcl.db?_journal=WAL
 
 # RFC 7591 Dynamic Client Registration + RFC 7592 management endpoints.
 # Without enabled, /register returns 501 and every RP must be operator-

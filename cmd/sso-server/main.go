@@ -566,6 +566,28 @@ var _ = lockNoop.New
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
+// buildSubjectClientIndex picks the SubjectClientIndex backend that
+// drives OIDC BCL multi-RP fan-out. memory keeps the single-replica
+// story; sqlite shares the index so a logout reaching any replica
+// fans out to every client a subject has touched cluster-wide.
+func buildSubjectClientIndex(cfg config.BCLIndexConfig) (sso.SubjectClientIndex, string, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "memory":
+		return defaultimpl.NewMemorySubjectClientIndex(), "memory (single-replica only)", nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, "", errors.New("backchannel_logout.index.sqlite.dsn required when backend=sqlite")
+		}
+		idx, err := sqlitestores.NewSubjectClientIndex(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, "", err
+		}
+		return idx, "sqlite (cluster-shared)", nil
+	default:
+		return nil, "", fmt.Errorf("unknown backchannel_logout.index.backend %q", cfg.Backend)
+	}
+}
+
 // buildJTIReplayStore picks the JTI replay backend. memory keeps
 // the single-replica defense story; sqlite shares the seen-set
 // across the cluster so a replay routed to a different replica still
@@ -1320,14 +1342,18 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 	if cfg.BackchannelLogout.Enabled {
+		idx, mode, err := buildSubjectClientIndex(cfg.BackchannelLogout.Index)
+		if err != nil {
+			return nil, fmt.Errorf("subject_client_index: %w", err)
+		}
 		opts = append(opts,
 			sso.WithBackchannelLogout(jwtIssuer, sso.NewHTTPLogoutNotifier()),
-			sso.WithSubjectClientIndex(defaultimpl.NewMemorySubjectClientIndex()),
+			sso.WithSubjectClientIndex(idx),
 		)
 		if n := cfg.BackchannelLogout.MaxConcurrent; n > 0 {
 			opts = append(opts, sso.WithBackchannelLogoutMaxConcurrent(n))
 		}
-		logger.Info("backchannel logout: enabled (memory subject-client index — single-replica only)")
+		logger.Info("backchannel logout: enabled", "subject_client_index", mode)
 	}
 	if cfg.Server.OAuth21StrictMode {
 		opts = append(opts, sso.WithOAuth21StrictMode(true))

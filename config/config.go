@@ -94,14 +94,28 @@ type ClientRegistrationConfig struct {
 // Backed by:
 //   - Ed25519JWTIssuer (reused from access tokens) as LogoutTokenIssuer
 //   - HTTPLogoutNotifier with the SDK default 5s timeout
-//   - MemorySubjectClientIndex so a logout reaches every other RP the
-//     subject has active sessions on (single-replica only; multi-
-//     replica needs a shared index)
+//   - SubjectClientIndex per Index.Backend — memory by default
+//     (single-replica) or sqlite (cluster-shared)
 //
 // MaxConcurrent caps the fan-out parallelism per logout (default 8).
 type BackchannelLogoutConfig struct {
-	Enabled       bool `yaml:"enabled"`
-	MaxConcurrent int  `yaml:"max_concurrent"`
+	Enabled       bool                  `yaml:"enabled"`
+	MaxConcurrent int                   `yaml:"max_concurrent"`
+	Index         BCLIndexConfig        `yaml:"index"`
+}
+
+// BCLIndexConfig configures the SubjectClientIndex backend that
+// drives multi-RP fan-out. memory keeps the simple-bootstrap story;
+// sqlite shares the index across replicas so a logout routed to a
+// replica that never issued tokens for a sibling RP still fans out
+// correctly.
+type BCLIndexConfig struct {
+	Backend string             `yaml:"backend"`
+	SQLite  BCLIndexSQLiteConfig `yaml:"sqlite"`
+}
+
+type BCLIndexSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // OAuthConfig opts into the OAuth/OIDC grant stores that cmd's binary
