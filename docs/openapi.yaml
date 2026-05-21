@@ -7,11 +7,16 @@
 # Coverage scope (v1): core auth flow (including upstream IdP
 # federation return URL) + self-service endpoints + operational probes
 # + OIDC discovery + RP-initiated logout + the WebAuthn (CTAP/FIDO2)
-# ceremony. The OAuth /token grant endpoints
-# (/token, /token/introspect, /token/revoke, /par, /device/*,
-# /register*), the admin REST surface (/api/v1/admin/*), the audit
-# query API, and the netpolicy CRUD surface are deferred to v2 —
-# additive layering only, no schema rewrites needed.
+# ceremony + the OAuth /token family (/token, /token/introspect,
+# /token/revoke — covers RFC 6749 grants, RFC 8628 device flow, RFC
+# 8693 token-exchange, RFC 7662 introspection, RFC 7009 revocation,
+# RFC 9449 DPoP, RFC 8705 mTLS binding, RFC 7521/7523 private_key_jwt).
+# The Pushed Authorization Request endpoint (/par), device-flow
+# user-facing endpoints (/device/code, /device/verify), Dynamic Client
+# Registration (/register*), the admin REST surface
+# (/api/v1/admin/*), the audit query API, and the netpolicy CRUD
+# surface are deferred to v2 — additive layering only, no schema
+# rewrites needed.
 #
 # Validate locally:    make docs-validate
 # Serve swagger-ui:    make docs-serve   (then open http://localhost:8088)
@@ -260,6 +265,236 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Local session storage failed after upstream succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /token:
+    post:
+      tags: [auth]
+      summary: OAuth 2.0 token endpoint (RFC 6749 §3.2).
+      description: |
+        Mints / refreshes / exchanges tokens. The same endpoint
+        dispatches across every grant type the server supports:
+
+        | grant_type | RFC | Required body fields |
+        |------------|-----|----------------------|
+        | `authorization_code` | RFC 6749 §4.1.3 | `code`, `redirect_uri` (when registered at issuance), `code_verifier` (when PKCE was used at /auth/login) |
+        | `refresh_token` | RFC 6749 §6 | `refresh_token` |
+        | `client_credentials` | RFC 6749 §4.4 | (none beyond client auth) |
+        | `urn:ietf:params:oauth:grant-type:device_code` | RFC 8628 §3.4 | `device_code` |
+        | `urn:ietf:params:oauth:grant-type:token-exchange` | RFC 8693 §2 | `subject_token`, `subject_token_type` (+ optional `actor_token`/`actor_token_type`, `audience`, `requested_token_type`, `acr_values`) |
+
+        **Client authentication** — per RFC 6749 §2.3.1, `Authorization:
+        Basic <base64(client_id:client_secret)>` beats body
+        `client_id` / `client_secret`. RFC 7521 + 7523 `private_key_jwt`
+        is accepted via `client_assertion` + `client_assertion_type =
+        urn:ietf:params:oauth:client-assertion-type:jwt-bearer` for
+        clients whose `Client.JWKS` is registered. Public clients
+        authenticate with `client_id` only (PKCE-bound). RFC 8705 mTLS
+        is accepted when `WithClientCertExtractor` is wired (cert
+        thumbprint binds the issued token via `cnf.x5t#S256`).
+
+        **DPoP** (RFC 9449) — supply `DPoP: <proof>` header to bind the
+        issued access token to a sender-constrained key. Server may
+        respond `400 use_dpop_nonce` (with `DPoP-Nonce` header) when
+        §8 nonce enforcement is wired; clients retry with the nonce
+        echoed in their next proof.
+
+        **Resource indicators** (RFC 8707) — repeat `resource=<uri>`
+        per requested audience. Allowed values come from
+        `Client.AllowedResources`; mismatches return
+        `invalid_target`.
+
+        **Form + JSON** — both `application/x-www-form-urlencoded`
+        (RFC 6749 mandatory) and `application/json` are accepted via
+        the dispatcher in `oauth_bind.go`. Repeated form keys form
+        the `resource` / `audience` lists; the JSON shape uses arrays.
+
+        Successful responses ALWAYS carry `Cache-Control: no-store`
+        and `Pragma: no-cache` per RFC 6749 §5.1 — apply on the
+        client side too, otherwise an intermediary cache may serve
+        the response cross-user.
+
+        **Oracle-leak hardening** — unknown / expired / consumed /
+        client-mismatch code or refresh-token failures all collapse
+        to a single `400 invalid_grant` response so an attacker
+        polling can't distinguish failure modes.
+      operationId: postToken
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+            examples:
+              authorizationCode:
+                value:
+                  grant_type: authorization_code
+                  code: ac_xJzq...
+                  redirect_uri: https://app.example.com/cb
+                  code_verifier: V3rifi3rRaw...
+                  client_id: my-app
+              refreshToken:
+                value:
+                  grant_type: refresh_token
+                  refresh_token: rt_xJzq...
+                  client_id: my-app
+              clientCredentials:
+                value:
+                  grant_type: client_credentials
+                  client_id: svc-id
+                  client_secret: svc-secret
+                  scope: items:read
+              deviceCode:
+                value:
+                  grant_type: urn:ietf:params:oauth:grant-type:device_code
+                  device_code: dc_xJzq...
+                  client_id: kiosk-app
+              tokenExchange:
+                value:
+                  grant_type: urn:ietf:params:oauth:grant-type:token-exchange
+                  subject_token: eyJhbGciOiJFZERTQSI...
+                  subject_token_type: urn:ietf:params:oauth:token-type:access_token
+                  audience: [https://downstream-api.example.com]
+                  requested_token_type: urn:ietf:params:oauth:token-type:access_token
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+      responses:
+        "200":
+          description: Issued / refreshed / exchanged token.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+            Pragma:
+              schema: { type: string, example: no-cache }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenIssuance"
+        "400":
+          description: |
+            Grant-specific failure — `invalid_request`,
+            `invalid_grant`, `invalid_target`, `invalid_dpop_proof`,
+            `use_dpop_nonce`. Body shape is the standard
+            ErrorResponse.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: |
+            Client authentication failed — wrong `client_id` /
+            `client_secret`, missing / bad `client_assertion`,
+            unknown registered client. Wire code:
+            `invalid_client` / `invalid_client_secret`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |
+            Client allowed but tenant binding rejected the request
+            (the resolved tenant ≠ `Client.TenantID`). Wire code:
+            `tenant_mismatch`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            Grant requested but the corresponding store / option
+            isn't wired (e.g. `authorization_code` without
+            `WithAuthCodeStore`). Wire codes:
+            `authorization_code_not_configured`,
+            `device_code_not_configured`, etc.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /token/introspect:
+    post:
+      tags: [auth]
+      summary: OAuth 2.0 token introspection (RFC 7662).
+      description: |
+        Resource servers query token state here when local JWT
+        validation isn't enough (e.g. revocation check, opaque
+        session tokens). RFC 7662 §2.2 — an inactive token returns
+        `{"active": false}` and nothing else; presence of any other
+        field on the response implies the token was valid at the
+        moment of introspection.
+
+        Client authentication follows the same rules as /token:
+        Basic > body > private_key_jwt. Caller MUST be a registered
+        client; anonymous introspection is intentionally not
+        supported.
+      operationId: postIntrospect
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/IntrospectRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntrospectRequest"
+      responses:
+        "200":
+          description: |
+            Introspection succeeded. `active: false` means revoked /
+            expired / never-issued (RFC 7662 §2.2 — same wire shape
+            for all three so callers can't enumerate token state).
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntrospectResponse"
+        "401":
+          description: Client authentication failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /token/revoke:
+    post:
+      tags: [auth]
+      summary: OAuth 2.0 token revocation (RFC 7009).
+      description: |
+        Marks the named token consumed. The server returns 200
+        regardless of whether the token existed (RFC 7009 §2.2 —
+        prevents an attacker from probing which tokens are valid by
+        observing the 200/404 split). The optional `token_type_hint`
+        lets the server short-circuit the lookup (`access_token` →
+        the JWT/session store; `refresh_token` → the refresh store).
+
+        Revoking a refresh token also kills its rotation family
+        when `RefreshTokenFamilyTracker` is wired (OAuth Security
+        BCP §4.14): every prior + future refresh derived from the
+        same auth event is invalidated atomically.
+      operationId: postRevoke
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/RevokeRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeRequest"
+      responses:
+        "200":
+          description: Revocation accepted (token may or may not have existed).
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+        "401":
+          description: Client authentication failed.
           content:
             application/json:
               schema:
@@ -934,6 +1169,208 @@ components:
             Always `authenticated` on the 200 path — the constant lives
             in `consts.go` (`StatusAuthenticated`). Future statuses
             (e.g. `mfa_required`) would extend this enum.
+
+    TokenRequest:
+      type: object
+      required: [grant_type]
+      properties:
+        grant_type:
+          type: string
+          enum:
+            - authorization_code
+            - refresh_token
+            - client_credentials
+            - urn:ietf:params:oauth:grant-type:device_code
+            - urn:ietf:params:oauth:grant-type:token-exchange
+          description: |
+            Selects the grant branch. See the endpoint description
+            for the required-field table.
+        client_id:
+          type: string
+          description: |
+            Public client identifier. Overridden by HTTP Basic
+            credentials when both are supplied (RFC 6749 §2.3.1).
+        client_secret:
+          type: string
+          description: |
+            Confidential client secret. Body form discouraged in
+            favor of HTTP Basic; supported for legacy compat.
+        code:
+          type: string
+          description: Authorization code for `grant_type=authorization_code`.
+        redirect_uri:
+          type: string
+          description: |
+            MUST equal the `redirect_uri` registered at /auth/login
+            time when one was supplied; rejected with
+            `invalid_redirect_uri` on mismatch.
+        code_verifier:
+          type: string
+          description: |
+            RFC 7636 §4.5 PKCE verifier. Required when /auth/login
+            supplied a `code_challenge`. Length bounds enforced
+            server-side; any failure collapses to `invalid_grant`.
+        refresh_token:
+          type: string
+          description: For `grant_type=refresh_token`.
+        device_code:
+          type: string
+          description: For `grant_type=urn:ietf:params:oauth:grant-type:device_code`.
+        scope:
+          type: string
+          description: Space-delimited scope request.
+        resource:
+          type: array
+          items: { type: string }
+          description: |
+            RFC 8707 resource indicators. Repeat the form key for
+            multiple values; in JSON, supply an array.
+        subject_token:
+          type: string
+          description: RFC 8693 subject_token (the token being exchanged).
+        subject_token_type:
+          type: string
+          example: urn:ietf:params:oauth:token-type:access_token
+        actor_token:
+          type: string
+          description: RFC 8693 actor_token for delegation / impersonation.
+        actor_token_type:
+          type: string
+        audience:
+          type: array
+          items: { type: string }
+          description: RFC 8693 audience list.
+        requested_token_type:
+          type: string
+        acr_values:
+          type: string
+          description: |
+            Space-delimited ACR list. On exchange, the dispatcher
+            refuses to mint when the inbound `subject_token.acr`
+            doesn't satisfy this demand (RFC 9470 step-up).
+        client_assertion:
+          type: string
+          description: |
+            RFC 7521 + 7523 JWT bearer client authentication. Signed
+            by a key in `Client.JWKS`. iss / sub MUST equal
+            client_id; aud MUST include this AS issuer or the
+            token endpoint URL.
+        client_assertion_type:
+          type: string
+          enum:
+            - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+          description: |
+            MUST be the jwt-bearer URN when `client_assertion` is
+            supplied; otherwise rejected with `invalid_request`.
+
+    TokenIssuance:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer, DPoP]
+          description: |
+            `Bearer` for the legacy path; `DPoP` when the issuance
+            was DPoP-bound (RFC 9449 §5).
+        expires_in:
+          type: integer
+          description: Access-token lifetime in seconds.
+        refresh_token:
+          type: string
+          description: |
+            Present when a refresh token was issued. Family-rotated
+            on every grant=refresh_token call when
+            `RefreshTokenFamilyTracker` is wired.
+        scope:
+          type: string
+          description: Space-delimited granted scopes.
+        id_token:
+          type: string
+          description: |
+            Present when the client requested `openid` scope and
+            `WithIDTokenIssuer` is wired. RFC 9068-shaped JWT.
+        issued_token_type:
+          type: string
+          description: |
+            RFC 8693 §2.2.1 — present on token-exchange responses.
+            Mirrors the inbound `requested_token_type`.
+
+    IntrospectRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The token to introspect.
+        token_type_hint:
+          type: string
+          enum: [access_token, refresh_token]
+          description: |
+            Lookup shortcut. Server falls back to the other store
+            when the hint misses, so an incorrect hint is a perf
+            hit but never a correctness bug.
+        client_id:
+          type: string
+        client_secret:
+          type: string
+
+    IntrospectResponse:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+          description: |
+            `false` covers expired / revoked / never-issued
+            (RFC 7662 §2.2). Other fields are absent in that case.
+        scope:
+          type: string
+        client_id:
+          type: string
+        username:
+          type: string
+        token_type:
+          type: string
+        exp:
+          type: integer
+          description: Unix expiry seconds.
+        iat:
+          type: integer
+          description: Unix issued-at seconds.
+        sub:
+          type: string
+        aud:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        iss:
+          type: string
+        jti:
+          type: string
+        cnf:
+          type: object
+          description: |
+            RFC 7800 confirmation method. Present when the token was
+            DPoP- or mTLS-bound; carries `jkt` or `x5t#S256`.
+
+    RevokeRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The token to revoke.
+        token_type_hint:
+          type: string
+          enum: [access_token, refresh_token]
+        client_id:
+          type: string
+        client_secret:
+          type: string
 
     User:
       type: object
