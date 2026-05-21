@@ -809,6 +809,21 @@ type ServerConfig struct {
 	// to the SDK constant when unset (5s).
 	DiscoveryDocCacheTTL time.Duration `yaml:"discovery_doc_cache_ttl"`
 
+	// DiscoveryCacheTTL caches the in-process clientDiscoverySnapshot
+	// (the projection of opt-in features + client store union) for
+	// this long. Separate from the marshaled-body cache above —
+	// reuses the snapshot across multiple base-URL renders. Defaults
+	// to the SDK constant when unset (5s).
+	DiscoveryCacheTTL time.Duration `yaml:"discovery_cache_ttl"`
+
+	// JWKSCacheTTL caches the JWKS response body + its ETag for
+	// this long. RPs and downstream resource servers honor the
+	// Cache-Control: max-age header so this controls how aggressively
+	// they refresh the signing-key set. Lower during planned key
+	// rotation, higher otherwise. Defaults to the SDK constant
+	// when unset (5 minutes).
+	JWKSCacheTTL time.Duration `yaml:"jwks_cache_ttl"`
+
 	// SignedMetadata adds an RFC 8414 §2.1 signed_metadata field
 	// to /.well-known/openid-configuration. The configured default
 	// TokenIssuer must satisfy the MetadataSigner interface (the

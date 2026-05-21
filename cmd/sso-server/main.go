@@ -1343,6 +1343,12 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		// from config without removing the field entirely.
 		opts = append(opts, sso.WithDiscoveryDocCacheTTL(cfg.Server.DiscoveryDocCacheTTL))
 	}
+	if cfg.Server.DiscoveryCacheTTL != 0 {
+		opts = append(opts, sso.WithDiscoveryCacheTTL(cfg.Server.DiscoveryCacheTTL))
+	}
+	if cfg.Server.JWKSCacheTTL != 0 {
+		opts = append(opts, sso.WithJWKSCacheTTL(cfg.Server.JWKSCacheTTL))
+	}
 	if cfg.Security.DPoPNonce.Enabled {
 		provider, err := buildDPoPNonceProvider(cfg.Security.DPoPNonce, logger)
 		if err != nil {

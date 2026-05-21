@@ -19,6 +19,19 @@ server:
   # for compromised expired tokens. Production-typical: 30s-2m.
   max_clock_skew: 30s
 
+  # Cache tuning for the high-traffic discovery + JWKS endpoints.
+  # discovery_doc_cache_ttl: marshaled-body cache keyed by base URL +
+  # serves ETag/If-None-Match. Set to a negative value to disable both
+  # the cache AND the response Cache-Control headers (useful when an
+  # upstream CDN owns caching).
+  # discovery_cache_ttl: in-process projection-snapshot cache (smaller
+  # cost than the doc body — re-iterates the client store on every miss).
+  # jwks_cache_ttl: how long RPs / resource servers cache the signing
+  # keys. Lower during planned key rotation, higher otherwise.
+  discovery_doc_cache_ttl: 5s
+  discovery_cache_ttl: 5s
+  jwks_cache_ttl: 5m
+
   # draft-ietf-oauth-v2-1 strict mode. When true:
   #   - response_type=token (implicit) rejected on /auth/login
   #   - code_challenge_methods_supported limited to S256 only

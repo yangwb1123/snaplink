@@ -584,7 +584,8 @@ Scorers needing richer signals query their own store inside
 
 ```yaml
 server:        # listen, issuer, TTLs, default_token_strategy, max_clock_skew,
-               # discovery_doc_cache_ttl, signed_metadata, oauth_21_strict_mode,
+               # discovery_doc_cache_ttl, discovery_cache_ttl, jwks_cache_ttl,
+               # signed_metadata, oauth_21_strict_mode,
                # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}
                # pairwise_subjects: { enabled, salt, salt_file, backend(memory|sqlite), sqlite.dsn }
                #   sqlite shares (pairwise → local) reverse lookup so /userinfo resolves on any replica
