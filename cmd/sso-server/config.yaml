@@ -679,6 +679,31 @@ snapshot:
     passphrase_file: ""
   restore_from: ""            # file:///abs/path or inline:<base64>
 
+# Reference rule-based RiskScorer (defaultimpl.RuleBasedRiskScorer).
+# Runs on /auth/login AFTER credential validation, BEFORE token
+# issuance — a Deny blocks the token, an Allow lets it through.
+# Operators with richer needs (impossible-travel, device
+# fingerprint, ML scoring) fork cmd and pass their own
+# sso.RiskScorer via WithRiskScorer. Eval order is deny-first:
+# IPDenyList → IPAllowList (default-deny if non-empty) →
+# CountryDenyList → CountryAllowList. country_allow_list rule
+# fires only when geo enrichment populated req.Geo.CountryCode;
+# deny_on_geo_missing flips that to "no geo = deny" for deployments
+# where geo is a hard requirement.
+risk:
+  enabled: false
+  ip_deny_list: []
+  # - "203.0.113.0/24"
+  # - "198.51.100.99"
+  ip_allow_list: []
+  # - "10.0.0.0/8"
+  country_deny_list: []
+  # - "KP"
+  country_allow_list: []
+  # - "US"
+  # - "DE"
+  deny_on_geo_missing: false
+
 # Frontend + backend app version pin / rollback. Pinner.PinForward +
 # PinRollback encode asymmetric ordering (backend-first forward,
 # frontend-first rollback). HealthProbe gates forward Pin; all-fail

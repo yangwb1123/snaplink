@@ -674,8 +674,18 @@ reason=risk_denied`).
 - **Fail-open** on scorer error (alert on the log line).
 - **Zero overhead** when option unset.
 
-Scorers needing richer signals query their own store inside
-`Score` — don't pad `RiskRequest`.
+Reference impls in `defaultimpl/`:
+- `NoopRiskScorer` — typed Allow-always (tests / explicit no-op).
+- `RuleBasedRiskScorer` — declarative IP / country deny-and-allow
+  lists. cmd wires this when `risk.enabled` is set. Eval order is
+  deny-first (IP deny → IP allow default-deny → country deny →
+  country allow); `deny_on_geo_missing` flips country allow into
+  hard-required when geo enrichment was unavailable.
+
+Scorers needing richer signals (impossible-travel, device
+fingerprint deltas, ML scoring) implement [sso.RiskScorer]
+directly and query their own store inside `Score` — don't pad
+`RiskRequest`.
 
 ---
 

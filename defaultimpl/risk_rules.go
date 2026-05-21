@@ -1,0 +1,200 @@
+package defaultimpl
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+
+	"github.com/snaplink/sso"
+)
+
+// RuleBasedRiskScorer is the reference rule-based [sso.RiskScorer].
+// It is intentionally simple — the 80% case of an operator who wants
+// declarative deny-by-IP / deny-by-country / allow-only-from-these
+// without writing Go. Anything more involved (impossible-travel,
+// device-fingerprint deltas, ML scoring) should plug in a custom
+// RiskScorer directly via [sso.WithRiskScorer].
+//
+// Evaluation order (first match wins; later rules are short-circuited):
+//
+//  1. IP in IPDenyList                              → Deny
+//  2. IPAllowList non-empty AND IP not in allow set → Deny
+//  3. Country in CountryDenyList                    → Deny
+//  4. CountryAllowList non-empty AND country not in allow set → Deny
+//     (when DenyOnGeoMissing is false, a missing Geo field skips this
+//     rule rather than denying — the safer default for deployments
+//     where geo enrichment is best-effort)
+//  5. → Allow
+//
+// IP rules accept individual IPs ("203.0.113.7") and CIDR ranges
+// ("203.0.113.0/24"). Country comparisons are case-insensitive (the
+// allow/deny sets normalize to upper case so ISO 3166-1 alpha-2
+// codes match whether the geo provider emits "US" or "us").
+type RuleBasedRiskScorer struct {
+	denyNets         []*net.IPNet
+	denyIPs          map[string]struct{}
+	allowNets        []*net.IPNet
+	allowIPs         map[string]struct{}
+	hasAllowIPRules  bool
+	denyCountries    map[string]struct{}
+	allowCountries   map[string]struct{}
+	hasAllowCountry  bool
+	denyOnGeoMissing bool
+}
+
+// RuleBasedRiskScorerConfig is the construction-time input. Callers
+// pass a literal struct rather than fluent options because there's
+// only a handful of fields and they're all data, not behavior.
+//
+// IPDenyList + IPAllowList accept CIDR ("10.0.0.0/8") or single-IP
+// ("203.0.113.7") strings — the same set syntax operators write in
+// netpolicy YAML. CountryDenyList + CountryAllowList are
+// ISO 3166-1 alpha-2 (e.g. "US", "DE"). DenyOnGeoMissing controls
+// whether the CountryAllowList rule fires when the geo lookup
+// returned nothing — false (the default) treats geo as best-effort
+// and lets the login through; true treats geo as a hard requirement.
+type RuleBasedRiskScorerConfig struct {
+	IPDenyList       []string
+	IPAllowList      []string
+	CountryDenyList  []string
+	CountryAllowList []string
+	DenyOnGeoMissing bool
+}
+
+// NewRuleBasedRiskScorer parses the supplied config into the
+// pre-resolved sets the hot path consults. Returns an error on
+// malformed CIDR / IP entries so misconfigurations fail at boot
+// rather than at the first request.
+func NewRuleBasedRiskScorer(cfg RuleBasedRiskScorerConfig) (*RuleBasedRiskScorer, error) {
+	s := &RuleBasedRiskScorer{
+		denyIPs:          make(map[string]struct{}),
+		allowIPs:         make(map[string]struct{}),
+		denyCountries:    make(map[string]struct{}),
+		allowCountries:   make(map[string]struct{}),
+		denyOnGeoMissing: cfg.DenyOnGeoMissing,
+	}
+	for _, raw := range cfg.IPDenyList {
+		if err := parseIPOrCIDR(raw, &s.denyNets, s.denyIPs); err != nil {
+			return nil, fmt.Errorf("risk: ip_deny_list %q: %w", raw, err)
+		}
+	}
+	for _, raw := range cfg.IPAllowList {
+		if err := parseIPOrCIDR(raw, &s.allowNets, s.allowIPs); err != nil {
+			return nil, fmt.Errorf("risk: ip_allow_list %q: %w", raw, err)
+		}
+		s.hasAllowIPRules = true
+	}
+	for _, raw := range cfg.CountryDenyList {
+		if c := strings.ToUpper(strings.TrimSpace(raw)); c != "" {
+			s.denyCountries[c] = struct{}{}
+		}
+	}
+	for _, raw := range cfg.CountryAllowList {
+		if c := strings.ToUpper(strings.TrimSpace(raw)); c != "" {
+			s.allowCountries[c] = struct{}{}
+			s.hasAllowCountry = true
+		}
+	}
+	return s, nil
+}
+
+// Score implements [sso.RiskScorer].
+func (s *RuleBasedRiskScorer) Score(_ context.Context, req *sso.RiskRequest) (*sso.RiskAssessment, error) {
+	if req == nil {
+		return &sso.RiskAssessment{Decision: sso.DecisionAllow}, nil
+	}
+	ip := parseRequestIP(req.RemoteIP)
+	if ip != nil {
+		if _, denied := s.denyIPs[ip.String()]; denied {
+			return deny("ip_deny_list", "ip-deny"), nil
+		}
+		for _, n := range s.denyNets {
+			if n.Contains(ip) {
+				return deny("ip_deny_list", "ip-deny"), nil
+			}
+		}
+		if s.hasAllowIPRules {
+			if _, ok := s.allowIPs[ip.String()]; ok {
+				goto countryRules
+			}
+			for _, n := range s.allowNets {
+				if n.Contains(ip) {
+					goto countryRules
+				}
+			}
+			return deny("ip_allow_list", "ip-not-allowed"), nil
+		}
+	}
+countryRules:
+	country := geoCountry(req)
+	if country != "" {
+		if _, denied := s.denyCountries[country]; denied {
+			return deny("country_deny_list", "country-deny"), nil
+		}
+	}
+	if s.hasAllowCountry {
+		switch {
+		case country != "":
+			if _, ok := s.allowCountries[country]; !ok {
+				return deny("country_allow_list", "country-not-allowed"), nil
+			}
+		case s.denyOnGeoMissing:
+			return deny("country_allow_list", "geo-missing"), nil
+		}
+	}
+	return &sso.RiskAssessment{Decision: sso.DecisionAllow}, nil
+}
+
+var _ sso.RiskScorer = (*RuleBasedRiskScorer)(nil)
+
+func parseIPOrCIDR(raw string, nets *[]*net.IPNet, set map[string]struct{}) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return errors.New("empty entry")
+	}
+	if strings.Contains(raw, "/") {
+		_, n, err := net.ParseCIDR(raw)
+		if err != nil {
+			return err
+		}
+		*nets = append(*nets, n)
+		return nil
+	}
+	ip := net.ParseIP(raw)
+	if ip == nil {
+		return errors.New("not an IP or CIDR")
+	}
+	set[ip.String()] = struct{}{}
+	return nil
+}
+
+// parseRequestIP normalizes whatever the RiskRequest.RemoteIP field
+// carries (raw IP, IP:port, or empty). Returns nil when no usable
+// IP — the caller then skips IP-based rules entirely.
+func parseRequestIP(raw string) net.IP {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	return net.ParseIP(raw)
+}
+
+func geoCountry(req *sso.RiskRequest) string {
+	if req.Geo == nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(req.Geo.CountryCode))
+}
+
+func deny(tag, reason string) *sso.RiskAssessment {
+	return &sso.RiskAssessment{
+		Decision: sso.DecisionDeny,
+		Reason:   reason,
+		Tags:     []string{tag},
+	}
+}

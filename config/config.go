@@ -46,6 +46,28 @@ type Config struct {
 	Identity           IdentityConfig           `yaml:"identity"`
 	WebAuthn           WebAuthnConfig           `yaml:"webauthn"`
 	Registry           RegistryConfig           `yaml:"registry"`
+	Risk               RiskConfig               `yaml:"risk"`
+}
+
+// RiskConfig wires the reference rule-based [sso.RiskScorer] into
+// cmd. Operators with non-trivial risk needs (impossible-travel,
+// device fingerprint deltas, ML scoring) fork cmd and pass their
+// own [sso.RiskScorer] via WithRiskScorer — this config covers the
+// 80% case of declarative deny-by-IP / deny-by-country /
+// allow-only-from-these.
+//
+// Evaluation is first-match-wins. The deny lists short-circuit
+// before the allow lists, so a CIDR in both lists always denies.
+// CountryAllowList rule fires only when geo enrichment populated
+// req.Geo.CountryCode; DenyOnGeoMissing flips that to "no geo =
+// deny" for deployments where geo is a hard requirement.
+type RiskConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	IPDenyList       []string `yaml:"ip_deny_list"`
+	IPAllowList      []string `yaml:"ip_allow_list"`
+	CountryDenyList  []string `yaml:"country_deny_list"`
+	CountryAllowList []string `yaml:"country_allow_list"`
+	DenyOnGeoMissing bool     `yaml:"deny_on_geo_missing"`
 }
 
 // RegistryConfig configures the service registry (etcd or in-process

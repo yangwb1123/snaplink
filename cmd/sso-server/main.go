@@ -1142,6 +1142,39 @@ func resolveServiceID(explicit, issuer string) string {
 	return issuer + "-" + host
 }
 
+// buildRiskScorer materializes the reference rule-based
+// [defaultimpl.RuleBasedRiskScorer] from RiskConfig. Returns nil
+// when risk.enabled=false so cmd skips WithRiskScorer entirely
+// (zero overhead on the login path).
+//
+// Operators with richer risk requirements (impossible-travel,
+// device fingerprinting, ML scoring) should fork cmd and call
+// sso.WithRiskScorer with their own implementation — the
+// RuleBasedRiskScorer is the declarative 80% case, not a
+// framework for embedding richer policies.
+func buildRiskScorer(cfg *config.RiskConfig, logger sso.Logger) (sso.RiskScorer, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	scorer, err := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
+		IPDenyList:       cfg.IPDenyList,
+		IPAllowList:      cfg.IPAllowList,
+		CountryDenyList:  cfg.CountryDenyList,
+		CountryAllowList: cfg.CountryAllowList,
+		DenyOnGeoMissing: cfg.DenyOnGeoMissing,
+	})
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("risk scorer enabled (rule-based)",
+		"ip_deny", len(cfg.IPDenyList),
+		"ip_allow", len(cfg.IPAllowList),
+		"country_deny", len(cfg.CountryDenyList),
+		"country_allow", len(cfg.CountryAllowList),
+		"deny_on_geo_missing", cfg.DenyOnGeoMissing)
+	return scorer, nil
+}
+
 // buildNetworkStore materializes the netpolicy.Store for cmd.
 //
 // Memory backend defers to [config.Config.BuildNetworkStore] (which
@@ -1669,6 +1702,18 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 				Timeout: cfg.Geo.LookupTimeout,
 			}))
 		}
+	}
+
+	// Risk scorer wired AFTER geo so country-based rules see the
+	// populated GeoInfo on RiskRequest.Geo. When risk.enabled is
+	// false, buildRiskScorer returns nil and cmd skips
+	// WithRiskScorer entirely — zero overhead on /auth/login.
+	riskScorer, err := buildRiskScorer(&cfg.Risk, logger)
+	if err != nil {
+		return nil, fmt.Errorf("risk scorer: %w", err)
+	}
+	if riskScorer != nil {
+		opts = append(opts, sso.WithRiskScorer(riskScorer))
 	}
 
 	tenantStore, err := buildTenantStore(cfg, logger)
