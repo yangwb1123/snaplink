@@ -16,11 +16,12 @@
 # + Dynamic Client Registration (/register, /register/{client_id};
 # RFC 7591 + 7592).
 # Plus the operator-side surfaces: GET /api/v1/clients/{id} (open),
-# the audit query API (/api/v1/audit/events[/{id}]), and the netpolicy
-# CRUD + classify surface (/api/v1/netpolicy/...). The admin gRPC
-# admin services (/api/v1/admin/*) — Snapshot, Release, Tenant,
-# Client, User, Token, Permission — are reachable over REST via the
-# grpc-gateway and remain deferred to a follow-up v2 OpenAPI batch.
+# the audit query API (/api/v1/audit/events[/{id}]), the netpolicy
+# CRUD + classify surface (/api/v1/netpolicy/...), and the full admin
+# gRPC service surface exposed via grpc-gateway under /api/v1/admin/* —
+# Snapshot, Release, Tenant, Domain, Client, User, Token, Permission.
+# Coverage scope is now complete for every endpoint cmd/sso-server
+# registers in its reference configuration.
 #
 # Validate locally:    make docs-validate
 # Serve swagger-ui:    make docs-serve   (then open http://localhost:8088)
@@ -1695,6 +1696,1078 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  # ---- Admin gRPC services exposed via grpc-gateway ----
+  #
+  # Every endpoint below requires the AdminMiddleware Bearer-validated
+  # admin:read (GET) or admin:write (POST/PUT/DELETE) scope. The wire
+  # contract is the gRPC-defined message shape — see proto/admin/v1/*.
+  # Mutations fire the matching admin_* audit event automatically.
+
+  /api/v1/admin/snapshots:
+    post:
+      tags: [admin]
+      summary: Export a snapshot of operator-managed state.
+      description: |
+        Pulls every wired backend's data (clients, users, roles,
+        assignments, menus, network policies, plus the bootstrap
+        Tracker high-water mark) and writes the resulting envelope
+        to the configured snapshot.storage backend. Returns the
+        header projection (size, codec, encryption alg, ...) plus
+        the storage key.
+      operationId: snapshotExport
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportSnapshotRequest"
+      responses:
+        "200":
+          description: Snapshot exported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportSnapshotResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List stored snapshots.
+      description: |
+        Returns each snapshot's header projection. Body resources
+        live encrypted inside the envelope; fetch one via Get.
+      operationId: snapshotList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Snapshots list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSnapshotsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/snapshots/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Fetch a single snapshot (header + decoded resources).
+      operationId: snapshotGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Snapshot envelope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetSnapshotResponse"
+        "404":
+          description: '`snapshot_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Delete a stored snapshot.
+      operationId: snapshotDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/snapshots/{id}:restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Restore a snapshot.
+      description: |
+        Replays a snapshot's resources into wired backends. Modes:
+        `merge` (insert-only; default), `overwrite` (upsert),
+        `replace` (wipe + seed — requires `confirm` equal to the
+        snapshot id so accidental drops can't happen). `dry_run`
+        returns counts only without persisting. `advance_bootstrap`
+        bumps the Tracker high-water to the snapshot's recorded
+        version (skip already-covered seeds on the same boot).
+      operationId: snapshotRestore
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreSnapshotRequest"
+      responses:
+        "200":
+          description: Restore report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestoreSnapshotResponse"
+        "400":
+          description: |
+            `confirmation_required` / `confirmation_mismatch` (mode=replace
+            without a matching `confirm`) or `unknown_schema_version`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '`snapshot_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/releases:
+    post:
+      tags: [admin]
+      summary: Register a paired frontend+backend release.
+      description: |
+        Stores a Release definition (no pin). Operators later call
+        Pin to make it current. At least one of `git_ref` / `uri`
+        MUST be set on each Artifact half.
+      operationId: releaseRegister
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterReleaseRequest"
+      responses:
+        "200":
+          description: Release registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterReleaseResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List registered releases.
+      operationId: releaseList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Releases list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListReleasesResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/releases:current:
+    get:
+      tags: [admin]
+      summary: Fetch the currently-pinned release.
+      description: |
+        Returns the active release plus the pin time / pinner. The
+        `release` field is unset when nothing is pinned (fresh
+        install).
+      operationId: releaseGetCurrent
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current release (may be empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetCurrentReleaseResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/releases/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Fetch a single release by id.
+      operationId: releaseGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Release.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetReleaseResponse"
+        "404":
+          description: '`release_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Delete a registered release.
+      operationId: releaseDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/releases/{id}:pin:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Pin (make current) a registered release.
+      description: |
+        Forward pin: backend-first ordering. Rejects pins that
+        regress schema_version (use Rollback). Health probe gates
+        when wired; an all-fail probe triggers auto-rollback.
+      operationId: releasePin
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pin report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PinReleaseResponse"
+        "400":
+          description: '`schema_regress` — use the Rollback endpoint instead.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/releases/{id}:rollback:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Rollback to a previously-pinned release.
+      description: |
+        Reverse pin: frontend-first ordering. Triggers the
+        SnapshotRestorer hook when the target's `config_snapshot`
+        is non-empty (admin state restored BEFORE the Pinner
+        flips). No probe gating on Rollback by design.
+      operationId: releaseRollback
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Rollback report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PinReleaseResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tenants:
+    get:
+      tags: [admin]
+      summary: List tenants.
+      operationId: tenantList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tenants list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTenantsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Create a tenant.
+      description: |
+        Body MUST set status to a known value (`active` /
+        `suspended`); SetStatus is the only RPC that mutates it
+        post-create so accidental backdoor suspensions via Update
+        can't happen.
+      operationId: tenantCreate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Tenant"
+      responses:
+        "200":
+          description: Created tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTenantResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tenants/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Fetch a tenant.
+      operationId: tenantGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetTenantResponse"
+        "404":
+          description: '`tenant_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [admin]
+      summary: Update a tenant (preserves status).
+      description: |
+        Update intentionally ignores body `status` — operators MUST
+        use SetStatus to flip suspension, so the cache invalidation
+        callback fires. UpdateTenant changes name / slug / settings
+        only.
+      operationId: tenantUpdate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Tenant"
+      responses:
+        "200":
+          description: Updated tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateTenantResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Delete a tenant.
+      description: |
+        Fires the cache invalidation callback so the deleted
+        tenant re-resolves as "no tenant" on the next request
+        rather than staying cached as Active until TTL expiry.
+      operationId: tenantDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tenants/{id}:set-status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Flip a tenant's suspension status.
+      description: |
+        The surgical entry point for suspension changes. Fires the
+        cache invalidation callback so the flip takes effect on the
+        next request (not just after the suspension-check TTL
+        expires). Status MUST be `active` or `suspended`.
+      operationId: tenantSetStatus
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTenantStatusRequest"
+      responses:
+        "200":
+          description: Updated tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetTenantStatusResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/domains:
+    get:
+      tags: [admin]
+      summary: List domains (hostname → tenant mappings).
+      operationId: domainList
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter to one tenant; empty returns every domain.
+      responses:
+        "200":
+          description: Domains list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListDomainsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Create a domain.
+      operationId: domainCreate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Domain"
+      responses:
+        "200":
+          description: Created domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDomainResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/domains/{hostname}:
+    parameters:
+      - name: hostname
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Fetch a domain.
+      operationId: domainGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetDomainResponse"
+        "404":
+          description: '`domain_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [admin]
+      summary: Update a domain.
+      operationId: domainUpdate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Domain"
+      responses:
+        "200":
+          description: Updated domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateDomainResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Delete a domain.
+      operationId: domainDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/clients:
+    get:
+      tags: [admin]
+      summary: List registered clients.
+      description: |
+        `secret` is write-only — never returned on List/Get. Use
+        RotateSecret to mint a fresh secret an operator can copy
+        once.
+      operationId: adminClientList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Clients list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListClientsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Create a client.
+      operationId: adminClientCreate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminClient"
+      responses:
+        "200":
+          description: Created client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateClientResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/clients/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Fetch a client (secret cleared).
+      operationId: adminClientGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetAdminClientResponse"
+        "404":
+          description: '`client_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [admin]
+      summary: Update a client.
+      operationId: adminClientUpdate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminClient"
+      responses:
+        "200":
+          description: Updated client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateClientResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Delete a client.
+      operationId: adminClientDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/clients/{id}/rotate-secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Mint a fresh client_secret.
+      description: |
+        Returns the new secret ONCE; the caller MUST capture it
+        immediately. Subsequent Get / List responses will not
+        re-emit it. Audit event `admin_client_rotate_secret`
+        records the rotation.
+      operationId: adminClientRotateSecret
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: New secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateSecretResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      summary: List users.
+      operationId: adminUserList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Users list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListUsersResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Create a user.
+      operationId: adminUserCreate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUser"
+      responses:
+        "200":
+          description: Created user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateUserResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Fetch a user.
+      operationId: adminUserGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetAdminUserResponse"
+        "404":
+          description: '`user_not_found`.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [admin]
+      summary: Update a user.
+      operationId: adminUserUpdate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUser"
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateUserResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Delete a user.
+      operationId: adminUserDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/users/{id}/sessions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a user's active sessions.
+      description: |
+        Session-strategy only; JWT-strategy users have no listable
+        sessions (stateless). For JWT-only deployments operators
+        rely on the audit log of issuance events.
+      operationId: adminUserListSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListUserSessionsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tokens/sessions:
+    get:
+      tags: [admin]
+      summary: List active session-backed tokens.
+      operationId: adminTokenListSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter to one user; empty returns every active session.
+      responses:
+        "200":
+          description: Active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSessionsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tokens/revoke:
+    post:
+      tags: [admin]
+      summary: Revoke a token or session.
+      description: |
+        Supply either `token` (raw access token or session id) OR
+        `session_id`. Response reports what was revoked — `token`,
+        `session`, or `both`.
+      operationId: adminTokenRevoke
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminTokenRevokeRequest"
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTokenRevokeResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tokens/temp:
+    post:
+      tags: [admin]
+      summary: Issue a temp token for a user.
+      description: |
+        Operator-driven one-time token bound to a user — password
+        resets, magic-link distribution, first-login flows.
+        TTL is server-side via authenticators.temp_token.ttl.
+        Display the returned token ONCE; never echo it back.
+      operationId: adminTokenIssueTemp
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueTempTokenRequest"
+      responses:
+        "200":
+          description: Temp token (display once).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueTempTokenResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/roles:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List roles for a client.
+      operationId: permissionListRoles
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Roles list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListRolesResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Add a role to the client's role registry.
+      operationId: permissionAddRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Role"
+      responses:
+        "200":
+          description: Added role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddRoleResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/roles/{role_code}:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: role_code
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Update a role.
+      operationId: permissionUpdateRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Role"
+      responses:
+        "200":
+          description: Updated role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateRoleResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Remove a role.
+      operationId: permissionRemoveRole
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/assignments:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List role assignments for a client.
+      operationId: permissionListAssignments
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Assignments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAssignmentsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/assignments/{user_id}:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Assign roles to a user (additive).
+      operationId: permissionAssignRoles
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignRolesRequest"
+      responses:
+        "200":
+          description: Assigned.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/assignments/{user_id}/unassign:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Unassign roles from a user.
+      operationId: permissionUnassignRoles
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnassignRolesRequest"
+      responses:
+        "200":
+          description: Unassigned.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/permissions/{client_id}/menus:
+    parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Set the menu tree for a client.
+      description: |
+        Replaces the client's menu tree wholesale. Items carry a
+        `permission` field — login responses filter the tree to
+        items the caller can access (when permissions.embed_in_login
+        is on).
+      operationId: permissionSetMenus
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMenusRequest"
+      responses:
+        "200":
+          description: Menus updated.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
 components:
 
   securitySchemes:
@@ -2402,6 +3475,484 @@ components:
             - $ref: "#/components/schemas/NetPolicy"
           description: Present when `class` is non-empty.
 
+    # ---- Snapshot admin schemas ----
+
+    SnapshotMeta:
+      type: object
+      properties:
+        schema_version: { type: string }
+        snapshot_id: { type: string }
+        taken_at_unix: { type: integer, format: int64 }
+        source_namespace: { type: string }
+        source_node_id: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        codec: { type: string }
+        encryption_algorithm: { type: string }
+        bootstrap_applied_version: { type: integer, format: int32 }
+
+    ExportSnapshotRequest:
+      type: object
+      properties:
+        exclude:
+          type: array
+          items: { type: string }
+          description: ResourceCategory names to omit. Empty = include all.
+        source_node_id: { type: string }
+
+    ExportSnapshotResponse:
+      type: object
+      properties:
+        meta: { $ref: "#/components/schemas/SnapshotMeta" }
+        stored_as: { type: string }
+
+    ListSnapshotsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SnapshotMeta" }
+
+    GetSnapshotResponse:
+      type: object
+      properties:
+        meta: { $ref: "#/components/schemas/SnapshotMeta" }
+        resources_json:
+          type: string
+          format: byte
+          description: Base64-encoded raw JSON of snapshot.Resources.
+
+    RestoreSnapshotRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [merge, overwrite, replace]
+          description: Defaults to merge when empty.
+        dry_run: { type: boolean }
+        advance_bootstrap: { type: boolean }
+        confirm:
+          type: string
+          description: Required iff mode=replace; MUST equal the snapshot id.
+        exclude:
+          type: array
+          items: { type: string }
+
+    RestoreSnapshotResponse:
+      type: object
+      properties:
+        report: { $ref: "#/components/schemas/RestoreReport" }
+
+    RestoreReport:
+      type: object
+      properties:
+        mode: { type: string }
+        dry_run: { type: boolean }
+        items:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/CategoryCounts"
+        bootstrap: { $ref: "#/components/schemas/BootstrapAdvance" }
+        errors:
+          type: array
+          items: { type: string }
+
+    CategoryCounts:
+      type: object
+      properties:
+        inserted: { type: integer, format: int32 }
+        updated: { type: integer, format: int32 }
+        deleted: { type: integer, format: int32 }
+        skipped: { type: integer, format: int32 }
+
+    BootstrapAdvance:
+      type: object
+      properties:
+        attempted: { type: boolean }
+        from: { type: integer, format: int32 }
+        to: { type: integer, format: int32 }
+        no_op: { type: boolean }
+        reason: { type: string }
+
+    # ---- Release admin schemas ----
+
+    Release:
+      type: object
+      properties:
+        id: { type: string }
+        channel: { type: string }
+        frontend: { $ref: "#/components/schemas/Artifact" }
+        backend: { $ref: "#/components/schemas/Artifact" }
+        schema_version: { type: integer, format: int32 }
+        config_snapshot:
+          type: string
+          description: |
+            Optional snapshot id paired with this release; Rollback
+            restores it before flipping the pinner.
+        released_at_unix: { type: integer, format: int64 }
+        released_by: { type: string }
+        notes: { type: string }
+
+    Artifact:
+      type: object
+      description: At least one of git_ref / uri MUST be set.
+      properties:
+        git_ref: { type: string }
+        uri: { type: string }
+        sha256: { type: string }
+        digest: { type: string }
+
+    RegisterReleaseRequest:
+      type: object
+      properties:
+        release: { $ref: "#/components/schemas/Release" }
+    RegisterReleaseResponse:
+      type: object
+      properties:
+        release: { $ref: "#/components/schemas/Release" }
+
+    ListReleasesResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Release" }
+
+    GetReleaseResponse:
+      type: object
+      properties:
+        release: { $ref: "#/components/schemas/Release" }
+
+    GetCurrentReleaseResponse:
+      type: object
+      properties:
+        release:
+          allOf:
+            - $ref: "#/components/schemas/Release"
+          description: Unset when nothing is pinned.
+
+    PinReleaseResponse:
+      type: object
+      properties:
+        report: { $ref: "#/components/schemas/PinReport" }
+
+    PinReport:
+      type: object
+      properties:
+        release_id: { type: string }
+        mode:
+          type: string
+          enum: [forward, rollback]
+        previous_id:
+          type: string
+          description: Empty when nothing was pinned beforehand.
+
+    # ---- Tenant admin schemas ----
+
+    Tenant:
+      type: object
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        status:
+          type: string
+          enum: [active, suspended]
+        settings:
+          type: object
+          additionalProperties: { type: string }
+
+    Domain:
+      type: object
+      properties:
+        hostname: { type: string }
+        tenant_id: { type: string }
+        default_client_id: { type: string }
+        is_apex: { type: boolean }
+        branding:
+          type: object
+          additionalProperties: { type: string }
+
+    ListTenantsResponse:
+      type: object
+      properties:
+        tenants:
+          type: array
+          items: { $ref: "#/components/schemas/Tenant" }
+
+    GetTenantResponse:
+      type: object
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+
+    CreateTenantResponse:
+      type: object
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+
+    UpdateTenantResponse:
+      type: object
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+
+    SetTenantStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, suspended]
+
+    SetTenantStatusResponse:
+      type: object
+      properties:
+        tenant: { $ref: "#/components/schemas/Tenant" }
+
+    ListDomainsResponse:
+      type: object
+      properties:
+        domains:
+          type: array
+          items: { $ref: "#/components/schemas/Domain" }
+
+    GetDomainResponse:
+      type: object
+      properties:
+        domain: { $ref: "#/components/schemas/Domain" }
+
+    CreateDomainResponse:
+      type: object
+      properties:
+        domain: { $ref: "#/components/schemas/Domain" }
+
+    UpdateDomainResponse:
+      type: object
+      properties:
+        domain: { $ref: "#/components/schemas/Domain" }
+
+    # ---- Client admin schemas ----
+
+    AdminClient:
+      type: object
+      description: |
+        Compact projection of sso.Client surfaced over the admin
+        gRPC service. The non-admin /api/v1/clients/{id} endpoint
+        returns the full ClientMetadata schema with every field;
+        this slim shape mirrors proto/admin/v1/clients.proto.
+      properties:
+        id: { type: string }
+        secret:
+          type: string
+          description: |
+            Write-only. Never echoed on Get/List responses; use
+            RotateSecret to mint a fresh secret.
+        name: { type: string }
+        redirect_uris:
+          type: array
+          items: { type: string }
+        allowed_scopes:
+          type: array
+          items: { type: string }
+        allowed_authenticators:
+          type: array
+          items: { type: string }
+        token_strategy:
+          type: string
+          enum: [jwt, session]
+        active: { type: boolean }
+
+    ListClientsResponse:
+      type: object
+      properties:
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/AdminClient" }
+
+    GetAdminClientResponse:
+      type: object
+      properties:
+        client: { $ref: "#/components/schemas/AdminClient" }
+
+    CreateClientResponse:
+      type: object
+      properties:
+        client: { $ref: "#/components/schemas/AdminClient" }
+
+    UpdateClientResponse:
+      type: object
+      properties:
+        client: { $ref: "#/components/schemas/AdminClient" }
+
+    RotateSecretResponse:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: New client_secret — display once.
+
+    # ---- User admin schemas ----
+
+    AdminUser:
+      type: object
+      properties:
+        id: { type: string }
+        external_id: { type: string }
+        provider: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        created_at_unix: { type: integer, format: int64 }
+        expires_at_unix: { type: integer, format: int64 }
+        revoked: { type: boolean }
+
+    ListUsersResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUser" }
+
+    GetAdminUserResponse:
+      type: object
+      properties:
+        user: { $ref: "#/components/schemas/AdminUser" }
+
+    CreateUserResponse:
+      type: object
+      properties:
+        user: { $ref: "#/components/schemas/AdminUser" }
+
+    UpdateUserResponse:
+      type: object
+      properties:
+        user: { $ref: "#/components/schemas/AdminUser" }
+
+    ListUserSessionsResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/Session" }
+
+    # ---- Token admin schemas ----
+
+    SessionToken:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        created_at_unix: { type: integer, format: int64 }
+        expires_at_unix: { type: integer, format: int64 }
+
+    ListSessionsResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/SessionToken" }
+
+    AdminTokenRevokeRequest:
+      type: object
+      description: Supply either token OR session_id (not both required).
+      properties:
+        token: { type: string }
+        session_id: { type: string }
+
+    AdminTokenRevokeResponse:
+      type: object
+      properties:
+        revoked:
+          type: array
+          items:
+            type: string
+            enum: [token, session]
+          description: '`["token","session"]` when both were revoked.'
+
+    IssueTempTokenRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id: { type: string }
+        client_id: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+
+    IssueTempTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Raw temp token — display ONCE.
+        expires_at_unix:
+          type: integer
+          format: int64
+
+    # ---- Permission admin schemas ----
+    # Role / Button / MenuItem live further down (pre-existing
+    # schemas shared with /permissions/me and /menus/me); the admin
+    # surface references the same shapes.
+
+    Assignment:
+      type: object
+      properties:
+        user_id: { type: string }
+        roles:
+          type: array
+          items: { type: string }
+
+    ListRolesResponse:
+      type: object
+      properties:
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/Role" }
+
+    AddRoleResponse:
+      type: object
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+
+    UpdateRoleResponse:
+      type: object
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+
+    ListAssignmentsResponse:
+      type: object
+      properties:
+        assignments:
+          type: array
+          items: { $ref: "#/components/schemas/Assignment" }
+
+    AssignRolesRequest:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          items: { type: string }
+
+    UnassignRolesRequest:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          items: { type: string }
+
+    SetMenusRequest:
+      type: object
+      properties:
+        menus:
+          type: array
+          items: { $ref: "#/components/schemas/MenuItem" }
+
     DCRResponse:
       type: object
       required: [client_id, client_id_issued_at, client_secret_expires_at]
@@ -2506,6 +4057,11 @@ components:
           example: admin
         name:
           type: string
+        description:
+          type: string
+          description: |
+            Human-readable role description; surfaced on the admin
+            permission service (proto/admin/v1/permissions.proto).
         permissions:
           type: array
           items:
