@@ -323,6 +323,10 @@ INTEGER.
   Observability: `Pending()` / `Capacity()` for queue depth gauge;
   `DropsQueueFull()` / `DropsClosed()` / `DropsInnerError()` for
   monotonic drop counters operators scrape into Prometheus.
+  Ready-made collector: `metrics.NewAsyncSinkCollector(asyncSink)`
+  → register on the Prometheus registry to expose all 5 series
+  (`sso_audit_async_drops_*`, `sso_audit_async_queue_*`) without
+  a polling goroutine.
 
 ### Permissions (`permissions/`)
 `MemoryProvider` gives per-APP role registries, wildcard matcher
