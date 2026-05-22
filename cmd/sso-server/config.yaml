@@ -800,9 +800,16 @@ risk:
 #
 # provider.kind=totp shares the same secret store + skew policy as
 # the primary authenticators.totp authenticator — one user enrollment
-# serves both primary auth and step-up. Other factor kinds (WebAuthn
-# step-up, push notification, hardware FIDO2, upstream IdP) implement
-# sso.MFAProvider directly in the SDK and bypass this YAML knob.
+# serves both primary auth and step-up. provider.kind=webauthn shares
+# the same UserStore + SessionStore + RP config as the primary
+# /webauthn/login/{begin,finish} ceremony (requires webauthn.enabled).
+# WebAuthn is the only two-call factor on the YAML surface: the
+# server pre-issues the assertion challenge during /auth/login's
+# mfa_required response (under mfa_method_data["webauthn"]), then
+# verifies the signed assertion at /auth/mfa. Push notification,
+# hardware OTP devices that pull a challenge, and upstream IdP
+# step-up implement sso.MFAProvider + sso.MFABeginner directly in
+# the SDK and bypass this YAML knob.
 #
 # challenge.backend=memory is single-replica only — a challenge issued
 # by one replica is unknown to other replicas, so /auth/mfa routed
@@ -811,7 +818,7 @@ risk:
 mfa:
   enabled: false
   provider:
-    kind: "totp"           # currently only totp; custom factors via SDK
+    kind: "totp"           # totp | webauthn; custom factors via SDK
   challenge:
     backend: "memory"      # memory | sqlite
     ttl: 5m                # 0 = SDK default (5m)

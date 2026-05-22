@@ -9,6 +9,7 @@ import (
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
+	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/config"
 )
 
@@ -16,7 +17,7 @@ import (
 // entirely when mfa.enabled=false. Risk scorers returning
 // DecisionRequireMFA then decay to Allow (back-compat preserved).
 func TestBuildMFA_DisabledReturnsZeroes(t *testing.T) {
-	provider, store, ttl, mode, err := buildMFA(config.MFAConfig{Enabled: false}, nil, quietLogger())
+	provider, store, ttl, mode, err := buildMFA(config.MFAConfig{Enabled: false}, nil, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestBuildMFA_TOTPWithMemoryStore(t *testing.T) {
 			Backend: "memory",
 			TTL:     3 * time.Minute,
 		},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildMFA: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestBuildMFA_TOTPWithSQLiteStore(t *testing.T) {
 			Backend: "sqlite",
 			SQLite:  config.MFAChallengeSQLiteConfig{DSN: dsn},
 		},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildMFA: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestBuildMFA_KindDefaultsToTOTP(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{}, // Kind unset
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildMFA: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestBuildMFA_TOTPRequiresTOTPAuth(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, quietLogger())
+	}, nil, nil, quietLogger())
 	if err == nil {
 		t.Fatal("buildMFA: want error when totp provider requested without TOTPAuthenticator")
 	}
@@ -152,7 +153,7 @@ func TestBuildMFA_UnknownKindRejected(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "fido2"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err == nil {
 		t.Fatal("buildMFA: want error on unknown provider kind")
 	}
@@ -167,7 +168,7 @@ func TestBuildMFA_SQLiteRequiresDSN(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "sqlite"}, // SQLite.DSN unset
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err == nil {
 		t.Fatal("buildMFA: want error on sqlite backend without DSN")
 	}
@@ -181,7 +182,7 @@ func TestBuildMFA_UnknownBackendRejected(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "redis"},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err == nil {
 		t.Fatal("buildMFA: want error on unknown challenge backend")
 	}
@@ -196,7 +197,7 @@ func TestBuildMFA_DefaultBackendIsMemory(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{}, // Backend unset
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildMFA: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestBuildMFA_ZeroTTLPassesThrough(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildMFA: %v", err)
 	}
@@ -237,12 +238,61 @@ func TestBuildMFA_StoreSurfacesNotFoundSentinel(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, quietLogger())
+	}, totpAuth, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildMFA: %v", err)
 	}
 	_, err = store.Consume(context.Background(), "missing-id")
 	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
 		t.Fatalf("Consume(missing): got %v want sso.ErrMFAChallengeNotFound", err)
+	}
+}
+
+// TestBuildMFA_WebAuthnWithMemoryStore proves cmd wires kind=webauthn
+// when a webauthnHelper is supplied. The provider is the WebAuthn
+// step-up adapter sharing the same Helper instance the primary
+// /webauthn/login/{begin,finish} routes use.
+func TestBuildMFA_WebAuthnWithMemoryStore(t *testing.T) {
+	helper, err := webauthn.NewHelper(webauthn.Config{
+		RPID:      "example.com",
+		RPOrigins: []string{"https://sso.example.com"},
+	}, webauthn.NewMemoryUserStore(), webauthn.NewMemorySessionStore())
+	if err != nil {
+		t.Fatalf("NewHelper: %v", err)
+	}
+	provider, store, _, _, err := buildMFA(config.MFAConfig{
+		Enabled:   true,
+		Provider:  config.MFAProviderConfig{Kind: "webauthn"},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, helper, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	if provider == nil || store == nil {
+		t.Fatalf("provider/store nil: provider=%v store=%v", provider, store)
+	}
+	methods := provider.SupportedMethods()
+	if len(methods) != 1 || methods[0] != webauthn.MethodWebAuthn {
+		t.Fatalf("SupportedMethods = %v, want [webauthn]", methods)
+	}
+	// Webauthn provider implements MFABeginner — the wired interface
+	// type assertion is what unblocks step-up factors needing
+	// server-side challenge issuance.
+	if _, ok := provider.(sso.MFABeginner); !ok {
+		t.Errorf("wired provider does not satisfy sso.MFABeginner — Begin dispatch won't fire")
+	}
+}
+
+// TestBuildMFA_WebAuthnRequiresHelper proves cmd refuses to wire
+// kind=webauthn without a webauthn.enabled wiring. Silent fallthrough
+// (e.g. degrading to TOTP) would surprise operators.
+func TestBuildMFA_WebAuthnRequiresHelper(t *testing.T) {
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled:   true,
+		Provider:  config.MFAProviderConfig{Kind: "webauthn"},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err == nil {
+		t.Fatal("buildMFA: want error when webauthn provider requested without Helper")
 	}
 }

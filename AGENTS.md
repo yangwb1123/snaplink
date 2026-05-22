@@ -616,13 +616,32 @@ Wire shape:
 - Discovery: when wired, `mfa_endpoint` + `mfa_methods_supported`
   appear in `/.well-known/openid-configuration`.
 
-`MFAProvider` is pluggable; ship-included impl:
+`MFAProvider` is pluggable; ship-included impls:
 - `authenticators.TOTPMFAProvider` adapts an existing
   `TOTPAuthenticator` so the same TOTPStore + skew config serves
-  primary auth (when wired) AND step-up.
+  primary auth (when wired) AND step-up. Single-call factor.
+- `authenticators/webauthn.WebAuthnMFAProvider` adapts an existing
+  WebAuthn `Helper` so the same UserStore + SessionStore + RP config
+  serves primary `/webauthn/login/{begin,finish}` AND step-up.
+  Two-call factor — implements `MFABeginner` so the server
+  pre-issues the assertion challenge into
+  `mfa_method_data["webauthn"]` on the `mfa_required` response;
+  client signs and replays via /auth/mfa params. Subject binding
+  (resolved user ≡ SubjectID) enforced on Verify.
 
-Custom factors (WebAuthn step-up, push notification, hardware FIDO2,
-upstream IdP) implement `MFAProvider` directly. `SupportedMethods()`
+Two-call factors implement the optional `MFABeginner` interface
+(`Begin(ctx, subjectID, method) (map[string]string, error)`). The
+SSO server type-asserts during `issueMFAChallenge`: providers
+implementing the interface get one Begin call per supported method,
+results bucketed under the response's `mfa_method_data` key.
+Single-call factors (TOTP) don't implement the interface; the
+response omits the key. Per-method Begin failure is non-fatal —
+method stays in `mfa_methods`, just without an attached
+`mfa_method_data` entry.
+
+Custom factors (push notification, hardware FIDO2 outside WebAuthn,
+upstream IdP step-up) implement `MFAProvider` directly + `MFABeginner`
+when they need server-side challenge issuance. `SupportedMethods()`
 populates the wire `mfa_methods` array; `Verify()` returns nil on
 success, any error on failure (collapsed to `mfa_invalid`).
 
@@ -685,10 +704,17 @@ the operator surface needs explanation:
 - **mfa** — opts into step-up orchestration gated by Risk's
   `DecisionRequireMFA`. `provider.kind=totp` reuses the
   `authenticators.totp` secret store + skew (single enrollment, two
-  consumer roles). `challenge.backend(memory|sqlite)` shares in-flight
-  challenges across replicas. Disabled or unwired → RequireMFA decays
-  to Allow (back-compat). cmd refuses `kind=totp` unless
-  `authenticators.totp.enabled=true` (the shared-store contract).
+  consumer roles); `kind=webauthn` reuses the `webauthn.enabled`
+  Helper (UserStore + SessionStore + RP config — same enrollment as
+  primary `/webauthn/login`). `challenge.backend(memory|sqlite)`
+  shares in-flight MFA challenges across replicas. Disabled or
+  unwired → RequireMFA decays to Allow (back-compat). cmd refuses
+  `kind=totp` unless `authenticators.totp.enabled=true` and
+  `kind=webauthn` unless `webauthn.enabled=true` (shared-store
+  contract). The WebAuthn provider implements [MFABeginner] so the
+  `mfa_required` response surfaces `mfa_method_data["webauthn"]
+  = {options, session}` for the client to feed to
+  `navigator.credentials.get`.
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.

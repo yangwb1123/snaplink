@@ -1183,22 +1183,23 @@ func buildRiskScorer(cfg *config.RiskConfig, logger sso.Logger) (sso.RiskScorer,
 // — RequireMFA then decays to Allow (back-compat).
 //
 // totpAuth is the *authenticators.TOTPAuthenticator instance built in
-// buildAuthenticators; passing the same instance here means the TOTP
-// secret store + skew policy is single-source between primary auth
-// (/auth/login?provider=totp) and MFA step-up (/auth/mfa) — one user
-// enrollment, two consumer roles.
+// buildAuthenticators; webauthnHelper is the *webauthn.Helper built
+// earlier in the assembly path. Passing the same instances here means
+// each factor's secret/credential store + policy is single-source
+// between primary auth and MFA step-up — one enrollment, two
+// consumer roles.
 //
 // The returned mode string is a short backend identifier emitted in
 // the startup log + suitable for /readyz wiring suffixes.
-func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, logger sso.Logger) (sso.MFAProvider, sso.MFAChallengeStore, time.Duration, string, error) {
+func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger) (sso.MFAProvider, sso.MFAChallengeStore, time.Duration, string, error) {
 	if !cfg.Enabled {
 		return nil, nil, 0, "", nil
 	}
 
-	// Provider: only "totp" carries a YAML toggle. Other factors
-	// (webauthn step-up, push, IdP redirect) ship in the SDK and
-	// embedders wire them via WithMFAProvider directly, so this
-	// switch intentionally stays narrow.
+	// Provider: "totp" and "webauthn" carry YAML toggles. Other factors
+	// (push, IdP redirect, hardware OTP) ship in the SDK and embedders
+	// wire them via WithMFAProvider directly, so this switch
+	// intentionally stays narrow.
 	kind := strings.ToLower(strings.TrimSpace(cfg.Provider.Kind))
 	if kind == "" {
 		kind = "totp"
@@ -1210,8 +1211,17 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 			return nil, nil, 0, "", errors.New("mfa.provider.kind=totp requires authenticators.totp.enabled=true")
 		}
 		provider = authenticators.NewTOTPMFAProvider(totpAuth)
+	case "webauthn":
+		if webauthnHelper == nil {
+			return nil, nil, 0, "", errors.New("mfa.provider.kind=webauthn requires webauthn.enabled=true")
+		}
+		p, err := webauthn.NewWebAuthnMFAProvider(webauthnHelper)
+		if err != nil {
+			return nil, nil, 0, "", fmt.Errorf("mfa.provider.kind=webauthn: %w", err)
+		}
+		provider = p
 	default:
-		return nil, nil, 0, "", fmt.Errorf("unknown mfa.provider.kind %q (supported: totp)", kind)
+		return nil, nil, 0, "", fmt.Errorf("unknown mfa.provider.kind %q (supported: totp, webauthn)", kind)
 	}
 
 	// Challenge store: memory for single-replica, sqlite for clusters.
@@ -1798,13 +1808,24 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithRiskScorer(riskScorer))
 	}
 
+	// WebAuthn helper built here (before MFA so mfa.provider.kind=
+	// webauthn can wrap the same helper instance, sharing UserStore +
+	// SessionStore + RP config across primary auth and step-up). Same
+	// /readyz wiring as the other SQLite-substrate components.
+	webauthnHelper, webauthnUsers, webauthnSessions, err := buildWebAuthnHelper(cfg.WebAuthn, logger)
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: %w", err)
+	}
+	opts = appendReadyCheck(opts, "sqlite-webauthn-users", webauthnUsers)
+	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
+
 	// MFA orchestration wired AFTER the risk scorer so the wire-up
 	// order matches the runtime gating order (Risk emits
 	// DecisionRequireMFA → MFA orchestration consumes it). Without
 	// both Provider + Store opts, RequireMFA decays to Allow — same
 	// back-compat fall-through embedders see when they ship a Risk
 	// scorer ahead of MFA.
-	mfaProvider, mfaStore, mfaTTL, _, err := buildMFA(cfg.MFA, totpAuth, logger)
+	mfaProvider, mfaStore, mfaTTL, _, err := buildMFA(cfg.MFA, totpAuth, webauthnHelper, logger)
 	if err != nil {
 		return nil, fmt.Errorf("mfa: %w", err)
 	}
@@ -2043,17 +2064,6 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}))
 		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
 	}
-
-	// WebAuthn is built before NewServer so its underlying stores
-	// can opt into the same /readyz wiring as the rest of the SQLite
-	// substrate. Ceremony routes mount on the server later via
-	// Server.Handle so this ordering is invisible to embedders.
-	webauthnHelper, webauthnUsers, webauthnSessions, err := buildWebAuthnHelper(cfg.WebAuthn, logger)
-	if err != nil {
-		return nil, fmt.Errorf("webauthn: %w", err)
-	}
-	opts = appendReadyCheck(opts, "sqlite-webauthn-users", webauthnUsers)
-	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
 
 	// Service registry built before NewServer so its etcd Ping can
 	// participate in /readyz alongside the SQLite peers. Self-
