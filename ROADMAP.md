@@ -766,3 +766,4 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 |---|---|---|
 | 2026-05-21 | v1 | 初版（多副本正确性 / WebAuthn / HSM / Console / 协议补完） |
 | 2026-05-22 | v2 | 上版 §1 / §2A-B / §5 已大量落地；refocus 到 HSM + 异步异常检测 + Console + migration + FAPI 2.0 |
+| 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
