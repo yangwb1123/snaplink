@@ -68,36 +68,41 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 	})
 }
 
+// loginRequest is the bound /auth/login request payload. Promoted from
+// an anonymous local struct so the MFA-resume path (handle_mfa.go) can
+// serialize + replay it.
+type loginRequest struct {
+	Provider             string            `json:"provider"`
+	Credential           map[string]string `json:"credential"`
+	ClientID             string            `json:"client_id"`
+	Scope                []string          `json:"scope"`
+	State                string            `json:"state"`
+	ResponseType         string            `json:"response_type"`         // "code" → return auth code instead of token
+	RedirectURI          string            `json:"redirect_uri"`          // required when response_type=code
+	Nonce                string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
+	CodeChallenge        string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
+	CodeChallengeMethod  string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
+	Resource             []string          `json:"resource"`              // RFC 8707 resource indicators
+	RequestURI           string            `json:"request_uri"`           // RFC 9126 PAR
+	AuthorizationDetails json.RawMessage   `json:"authorization_details"` // RFC 9396
+	Request              string            `json:"request"`               // RFC 9101 JAR
+	Prompt               string            `json:"prompt"`                // OIDC Core §3.1.2.1: space-separated none|login|consent|select_account
+	IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
+	MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
+	LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
+	ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
+	ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
+	UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
+	Claims               json.RawMessage   `json:"claims"`                // OIDC Core §5.5: requested claims JSON object
+}
+
 func (s *Server) handleLogin(ctx HandlerContext) {
 	// RFC 6749 §5.1: token responses MUST stamp Cache-Control:
 	// no-store + Pragma: no-cache. /auth/login bodies carry
 	// access_token + refresh_token (and PKCE-flow code values
 	// that an intermediary cache must not retain).
 	tokenNoStoreHeaders(ctx)
-	var req struct {
-		Provider             string            `json:"provider"`
-		Credential           map[string]string `json:"credential"`
-		ClientID             string            `json:"client_id"`
-		Scope                []string          `json:"scope"`
-		State                string            `json:"state"`
-		ResponseType         string            `json:"response_type"`         // "code" → return auth code instead of token
-		RedirectURI          string            `json:"redirect_uri"`          // required when response_type=code
-		Nonce                string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
-		CodeChallenge        string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
-		CodeChallengeMethod  string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
-		Resource             []string          `json:"resource"`              // RFC 8707 resource indicators
-		RequestURI           string            `json:"request_uri"`           // RFC 9126 PAR
-		AuthorizationDetails json.RawMessage   `json:"authorization_details"` // RFC 9396
-		Request              string            `json:"request"`               // RFC 9101 JAR
-		Prompt               string            `json:"prompt"`                // OIDC Core §3.1.2.1: space-separated none|login|consent|select_account
-		IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
-		MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
-		LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
-		ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
-		ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
-		UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
-		Claims               json.RawMessage   `json:"claims"`                // OIDC Core §5.5: requested claims JSON object
-	}
+	var req loginRequest
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
 		return
@@ -508,13 +513,34 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 				ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrRiskDenied))
 				return
 			}
-			// DecisionRequireMFA: documented in risk.go as future-reserved.
-			// Today we treat it as Allow (so a forward-looking scorer can
-			// emit it without breaking flows). When MFA orchestration lands,
-			// this branch returns a challenge response.
+			if assessment.Decision == DecisionRequireMFA && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+				// Step-up gate engaged: persist the in-flight state and
+				// return mfa_required so the client follows up at
+				// /auth/mfa. issueMFAChallenge writes the response;
+				// resume happens in handleMFAComplete (handle_mfa.go).
+				s.issueMFAChallenge(ctx, result, req, client)
+				return
+			}
+			// DecisionRequireMFA with NO provider wired falls through to
+			// Allow — preserves the historical no-op behavior so callers
+			// configuring a forward-looking scorer aren't broken when
+			// they pre-date MFA orchestration. Operators who do ship MFA
+			// add WithMFAProvider + WithMFAChallengeStore and this branch
+			// never fires.
 		}
 	}
 
+	s.finishLogin(ctx, result, req, client)
+}
+
+// finishLogin runs the post-credential-validation, post-risk-decision
+// portion of /auth/login: optional userProvider upsert, OAuth 2.1
+// strict checks, response_mode validation, the code-flow / direct-mint
+// branches plus the refresh_token / id_token / permission-embed
+// bookkeeping. Extracted so handleMFAComplete can re-enter the same
+// flow after the step-up factor verifies — same response shape no
+// matter whether MFA gated the request or not.
+func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRequest, client *Client) {
 	if s.userProvider != nil {
 		user := &User{
 			ID:         result.UserID,
@@ -770,30 +796,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 func (s *Server) issueAuthCode(
 	ctx context.Context,
 	result *AuthResult,
-	req *struct {
-		Provider             string            `json:"provider"`
-		Credential           map[string]string `json:"credential"`
-		ClientID             string            `json:"client_id"`
-		Scope                []string          `json:"scope"`
-		State                string            `json:"state"`
-		ResponseType         string            `json:"response_type"`
-		RedirectURI          string            `json:"redirect_uri"`
-		Nonce                string            `json:"nonce"`
-		CodeChallenge        string            `json:"code_challenge"`
-		CodeChallengeMethod  string            `json:"code_challenge_method"`
-		Resource             []string          `json:"resource"`
-		RequestURI           string            `json:"request_uri"`
-		AuthorizationDetails json.RawMessage   `json:"authorization_details"`
-		Request              string            `json:"request"`
-		Prompt               string            `json:"prompt"`
-		IDTokenHint          string            `json:"id_token_hint"`
-		MaxAge               *int64            `json:"max_age"`
-		LoginHint            string            `json:"login_hint"`
-		ResponseMode         string            `json:"response_mode"`
-		ACRValues            string            `json:"acr_values"`
-		UILocales            string            `json:"ui_locales"`
-		Claims               json.RawMessage   `json:"claims"`
-	},
+	req *loginRequest,
 	client *Client,
 ) (string, error) {
 	code, err := generateAuthCodeBytes()

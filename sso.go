@@ -49,6 +49,9 @@ type Server struct {
 	tenantSuspensionEnabled        bool
 	tenantSuspensionCache          *suspensionCache
 	riskScorer                     RiskScorer
+	mfaProvider                    MFAProvider
+	mfaChallengeStore              MFAChallengeStore
+	mfaChallengeTTL                time.Duration
 	metrics                        *metrics.Metrics
 	rateLimitPolicy                *ratelimit.Policy
 	bodyLimit                      int64
@@ -631,6 +634,40 @@ func WithRiskScorer(r RiskScorer) Option {
 	return func(s *Server) { s.riskScorer = r }
 }
 
+// WithMFAProvider activates MFA orchestration: when the RiskScorer
+// returns [DecisionRequireMFA] AND this option is set, /auth/login
+// returns a pending mfa_required response (challenge ID + supported
+// methods) instead of tokens. The client follows up with POST
+// /auth/mfa carrying the challenge ID + factor proof. Without this
+// option, RequireMFA decays to Allow — preserving the historical
+// no-op behavior for callers wiring a scorer that may emit RequireMFA
+// in advance of MFA orchestration shipping.
+//
+// Requires [WithMFAChallengeStore] (or sso panics at handler entry
+// the first time a challenge would be issued — fail-loud, since a
+// silent fallthrough to Allow would defeat the security control the
+// scorer asked for).
+func WithMFAProvider(p MFAProvider) Option {
+	return func(s *Server) { s.mfaProvider = p }
+}
+
+// WithMFAChallengeStore persists in-flight MFA challenges (the state
+// between /auth/login returning mfa_required and /auth/mfa completing
+// the factor). ttl controls how long a challenge stays redeemable;
+// pass 0 to inherit [DefaultMFAChallengeTTL].
+//
+// Backends: [defaultimpl.MemoryMFAChallengeStore] for single-replica
+// deploys, the SQLite peer for cluster-shared state. Required when
+// [WithMFAProvider] is set.
+func WithMFAChallengeStore(store MFAChallengeStore, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.mfaChallengeStore = store
+		if ttl > 0 {
+			s.mfaChallengeTTL = ttl
+		}
+	}
+}
+
 // WithMetrics enables Prometheus instrumentation on the HTTP layer +
 // login / token / risk-scoring counters. The Server's Handler() will
 // also expose /metrics for scraping the supplied registry. Omit the
@@ -818,6 +855,7 @@ func (s *Server) Mount() {
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.router.GET(PathOIDCDiscovery, s.handleOIDCDiscovery)
 	s.router.POST(PathLogin, s.handleLogin)
+	s.router.POST(PathMFAComplete, s.handleMFAComplete)
 	s.router.POST(PathSendCode, s.handleSendCode)
 	s.router.GET(PathCallback, s.handleCallback)
 	s.router.POST(PathToken, s.handleToken)

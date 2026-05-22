@@ -120,6 +120,10 @@ enumerate the failure cases to lock the behavior.
   unknown users (timing parity).
 - WebAuthn unknown user / unknown session both collapse to `404
   session_invalid`.
+- MFA orchestration: unknown / expired / already-consumed challenge,
+  unsupported method, wrong factor — all collapse to `400 mfa_invalid`
+  on `/auth/mfa`. Operator-visible detail surfaces via the
+  `mfa_failure` audit event only.
 
 ### Fail-open vs fail-closed
 - **Fail-open** (log + continue): refresh issuance during `/auth/login`
@@ -567,8 +571,8 @@ silently no-op. Payload:
 
 ### Risk scoring (`risk.go`)
 `RiskScorer` runs on `/auth/login` AFTER credential validation, BEFORE
-token issuance. Returns `Allow` / `RequireMFA` (reserved, treated as
-Allow today) / `Deny` (403 + audit `login_failure reason=risk_denied`).
+token issuance. Returns `Allow` / `RequireMFA` (gates the MFA flow
+below) / `Deny` (403 + audit `login_failure reason=risk_denied`).
 **Fail-open** on scorer error (alert on the log line). **Zero overhead**
 when option unset.
 
@@ -583,6 +587,52 @@ Reference impls in `defaultimpl/`:
 Richer scorers (impossible-travel, device fingerprint, ML) implement
 [sso.RiskScorer] directly and query their own store inside `Score` —
 don't pad `RiskRequest`.
+
+### MFA orchestration (`mfa.go` + `handle_mfa.go`)
+Two-leg step-up flow gated by `RiskScorer` returning `DecisionRequireMFA`.
+Without `WithMFAProvider` + `WithMFAChallengeStore` wired, RequireMFA
+decays to Allow (back-compat for callers shipping a forward-looking
+scorer ahead of MFA orchestration).
+
+Wire shape:
+- `/auth/login` returns `{error: mfa_required, mfa_challenge_id,
+  mfa_methods: ["totp"], iss}` instead of tokens (HTTP 200 — the
+  primary credential validated, it's just pending step-up).
+- Client POSTs `/auth/mfa` with `{mfa_challenge_id, mfa_method, code |
+  assertion | params}`; on success the server replays `finishLogin`
+  against the frozen state and returns the standard direct-mint /
+  code / form_post response. The caller can't tell an MFA-gated login
+  from a non-gated one.
+- Oracle-leak hardening: missing / expired / consumed challenge,
+  unsupported method, wrong factor — all collapse to `400 mfa_invalid`.
+  Operator-visible reasons ride on `mfa_failure` audit events only.
+- Single-use: `MFAChallengeStore.Consume` atomically deletes; replay
+  → `mfa_invalid`.
+- Client / tenant re-validated on resume (deactivated between login
+  and /auth/mfa surfaces as `inactive_client`, distinct from `mfa_invalid`
+  so SIEM can tell it wasn't the factor that failed).
+- Discovery: when wired, `mfa_endpoint` + `mfa_methods_supported`
+  appear in `/.well-known/openid-configuration`.
+
+`MFAProvider` is pluggable; ship-included impl:
+- `authenticators.TOTPMFAProvider` adapts an existing
+  `TOTPAuthenticator` so the same TOTPStore + skew config serves
+  primary auth (when wired) AND step-up.
+
+Custom factors (WebAuthn step-up, push notification, hardware FIDO2,
+upstream IdP) implement `MFAProvider` directly. `SupportedMethods()`
+populates the wire `mfa_methods` array; `Verify()` returns nil on
+success, any error on failure (collapsed to `mfa_invalid`).
+
+`MFAChallengeStore`: in-process `defaultimpl.MemoryMFAChallengeStore`
+for single-replica deploys; SQLite peer for cluster-shared state
+(future). Default TTL 5min (`DefaultMFAChallengeTTL`); tune via the
+ttl arg on `WithMFAChallengeStore`.
+
+Audit events: `mfa_required` (challenge issued), `mfa_success`
+(factor verified), `mfa_failure` (factor rejected). The standard
+`login_success` event still fires on the resume, so existing SIEM
+queries continue to work — MFA gating is additive observability.
 
 ---
 

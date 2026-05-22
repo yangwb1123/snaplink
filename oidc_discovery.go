@@ -220,6 +220,17 @@ type oidcConfiguration struct {
 	// signed payload wins. Wired via `WithMetadataSigner` — left
 	// empty (and field omitted) when no signer is plugged in.
 	SignedMetadata string `json:"signed_metadata,omitempty"`
+
+	// MFA orchestration (SnapLink extension; non-standard). When
+	// [WithMFAProvider] + [WithMFAChallengeStore] are wired, MFAEndpoint
+	// points at /auth/mfa and MFAMethodsSupported lists the factor
+	// names the provider can verify. Discovery clients branch on the
+	// presence of MFAEndpoint to know whether to handle the
+	// mfa_required response shape. Fields omitted from the JSON when
+	// MFA is not wired (preserves wire-shape parity with vanilla OIDC
+	// discovery for callers that don't speak the extension).
+	MFAEndpoint         string   `json:"mfa_endpoint,omitempty"`
+	MFAMethodsSupported []string `json:"mfa_methods_supported,omitempty"`
 }
 
 // MTLSEndpointAliases is the RFC 8705 §5 alias map. Only endpoints
@@ -382,6 +393,14 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if s.jarFetcher != nil {
 		cfg.RequestURIParameterSupported = true
+	}
+	// MFA orchestration is advertised only when both Provider + Store
+	// are wired — having Provider without Store would be a misconfig
+	// (handleMFAComplete returns 404 in that state) so we don't leak
+	// the endpoint into discovery either.
+	if s.mfaProvider != nil && s.mfaChallengeStore != nil {
+		cfg.MFAEndpoint = base + PathMFAComplete
+		cfg.MFAMethodsSupported = s.mfaProvider.SupportedMethods()
 	}
 	// When the operator overrode the issuer name with WithIssuer, prefer
 	// that — many production deployments set issuer to the canonical

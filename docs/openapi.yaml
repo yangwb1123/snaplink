@@ -153,14 +153,21 @@ paths:
       responses:
         "200":
           description: |
-            Either an authentication success (when `provider` was set)
-            or a discovery response (when omitted).
+            One of three shapes:
+            - `LoginResponse` — credentials accepted, tokens minted.
+            - `LoginDiscoveryResponse` — `provider` was omitted; the
+              server returns the providers this client may use.
+            - `MFARequiredResponse` — credentials accepted but the
+              configured RiskScorer demanded a step-up factor.
+              `mfa_challenge_id` + `mfa_methods` direct the client
+              to POST `/auth/mfa` next.
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/LoginResponse"
                   - $ref: "#/components/schemas/LoginDiscoveryResponse"
+                  - $ref: "#/components/schemas/MFARequiredResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -171,6 +178,91 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Client inactive / tenant mismatch / authenticator not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/mfa:
+    post:
+      tags: [auth]
+      summary: Complete an MFA step-up challenge.
+      description: |
+        Second leg of the MFA orchestration flow. When `/auth/login`
+        succeeds against the primary credential but the configured
+        RiskScorer returns `require_mfa` AND `WithMFAProvider` +
+        `WithMFAChallengeStore` are wired, the login response carries
+        `error: mfa_required`, `mfa_challenge_id`, and `mfa_methods`
+        instead of tokens.
+
+        The client picks one of the offered methods and POSTs it here.
+        On success the server replays the original login flow and
+        returns the standard direct-mint (or auth_code, or form_post)
+        response — the caller can't distinguish an MFA-gated login
+        from a non-gated one except by the extra round trip.
+
+        **Oracle-leak hardening**: every failure path (unknown /
+        expired / already-consumed challenge, unsupported method,
+        wrong factor) collapses to one wire response (`400` +
+        `error: mfa_invalid`) so probes can't enumerate the cases.
+        Operator-side detail rides on the `mfa_failure` audit event
+        only.
+
+        **Single-use**: a successful `/auth/mfa` atomically deletes
+        the challenge. Replaying the same `mfa_challenge_id` returns
+        `mfa_invalid`.
+
+        Returns 404 when MFA is not configured on this deployment
+        (same shape as `mfa_invalid` body — probes can't fingerprint
+        the capability).
+      operationId: postMFAComplete
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/MFACompleteRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MFACompleteRequest"
+      responses:
+        "200":
+          description: |
+            Factor verified; the response body is the same shape
+            `/auth/login` would have returned without MFA gating
+            (direct-mint tokens, or `code` for response_type=code,
+            or HTML for response_mode=form_post).
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: |
+            mfa_invalid. Unknown / expired / consumed challenge,
+            unsupported method, wrong factor, or malformed body —
+            all collapsed to the same wire shape.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |
+            Client became inactive (or tenant suspended) between
+            challenge issue and completion. Distinguished from
+            mfa_invalid so operators triaging audit can tell it
+            wasn't the factor that failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: MFA not configured on this deployment.
           content:
             application/json:
               schema:
@@ -2957,6 +3049,73 @@ components:
           items:
             type: string
           description: Authenticator names this client may use.
+
+    MFARequiredResponse:
+      type: object
+      required: [error, mfa_challenge_id, mfa_methods, iss]
+      properties:
+        error:
+          type: string
+          enum: [mfa_required]
+          description: |
+            Sentinel value. Use this to branch — the rest of the
+            response shape is pending-state, not failure-state.
+        mfa_challenge_id:
+          type: string
+          description: |
+            Opaque challenge id to pass back on `POST /auth/mfa`.
+            Single-use, short-lived (default 5 minutes).
+        mfa_methods:
+          type: array
+          items:
+            type: string
+          description: |
+            Factor names the wired MFAProvider can verify. SPAs render
+            UI per entry; mobile apps pick the strongest they support.
+          example: [totp, webauthn]
+        iss:
+          type: string
+          description: RFC 9207 authorization-response issuer identifier.
+        state:
+          type: string
+          description: Round-tripped from the original `/auth/login` request when set.
+
+    MFACompleteRequest:
+      type: object
+      required: [mfa_challenge_id, mfa_method]
+      properties:
+        mfa_challenge_id:
+          type: string
+          description: |
+            The opaque challenge id returned by `/auth/login` in the
+            mfa_required response. crypto/rand-derived, single-use.
+        mfa_method:
+          type: string
+          description: |
+            One of the values from the `mfa_methods` array the
+            mfa_required response advertised.
+          example: totp
+        code:
+          type: string
+          description: |
+            TOTP code (RFC 6238) for the `totp` method. Six digits.
+            Convenience field; equivalent to `params: {code: "..."}`.
+          example: "012345"
+        assertion:
+          type: string
+          description: |
+            WebAuthn assertion (CBOR or base64url-encoded JSON,
+            method-defined) for the `webauthn` method. Convenience
+            field; equivalent to `params: {assertion: "..."}`.
+        params:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Method-specific parameter map. When Params is set it wins
+            over the flat `code` / `assertion` convenience fields, so
+            callers using arbitrary providers can pass whatever the
+            provider expects.
 
     SendCodeRequest:
       type: object

@@ -45,6 +45,27 @@ const (
 	// auto-unlock time.
 	EventAccountLocked EventType = "account_locked"
 
+	// EventMFARequired — /auth/login's RiskScorer returned
+	// DecisionRequireMFA and the server issued a pending challenge
+	// instead of tokens. Outcome=success (the primary credential
+	// validated cleanly; the user just hasn't completed step-up yet).
+	// ActorID = subject; Metadata "mfa_challenge_id" carries the
+	// issued challenge identifier so SIEMs can correlate the followup.
+	EventMFARequired EventType = "mfa_required"
+
+	// EventMFASuccess — /auth/mfa accepted the supplied factor.
+	// Outcome=success; Metadata "mfa_method" carries the verified
+	// method name. Followed by the standard login_success event
+	// once the resumed handler mints tokens.
+	EventMFASuccess EventType = "mfa_success"
+
+	// EventMFAFailure — /auth/mfa rejected the supplied factor
+	// (wrong code / unknown challenge / unsupported method — all
+	// collapsed per the oracle-leak hardening contract). Outcome=failure;
+	// Reason carries the operator-side detail; the wire response is
+	// always the same mfa_invalid shape.
+	EventMFAFailure EventType = "mfa_failure"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason

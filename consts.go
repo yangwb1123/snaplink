@@ -8,6 +8,7 @@ const (
 	PathLivez          = "/livez"
 	PathReadyz         = "/readyz"
 	PathLogin          = "/auth/login"
+	PathMFAComplete    = "/auth/mfa"
 	PathSendCode       = "/auth/send-code"
 	PathCallback       = "/auth/callback"
 	PathToken          = "/token"
@@ -100,6 +101,15 @@ const (
 	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
 	KeyIDToken = "id_token"
 
+	// MFA orchestration response keys. KeyMFAChallengeID is the opaque
+	// challenge token returned by /auth/login + accepted by /auth/mfa.
+	// KeyMFAMethods is the array of supported factor names; SPAs render
+	// UI per entry. KeyMFAMethod is the body field on /auth/mfa naming
+	// which factor the caller is responding with.
+	KeyMFAChallengeID = "mfa_challenge_id"
+	KeyMFAMethods     = "mfa_methods"
+	KeyMFAMethod      = "mfa_method"
+
 	// ScopeOpenID triggers OIDC ID Token issuance when an IDTokenIssuer
 	// is wired (OIDC Core §3.1.2.1).
 	ScopeOpenID = "openid"
@@ -139,6 +149,16 @@ const (
 	ErrNetPolicyNotFound         = "netpolicy_not_found"
 	ErrRiskDenied                = "risk_denied"
 	ErrPayloadTooLarge           = "payload_too_large"
+
+	// MFA orchestration. ErrMFARequired is the pending status returned
+	// by /auth/login when the RiskScorer decided RequireMFA and a
+	// MFAProvider is wired — the response carries mfa_challenge_id +
+	// mfa_methods instead of tokens. ErrMFAInvalid is the single wire
+	// response /auth/mfa returns for every failure (unknown / expired /
+	// already-consumed challenge, unsupported method, wrong factor) per
+	// the oracle-leak hardening contract.
+	ErrMFARequired               = "mfa_required"
+	ErrMFAInvalid                = "mfa_invalid"
 	ErrInvalidGrant              = "invalid_grant"
 	ErrInvalidRedirectURI        = "invalid_redirect_uri"
 	ErrAuthCodeNotConfigured     = "authorization_code_not_configured"

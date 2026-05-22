@@ -64,6 +64,13 @@ exact emission site.
 |------------------|------|---------------------------------------------------------------------------------------|---------------------------------------|
 | `account_locked` | 423  | `AccountLockout` reports the (client_id, identifier) key is past the failure threshold | Wait until the lock expires, then retry |
 
+### MFA orchestration (`/auth/login`, `/auth/mfa`)
+
+| Code            | HTTP | Emitted when                                                                                                                          | Client should                                              |
+|-----------------|------|---------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+| `mfa_required`  | 200  | `/auth/login` accepted the primary credential but the RiskScorer returned `DecisionRequireMFA` and `WithMFAProvider` is wired         | Read `mfa_challenge_id` + `mfa_methods`; POST `/auth/mfa`  |
+| `mfa_invalid`   | 400 / 404 | `/auth/mfa` could not complete the challenge (unknown id, expired, already consumed, unsupported method, wrong factor — all collapsed by anti-enumeration) | Restart the auth flow from `/auth/login`                |
+
 ### Authorization (`/auth/login`, `/par`)
 
 These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary so off-the-shelf RP libraries (e.g. AppAuth, oauth4webapi, MSAL) recognize them without remapping.
