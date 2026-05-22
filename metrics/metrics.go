@@ -79,6 +79,18 @@ type Metrics struct {
 	// noise. Labels: provider (login only) / outcome (login + mfa).
 	LoginDuration         *prometheus.HistogramVec // labels: provider, outcome
 	MFACompletionDuration *prometheus.HistogramVec // labels: outcome
+
+	// Anomaly detection (zero traffic when no AnomalyRunner wired).
+	// AnomaliesDetectedTotal counts each Anomaly surfaced by a
+	// detector, labeled by type + severity. AnomalyDispatchDropsTotal
+	// counts events dropped by the bounded-queue dispatcher (load-
+	// shedding metric — non-zero = login traffic outpaces detector
+	// capacity). AnomalyInspectErrorsTotal counts per-detector
+	// failures (DB timeout, store unreachable) — surfaces the
+	// "anomaly detection silently broken" failure mode.
+	AnomaliesDetectedTotal    *prometheus.CounterVec // labels: anomaly_type, severity
+	AnomalyDispatchDropsTotal *prometheus.CounterVec // labels: reason
+	AnomalyInspectErrorsTotal *prometheus.CounterVec // labels: detector
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -217,6 +229,30 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Buckets: prometheus.DefBuckets,
 			},
 			[]string{LabelOutcome},
+		),
+
+		AnomaliesDetectedTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameAnomaliesDetectedTotal,
+				Help: "Anomalies surfaced by behavioral detectors (off the request hot path). Labels: anomaly_type (impossible_travel/velocity_burst/new_device/new_country/brute_force_shadow), severity (info/warn/critical). Operators alerting on credential stuffing graph rate(critical) per 5min.",
+			},
+			[]string{LabelAnomalyType, LabelSeverity},
+		),
+
+		AnomalyDispatchDropsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameAnomalyDispatchDropsTotal,
+				Help: "Login events dropped by the AsyncAnomalyRunner bounded queue. Non-zero = login traffic outpaces detector capacity; raise queue size or worker count, or accept reduced anomaly coverage during bursts. reason ∈ {queue_full, ctx_canceled}.",
+			},
+			[]string{LabelDropReason},
+		),
+
+		AnomalyInspectErrorsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameAnomalyInspectErrorsTotal,
+				Help: "Detector.Inspect calls that returned an error (DB timeout, store unreachable). Surfaces the silently-broken-detector failure mode — operators alert on any non-zero rate per detector.",
+			},
+			[]string{LabelDetector},
 		),
 	}
 }

@@ -244,6 +244,25 @@ func WithAnomalyLogger(l Logger) AnomalyRunnerOption {
 	}
 }
 
+// WithAnomalyMetricsCallbacks wires the three anomaly metric
+// emitters. cmd builds these from its *metrics.Metrics; tests
+// inject inline closures to assert metric activity without
+// dragging the prometheus dep into the SPI layer. Any callback
+// may be nil — only set ones fire.
+func WithAnomalyMetricsCallbacks(
+	detected func(anomalyType, severity string),
+	dropped func(reason string),
+	inspectError func(detector string),
+) AnomalyRunnerOption {
+	return func(r *AsyncAnomalyRunner) {
+		r.metrics = &anomalyMetrics{
+			detected:     detected,
+			dropped:      dropped,
+			inspectError: inspectError,
+		}
+	}
+}
+
 // NewAsyncAnomalyRunner builds a runner around the given detectors
 // + AnomalySink. sink may be nil (drops every anomaly; useful for
 // tests that observe detectors via direct Inspect calls instead).

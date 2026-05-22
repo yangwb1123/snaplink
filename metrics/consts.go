@@ -18,6 +18,9 @@ const (
 	NameWebAuthnAssertionsTotal    = "sso_webauthn_assertions_total"
 	NameLoginDuration              = "sso_login_duration_seconds"
 	NameMFACompletionDuration      = "sso_mfa_completion_duration_seconds"
+	NameAnomaliesDetectedTotal     = "sso_anomalies_detected_total"
+	NameAnomalyDispatchDropsTotal  = "sso_anomaly_dispatch_drops_total"
+	NameAnomalyInspectErrorsTotal  = "sso_anomaly_inspect_errors_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -31,6 +34,10 @@ const (
 	LabelDecision    = "decision"
 	LabelMFAMethod   = "mfa_method"
 	LabelSubsystem   = "subsystem" // audit | snapshot | push_approvals
+	LabelAnomalyType = "anomaly_type"
+	LabelSeverity    = "severity"
+	LabelDropReason  = "reason"
+	LabelDetector    = "detector"
 )
 
 // Status class label values, bucketed into the four standard HTTP

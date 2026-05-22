@@ -294,6 +294,8 @@ TABLE IF NOT EXISTS` at construction. Constructor: `New<Provider>(dsn)`
 | Audit sink | ✓ | ✓ | `audit.backend` |
 | Permissions (Provider) | ✓ | ✓ | `permissions.backend` |
 | Tenants + Domains | ✓ | ✓ | `tenant.backend` |
+| Recent logins (anomaly state) | ✓ | ✓ | `anomaly.recent_login.backend` |
+| IP failure counter (brute-force) | ✓ | ✓ | `anomaly.ip_failure.backend` |
 | Network policy store | ✓ | etcd | `network.store.backend` |
 | Service registry | ✓ | etcd | `registry.backend` |
 
@@ -337,6 +339,62 @@ Reference impls in `defaultimpl/`:
 Richer scorers (impossible-travel, device fingerprint, ML) implement
 `sso.RiskScorer` directly and query their own store inside `Score` —
 don't pad `RiskRequest`.
+
+### Anomaly detection (`anomaly.go` + `defaultimpl/anomaly/`)
+Async behavioral-anomaly path that complements the synchronous
+[RiskScorer]. The synchronous scorer can only afford ms-level
+decisions; anomaly detectors run OFF the request path on every
+login event (success + failure), surface anomalies via audit +
+webhook, NEVER back into the login decision. Operators want
+"tell me what's unusual, let me decide policy" — not "block on
+every guess."
+
+Wire shape: `AsyncAnomalyRunner` worker pool (bounded queue,
+default 1024 depth + 4 workers, drop-newest on overflow) consumes
+`LoginEvent`s + fans to every registered `AnomalyDetector`. Events
+are stamped at `recordLoginSuccess` / `recordLoginFailure`; runner
+nil → zero overhead. Per-detector 5s ctx bound; one slow detector
+can't pile up siblings. Per-detector errors logged + metric'd,
+never propagated.
+
+Reference detectors (`defaultimpl/anomaly/`):
+- `ImpossibleTravelDetector` — haversine distance + speed ceiling
+  (default 800 km/h). 800-2000 = warn; 2000+ = critical. 10km
+  same-metro floor; 24h history window. Owns the
+  `RecentLoginStore` writes (other detectors are read-only).
+- `VelocityDetector` — sliding window per-subject failure +
+  success counts. HourlyLimit (default 25 → warn) +
+  DailyLimit (default 200 → critical) fire independently.
+- `NewDeviceDetector` — UA fingerprint comparison vs 30-day
+  baseline + 7-day bootstrap grace period (cold-start
+  suppression).
+- `NewCountryDetector` — country comparison vs 90-day baseline +
+  7-day grace. Works without lat/lon-capable geo provider.
+- `BruteForceShadowDetector` — CROSS-account same-IP failure
+  counter against `IPFailureCounter`. Catches the AccountLockout
+  blind spot: attacker spraying credentials across N accounts
+  staying below per-account threshold (5 fails × 100 accounts =
+  500 IP failures invisible to per-subject lockout). FailureLimit
+  (default 50 → warn) + DistinctSubjectLimit (default 10 →
+  critical) fire independently.
+
+State substrate:
+- `RecentLoginStore` (memory + sqlite peer at
+  `defaultimpl/sqlite/recent_login.go`): per-subject ring buffer,
+  256 entries default, append + windowed read + prune-older.
+  Stores SHA-256-salted IP + per-subject-salted UA hash + lat/lon
+  + country. Cluster-shared via SQLite. PII-light by construction
+  (never raw IP / UA).
+- `IPFailureCounter` (memory + sqlite peer): IP-keyed counter
+  with distinct-subject aggregation. Separate from
+  `RecentLoginStore` to avoid double-index cost: subject-keyed
+  access pattern vs IP-keyed access pattern.
+
+`HashLoginEntry(event, ipSalt)` is the canonical event-to-entry
+converter — detector implementations call this rather than
+reaching for crypto/sha256 themselves. Per-subject UA salt
+deterministically derived from subjectID + ipSalt so privacy
+holds even on dump.
 
 ### MFA orchestration (`mfa.go` + `handle_mfa.go`)
 Two-leg step-up flow gated by `RiskScorer` returning
@@ -652,6 +710,9 @@ labels):
 | `sso_webauthn_assertions_total` | Counter | outcome |
 | `sso_retention_pruned_total` | Counter | subsystem |
 | `sso_retention_prune_errors_total` | Counter | subsystem |
+| `sso_anomalies_detected_total` | Counter | anomaly_type, severity |
+| `sso_anomaly_dispatch_drops_total` | Counter | reason |
+| `sso_anomaly_inspect_errors_total` | Counter | detector |
 
 Per-endpoint breakdowns come from traces, not labels. MFA labels are
 restricted to the wired provider's `SupportedMethods()` set

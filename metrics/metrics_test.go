@@ -25,6 +25,9 @@ func TestNew_ConstructsAllVectors(t *testing.T) {
 	if m.RiskDecisionsTotal == nil {
 		t.Error("risk decisions collector not initialized")
 	}
+	if m.AnomaliesDetectedTotal == nil || m.AnomalyDispatchDropsTotal == nil || m.AnomalyInspectErrorsTotal == nil {
+		t.Error("anomaly collectors not initialized")
+	}
 }
 
 func TestMiddleware_NilMetricsIsIdentity(t *testing.T) {
@@ -163,6 +166,16 @@ func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
 	scrape = scrapeMetrics(t, m)
 	mustContain(t, scrape, `sso_login_duration_seconds_count{outcome="success",provider="password"} 1`)
 	mustContain(t, scrape, `sso_mfa_completion_duration_seconds_count{outcome="success"} 1`)
+
+	m.AnomaliesDetectedTotal.WithLabelValues("impossible_travel", "critical").Inc()
+	m.AnomaliesDetectedTotal.WithLabelValues("velocity_burst", "warn").Add(3)
+	m.AnomalyDispatchDropsTotal.WithLabelValues("queue_full").Add(5)
+	m.AnomalyInspectErrorsTotal.WithLabelValues("impossible_travel").Inc()
+	scrape = scrapeMetrics(t, m)
+	mustContain(t, scrape, `sso_anomalies_detected_total{anomaly_type="impossible_travel",severity="critical"} 1`)
+	mustContain(t, scrape, `sso_anomalies_detected_total{anomaly_type="velocity_burst",severity="warn"} 3`)
+	mustContain(t, scrape, `sso_anomaly_dispatch_drops_total{reason="queue_full"} 5`)
+	mustContain(t, scrape, `sso_anomaly_inspect_errors_total{detector="impossible_travel"} 1`)
 }
 
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {
