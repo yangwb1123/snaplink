@@ -1,330 +1,348 @@
 # ROADMAP
 
-> 基于 2026-05 时点对 `github.com/snaplink/sso` 的全局扫描，从资深架构师 / PM
-> 的视角列出下一阶段投入产出比最高的 5 个扩展方向。
+> 基于 2026-05-22 时点对 `github.com/snaplink/sso` 的全局扫描，从资深
+> 架构师 / PM 视角列出下一阶段投入产出比最高的 5 个扩展方向。
 >
 > 每项包含 **Why now**（这件事为什么比别的事更值得做）、**Scope**
 > （拆到可独立 PR 的颗粒度）、**Edge cases / 当前实现具体短板**、
 > **Sequencing hint**（与既有功能的耦合点）。
 >
 > 排序按"如果只能挑一件先做"的优先级。文末附 **边界情况 & 性能优化**
-> 清单，记录够不上独立方向但需要持续跟进的小颗粒。
+> 清单 + **优先级摘要**。
+
+---
+
+## 上一版 ROADMAP（2026-05-21）之后已落地的能力
+
+读这份文档前先承认进度——上一版的五个方向有大量已经实现：
+
+| 上版方向 | 当时状态 | 现在状态 |
+|---|---|---|
+| §1 多副本正确性（6 个 SPI 缺分布式后端） | 全部 memory-only | **SQLite peer 全部到位**：PAR / Session / RateLimiter / JTIReplay / SubjectClientIndex / AccountLockout、再 + MFAChallenge / PushApproval / Tenant / Permissions / Audit / WebAuthn — 共 15 个 store 都有 cluster-shared 后端 |
+| §2A WebAuthn / Passkey | 未实现 | **完整 4-call ceremony** + cmd 路由 + SQLite UserStore/SessionStore + MFA-as-step-up |
+| §2B 上游 IdP 联邦 | 未实现 | **OIDC RP 端 5 个内置 provider**（Google/Microsoft/GitHub/Auth0/Keycloak）— SAML 仍缺 |
+| §2C SCIM 2.0 | 未实现 | 仍缺 |
+| §3 HSM / KMS / 自动轮换 | 未实现 | 仍缺 — Ed25519 私钥仍在进程内存 |
+| §4A Audit Explorer 后端（SQLite FTS） | 未实现 | **Audit SQLite Sink 落地**（含 Query API + 保留调度器 + 哈希链 + PII redactor + Async/Retry/Multi sink composition + Webhook sink） |
+| §4B 用户自助 / Admin Web Console | 未实现 | 仍缺 |
+| §4C GDPR erase pipeline | 未实现 | 仍缺 — `RefreshTokenSubjectIndex.DeleteAllForSubject` 已经有，但跨 store 删除工作流没串起来 |
+| §4D 异步异常检测 | 未实现 | 仍缺 — `RiskScorer` 是同步路径决策 |
+| §5 Signed Metadata | 未实现 | **已落地**（`WithMetadataSigner`） |
+| §5 DPoP Nonces | 未实现 | **已落地**（`WithDPoPNonceProvider`） |
+| §5 Pairwise Subject | 未实现 | **已落地**（`PairwiseSubjectStore` + SQLite peer） |
+| §5 JWE for JAR | 未实现 | **已落地**（RFC 9101 §6.4，RSA-OAEP-256 + A256GCM） |
+| §5 CIBA | 未实现 | 仍缺 |
+| §5 JWE for id_token/userinfo | 未实现 | 仍缺 |
+| §5 FAPI 2.0 profile | 未实现 | 仍缺（前置零件齐了，缺单开关 + inspection mode） |
+
+**新增能力**（上版未列入，但这一轮做了）：
+
+- **MFA orchestration**：TOTP / WebAuthn / Push / Multi-composer 全套
+  factor，`MFABeginner` 双 call ceremony SPI，cmd YAML 完整 wire（含
+  `kind=multi` 组合）。
+- **Push 全栈**：`PushTransport` SPI + 内置 `log` / `webhook` 两种
+  transport + 参考回调处理器 `/push/approval/:id/:decision`。
+- **Snapshot AES-GCM Sealer**：除 argon2id+chacha20poly1305
+  passphrase 外，新增 KMS-friendly 直接 32 字节密钥 sealer。
+- **观测全面升级**：`sso_login_duration_seconds{provider,outcome}`
+  + `sso_mfa_completion_duration_seconds{outcome}` +
+  `sso_webauthn_{registrations,assertions}_total{outcome}` +
+  `sso_retention_{pruned,prune_errors}_total{subsystem}` + `/health`
+  含 build info（version + VCS revision）。
+- **三套 retention scheduler**：`audit.retention` /
+  `snapshot.retention` / `mfa.provider.push.prune_interval`，cmd 统一
+  shutdown 协调。
+- **`WithReadyCheckTimeout` 单 check 超时**：聚合 3s 内的 per-check
+  override。
+- **安全修复**：`SessionManager.Refresh` 拒绝复活已 expired/revoked
+  session（两后端同时修）。
+- **Permissions conformance suite**：memory / sqlite 等价性锁定
+  （`permissions/permissionstest`）。
 
 ---
 
 ## 现状自检
 
-过去几个季度 OAuth/OIDC 协议覆盖度已经做到 2026 年同类产品 P95 水平：
+按一份成熟 OAuth/OIDC 平台的 RFP 评估表对照：
 
-- 完整 grant 集（auth_code / refresh / client_credentials / device /
-  token-exchange + RAR）+ PAR + DCR/DCM + Introspect + Revoke。
-- 现代安全 profile：DPoP、mTLS 持有证明、RFC 9068 at+jwt、JAR
-  （inline + URL fetch）、`private_key_jwt`、`prompt=none` 静默续期、
-  `iss` 响应参数（RFC 9207）、step-up 挑战（RFC 9470）、Form Post
-  Response Mode、OAuth 2.1 严格模式。
-- 端到端会话：BCL（多 RP 扇出）+ FCL + `sid` claim + 跨发行器吊销。
-- 8 种 authenticator（含 TOTP RFC 6238）+ 账户级锁定 + risk
-  scorer 钩子。
-- 运维面：snapshot 导出/恢复、release pin/rollback、bootstrap
-  builtin 步骤 + 分布式锁、admin REST + gRPC、netpolicy、tenant、
-  geo、permissions（含菜单）、audit 哈希链 + PII redactor。
-- HTTP 资源面：RFC 6749 §5.1 no-store、RFC 6750 §3 WWW-Authenticate
-  challenge 全面落地。
+- **协议覆盖** —— 完整 grant 集 + PAR + DCR + Introspect + Revoke +
+  Token Exchange + RAR；DPoP + mTLS-bound + 9068 + 9207 + JAR
+  (signed + JWE) + Signed Metadata + Pairwise + OAuth 2.1 strict +
+  step-up + BCL/FCL + RP-initiated logout。**协议层 ≈ 95%**。
+- **认证因子** —— 9 个 primitive + WebAuthn + TOTP/Passkey/Push 三种
+  MFA + 上游 OIDC 联邦。**剩 SAML / SCIM 是企业销售清单的两行**。
+- **多副本正确性** —— 15 个 store 都有 SQLite peer，cluster-shared
+  路径走得通。**剩 Redis / 跨区一致是吞吐 + 跨区课题，不是正确性**。
+- **运维面** —— Snapshot / Release / Bootstrap / Retention 自动化都
+  到位，CLIs（`sso-audit-verify`/`sso-snapshotctl`）齐备。**剩没有面
+  向人的 Web Console**。
+- **安全 / 合规** —— Audit 哈希链 + PII redactor + 退化策略全面落
+  地。**密钥治理（HSM）、合规闭环（GDPR erase）、行为异常检测三块
+  是空白**。
+- **协议补完位** —— CIBA + JWE 响应加密 + FAPI 2.0 profile 三件。
 
-**剩下的不再是"补协议"**，而是把这套发动机：**修到多副本正确 → 把
-2026 年的认证因子补全 → 把密钥治理升级 → 把面向人的操作面 / 合规
-做完 → 把最后一批协议补完位收口**。下面 5 个方向按这个顺序排。
-
----
-
-## 1. 把"多副本部署"从「能跑」修到「正确」
-
-### Why now
-
-这是 **正确性 Bug**，不是性能优化。SQLite 后端已经覆盖 User /
-AuthCode / RefreshToken（含 FamilyTracker）/ DeviceCode / Client
-五种，但 **PARStore、SessionManager、RateLimiter、JTIReplayStore、
-SubjectClientIndex、AccountLockout 六个 SPI 仍然只有 memory 实现**。
-任何一个在多副本下都会出 bug：
-
-| 缺失分布式后端 | 多副本下的具体故障 |
-|---|---|
-| `PARStore` | 副本 A 颁发 `request_uri` 后浏览器 302 被 LB 路由到副本 B → `Consume` 返回 `invalid_request_uri`，PAR 流彻底走不通 |
-| `SessionManager` | `prompt=none` 静默续期、BCL 的 `sid` 绑定、`/end_session` 都依赖；副本切换 = 用户被强制重新登录 |
-| `RateLimiter` | N 副本下 `default_per_sec` 实际容量被放大 N 倍，`/auth/login` 暴力破解防御被打穿 |
-| `JTIReplayStore` | DPoP / JAR / `client_assertion` / token-exchange `actor_token` 的重放检测全部副本本地，攻击者在副本之间漂移即可重放 |
-| `SubjectClientIndex` | BCL 多 RP 扇出索引落在颁发 token 那个副本上；另一台副本上的 `/end_session` 看不见，相当于单 SSO 失效 |
-| `AccountLockout` | 滑窗失败计数器只在登录命中的那个副本累加，攻击者从不同副本视角各试 5 次 = 总共试 5N 次 |
-
-### Scope
-
-| 工作项 | 落地点 |
-|---|---|
-| `defaultimpl/redis/` 后端，覆盖上表六个 SPI（PARStore 用 `SET NX PX` + `GETDEL` 保证单次消费；SessionManager 走 hash + TTL；RateLimiter 用 lua script 实现令牌桶；JTIReplay 用 `SET NX PX exp`；SubjectClientIndex 用 set + sub-key TTL；AccountLockout 用 sorted set 滑窗） | 新包 |
-| 配置层 `storage.backend: redis \| sqlite \| memory` + 统一 DSN，按 SPI 分别 override | `config/config.go` |
-| `WithReadyCheck("redis", ...)` 启动期连通性检查，Redis 不可达时 503 而非颁发受损的 token | `cmd/sso-server` |
-| `WithClockSource(time.Source)` 注入点 + 顶层 `max_clock_skew` 配置；多副本时钟漂移 > skew 直接报警 | `sso.go` |
-| graceful shutdown：`errgroup` + signal hook + 让 in-flight `/token` 跑完再关 Redis client | `cmd/sso-server` |
-| 文档：`AGENTS.md` 的 "Storage today" 表更新；deploy 文档解释为什么仍然推荐 sticky session（仅为 `/auth/login` 的 cookie 续期友好性，不是正确性必需） | docs |
-
-### Edge cases / 当前实现具体短板
-
-- **单次消费的竞态**：`MemoryAuthCodeStore.Consume` 是 mutex，Redis
-  必须用 `GETDEL`（6.2+）或 `EVAL` lua。两副本同时收到 /token
-  重放都成功 = code 反复被换 = 静默授权多个会话。
-- **DPoP 时钟窗**：今天 `dpop.go` 的 `iat` 校验是 ±60s，副本时钟漂移
-  > 60s 就开始合法请求被拒。绑定到 `WithClockSource` 后，
-  `dpopProofMaxAge` 应改为 `clockSkew + protocolWindow`。
-- **Family Tracker 持久化语义**：refresh-token reuse detection
-  落 Redis 之前要先想清楚 AOF 策略——AOF=`always` 性能差，但
-  `everysec` 在崩溃时可能丢一秒级别的家族表，会让一次合法 rotation
-  被误判为 reuse → 误杀整族。建议 fail-open 改 fail-soft：家族表读
-  失败时退化到 plain `invalid_grant`（普通失败），不杀全族。
-- **JWKS 私钥不能在副本间漂移**：跨副本 key rotation 需要协调（见
-  方向 §3 的 HSM 抽象，那里一并解决）。
-- **graceful shutdown 的隐患**：现在 main 收到 SIGTERM 后直接退出，
-  正在处理 /token 的连接会让 RP 看到 EOF。配 Kubernetes
-  `terminationGracePeriodSeconds` 才有用。
-
-### Sequencing hint
-
-**P0，立刻**。其余四个方向（WebAuthn 持久化、HSM 抽象、Admin
-Console 多副本实时面、CIBA 长轮询）都假设"Store 是分布式且强一致"。
-这条不做掉，后面任何"加机器扛流量"的对话都没法谈。
+**这一阶段剩下的不是"做协议"**，而是：**把密钥升到 HSM → 把行为
+异常这条异步通路补上 → 把面向人的操作面做出来 → 把多表 schema 演化
+路径修通 → 把最后一公里协议（CIBA / 响应 JWE / FAPI 2.0）收口**。
+下面 5 个方向按这个顺序排。
 
 ---
 
-## 2. 把 2026 年的认证因子补全（WebAuthn / Passkey + 上游 IdP 联邦 + SCIM 2.0）
+## 1. 签名密钥治理：HSM / KMS 抽象 + 自动轮换 + per-tenant 隔离
 
 ### Why now
 
-当前 8 种 authenticator 全部是 **primitive**：password / phone / email /
-temp_token 覆盖知识因素和占有因素的低保证版本；keypair / apikey /
-certificate 是 service-to-service；TOTP 是入门级 MFA。**没有一个
-是 2026 年企业 SSO 选型清单上的差异化项**：
+`Ed25519JWTIssuer.Issue` 直接调 `ed25519.Sign(j.privateKey, ...)` —
+**私钥裸存进程内存**。这一项在三个客户对话里会立刻被拒，是这个
+项目今天面向**金融 / 政府 / 高敏感 SaaS** 销售的 **唯一硬阻塞**：
 
-- **没有 WebAuthn / FIDO2 / Passkey**——苹果 / 谷歌 / 微软三家
-  默认推 Passkey 已经两个完整产品周期，企业 SSO 没这个直接出不了
-  POC。
-- **没有上游 IdP 联邦**——客户问"能用 Google Workspace / Okta /
-  Azure AD 登录吗"只能回答"不行"。SAML 2.0 是政府 / 大企业的硬
-  门槛。
-- **没有 SCIM 2.0**——HR / IT 自动 provisioning 是企业版定价的
-  分水岭，没它就被卡在"开发者工具"层级。
+1. **金融 / 政府客户合规**：FIPS 140-2/3、PCI-DSS、SOC2 Type II
+   要求签名密钥在 HSM 内，私钥永不出硬件边界。今天 SDK 不提供这
+   条路径——这是 RFP 第一页就会被筛掉的项。
+2. **多租户内存隔离**：同一进程持有所有 tenant 的签名密钥 = 单个
+   memory dump 暴露所有 tenant 的伪造能力。Tenant SPI 已经落地，
+   per-tenant signing 是逻辑下一步。
+3. **轮换审计闭环缺失**：今天密钥轮换是手动调 `RotateKey`，没有
+   "轮换记录、谁触发、为什么轮换、上一版本何时停止接受签名" 的
+   审计追溯。SOC2 Type II 复审强制要求这条记录。
 
-### Scope
+附带解决两个长期待办：
 
-**A. WebAuthn / Passkey Authenticator**
-
-- 新包 `authenticators/webauthn/`，复用 `go-webauthn/webauthn`。
-- 4 条新路由：`/auth/webauthn/{begin,finish}-registration`、
-  `/auth/webauthn/{begin,finish}-login`。
-- 凭据持久化：SQLite 新表 `webauthn_credentials`（`user_id`、
-  `credential_id`、`public_key`、`sign_count`、`aaguid`、`transports`、
-  `last_used_at`）。**注意**：`sign_count` 的递增必须 atomic（防
-  clone attack），用 `UPDATE … WHERE sign_count < ?`。
-- AMR claim 上声明 `["hwk"]`（hardware key）/ `["swk"]`（software），
-  ACR 推荐 `urn:mace:incommon:iap:silver` 或 FAPI 1 baseline 等
-  常用值。
-- 可发现凭据（discoverable credentials / resident keys）需要
-  `userHandle` 注入到 `Subject.ID` 解析路径——这是 Passkey
-  跨设备同步的核心，必须支持。
-
-**B. 上游 IdP 联邦（OIDC RP-side + SAML 2.0）**
-
-- 新包 `federation/`，接口 `Provider`：`AuthorizeURL(state) →
-  redirectURL`、`Exchange(code) → IdentityClaim`、`UserInfo` 可选。
-- 内置实现：
-  - `federation/oidc/` —— 通用 OIDC RP，覆盖 Google / Microsoft /
-    Okta / Auth0；走 `github.com/coreos/go-oidc/v3` 验证 id_token；
-    自动从上游 discovery 文档摘 JWKS。
-  - `federation/saml/` —— `crewjam/saml`；处理 SP-init 与 IdP-init，
-    AssertionConsumerService URL 由本 SSO 提供。
-- 路由：`GET /auth/federated/:provider`（302 到上游）、
-  `GET/POST /auth/federated/:provider/callback`。
-- JIT 用户创建走 `UserProvider.CreateOrUpdate`；填充
-  `Subject.Attributes["idp"] = providerName`、`["idp_subject"]`、
-  `["email_verified"]`。
-- per-tenant policy：`Tenant.Settings["federation"]` 控制
-  可见的 IdP 列表 + 强制策略（"`@acme.com` 域名强制走 Okta"）。
-- `amr: ["fed"]` + 上游 ACR 透传到本服务 ACR。
-
-**C. SCIM 2.0 (RFC 7644)**
-
-- 新包 `scim/`，挂在 `/scim/v2/Users` + `/scim/v2/Groups`。
-- Bearer auth 与 admin 同源，gated by 新权限 `scim:write` /
-  `scim:read`。
-- 走现有 `UserProvider` + `permissions.Provider`，不引入新存储。
-- 关键动作：
-  - `PATCH /Users/{id}` 改 status → 异步触发该 user 全部 session 吊销。
-  - `DELETE /Users/{id}` → 调用 `RefreshTokenSubjectIndex.DeleteAllForSubject`
-    + `SessionManager.ListByUser` → `Destroy`。
-  - HR 误删保护：默认 soft-delete（`User.Status="archived"`），
-    30/60/90 天可配置硬删；硬删走方向 §4 的 GDPR pipeline。
-
-### Edge cases / 当前实现具体短板
-
-- `Subject.Attributes` 是 `map[string]string`——存 WebAuthn
-  credential 的 byte slice 必须 base64。要么升级到 `map[string]any`，
-  要么把这类二进制属性挪到独立的 Attribute store（解耦后 token claim
-  payload 也变小）。
-- 联邦回调路径下 `RiskScorer.Score` 拿不到密码——必须把
-  `RiskRequest` 的 `Authenticator` 字段改为可识别"上游 IdP 类型"
-  的形式（如 `federation/google`）；现有 scorer 不要假定永远有
-  password hash。
-- WebAuthn 的 `clientDataJSON.origin` 必须在多 tenant + 多域名下匹配
-  正确——`tenant/` 已经做了 hostname → tenant 映射，把
-  `webauthn.RelyingPartyID` 设为 `tenant.PrimaryDomain` 即可，但
-  跨子域 Passkey 共享需要显式声明 `apple-app-site-association` /
-  `assetlinks.json`，文档要写清楚。
-- SAML SP metadata 暴露面：`GET /federation/saml/:provider/metadata`
-  必须缓存（一次 IdP 注册可能触发上游半小时一次的拉取），并签名
-  以防元数据投毒。
-- SCIM `bulkOperations` 极易被误用——一次性导入 10k 用户会让 admin
-  token bucket 干涸。建议：`bulk` 请求必须 admin-bypass rate limit，
-  同时落 audit `scim_bulk_imported` 并强制需要 `scim:bulk` 权限。
-
-### Sequencing hint
-
-WebAuthn + 上游 IdP 联邦 是 **第一波**——共 8-10 周工时，但锁定
-两类销售场景（B2C Passkey 升级 + B2B "用我们的 IdP" 谈判）。SCIM
-是 **第二波**——上线后 30 天内才会被 IT 真正使用，但报价单上
-立刻需要这一行。账户级防御（HIBP k-anonymity、固定窗口 timing
-equalization）可以与第一波并行，每项不到一个 sprint。
-
----
-
-## 3. 签名密钥治理：HSM / KMS 抽象 + 多算法 + 自动轮换 + 密钥审计
-
-### Why now
-
-`Ed25519JWTIssuer.Issue` 直接调 `ed25519.Sign(j.privateKey, ...)`——
-**私钥裸存进程内存**。这在三个客户对话里会立刻被拒：
-
-1. **金融 / 政府客户**：合规要求签名密钥必须在 HSM / KMS 内，
-   私钥永不离开硬件边界。
-2. **SaaS 多租户**：同一进程持有所有 tenant 的签名密钥 = 单个
-   memory dump 暴露所有 tenant 的伪造能力。
-3. **密钥轮换审计**：今天密钥轮换是手动调 `RotateKey`，没有
-   "轮换记录、谁触发、为什么轮换、上一版本何时停止接受签名"
-   的审计闭环。
-
-并且这件事还顺手解决两个长期 TODO：
-
-- **多算法支持（RS256 / ES256 / EdDSA 并存）**：今天只有 EdDSA。
-  联邦上游可能是 RS256，资源服务器要验上游签名也需要 RS256
-  支持——一旦引入新算法，alg confusion 攻击的窗口立刻打开
-  （AGENTS.md 已 noted）。统一的 `Signer` 抽象层是收口这个攻击
-  面的唯一办法。
-- **per-tenant 签名密钥**：多租户的 issuer 是不同的 `https://
-  tenant-a.example/` vs `tenant-b`，理论上每个 tenant 应该有
-  独立 JWKS。今天是共享一把 key——任何一个 tenant 的 token
-  在另一个 tenant 的 issuer 校验语义下都"可疑"。
+- **多算法（RS256 / ES256 / EdDSA 并存）**：今天只有 EdDSA。
+  联邦上游可能是 RS256；资源服务器要验上游签名也需要 RS256；
+  FAPI 客户硬要 PS256。引入新算法本身不难，难的是 alg-confusion
+  攻击窗口的收口（AGENTS.md §2 已 noted 的 `alg+typ allowlist`
+  是基础，但当前 `supportedJWTAlgs` 是 hardcoded `["EdDSA"]`，
+  扩展需要先把它做成配置项）。
+- **per-tenant JWKS**：tenant 解析层已经按 hostname → tenant 路由
+  齐备；缺的是 `/tenant/{id}/.well-known/jwks.json` 入口 + 按 `iss`
+  claim 选 KeyProvider 验签的 dispatch 逻辑。
 
 ### Scope
 
-**A. `SigningKeyProvider` 抽象**
+**A. `SigningKeyProvider` SPI**
 
 ```go
 type SigningKeyProvider interface {
     Sign(ctx, kid, algorithm, payload) (signature, error)
-    PublicJWKS(ctx) (JWKS, error)       // 公布给 JWKS endpoint
+    PublicJWKS(ctx) (JWKS, error)
     ActiveKID(ctx, algorithm) (kid, error)
-    Rotate(ctx, reason) (newKID, error) // 触发轮换 + audit
+    Rotate(ctx, reason) (newKID, error)
 }
 ```
 
-- 默认实现 `defaultimpl/software`：现有 Ed25519 软件签名走这个壳，
-  零行为变更。
-- `defaultimpl/awskms/` —— AWS KMS（用 `aws-sdk-go-v2`，
-  `kms.Sign`）。
+- 默认实现 `defaultimpl/software`：现有 `Ed25519JWTIssuer` 走这个
+  壳，零行为变更（一次重构 commit）。
+- `defaultimpl/awskms/` —— AWS KMS（`aws-sdk-go-v2`, `kms.Sign`）。
 - `defaultimpl/gcpkms/`、`defaultimpl/azurekv/`、`defaultimpl/vault/`
-  —— 同模式可由社区/客户按需加。
-- `defaultimpl/hsm-pkcs11/` —— PKCS#11 通用层（YubiHSM / SoftHSM /
+  —— 同模式，社区/客户按需加。
+- `defaultimpl/pkcs11/` —— PKCS#11 通用层（YubiHSM / SoftHSM /
   Thales / Entrust 都走这套），用 `github.com/miekg/pkcs11`。
 
-**B. 多算法 + alg allowlist 收紧**
+**B. 多算法 + alg allowlist 配置化**
 
 - `Server.supportedJWTAlgs` 从 hardcoded `["EdDSA"]` 变成
-  `WithSupportedSigningAlgs(...)` 配置；discovery 同步反映。
+  `WithSupportedSigningAlgs(...)`；discovery 同步反映。
 - `Validate` 严格化：header `alg` 必须在 allowlist 且必须与 `kid`
-  对应密钥的算法一致（防 RS256 公钥被当 HS256 共享密钥用的经典攻击）。
-- 引入 `WithSecondaryAlg(...)` 用于过渡：同时接受老 EdDSA + 新
-  RS256，给现有 RP 6+ 个月迁移窗口。
+  对应密钥的算法一致（防 RS256 公钥被当 HS256 共享密钥用的经典
+  攻击）。
+- `WithSecondaryAlg(...)` 过渡期支持：同时接受老 EdDSA + 新 RS256，
+  给现有 RP 6+ 个月迁移窗口。
 
 **C. 自动轮换 + 重叠期 + 审计**
 
-- 新配置块 `keys.rotation`：
-  ```yaml
-  keys:
-    rotation:
-      interval: 90d         # 每 N 天自动轮换
-      grace_period: 7d      # 旧 kid 在 JWKS 多保留 N 天（让在飞行的 token 仍能验签）
-      strategy: scheduled   # scheduled | manual | event-driven (HSM rekey)
-  ```
+```yaml
+keys:
+  rotation:
+    interval: 90d
+    grace_period: 7d
+    strategy: scheduled   # scheduled | manual | event-driven
+```
+
 - 轮换由 `bootstrap/builtin` 的 v5 step `ensure_signing_key_rotation`
   注册（首次启动检查 `last_rotated_at`，到期触发）。
-- 每次轮换写 audit `signing_key_rotated`：包含 `from_kid` /
-  `to_kid` / `algorithm` / `reason`（scheduled / manual / suspected_compromise）。
-- 紧急轮换接口：`POST /api/v1/admin/keys:rotate {reason: "compromise"}`
-  立即生成新 kid + 把所有现存 token 标记为 needs-revalidation；与
-  既有 `/token/revoke-all` 配合可达成"全局 token 黑屏 30 秒"。
+- 每次轮换写 audit `signing_key_rotated`：`from_kid` / `to_kid` /
+  `algorithm` / `reason`（scheduled / manual / suspected_compromise）。
+- 紧急轮换接口：`POST /api/v1/admin/keys:rotate
+  {reason:"compromise"}` 立即生成新 kid + 把所有现存 token 标记为
+  needs-revalidation；与 `/token/revoke-all` 配合达成 "全局 token
+  黑屏 30 秒"。
 
 **D. per-tenant 签名密钥（可选第二阶段）**
 
-- `Tenant.SigningKey` 可指向独立的 `SigningKeyProvider`；空则走全局。
-- discovery 已经按 tenant 路由（`tenant/` 解析），加上 per-tenant
-  JWKS endpoint 即可：`/tenant/{tenant-id}/.well-known/jwks.json`。
-- 关键 invariant：跨 tenant 的 token 在错误 tenant 的 issuer 视角
-  下永远拒签——`Validate` 必须先按 `iss` claim 路由到对应
-  KeyProvider，而非用进程级 KeyProvider 验所有 token。
+- `Tenant.SigningKey` 可指向独立的 `SigningKeyProvider`；空走全局。
+- 路由：`/tenant/{tenant-id}/.well-known/jwks.json`。
+- Validate 必须按 `iss` claim 路由到对应 KeyProvider，不能用进程级
+  KeyProvider 验所有 token。
 
 ### Edge cases / 当前实现具体短板
 
-- KMS 延迟：AWS KMS sign 是网络 RTT（5-50ms），把 ed25519.Sign 的
-  µs 级响应拉慢三个数量级。需要：(1) KMS-signed token 的 TTL 适度
-  拉长（10min → 30min）摊薄签名成本；(2) per-process LRU 缓存
+- **KMS 延迟**：AWS KMS sign 是网络 RTT（5-50ms），把 `ed25519.Sign`
+  的 µs 级响应拉慢三个数量级。需要：(1) KMS-signed token 的 TTL
+  适度拉长（10min → 30min）摊薄签名成本；(2) per-process LRU 缓存
   `(kid, payload_hash) → signature`（DPoP 的 `jti` 已经在防重放，
-  签名缓存复用安全）；(3) p99 监控 + 熔断到本地缓存的 kid。
-- JWKS endpoint 的 ETag：今天 ETag = `sha256(body)[:8]`，KMS 后端
-  的公钥不会变，但缓存层引入后 `body` 字节顺序可能不稳定。改成
+  签名缓存复用安全）；(3) p99 监控 + 熔断到本地 fallback kid。
+- **JWKS endpoint ETag 稳定性**：今天 ETag = `sha256(body)[:8]`，
+  KMS 后端的公钥不变但 JSON 序列化字节顺序可能不稳定。改成
   `sha256(canonical(jwks))` 或 `kid_set || algorithm_set` 组合
   hash。
-- 轮换期的 `kid` 选择竞态：grace_period 内同一 token issuance 路径
+- **轮换期 `kid` 选择竞态**：grace_period 内同一 token issuance 路径
   可能命中老 kid（cache miss）和新 kid（cache hit）两种状态。
   `ActiveKID` 必须强一致（走分布式存储或单点 leader），不能在
   副本间漂移；否则 N 副本会颁发用 N 种 kid 签的 token，RP 端
   JWKS 缓存反而抓不到刚轮换出去的那个 kid。
-- 算法切换的"算法混淆"攻击窗口：从 EdDSA 单算法过渡到 EdDSA +
-  RS256 双算法时，必须在 `Validate` 严格做 `kid → algorithm`
-  对应，不允许 RP 通过 header `alg` 选择算法——必须由 server-side
-  键空间决定。
+- **算法切换的算法混淆窗口**：从 EdDSA 单算法过渡到 EdDSA + RS256
+  双算法时，必须在 `Validate` 严格做 `kid → algorithm` 对应，不允许
+  RP 通过 header `alg` 选择算法——必须由 server-side 键空间决定。
 
 ### Sequencing hint
 
-**先做 A**（HSM/KMS 抽象）+ **B**（多算法 allowlist 收紧）作为一个
-batch，约 3-4 周；**C**（自动轮换 + 审计）独立 sprint；**D**
+**先做 A**（HSM/KMS 抽象）+ **B**（多算法 allowlist 配置化）作为一
+个 batch，约 3-4 周；**C**（自动轮换 + 审计）独立 sprint；**D**
 （per-tenant 签名密钥）等真有 multi-tenant 客户提需求再做（涉及
 discovery URL schema 演化，破坏性较大）。
 
 ---
 
-## 4. 把面向人的操作面 / 合规闭环做完：Admin Web Console + 用户自助 + GDPR + 异常检测
+## 2. 异步行为异常检测（Anomaly Detector）+ 凭据健康度
 
 ### Why now
 
-后端 capability 已经齐整，**面向人的操作面是空白**：
+`RiskScorer` 今天是 **请求路径上的同步决策**——`Allow` / `Deny` /
+`RequireMFA` 三选一，毫秒级响应。这套适合"已知签名 IP 黑名单"、
+"国家级 geo 拒绝" 这类硬规则，**完全无法处理凭据撞库 / impossible
+travel / 新设备登录 / 时段异常 / brute-force 横扫副本** 这类需要
+**窗口聚合** + **个体基线** 的真信号。
 
-- **运营 / IT**：客户公司想看"过去 24 小时谁登录失败、从哪个国家、
-  哪个 client" → 现在只能 `GET /api/v1/audit/events` 自己写脚本。
-- **终端用户**：想看"我的活跃会话、能不能注销具体设备" → 没
-  UI，只有 `POST /token/revoke-all`（全员注销）。
+观察：
+
+- 当前 `RuleBasedRiskScorer` 是 IP / country 拒绝-允许清单，零
+  动态学习。
+- `AccountLockout` 已经按账户滑窗，但只在登录路径触发；不对
+  "同一 IP 一夜之间 1000 次失败登录但每个账户都只试 4 次（保持
+  在 lockout 阈值之下）" 这类**横向撞库**敏感。
+- 真实安全运营靠 **事后聚合 + 告警 + 人审** 工作流，不是请求
+  路径上的"直接拒绝"。今天 SDK 强制把所有风控决策塞进同步
+  Score()，导致客户只能选择"激进拒绝（误报扰民）"或"什么都不
+  做（撞库横行）"。
+- 凭据健康度（HIBP / pwned password / 弱密码 / 过期未轮换）今天
+  完全缺失——password authenticator 只验 bcrypt 匹配，不告诉用户
+  "你的密码在 2023 数据泄漏里出现过 14 万次"。
+
+**这是把"auth 库"升级到"identity 平台"的关键差异化**。
+
+### Scope
+
+**A. `AnomalyDetector` SPI（与 `RiskScorer` 平行的异步通路）**
+
+```go
+type AnomalyDetector interface {
+    // 登录成功 / 失败后异步调用，不阻塞请求路径
+    Inspect(ctx, *LoginEvent) []*Anomaly
+}
+
+type Anomaly struct {
+    Type      string  // impossible_travel | new_country | velocity | brute_force_shadow | ...
+    Severity  string  // info | warn | critical
+    Score     float64
+    Evidence  map[string]string
+    SubjectID string
+}
+```
+
+调用点：`audit.Recorder` 之后启动 `defaultimpl.NewAsyncSink` 类似的
+有界 worker pool，把 `LoginEvent`（含 geo、UA、success/failure、
+trace_id）排队 → 每个 detector 独立消费 → 输出 `anomaly_detected`
+audit + 可选 webhook。**请求路径完全不知情**——这是关键设计契约。
+
+**B. 内置 detector**（每个独立 PR）
+
+- **Impossible travel**：基于现有 `geo.GeoInfo`，相邻成功登录跨度
+  距离 / 时间 > 物理可达（800km/h 上限）。状态需要 per-subject
+  滑窗 → 新接口 `RecentLoginStore`（memory + sqlite，schema：
+  `(subject_id, timestamp, country_code, ip_hash)` + index）。
+- **Velocity**：同一账户 / IP 在窗口内成功登录次数 > 阈值（默认
+  `25/hour` / `200/day`）。复用 `AccountLockout` 类似的滑窗 store
+  即可，schema 类似。
+- **New country / new device**：相对该用户的 7 天基线，新出现的
+  UA fingerprint hash 或 country_code。需要 `KnownDeviceStore`
+  （subject_id, ua_fingerprint, country_code, last_seen_at）。
+- **Brute-force shadow**：同一 IP 在 N 个账户上累计失败次数（绕
+  per-account lockout），分布全部副本（依赖 SQLite 共享 store）。
+- **Off-hours**：用户基线工作时段 + 容差，新登录在基线外触发
+  warn。低优，做最后。
+
+**C. 凭据健康度（CredentialHealthChecker）**
+
+- **HIBP k-anonymity 检查**：password verifier 在 hash 校验通过后，
+  异步查 `api.pwnedpasswords.com` 的 k-anonymity API（提交 SHA-1
+  前 5 位，比对返回的密码列表是否含完整 SHA-1）。命中 → audit
+  `password_compromised` + 下次登录强制改密 UI flag。
+- **弱密码字典**：bootstrap 集成可选字典（top 10k common passwords），
+  注册 / 改密时拒绝（403 + `password_too_weak`）。
+- **密码年龄**：可选 `password.max_age_days`，过期 → 强制走改密
+  流程（但不锁登录，避免 lockout 闪退）。
+
+**D. 告警通路**
+
+- `audit.EventAnomalyDetected` 类型，包含 detector 名 + score +
+  原始事件 ID + evidence map。
+- 可选 webhook (`AnomalyWebhookSink`)：与 `audit.WebhookSink` 同源
+  设计，push 到 SIEM / Slack。
+- 可选 SMTP / Slack 推送到 **用户本人**："我们检测到来自新国家的
+  登录…"——这是终端用户感知到的"为什么这家产品安全"。
+- 新 metric：`sso_anomalies_detected_total{type, severity}`。
+
+### Edge cases / 当前实现具体短板
+
+- **误报成本**：impossible travel 在 VPN 用户身上几乎 100% 误报。
+  所以默认输出是 audit + webhook，**不进请求路径**（不影响登录
+  成功/失败）；只有运维 / 用户自己看到信号。让客户按自己的安全
+  姿态决定是否升级到"自动锁账户"。
+- **状态 store 体量**：N 用户 × 30 天 login history 是真实数据
+  膨胀点。需要：(1) `RecentLoginStore` 强制 TTL（默认 30 天）；
+  (2) 配套 retention 调度器复用 §1 中的 scheduler 框架；(3) 文档
+  示例规模数字（10k 用户 ≈ 1GB SQLite）。
+- **detector 排序与短路**：N 个 detector 串行跑会拖延后续处理。
+  worker pool 模型让每个 detector 独立消费，互不阻塞；只在 audit
+  写入时聚合。
+- **隐私**：UA fingerprint 是 PII 的近邻——不要直接落原始 UA，
+  落 `sha256(ua || subject_id_salt)`。同样 IP 应当 `ipv4 /24
+  truncate` 或 `ipv6 /64 truncate` 后再持久化。复用现有
+  `RedactIPTruncate` / `RedactUserAgent`。
+- **冷启动**："new country" 需要历史基线——前 7 天 every login is
+  new，告警洪水。引入 `bootstrap_grace_period: 7d` 字段，首次见
+  到 subject 后这段时间内 new-country detector 静默。
+- **HIBP 网络依赖**：`api.pwnedpasswords.com` 不可达时不能阻塞登录
+  （fail-open）。可缓存 hash prefix → 命中结果，TTL 24h。
+
+### Sequencing hint
+
+**A**（SPI + AsyncRunner）+ **B.impossible_travel**（最有 demo
+价值）作为 **第一波**，2-3 周；**B.velocity** + **B.new_country**
+作为 **第二波**；**C.HIBP** 独立 sprint（涉及外部依赖 + 缓存），
+最后做。**D 告警通路** 与 A 并行。
+
+---
+
+## 3. Operator UX：Admin Web Console + 终端用户自助门户 + GDPR 工作流
+
+### Why now
+
+后端 capability 已经齐整，**面向人的操作面是 0**：
+
+- **运营 / IT**："过去 24 小时谁登录失败、从哪个国家、哪个 client"
+  → 现在只能 `GET /api/v1/audit/events` 自己写脚本 / 接 Grafana
+  Loki。
+- **终端用户**："我的活跃会话、能不能注销具体设备" → 没 UI，
+  只有 `POST /token/revoke-all`（全员注销）。
 - **合规**：GDPR Art. 15 / 17 / 20（访问 / 删除 / 可移植）请求来
-  时，没有标准化的导出/删除流水线；audit redactor 是工具，没人
+  时，没有标准化的导出 / 删除流水线；audit redactor 是工具，没人
   调它。
-- **安全**：今天 risk scorer 是**请求路径上的同步决策**，但凭据
-  撞库的真正信号通常是**事后聚合**（同一 IP 24 小时内 1000 次
-  失败、impossible travel、新设备）——这是异步的、需要独立通路。
+- **客户认知**：今天产品的销售姿态是"开发者工具"——竞品（Auth0
+  / WorkOS / Stytch）的销售姿态是 "5 分钟从 demo 到生产，包含
+  UI + 报表 + GDPR 按钮"。**没有 Admin Console = 不能进入企业
+  采购清单**。
 
 这件事的 ROI 不是写新协议，而是 **把已经写好的能力包装出来卖**。
 
@@ -341,9 +359,8 @@ discovery URL schema 演化，破坏性较大）。
      编辑器 + JWKS / cert binding 配置面板。
   3. **Users / Roles / Menus** —— 三方树状选择器，复用
      `permissions.MenuLister`。
-  4. **Audit Explorer** —— 全文检索（依赖 §A.1）+ facet 过滤
-     `(tenant, country, outcome, reason, client_id)`；trace_id 跳
-     Grafana Tempo / Jaeger。
+  4. **Audit Explorer** —— 全文检索 + facet 过滤 `(tenant, country,
+     outcome, reason, client_id)`；trace_id 跳 Grafana Tempo / Jaeger。
   5. **Sessions / Tokens** —— 活跃会话列表、按用户/客户端筛选、
      一键吊销整族；DPoP-bound / mTLS-bound token 显式标识。
   6. **Releases / Snapshots** —— `pin` / `rollback` / `export` /
@@ -351,14 +368,14 @@ discovery URL schema 演化，破坏性较大）。
 - **认证流**：Console 本身用本 SSO 登录（典型的 dogfooding），
   `client_id=sso-admin-console`，scope=`admin:*`。
 
-**A.1 Audit 后端升级（Console 的前置依赖）**
+**A.1 Audit Query API 升级**
 
-- 新 audit sink `audit/sink/sqlite/`（FTS5 全文索引 + 关键 facet
-  字段加 index）。
-- 可选 sink `audit/sink/clickhouse/`、`audit/sink/opensearch/`，
-  接受运维选择列存 / 搜索引擎走更大规模。
-- Query API 升级：`audit.Query` 增加 facet 字段聚合返回（让前端
-  filter 面板直接渲染候选值）。
+- `audit.Query` 增加 facet 字段聚合返回（让前端 filter 面板直接
+  渲染候选值，避免 N+1 round trip）：`OutcomesCount`、`ClientsCount`、
+  `CountriesCount`。
+- 大规模部署可选 sink `audit/sink/clickhouse/`、
+  `audit/sink/opensearch/`——SQLite FTS5 在 > 10M 事件后会吃力，
+  列存 / 搜索引擎是下一档。
 
 **B. 终端用户自助门户**
 
@@ -371,185 +388,299 @@ discovery URL schema 演化，破坏性较大）。
 - 关键 invariant：**改密码后默认吊销所有 session 除当前**——
   per-`Client` 可配置（默认安全，opt-out 便利）。
 
-**C. GDPR / 合规流水线**
+**C. GDPR / CCPA / PIPL 合规流水线**
 
 - `POST /api/v1/admin/users/:id:export` —— 调用所有 Provider 的
   optional `Exporter` 扩展，打包 ZIP 返回。结构：`user.json` /
   `sessions.json` / `audit_events.jsonl` / `refresh_tokens.json` /
-  `permissions.json` / `webauthn_credentials.json`。
+  `permissions.json` / `webauthn_credentials.json` /
+  `mfa_credentials.json`。
 - `POST /api/v1/admin/users/:id:erase` —— right-to-be-forgotten
   workflow：
-  1. 吊销所有 token + session
+  1. 吊销所有 token + session（已有 `RefreshTokenSubjectIndex.
+     DeleteAllForSubject` + `SessionManager.ListByUser → Destroy`
+     可复用）
   2. soft-delete user（`Status="erased"`，可登录被拒）
-  3. 排队 30 天后真正调用 `UserProvider.Delete` + `audit redactor`
+  3. 排队 N 天后真正调用 `UserProvider.Delete` + `audit redactor`
      对历史 audit 事件做 PII 假名化（**保留事件 ID 与时间戳与
-     hash 链**，仅替换 PII 字段为 `[REDACTED]`——hash 链仍可
-     校验，因为内容确实变了，但"事件 X 在时间 T 存在过"得以
+     hash 链**，仅替换 PII 字段为 `[REDACTED]` —— hash 链仍可
+     校验，因为内容确实变了，但 "事件 X 在时间 T 存在过" 得以
      保留）。
-- 新模块 `compliance/erasure/` 持有 30 天 schedule，与 bootstrap
+- 新模块 `compliance/erasure/` 持有 N 天 schedule，与 bootstrap
   Step 复用同一 tracker；崩溃恢复友好。
 - 文档：`docs/compliance.md` 写明 GDPR / CCPA / PIPL 的字段映射。
 
-**D. 异步异常检测（Anomaly Detector，与 Risk Scorer 平行）**
-
-- 新接口 `sso.AnomalyDetector`：**登录成功后** 异步调用，输出
-  alert 到 audit + 可选 webhook。
-- 内置检测器（每个独立 PR）：
-  - **Impossible travel**：基于现有 `geo.GeoInfo`，相邻成功登录跨度
-    距离 / 时间 > 物理可达（800km/h 上限）。
-  - **Velocity**：同一账户 / IP 在窗口内成功登录次数 > 阈值（默认
-    `25/hour` / `200/day`）。
-  - **New device / new country**：相对该用户的 7 天基线，新出现的
-    UA fingerprint 或 country_code。
-  - **Brute-force shadow**：同一账户失败计数 / 成功计数比 > 阈值，
-    暗示 lockout 边缘的撞库行为。
-- 告警出口：
-  - audit event `anomaly_detected`，包含 detector 名 + score + 原始
-    事件 ID
-  - 可选 webhook（与 `audit.WebhookSink` 同源）push 到 SIEM
-  - 可选 SMTP / Slack 推送到用户本人（"我们检测到来自新国家的
-    登录…"）
-
 ### Edge cases / 当前实现具体短板
 
-- Audit Explorer 在 SQLite `MemorySink` / `WriterSink` 后端走线性
-  扫描，> 100k 事件即不可用——A.1 是 Console 真正能用的前提。
-- GDPR erase 与 audit hash chain 的冲突：方案如上（保留事件 + 替换
-  PII）。这套合规语义必须写进 `docs/error-codes.md` 同源的
-  `docs/compliance.md`。
-- 异常检测的 false positive 成本：impossible travel 在 VPN 用户身上
-  几乎 100% 误报。所以默认输出是 audit + webhook，**不进请求路径**
-  （不影响登录成功/失败）；只有运维 / 用户自己看到信号。让客户
-  按自己的安全姿态决定是否升级到"自动锁账户"。
-- Admin Console 的 release 步调：Console 是前端 bundle，已经有
-  `releases/pinner/static` 走 atomic symlink swap——这是为什么
-  release pinning 早早做好的原因。前端落 `web/admin/dist/`，由 nginx
-  / CDN 提供。
-- **重要**：Console 的访问控制必须能区分"我能看自己 tenant 的
-  audit" vs "我能看所有 tenant 的"。新权限：`admin:read.tenant.{tid}`
-  vs `admin:read.global`。
+- **Audit Explorer 查询性能**：SQLite 无 FTS5 索引时全表扫，10w
+  events 后端响应 > 2s。建议先加 `audit_events_fts5` virtual table
+  on `(actor_id, client_id, reason, metadata_json)`，再决定是否上
+  ClickHouse / OpenSearch。
+- **GDPR erase 与 audit hash chain 的冲突**：方案如上（保留事件 +
+  替换 PII）。这套合规语义必须写进 `docs/compliance.md`。
+- **跨 store 删除的事务边界**：今天没有跨 store 事务（每个 SQLite
+  backend 独立 DB connection）。erase pipeline 必须设计成 **多步
+  + 幂等**：先 revoke（幂等）→ 标记 erased（幂等）→ 后台清理（幂等
+  + 可恢复）。任一步崩溃，下次启动 bootstrap 的 erasure scheduler
+  会从 checkpoint 继续。
+- **Console 的多 tenant 权限隔离**：Console 的访问控制必须能区分
+  "我能看自己 tenant 的 audit" vs "我能看所有 tenant 的"。新权限
+  分隔：`admin:read.tenant.{tid}` vs `admin:read.global`。已有的
+  permissions wildcard matcher 可以表达（`admin:read.tenant.*`），
+  但需要把 tenant context 注入到权限检查路径。
+- **改密后 session 处理**：默认吊销除当前会话外的所有 session
+  这条 invariant 必须可被 client 单独 opt-out（B2C 场景常常希望
+  "保留我的所有设备"），不要硬编码。
 
 ### Sequencing hint
 
-**A.1 Audit SQLite/CK sink 是关键路径**——没它 Console 跑不动。
-A.1 + B（用户自助门户）+ C（GDPR）三件可以**前后端并行**：前端
-3-4 周做 Dashboard + Sessions 这两个最有 demo 价值的 panel，后端
-2 周补 Audit SQLite sink。异常检测 D 完全独立，可作为
-sprint-filler 随时加。
+**A.1 Audit Query facet 是关键路径**——前端 filter 没它跑不动。
+A.1（2 周后端）+ B（用户自助门户，3 周前端）+ C（GDPR pipeline，
+2 周后端 + 1 周 audit redactor 集成）可以前后端并行。Admin Web
+Console panel 按 demo 价值排序：Dashboard + Sessions + Audit
+Explorer 三个最早做，Releases / Snapshots 可以晚 1-2 sprint。
 
 ---
 
-## 5. 最后一公里协议补完：CIBA + JWE + Signed Metadata + DPoP Nonces + Pairwise Subject
+## 4. Schema 演化与多 store 数据治理：migration runner + 跨 store 一致性 + multi-table 备份
 
 ### Why now
 
-这五件事单独看都不大，但放在 **2026 年 FAPI 2.0 客户清单 +
-Open Banking 区域合规** 的视角下是 **一组**：缺一项就被 RFP 表筛出去。
+`AGENTS.md` 明文写着 **"The next multi-table backend MUST bring
+goose/golang-migrate"**——这条判定是在只有 User/Client/Session
+三个表的时候写的。今天的 multi-table 后端清单：
 
-- **CIBA**（OIDC Client-Initiated Backchannel Authentication）—— 银行
-  柜员推到客户手机确认，IoT 设备推到用户 PIN 输入——FAPI Brazil /
-  开放银行的硬需求。
-- **JWE**（JSON Web Encryption）—— FAPI 2.0 baseline 要求
-  `request` 参数可加密；某些金融 RP 要求 id_token 加密；JAR
-  请求里带 PII（如 `login_hint` = 手机号）时也需要加密在传输层
-  之上。
-- **Signed Metadata**（RFC 8414 §2.1）—— discovery 文档本身用 JWS
-  签名，防止 MitM 篡改 `token_endpoint` 等关键 URL。
-- **DPoP Nonces**（RFC 9449 §8）—— server-issued nonce，让 DPoP proof
-  必须包含 server-发送的 nonce 才能通过——彻底封死即使 jti 防重放
-  也存在的"窗口期重放"。
-- **Pairwise Subject Identifiers**（OIDC §8.1）—— 同一用户在不同 RP
-  下 `sub` 是不同值，跨 RP 不能 correlate；GDPR 默认隐私要求 +
-  消费者场景常需。今天 `subject_types_supported: ["public"]` 唯一。
+- `defaultimpl/sqlite/`：users / clients / sessions / auth_codes /
+  refresh_tokens / device_codes / par_requests / jti_replay /
+  account_lockout / pairwise_subjects / subject_client_index /
+  mfa_challenges / push_approvals / rate_limiter（共 14 张表）
+- `audit/sqlite/`：audit_events（1 张表 + 6 index）
+- `permissions/sqlite/`：permissions_roles / permissions_assignments
+  / permissions_menus（3 张表）
+- `tenant/sqlite/`：tenants / tenant_domains（2 张表 + FK CASCADE）
+- `authenticators/webauthn/sqlite/`：webauthn_users / webauthn_sessions
+  （2 张表）
+
+**= 22 张表，全部用 `CREATE TABLE IF NOT EXISTS` 在 `New()` 阶段
+裸建，无版本号、无回滚、无变更日志**。
+
+后果：
+
+1. **任何 schema 变更都是 "破坏性"**：加列、改索引、改默认值都没
+   有迁移路径。今天只能让运维 "下线 + dump + 手动 sed + 重启" ——
+   一次次迭代的运维代价指数级。
+2. **`bootstrap/builtin` 没法和 schema 联动**：bootstrap 知道
+   "applied step version"，但 schema 不知道"current version"——
+   bootstrap 升级到 v5 + 新 SQL 字段，运维滚动升级时一半副本拿
+   不到字段。
+3. **备份 / 还原跨 store 不一致**：snapshot 工具只导出 SDK 资源
+   层（clients/users/roles/...），不导出 SQLite 物理表。DR 演练
+   时 SQLite 表恢复 = `cp old.db new.db` + 祈祷格式不变。
+
+### Scope
+
+**A. Migration framework**
+
+- 选型：`goose`（项目本来已经有 Go 生态共识）或 `golang-migrate`。
+  推荐 `goose`——内嵌迁移 + Go-native API + 支持 SQLite。
+- 新目录 `defaultimpl/sqlite/migrations/`（embed-fs 内嵌）+
+  `audit/sqlite/migrations/` + `permissions/sqlite/migrations/` +
+  `tenant/sqlite/migrations/` + `authenticators/webauthn/sqlite/migrations/`。
+- 每个 backend 的 `New()` 改成 `goose.Up(db, "migrations")`；首次
+  跑 `001_baseline.up.sql` = 把现有 schema 导成 baseline。
+- 一次性脚本：扫现有运维 DB → 检查表 schema 与 baseline 一致 →
+  写入 `goose_db_version`。**升级路径文档化**。
+
+**B. SDK 层 SchemaVersion API**
+
+```go
+type SchemaVersioned interface {
+    CurrentSchemaVersion(ctx) (int64, error)
+    RequiredSchemaVersion() int64
+}
+```
+
+- 每个 backend 实现，cmd 启动期检查 `Current < Required` → fail
+  fast，"运维需要先跑 `sso-migrate up`"。
+- 新 CLI `cmd/sso-migrate`：`up | down | status | force <ver>`。
+- bootstrap.builtin 加 v0.5 `verify_schema_version`：在所有
+  seed step 之前 fail fast。
+
+**C. 跨 store 一致性：snapshot v2 + multi-store backup**
+
+- `snapshot.Snapshotter` 升级：除了 SDK 资源层（已有），新增
+  `physical_backup` mode 走每个 SQLite backend 的 `BACKUP TO`
+  pragma → 输出 tar.gz 含每个表的 `.db` 文件。
+- `Restorer.Restore` 对应支持物理还原：先 stop server → 替换文件
+  → 启动 → bootstrap 校验 schema version。
+- 新模式 `ModeMigrate`：导入旧版 snapshot，自动跑 `goose.Up` 拉到
+  current。
+
+**D. 多 store 健康度报表**
+
+- 新 admin REST `GET /api/v1/admin/storage:health` —— 列每个 store
+  的 schema_version / row_count / db_size / last_migration_at /
+  ping_latency_ms。
+- Console 的 Storage panel 一眼可见集群健康度。
+
+### Edge cases / 当前实现具体短板
+
+- **Goose 与 modernc.org/sqlite 兼容**：goose 默认走 `database/sql`
+  driver，需要 verify modernc 的 sqlite driver 兼容（应该 OK，
+  但需要 smoke test）。
+- **多 backend 共享同一 DSN**：当前若操作员把所有 backend 指向
+  同一 SQLite 文件（cluster-shared 推荐模式），每个 backend 跑
+  migrations 必须用独立 `goose_db_version` 表，否则版本号互相
+  覆盖。每个 backend 用独立 table name：
+  `goose_db_version_<backend>`（如 `goose_db_version_audit`）。
+- **生产环境的迁移 downtime**：加列在 SQLite 是元数据操作，瞬时；
+  加索引在 10GB+ DB 上会锁写 N 分钟。文档需要明确写"哪些迁移会
+  锁写多久"——已有 `audit_events` 已经 indexed 7 个字段，未来加
+  索引就有 downtime。Mitigation：迁移文档约定 `large_index:
+  true` 标记 + 部署建议（先在副本 A 跑、A 暂时下流量、跑完拉
+  上、轮流）。
+- **降级 / 回滚**：`goose down` 在生产是危险动作（删字段 = 数据
+  丢失）。建议：production deploy 时 cmd 接 `--migrations
+  forward-only`，禁用 down migration；只在 dev 环境允许。
+- **MFA challenge / push approval 等 TTL 短的表，迁移时数据是否
+  保留**：这些表的内容 TTL < 1 天，迁移时 `DROP TABLE + RECREATE`
+  比 `ALTER TABLE` 简单且安全。document 哪些表可以 wipe-and-recreate。
+
+### Sequencing hint
+
+**A**（migration runner + baseline）+ **B**（SchemaVersion API +
+cmd CLI）作为 **第一波**，3-4 周。**C**（snapshot v2 物理备份）独
+立 sprint，依赖 A 完成。**D**（storage health admin REST）插在
+Console（方向 §3）里实现，1 周。
+
+不能再拖：每加一个 multi-table backend，这件事的迁移成本就翻倍。
+今天 22 张表，再迟 6 个月可能 30+。
+
+---
+
+## 5. 最后一公里协议：CIBA + JWE response encryption + FAPI 2.0 compliance profile
+
+### Why now
+
+上一版 ROADMAP §5 的 6 个项目里，已经做完 4 个（Signed Metadata
+/ DPoP Nonces / Pairwise Subject / JWE for JAR）。**剩下 3 个未做项
+放在 FAPI 2.0 / Open Banking 客户清单视角下是 "一组"——缺一项就
+被 RFP 表筛掉**：
+
+- **CIBA**（OIDC Client-Initiated Backchannel Authentication）——
+  银行柜员推到客户手机确认，IoT 设备推到用户 PIN 输入——FAPI
+  Brazil / 开放银行的硬需求。**今天 0 实现**。
+- **JWE for id_token / userinfo response**（OIDC Core §10.2）——
+  FAPI 2.0 baseline 要求；某些金融 RP 要求 id_token 加密；当
+  `id_token` 含 PII 时业务要求传输层之上再加密。今天我们已经实现
+  了 JAR 的 JWE（请求方向），**响应方向（id_token + userinfo）的
+  JWE 是缺的**。
+- **FAPI 2.0 profile 总开关**：所有零件都在了（PAR + JAR-required
+  + DPoP / mTLS + pairwise + signed_metadata + 严格 alg allowlist），
+  缺 **single `oauth_compliance: fapi_2` 开关 + inspection mode**。
 
 ### Scope
 
 | 工作项 | 大致工作量 | 标准 |
 |---|---|---|
-| `POST /backchannel-authentication` + `/bc-authorize` 长轮询 + push notification 模式；用 SessionManager 持久化挂起请求 | L | OIDC CIBA |
-| 引入 `defaultimpl/cibanotifier/{fcm,apns,http}` —— 推送到设备 / 应用 webhook | M | 同上 |
-| `request` 参数支持 JWE 解包（外层加密 + 内层签名嵌套结构）；解密密钥从 `Client.JWKS` 中按 `enc=A256GCM` 等 alg 选择 | M | RFC 7516 + RFC 9101 §6.2 |
-| id_token / userinfo 加密响应：`id_token_encrypted_response_alg` + `_enc` per-client 配置；输出从 JWS-only 升级到 JWE(JWS(...)) 嵌套 | M | OIDC Core §10.2 |
-| `signed_metadata` 字段加入 discovery JSON：内容 = 整个 metadata JWS-signed；RP 端拿到后 `verify(sigingKey)` 才信任 endpoints | S | RFC 8414 §2.1 |
-| DPoP nonce challenge：`/token` / `/userinfo` 返回 `DPoP-Nonce` header + 401 `use_dpop_nonce`；RP 第二次请求带 nonce 才放行 | S | RFC 9449 §8 |
-| Pairwise subject：`Client.SubjectType=pairwise` + `Client.SectorIdentifierURI`；`sub = sha256(sector \|\| user_id \|\| salt)`；存储在新表 `pairwise_sub_map`（避免每次重算） | M | OIDC §8.1 |
-| FAPI 2.0 compliance profile：单个 `oauth_compliance: fapi_2` 开关，开启后强制（PAR-only、`request` 必签 + 必加密、PKCE S256、DPoP-only or mTLS-only、no implicit、pairwise sub、signed_metadata、ACR `urn:openid:fapi:...`） | L（主要是测试） | FAPI 2.0 Security Profile |
+| `POST /backchannel-authentication` + `/bc-authorize` 长轮询 + push notification 模式；复用 `defaultimpl.PushMFAProvider` 已有的 `PushApprovalStore` 实现 pending request 的 store | L | OIDC CIBA |
+| `id_token` 加密响应：`id_token_encrypted_response_alg` + `_enc` per-client 配置；输出从 JWS-only 升级到 JWE(JWS(...)) 嵌套；解密密钥从 `Client.JWKS` 中按 `enc=A256GCM` 等 alg 选择 | M | OIDC Core §10.2 |
+| `userinfo` 加密响应：同上但 endpoint 是 `/userinfo`；client 通过 `userinfo_encrypted_response_alg` registration 字段声明 | M | OIDC Core §5.3.2 |
+| FAPI 2.0 compliance profile：单个 `oauth_compliance: fapi_2` 开关，开启后强制（PAR-only、`request` 必签 + 必加密、PKCE S256、DPoP-only or mTLS-only、no implicit、pairwise sub、signed_metadata、ACR `urn:openid:fapi:...`、严格 alg allowlist） | L（主要是测试 + inspection mode） | FAPI 2.0 Security Profile |
+| FAPI 2.0 inspection mode（"开关打开但只 audit 不拒绝"）—— 让运维 ramp-up 看到哪些 RP / 配置违规：`fapi_2_inspection_only: true` 时所有违规走 audit `fapi_compliance_violation` 而非拒绝 | S | 自定义 |
 
 ### Edge cases / 当前实现具体短板
 
-- CIBA 的 `binding_message` 必须显示给用户（防 phishing："你在
-  pad 上点击的金额是 ¥{N}"）——这要求 device-side app 实现，
-  服务端只能保证字段传递正确性，文档要写清楚 SDK 契约。
-- JWE 解密失败 vs 签名验证失败 —— oracle-leak 风险。两者必须
-  collapse 到同一个 `invalid_request_object`，不能透露"加密成功
-  但签名失败"这种信号（攻击者可借此区分 alg 错误 vs key 错误）。
-- Signed metadata 的 `signed_metadata` 字段如果与平铺字段不一致，
-  RP 应该信哪个？RFC 8414 说签名版本优先。我们必须：(1) 先签名
-  后序列化平铺字段，确保两者派生自同一 source；(2) discovery 加
-  invariant test，强制两边一致。
-- DPoP nonce 与 SessionManager 不依赖——nonce 是 server-issued
-  ephemeral value，落到 JTIReplayStore 的同一 Redis namespace（不同
-  prefix `nonce:`）即可。但 N 副本下 nonce issuance 必须是任一副本
-  签发都被全部副本接受 —— 走方向 §3 的对称签名（HMAC with
-  shared secret）或 Redis 集合查询。
-- Pairwise sub 的 sector identifier 验证：必须 fetch
-  `sector_identifier_uri` 拿到 RP 的 redirect_uri allowlist，验证
-  当前 redirect_uri 在内——否则任何 client 都可以声明同一个 sector
-  共享 `sub`，跨 client correlate 用户身份。这是 OIDC §5
-  的精确要求，实现不到位 = 直接违反规范。
-- FAPI 2.0 compliance profile 的"全或无"对客户是悬崖——必须配
-  **inspection mode**：开关打开但只 audit 不拒绝，让运维 ramp-up
-  看到哪些 RP / 配置违规。`fapi_2_inspection_only: true`。
+- **CIBA 与 PushMFAProvider 复用**：CIBA 的"等待用户确认"语义与
+  Push MFA 完全一致——都是 **server-issued challenge → out-of-band
+  device confirm → server polls/notifies**。现有
+  `PushApprovalStore` + `PushTransport` SPI 直接可以复用，只需要
+  在 `PushApproval` 上多挂一个 `request_context`（CIBA 的
+  authorization params 序列化）；CIBA 的 polling endpoint 是
+  `/token` 的 `grant_type=urn:openid:params:grant-type:ciba`，
+  实际上就是 Push 流的 long-poll 包装。**这件事在我们当前架构下
+  比从头实现轻得多**，是个隐藏的 ROI 高点。
+- **CIBA 的 `binding_message`**：必须显示给用户（防 phishing：
+  "你在 pad 上点击的金额是 ¥{N}"）——这要求 device-side app
+  实现，服务端只能保证字段传递正确性。文档要写清楚 SDK 契约。
+- **JWE 解密 / 加密失败 vs 签名验证失败 —— oracle-leak 风险**：
+  在请求方向已经处理（`jwe.go` 已 collapse 到
+  `invalid_request_object`）。响应方向有不同问题——加密失败时
+  不能透露"找不到 RP 公钥"vs"加密计算失败"。统一返回
+  `server_error`。
+- **id_token / userinfo 加密的密钥管理**：响应加密需要 RP 的公钥
+  （在 `Client.JWKS` 里以 `use:enc` 标记）。当前 SDK 已经能区分
+  `use:sig` 和 `use:enc`（JWE-JAR 已经走这套），但 `Client` SPI
+  没有显式 "encryption alg/enc registration" 字段，需要加：
+  `id_token_encrypted_response_alg` / `_enc` / `userinfo_*` 6 个
+  string 字段（与 OIDC Core 命名严格一致，方便 DCR 自动映射）。
+- **FAPI 2.0 inspection mode 的设计**：必须是"开关打开但只 audit
+  不拒绝" → 让运维看到哪些 RP / 配置违规。每条违规走 audit
+  `fapi_compliance_violation` + 包含 `rule_id` + `client_id` +
+  `violation_detail`，运维拿这个清单逐项 fix。**全或无切换对客户
+  是悬崖**——这是 FAPI 1 失败案例的核心教训。
+- **CIBA 的 polling rate-limit**：与 device flow 类似，client 会
+  100ms 间隔狂轮——必须强制 `slow_down` 响应（RFC 8628 §3.5），
+  与 device flow 的实现复用。
 
 ### Sequencing hint
 
-按 ROI 排序：**Signed Metadata + DPoP Nonces + Pairwise**（三个
-小颗粒，合计一个 sprint）→ **JWE**（两 sprint，单独 review 防止
-oracle leak）→ **CIBA**（独立 sprint，需要新基础设施 push notification）→
-**FAPI 2.0 profile**（最后做，因为依赖前面四个全部到位）。
+按 ROI 排序：**JWE response encryption**（2 sprint，单独 review
+防 oracle leak）→ **FAPI 2.0 profile + inspection mode**（1
+sprint，主要工作是测试矩阵）→ **CIBA**（独立 sprint，复用
+PushMFAProvider 基础设施）。
+
+如果一定要先做一件——**FAPI 2.0 inspection mode**。理由：所有
+零件已经齐了，只是统一开关 + audit 出口。客户开 inspection mode
+立刻就能拿到合规缺口清单——这是销售对话里"我们已经支持 FAPI
+2.0 baseline" 的硬证据。
 
 ---
 
 ## 边界情况 & 性能优化（持续清单）
 
-下面这些颗粒度不够独立方向，但建议作为常规迭代的"sprint filler"
+下面这些颗粒度不够独立方向，但建议作为常规迭代的 "sprint filler"
 逐项消化。每条都对应一个具体的代码位置或行为契约。
 
 ### 性能
 
-- **Discovery 文档缓存**：当前 `handleOIDCDiscovery` 每次请求都重
-  扫 client store 4 次（`oidc_discovery.go:255,277,478,514`）。建议
-  TTL 5s 的进程内 single-flight 缓存——客户端会订阅这个文档但
-  10k 客户端规模下不可能每个请求都扫全表。
+- **Discovery 文档缓存命中**：`WithDiscoveryDocCacheTTL` 已默认
+  5s，但 `handleOIDCDiscovery` 内部 client store 4 次 List 仍然
+  在 cache miss 时全表扫。规模上去后可以加 `ClientStore.Stats()
+  → (count, hash)` 廉价方法，cache 用 hash invalidate。
 - **BCL 多 RP 扇出并发化**：`backchannel_logout.go` 的 fan-out
   当前是串行 for-loop，10 个 RP × 500ms = 5s 阻塞 `/end_session`。
-  改成 `errgroup` + `WithMaxConcurrent` 限流，p99 从秒级回到 ms 级。
-- **Audit 异步化**：`audit.Recorder` 今天是同步 → Sink。webhook /
-  网络 sink 失败会阻塞请求路径 timeout。建议加 `WithBufferedSink(cap)`
-  把每个 Sink 包装为 goroutine + 有界 channel，溢出策略：drop oldest
-  + 报 audit metric。
-- **`validateAnyToken` 顺序优化**：`sso.go:921` 线性试每个 issuer。
+  改成 `errgroup` + `WithMaxConcurrent` 限流。
+- **`validateAnyToken` 顺序优化**：`sso.go` 线性试每个 issuer。
   改成先 peek token 形态（含 `.` = JWT；不含 = opaque）再 dispatch；
   Session + JWT 双 issuer 下减少一次失败的 JWT 签名解析。
-- **JWKS 缓存的 single-flight refresh**：`remote.JWKSCache` 已经有
-  single-flight，但服务端 JWKS endpoint 本身没有；OpenResty 边缘
-  缓存能扛但服务端被 N 副本同时拉时还是会重算。给 `handleJWKS`
-  加 `sync.Once` per rotation epoch。
+- **JWKS endpoint single-flight refresh**：`remote.JWKSCache` 已经
+  有 single-flight，但服务端 `handleJWKS` 本身没有；OpenResty 边缘
+  缓存能扛但服务端被 N 副本同时拉时还是会重算。给 `handleJWKS` 加
+  `sync.Once` per rotation epoch。
+- **MFA Push polling 优化**：当前 `PushMFAProvider.Verify` 是固定
+  间隔 polling。条件变量 / channel-of-id 模型（callback 主动 push
+  到等待的 Verify goroutine）可以把响应延迟从 ~poll_interval 减
+  到 ms 级。SDK 已 noted "production deployments wanting
+  push-without-polling fork PushMFAProvider"，做成内置可选项。
 
 ### 边界情况
 
-- **Tenant 暂停的主动吊销**：今天 `Tenant.Status=suspended` 只让新
-  请求失败，已经发出的 token / session 仍然有效。建议：suspend
+- **Tenant 暂停的主动吊销**：今天 `Tenant.Status=suspended` 只让
+  新请求失败，已经发出的 token / session 仍然有效。建议：suspend
   时触发后台 job 调用 `RefreshTokenSubjectIndex.DeleteByTenant`
   + `SessionManager.DeleteByTenant`（后两个 SPI 都还没有，需要
-  补）。
+  补）。**关联方向 §3 的 GDPR pipeline**：跨 store 删除工作流是
+  一份，suspend / erase / archive 都复用。
 - **`/par` 的 body 大小限制**：全局 `body_limit` 默认覆盖所有路径，
-  但 JAR JWT（加密后）可能 > 全局默认。建议 per-endpoint
-  override：`security.body_limit.per_endpoint: { "/par": "64KB" }`。
-- **graceful shutdown**：`cmd/sso-server/main.go` 没有 SIGTERM
-  handler；K8s rolling update 会让 in-flight `/token` 看到 EOF。
+  但 JWE-wrapped JAR JWT 可能 > 全局默认。建议 per-endpoint
+  override：`security.body_limit.per_endpoint: {"/par": "64KB"}`。
+- **graceful shutdown**：cmd 已有三套 retention scheduler 的
+  cancel coordinated（audit/snapshot/push），但 SIGTERM 主路径
+  还没有显式 "等 in-flight `/token` 跑完再退出"。需要 `errgroup`
+  + signal handler + http.Server `Shutdown(ctx)` 串联起来。
 - **跨 issuer revoke 的最终一致**：`/token/revoke-all` 调
-  `revokeAcrossIssuers` 但任一 issuer 失败不会阻断，也不报错。
+  `revokeAcrossIssuers` 但任一 issuer 失败不会阻断、也不报错。
   建议：失败的 issuer 名收集进 audit `partial_revoke_failure`，
   以便运维后续手动处理。
 - **bootstrap admin password 只打印到 stdout**：容器化部署里
@@ -557,52 +688,57 @@ oracle leak）→ **CIBA**（独立 sprint，需要新基础设施 push notifica
   `--bootstrap-admin-password-file=/path/secret` 把首次密码写到
   指定路径并 chmod 0600。
 - **OIDC `claims` 参数的深度处理**：`claims_param.go` 当前解析
-  字段名但不强制 essential claim 必须 honor——upstream
-  required claim 没法满足时应该返回 `invalid_request` 而非沉默
-  忽略。
+  字段名但不强制 essential claim 必须 honor——upstream required
+  claim 没法满足时应该返回 `invalid_request` 而非沉默忽略。
 - **DPoP `htu` 与 reverse proxy**：`requestURLForDPoP` 已经吃 XFF，
   但 `htu` 校验在严格 FAPI 模式下要求精确匹配，proxy 改写过的
-  URL 与 RP 看到的可能不一致。需要 deploy 文档明确"`X-Forwarded-*`
+  URL 与 RP 看到的可能不一致。需要 deploy 文档明确 "`X-Forwarded-*`
   必须在 ingress 层稳定 set"。
+- **Push 回调 IP allowlist 与 IPv6**：`callbackClientIP` 当前从
+  RemoteAddr / XFF 取，但 `net.ParseCIDR` 对 IPv4-mapped IPv6
+  地址（`::ffff:10.0.0.1`）的匹配在某些 ingress 下不稳定。需要
+  在 doc 标注，或在 helper 内做 IPv4 提取。
 
 ### 协议小颗粒
 
-- **goreleaser publish 启用**：`.goreleaser.yaml` 当前 `disable: true`，
-  CI 跑完不发布。挂目标：GitHub Releases + ghcr.io container +
-  cosign signature。
-- **SQLite 多表 schema 演化**：现在每个 backend 都 `CREATE TABLE
-  IF NOT EXISTS`，无版本号。引入 `goose` 或 `golang-migrate`，
-  在 `defaultimpl/sqlite/migrations/` 走 versioned migration——
-  未来加列 / 改索引才有路径。
+- **`goreleaser publish` 启用**：`.goreleaser.yaml` 当前
+  `disable: true`，CI 跑完不发布。挂目标：GitHub Releases +
+  ghcr.io container + cosign signature。
 - **`/end_session` `state` 参数透传**：OIDC RP-Initiated Logout
   §3 要求 `state` 在 `post_logout_redirect_uri` 上原样回传，需
   spot-check 是否实现。
 - **`acr_values` 在 token-exchange 上的处理**：今天透传 inbound
-  ACR，但 step-up 后的 token 应该用更高 ACR——
-  `handle_token_exchange.go` 需要支持 caller 显式声明
-  `acr_values` 升级请求（同 `/auth/login`），由 server 验证可达
-  性。
+  ACR，但 step-up 后的 token 应该用更高 ACR——`handle_token_exchange.go`
+  需要支持 caller 显式声明 `acr_values` 升级请求（同 `/auth/login`），
+  由 server 验证可达性。
+- **SAML 2.0 AS / IdP 角色**：上一版 §2B 拆出来的 SAML 联邦没做。
+  企业 / 政府客户仍需。**单独立项**（约 4-6 周）。
+- **SCIM 2.0**：上一版 §2C 没做。HR / IT 自动 provisioning 的硬
+  需求。**单独立项**（约 3-4 周）。
 
 ---
 
 ## 未列入但已经考虑过的方向
 
-- **跨区域 active-active**：依赖方向 §1 完成。etcd 跨区 raft 是
-  独立的容量规划课题，不属于 SDK 范畴；多区方案应交给运维而非
-  SDK。
-- **CLI 工具 `ssoctl`**：admin REST 已经覆盖所有 capability，CLI
-  是 DX 优化不是能力扩展，留到 v2。
+- **Redis 后端**：上一版 §1 的 Redis 没做（SQLite peer 覆盖了
+  正确性）。Redis 的 ROI 是 **performance**（>1k QPS）而不是
+  correctness——但代价是引入一个新的有状态依赖。建议：等真有
+  >1k QPS 客户 inbound 时再做，否则维护成本不划算。SPI 已稳定，
+  社区/客户自己实现也行。
+- **跨区域 active-active**：依赖方向 §1（HSM 解决密钥跨区分发）+
+  Redis（解决 store 跨区一致）。etcd 跨区 raft 是独立的容量
+  规划课题，不属于 SDK 范畴；多区方案应交给运维而非 SDK。
+- **CLI 工具 `ssoctl`**：admin REST 已经覆盖所有 capability，
+  CLI 是 DX 优化不是能力扩展，留到 v2。Console（§3）做完后 CLI
+  的需求会变弱。
 - **GraphQL admin API**：REST gateway 已经 proto 自动生成，多一层
   GraphQL 是维护成本，没有清晰需求场景。
-- **多服务 SDK（Python / Node / Java client lib）**：标准 OAuth/OIDC
-  生态有大量成熟 lib（`oidc-client-ts`、`authlib`、`Spring Security
-  OAuth`），重复造轮没价值；focus 在让本服务输出 **正确的标准
-  endpoints** 上。
+- **多语言 SDK（Python / Node / Java client lib）**：标准 OAuth/OIDC
+  生态有大量成熟 lib，重复造轮没价值；focus 在让本服务输出 **正确
+  的标准 endpoints** 上。
 - **OAuth 1.0a / Kerberos / RADIUS / NTLM 兼容层**：历史协议，企业
-  里仍有但已经被网关产品（Keycloak、PingFederate）覆盖，不是新进
-  入者的差异化点。
-- **Custom JSON-RPC / SOAP authenticator**：客户自定义协议可以在
-  应用层包装 `temp_token` 或 `keypair` 实现，无需进 SDK 核心。
+  里仍有但已经被网关产品（Keycloak / PingFederate）覆盖，不是新
+  进入者的差异化点。
 
 ---
 
@@ -610,8 +746,23 @@ oracle leak）→ **CIBA**（独立 sprint，需要新基础设施 push notifica
 
 | # | 方向 | 类型 | 阻塞下游 | 建议先后 |
 |---|---|---|---|---|
-| 1 | 多副本分布式后端 + 时钟 + graceful shutdown | **正确性 Bug** | 几乎所有其他方向 | **P0，立刻** |
-| 2 | WebAuthn / 上游 IdP 联邦 / SCIM 2.0 | 产品差异化 + 企业销售 | 销售 demo + RFP | P1，与 §3 并行 |
-| 3 | HSM/KMS 抽象 + 多算法 + 自动轮换 + 密钥审计 | 安全合规 + 多租户 | 金融客户准入 + FAPI | P1，与 §2 并行 |
-| 4 | Admin Web Console + 用户自助 + GDPR + 异常检测 | 产品化 + 合规闭环 | 企业版定价 + 上线公关 | P2，§1 落地后跟进 |
-| 5 | CIBA + JWE + Signed Metadata + DPoP Nonces + Pairwise | 协议补完 + FAPI 2 准入 | Open Banking / 金融 RFP | P3，§3 落地后跟进 |
+| 1 | 签名密钥 HSM/KMS 抽象 + 自动轮换 + per-tenant 隔离 | **合规 / 安全 gate** | 金融 / 政府 / FAPI 客户准入 | **P0**，金融客户对话开始就拦下 |
+| 2 | 异步行为异常检测 + 凭据健康度 | 产品差异化（auth lib → identity 平台） | 防撞库 / 防 ATO / SOC2 监测 | **P0**，与 §1 可并行 |
+| 3 | Admin Web Console + 用户自助 + GDPR 工作流 | 产品化 + 合规闭环 | 企业版定价 + 上线公关 | **P1**，§2 落地后跟进 |
+| 4 | Schema migration framework + 跨 store 一致性 | 操作债 / 长期可维护性 | 任何 schema 变更 | **P1**，越拖代价越高 |
+| 5 | CIBA + JWE response encryption + FAPI 2.0 profile | 协议补完位 | Open Banking / 金融 RFP | **P2**，§1 + §2 落地后跟进 |
+
+**单独提示**：方向 §4（migration framework）虽然排第 4 位，但它的
+"今天不做、明天就更贵" 特性强于其他几项——每加一个 multi-table
+backend，未来的迁移成本就翻倍。如果资源允许，§4 可以 **作为
+sprint-filler 与 §1/§2 并行**，每次任意一个 PR 顺带把它对应的
+backend 接入 migration runner，3 个 sprint 就摊完。
+
+---
+
+## 文档版本
+
+| 时间 | 版本 | 编辑 |
+|---|---|---|
+| 2026-05-21 | v1 | 初版（多副本正确性 / WebAuthn / HSM / Console / 协议补完） |
+| 2026-05-22 | v2 | 上版 §1 / §2A-B / §5 已大量落地；refocus 到 HSM + 异步异常检测 + Console + migration + FAPI 2.0 |
