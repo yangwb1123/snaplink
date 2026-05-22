@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"time"
 
@@ -23,6 +24,20 @@ import (
 	"github.com/snaplink/sso/registry"
 	"github.com/snaplink/sso/registry/memory"
 )
+
+// forceRequireMFAScorer is the simplest possible RiskScorer — it
+// returns DecisionRequireMFA for every login attempt. Used by the
+// MFA_DEMO=1 mode so embedders can exercise the step-up flow
+// without setting up a real risk signal. Production embedders
+// supply their own RiskScorer with actual risk inputs
+// (impossible-travel, device fingerprint, ML scoring); see
+// defaultimpl.RuleBasedRiskScorer for a declarative starting
+// point.
+type forceRequireMFAScorer struct{}
+
+func (forceRequireMFAScorer) Score(_ context.Context, _ *sso.RiskRequest) (*sso.RiskAssessment, error) {
+	return &sso.RiskAssessment{Decision: sso.DecisionRequireMFA}, nil
+}
 
 const (
 	demoUser      = "alice"
@@ -90,8 +105,31 @@ func main() {
 		}
 	}
 
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	for _, a := range buildAuthenticators(cfg) {
 		opts = append(opts, sso.WithAuthenticator(a))
+	}
+	// TOTP is wired separately so the MFA block below can reuse the
+	// same authenticator instance (one user enrollment, two roles —
+	// primary auth at /auth/login?provider=totp AND step-up at
+	// /auth/mfa). When you don't want the TOTP authenticator for
+	// primary auth, drop the WithAuthenticator call here and keep
+	// the TOTPMFAProvider wrap below.
+	opts = append(opts, sso.WithAuthenticator(totpAuth))
+
+	// MFA orchestration reference wiring. Reads MFA_DEMO=1 from the
+	// environment so the default example flow stays simple. Embedders
+	// shipping MFA in production wire WithRiskScorer with their real
+	// scorer (impossible-travel, device fingerprint, etc) and let
+	// THAT decide DecisionRequireMFA per request rather than the
+	// blanket force-on stub used here.
+	if os.Getenv("MFA_DEMO") == "1" {
+		opts = append(opts,
+			sso.WithRiskScorer(forceRequireMFAScorer{}),
+			sso.WithMFAProvider(authenticators.NewTOTPMFAProvider(totpAuth)),
+			sso.WithMFAChallengeStore(defaultimpl.NewMemoryMFAChallengeStore(), 0),
+		)
+		log.Printf("MFA_DEMO=1 — every login goes through TOTP step-up")
 	}
 
 	server := sso.NewServer(opts...)
