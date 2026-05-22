@@ -245,6 +245,7 @@ One row per spec; file is the owner. Gotchas above apply across grants.
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
 | RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `jar.go` + `jar_fetch.go` |
+| RFC 9101 §6.4 JWE JAR | `request` (JWE-wrapped) | `WithJARDecrypter`; default `defaultimpl.RSAJWEDecrypter` (RSA-OAEP-256 + A256GCM); enc public key auto-published in JWKS with `use:enc` | `jwe.go` + `defaultimpl/rsa_jwe_decrypter.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `account_lockout.go` |
 
 **Token strategies** are per-client (`token_strategy: jwt|session`):

@@ -338,8 +338,21 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// JWT claims into req with JWT taking precedence on conflict
 	// (matches PAR's merge semantics; FAPI 2.0's "ignore all
 	// outside" mode is reserved for a future strict flag).
+	//
+	// RFC 9101 §6.4 encrypted variant: when the payload is JWE-shaped
+	// (5 compact segments) and WithJARDecrypter is wired, decrypt
+	// first; the plaintext is the same signed JAR JWT verifyJAR
+	// validates below. Without a decrypter wired, JWE-shaped payloads
+	// fail invalid_request_object (fail-closed; can't validate what
+	// we can't decrypt).
 	if req.Request != "" {
-		jar, jarErr := verifyJAR(ctx.Request().Context(), req.Request, client, s.resolveIssuer(ctx), s.jtiReplayStore)
+		jarRaw, unwrapErr := jweUnwrap(ctx.Request().Context(), req.Request, s.jarDecrypter)
+		if unwrapErr != nil {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, unwrapErr.Error()))
+			return
+		}
+		jar, jarErr := verifyJAR(ctx.Request().Context(), jarRaw, client, s.resolveIssuer(ctx), s.jtiReplayStore)
 		if jarErr != nil {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, jarErr.Error()))

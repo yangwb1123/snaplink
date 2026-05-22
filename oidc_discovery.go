@@ -213,6 +213,15 @@ type oidcConfiguration struct {
 	// the JAR verifier accepts on the request JWT. EdDSA today.
 	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
 
+	// RFC 9101 §6.4 encrypted JAR. Populated when WithJARDecrypter
+	// is wired — the SupportedAlgs() / SupportedEncs() the decrypter
+	// reports surface here so RPs know which alg + enc to use when
+	// constructing the JWE. Omitted (the fields disappear from the
+	// JSON) when no decrypter is wired; encrypted requests are
+	// rejected with invalid_request_object in that case.
+	RequestObjectEncryptionAlgValuesSupported []string `json:"request_object_encryption_alg_values_supported,omitempty"`
+	RequestObjectEncryptionEncValuesSupported []string `json:"request_object_encryption_enc_values_supported,omitempty"`
+
 	// RFC 8414 §2.1 — when set, contains a JWS over the same
 	// metadata claims as the surrounding document. RPs MUST verify
 	// the signature with JWKS before trusting any endpoint; if the
@@ -393,6 +402,14 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if s.jarFetcher != nil {
 		cfg.RequestURIParameterSupported = true
+	}
+	if s.jarDecrypter != nil {
+		// Advertising the alg + enc lists tells RPs which JWE shapes
+		// the AS will accept on the `request` parameter. RPs that don't
+		// see these fields know to fall back to plain JWS JAR (which
+		// is always accepted).
+		cfg.RequestObjectEncryptionAlgValuesSupported = s.jarDecrypter.SupportedAlgs()
+		cfg.RequestObjectEncryptionEncValuesSupported = s.jarDecrypter.SupportedEncs()
 	}
 	// MFA orchestration is advertised only when both Provider + Store
 	// are wired — having Provider without Store would be a misconfig

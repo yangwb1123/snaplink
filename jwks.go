@@ -63,6 +63,19 @@ func (s *Server) handleJWKS(ctx HandlerContext) {
 		}
 		keys = append(keys, ks...)
 	}
+	// JAR JWE decrypter typically also implements JWKSProvider so its
+	// public encryption key (use: "enc") publishes alongside the
+	// issuer signing keys (use: "sig"). A single JWKS doc covers both
+	// roles; RPs branch on `use` to know which key to encrypt to vs
+	// verify with.
+	if jp, ok := s.jarDecrypter.(JWKSProvider); ok {
+		ks, err := jp.JWKS(ctx.Request().Context())
+		if err != nil {
+			s.logger.Error("jwks decrypter failed", "error", err)
+		} else {
+			keys = append(keys, ks...)
+		}
+	}
 
 	body, err := json.Marshal(map[string]any{"keys": keys})
 	if err != nil {

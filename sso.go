@@ -80,6 +80,7 @@ type Server struct {
 	jtiReplayStore                 JTIReplayStore
 	subjectClientIndex             SubjectClientIndex
 	jarFetcher                     JARFetcher
+	jarDecrypter                   JWEDecrypter
 	clientCertExtractor            ClientCertExtractor
 	dpopNonceProvider              DPoPNonceProvider
 	metadataSigner                 MetadataSigner
@@ -384,6 +385,31 @@ func WithSubjectClientIndex(idx SubjectClientIndex) Option {
 // is HTTPS-only, no-redirects, 5s timeout, 16KB body cap.
 func WithJARFetcher(fetcher JARFetcher) Option {
 	return func(s *Server) { s.jarFetcher = fetcher }
+}
+
+// WithJARDecrypter enables RFC 9101 §6.4 encrypted JAR — the request
+// object arrives JWE-wrapped (5 segments) instead of plain JWS
+// (3 segments). The AS decrypts to plaintext, then validates the
+// inner signed JAR via the existing verifyJAR pipeline.
+//
+// Wire shape:
+//   - Without this option, JWE-shaped JAR payloads are rejected with
+//     invalid_request_object (fail-closed; the AS can't validate
+//     what it can't decrypt).
+//   - With it wired, both plain JWS and JWE-wrapped JWS request
+//     objects are accepted; the AS branches on segment count.
+//
+// The decrypter typically also implements [JWKSProvider] so its
+// public encryption key shows up at /.well-known/jwks.json with
+// `use: "enc"`. RPs introspect that to choose which kid to encrypt
+// to. Default impl: [defaultimpl.RSAJWEDecrypter] (RSA-OAEP-256 +
+// A256GCM).
+//
+// Discovery advertises supported alg + enc lists when this option
+// is wired — see request_object_encryption_alg_values_supported +
+// request_object_encryption_enc_values_supported.
+func WithJARDecrypter(d JWEDecrypter) Option {
+	return func(s *Server) { s.jarDecrypter = d }
 }
 
 // WithClientCertExtractor enables RFC 8705 §3 mTLS certificate-
