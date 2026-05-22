@@ -438,10 +438,12 @@ type Subject struct {
 	// access token carries an `act` claim — a nested object
 	// with at least the actor's `sub`. Today's token-exchange
 	// grant populates this when called with `actor_token`;
-	// other grants leave it nil. Nested act-in-act (multi-hop
-	// delegation) is NOT YET wired — when a subject token
-	// already has `act`, the exchange overwrites with the new
-	// actor; future extension can prepend the chain instead.
+	// other grants leave it nil. Multi-hop delegation chains
+	// (RFC 8693 §4.1.1) are preserved: when the subject_token
+	// already carries `act`, the new ActorClaim prepends the
+	// current actor and nests the previous chain underneath,
+	// so reading outside-in walks the delegation in time-order
+	// (outermost = most recent).
 	Actor *ActorClaim
 }
 
