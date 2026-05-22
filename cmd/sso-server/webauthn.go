@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/authenticators/webauthn"
 	webauthnsqlite "github.com/snaplink/sso/authenticators/webauthn/sqlite"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/metrics"
 )
 
 // buildWebAuthnHelper assembles the helper + stores from YAML.
@@ -127,6 +128,7 @@ type webauthnDeps struct {
 	RefreshTokenStore sso.RefreshTokenStore
 	RefreshTokenTTL   time.Duration
 	IDTokenIssuer     sso.IDTokenIssuer
+	Metrics           *metrics.Metrics // nil-safe; emit only when present
 }
 
 // mountWebAuthnRoutes registers the four ceremony endpoints on the
@@ -147,7 +149,7 @@ func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
 		handler http.HandlerFunc
 	}{
 		{pathWebAuthnRegistrationBegin, webauthnBeginRegistrationHandler(deps.Helper)},
-		{pathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(deps.Helper)},
+		{pathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(deps)},
 		{pathWebAuthnLoginBegin, webauthnBeginLoginHandler(deps.Helper)},
 		{pathWebAuthnLoginFinish, webauthnFinishLoginHandler(deps)},
 	}
@@ -229,23 +231,45 @@ func webauthnBeginRegistrationHandler(h *webauthn.Helper) http.HandlerFunc {
 	}
 }
 
-func webauthnFinishRegistrationHandler(h *webauthn.Helper) http.HandlerFunc {
+func webauthnFinishRegistrationHandler(deps *webauthnDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("session_id")
 		if sessionID == "" {
 			writeWebAuthnError(w, http.StatusBadRequest, "invalid_request", "session_id required")
+			recordWebAuthnRegistration(deps, "failure")
 			return
 		}
-		cred, err := h.FinishRegistration(r.Context(), sessionID, r)
+		cred, err := deps.Helper.FinishRegistration(r.Context(), sessionID, r)
 		if err != nil {
 			status, code := webauthnErrorStatus(err)
 			writeWebAuthnError(w, status, code, err.Error())
+			recordWebAuthnRegistration(deps, "failure")
 			return
 		}
 		writeWebAuthnJSON(w, http.StatusOK, webauthnFinishRegistrationResponse{
 			CredentialID: base64.RawURLEncoding.EncodeToString(cred.ID),
 		})
+		recordWebAuthnRegistration(deps, "success")
 	}
+}
+
+// recordWebAuthnRegistration increments the registration counter
+// for the given outcome. Nil-safe: when metrics are disabled
+// (deps.Metrics nil), emit is silently skipped.
+func recordWebAuthnRegistration(deps *webauthnDeps, outcome string) {
+	if deps == nil || deps.Metrics == nil {
+		return
+	}
+	deps.Metrics.WebAuthnRegistrationsTotal.WithLabelValues(outcome).Inc()
+}
+
+// recordWebAuthnAssertion mirrors recordWebAuthnRegistration for the
+// login-finish path.
+func recordWebAuthnAssertion(deps *webauthnDeps, outcome string) {
+	if deps == nil || deps.Metrics == nil {
+		return
+	}
+	deps.Metrics.WebAuthnAssertionsTotal.WithLabelValues(outcome).Inc()
 }
 
 func webauthnBeginLoginHandler(h *webauthn.Helper) http.HandlerFunc {
@@ -282,12 +306,14 @@ func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 		sessionID := r.URL.Query().Get("session_id")
 		if sessionID == "" {
 			writeWebAuthnError(w, http.StatusBadRequest, "invalid_request", "session_id required")
+			recordWebAuthnAssertion(deps, "failure")
 			return
 		}
 		user, cred, err := deps.Helper.FinishLogin(r.Context(), sessionID, r)
 		if err != nil {
 			status, code := webauthnErrorStatus(err)
 			writeWebAuthnError(w, status, code, err.Error())
+			recordWebAuthnAssertion(deps, "failure")
 			return
 		}
 		resp := webauthnFinishLoginResponse{
@@ -306,6 +332,13 @@ func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 			if err != nil {
 				status, code := webauthnIssueErrorStatus(err)
 				writeWebAuthnError(w, status, code, err.Error())
+				// Token issuance failure post-assertion is still a
+				// crypto-verified user — the assertion succeeded. We
+				// label the issuance failure separately via the
+				// existing http_requests_total status_class signal.
+				// Don't double-count by also flagging this as an
+				// assertion failure.
+				recordWebAuthnAssertion(deps, "success")
 				return
 			}
 			resp.AccessToken = result.AccessToken
@@ -316,6 +349,7 @@ func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 			resp.IDToken = result.IDToken
 		}
 		writeWebAuthnJSON(w, http.StatusOK, resp)
+		recordWebAuthnAssertion(deps, "success")
 	}
 }
 

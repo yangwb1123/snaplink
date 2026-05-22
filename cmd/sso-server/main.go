@@ -240,6 +240,12 @@ type app struct {
 	pushPruneCancel context.CancelFunc
 	pushPruneDone   <-chan struct{}
 
+	// metrics handle is held so subsystems wired after the SSO
+	// server (e.g. WebAuthn route mounting in buildHTTPHandler)
+	// can emit on their own counters. Nil when cfg.Metrics.Enabled
+	// is false.
+	metrics *metrics.Metrics
+
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
@@ -472,6 +478,7 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 			RefreshTokenStore: a.refreshTokenStore,
 			RefreshTokenTTL:   a.refreshTokenTTL,
 			IDTokenIssuer:     a.idTokenIssuer,
+			Metrics:           a.metrics,
 		}
 		if err := mountWebAuthnRoutes(a.server, deps); err != nil {
 			return nil, fmt.Errorf("mount webauthn: %w", err)
@@ -2537,6 +2544,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		snapshotRetentionDone:   snapshotRetentionDone,
 		pushPruneCancel:         pushPruneCancel,
 		pushPruneDone:           pushPruneDone,
+		metrics:                 metricsRegistry,
 		netStop:                 netStop,
 	}, nil
 }

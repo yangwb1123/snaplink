@@ -64,6 +64,13 @@ type Metrics struct {
 	// means retention is silently failing.
 	RetentionPrunedTotal     *prometheus.CounterVec // labels: subsystem
 	RetentionPruneErrorTotal *prometheus.CounterVec // labels: subsystem
+
+	// WebAuthn ceremony completion. Incremented at the Finish phase
+	// (cryptographic verification step) only — Begin observability
+	// is derivable from sso_http_requests_total on the begin paths.
+	// outcome ∈ {success, failure} (bounded cardinality).
+	WebAuthnRegistrationsTotal *prometheus.CounterVec // labels: outcome
+	WebAuthnAssertionsTotal    *prometheus.CounterVec // labels: outcome
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -168,6 +175,22 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "Retention prune calls that returned an error, by subsystem. Operators alert on a rising error rate relative to retention_pruned_total — sustained errors with no successes means retention is silently failing.",
 			},
 			[]string{LabelSubsystem},
+		),
+
+		WebAuthnRegistrationsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameWebAuthnRegistrationsTotal,
+				Help: "WebAuthn registration ceremony completions at /webauthn/registration/finish, by outcome (success/failure). Begin observability comes from sso_http_requests_total on /webauthn/registration/begin.",
+			},
+			[]string{LabelOutcome},
+		),
+
+		WebAuthnAssertionsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameWebAuthnAssertionsTotal,
+				Help: "WebAuthn login assertion completions at /webauthn/login/finish, by outcome (success/failure). Operators alert on a rising failure rate as a credential-stuffing signal.",
+			},
+			[]string{LabelOutcome},
 		),
 	}
 }

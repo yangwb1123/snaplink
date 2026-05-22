@@ -139,6 +139,20 @@ func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
 	mustContain(t, scrape, `sso_retention_pruned_total{subsystem="snapshot"} 7`)
 	mustContain(t, scrape, `sso_retention_pruned_total{subsystem="push_approvals"} 3`)
 	mustContain(t, scrape, `sso_retention_prune_errors_total{subsystem="audit"} 1`)
+
+	// WebAuthn completion counters (registration + assertion).
+	// Operators alert on assertion failure-rate surges as a
+	// credential-stuffing signal.
+	m.WebAuthnRegistrationsTotal.WithLabelValues("success").Add(5)
+	m.WebAuthnRegistrationsTotal.WithLabelValues("failure").Inc()
+	m.WebAuthnAssertionsTotal.WithLabelValues("success").Add(99)
+	m.WebAuthnAssertionsTotal.WithLabelValues("failure").Add(2)
+
+	scrape = scrapeMetrics(t, m)
+	mustContain(t, scrape, `sso_webauthn_registrations_total{outcome="success"} 5`)
+	mustContain(t, scrape, `sso_webauthn_registrations_total{outcome="failure"} 1`)
+	mustContain(t, scrape, `sso_webauthn_assertions_total{outcome="success"} 99`)
+	mustContain(t, scrape, `sso_webauthn_assertions_total{outcome="failure"} 2`)
 }
 
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {

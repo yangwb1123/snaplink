@@ -557,6 +557,8 @@ Wire each with `sso.With{Tracing, RateLimit, BodyLimit, Metrics, CORS}`.
 | `sso_mfa_completions_total` | Counter | mfa_method, outcome |
 | `sso_retention_pruned_total` | Counter | subsystem |
 | `sso_retention_prune_errors_total` | Counter | subsystem |
+| `sso_webauthn_registrations_total` | Counter | outcome |
+| `sso_webauthn_assertions_total` | Counter | outcome |
 
 Per-endpoint breakdowns come from traces, not labels. MFA labels
 are restricted to the wired provider's `SupportedMethods()` set
