@@ -225,6 +225,116 @@ func mustRecord(t *testing.T, s *Sink, e *audit.Event) {
 	}
 }
 
+// TestSink_PruneZeroTimeIsNoop proves the time.Time{} input doesn't
+// delete the table (the contract operators rely on for "do nothing
+// when retention is disabled" semantics).
+func TestSink_PruneZeroTimeIsNoop(t *testing.T) {
+	s := newTestSink(t)
+	now := time.Now().UTC()
+	mustRecord(t, s, &audit.Event{ID: "evt-1", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: now})
+
+	deleted, err := s.Prune(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("zero-time Prune deleted %d rows, want 0", deleted)
+	}
+	// Row should still be retrievable.
+	if _, err := s.Get(context.Background(), "evt-1"); err != nil {
+		t.Fatalf("Get after no-op Prune: %v", err)
+	}
+}
+
+// TestSink_PruneRespectsBoundary proves Prune deletes events with
+// ts_unix_ns STRICTLY LESS than the threshold — the boundary event
+// itself survives. This matters for operators reasoning about
+// "retain last 30 days" — events from exactly 30 days ago are
+// retained, events older are not.
+func TestSink_PruneRespectsBoundary(t *testing.T) {
+	s := newTestSink(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mustRecord(t, s, &audit.Event{ID: "old", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: base.Add(-1 * time.Second)})
+	mustRecord(t, s, &audit.Event{ID: "exactly", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: base})
+	mustRecord(t, s, &audit.Event{ID: "new", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: base.Add(1 * time.Second)})
+
+	deleted, err := s.Prune(context.Background(), base)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted %d, want 1 (only 'old' before threshold)", deleted)
+	}
+	if _, err := s.Get(context.Background(), "old"); !errors.Is(err, audit.ErrEventNotFound) {
+		t.Errorf("'old' should be gone; got %v", err)
+	}
+	if _, err := s.Get(context.Background(), "exactly"); err != nil {
+		t.Errorf("'exactly' (== boundary) should survive; got %v", err)
+	}
+	if _, err := s.Get(context.Background(), "new"); err != nil {
+		t.Errorf("'new' (> boundary) should survive; got %v", err)
+	}
+}
+
+// TestSink_PruneWipesEverythingWhenFutureThreshold proves a far-future
+// olderThan reduces the table to empty. Operators truncating audit
+// for a re-seed pass this value (instead of issuing a DROP TABLE +
+// migration round-trip).
+func TestSink_PruneWipesEverythingWhenFutureThreshold(t *testing.T) {
+	s := newTestSink(t)
+	now := time.Now().UTC()
+	for i := range 5 {
+		mustRecord(t, s, &audit.Event{
+			ID:        "evt-" + string(rune('a'+i)),
+			Type:      audit.EventLogin,
+			Outcome:   audit.OutcomeSuccess,
+			Timestamp: now.Add(-time.Duration(i) * time.Hour),
+		})
+	}
+	deleted, err := s.Prune(context.Background(), now.Add(100*time.Hour))
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if deleted != 5 {
+		t.Fatalf("deleted %d, want 5", deleted)
+	}
+	events, err := s.Query(context.Background(), audit.Query{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Query after full Prune returned %d events, want 0", len(events))
+	}
+}
+
+// TestSink_PruneOnEmptyTableSucceeds proves Prune is a clean no-op
+// (rows-affected=0) when the table is already empty. Removes a class
+// of operator scare from cron Prune runs on freshly-bootstrapped
+// servers.
+func TestSink_PruneOnEmptyTableSucceeds(t *testing.T) {
+	s := newTestSink(t)
+	deleted, err := s.Prune(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("Prune on empty table: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted %d on empty table, want 0", deleted)
+	}
+}
+
+// TestSink_PruneAfterCloseErrors proves Prune respects the closed
+// lifecycle rather than panicking with nil deref. Operators who
+// wrap audit sink in goroutine + cancellation pattern can rely on
+// the error to drive their shutdown ordering.
+func TestSink_PruneAfterCloseErrors(t *testing.T) {
+	s := newTestSink(t)
+	_ = s.Close()
+	_, err := s.Prune(context.Background(), time.Now())
+	if err == nil {
+		t.Fatal("Prune after Close: want error, got nil")
+	}
+}
+
 func idFor(i int) string { return "e" + string(rune('0'+i)) }
 
 func sliceEqual(a, b []string) bool {
