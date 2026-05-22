@@ -147,11 +147,12 @@ type MFAProviderConfig struct {
 // handler against the SDK's [defaultimpl.PushApprovalStore]
 // SetStatus method and route it through their own gateway.
 type MFAPushConfig struct {
-	Backend      string              `yaml:"backend"`       // memory | sqlite
-	Transport    string              `yaml:"transport"`     // log (only ship-included)
-	PollInterval time.Duration       `yaml:"poll_interval"` // 0 → SDK default
-	MaxWait      time.Duration       `yaml:"max_wait"`      // 0 → SDK default
-	SQLite       MFAPushSQLiteConfig `yaml:"sqlite"`
+	Backend       string              `yaml:"backend"`       // memory | sqlite
+	Transport     string              `yaml:"transport"`     // log (only ship-included)
+	PollInterval  time.Duration       `yaml:"poll_interval"` // 0 → SDK default
+	MaxWait       time.Duration       `yaml:"max_wait"`      // 0 → SDK default
+	SQLite        MFAPushSQLiteConfig `yaml:"sqlite"`
+	PruneInterval time.Duration       `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
 }
 
 type MFAPushSQLiteConfig struct {

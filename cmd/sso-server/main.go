@@ -234,6 +234,12 @@ type app struct {
 	snapshotRetentionCancel context.CancelFunc
 	snapshotRetentionDone   <-chan struct{}
 
+	// pushPruneCancel + pushPruneDone — same pattern for the
+	// PushApprovalStore PruneExpired loop. SQLite backend only;
+	// memory store self-prunes via Get's expiry check.
+	pushPruneCancel context.CancelFunc
+	pushPruneDone   <-chan struct{}
+
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
@@ -378,6 +384,17 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 			case <-a.snapshotRetentionDone:
 			case <-ctx.Done():
 				logger.Error("snapshot retention scheduler did not exit cleanly")
+			}
+		}
+	}
+	// Push approval pruner: same pattern.
+	if a.pushPruneCancel != nil {
+		a.pushPruneCancel()
+		if a.pushPruneDone != nil {
+			select {
+			case <-a.pushPruneDone:
+			case <-ctx.Done():
+				logger.Error("push approval pruner did not exit cleanly")
 			}
 		}
 	}
@@ -2122,8 +2139,18 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	// handle for /readyz wiring + the optional PruneExpired loop
 	// (operators wanting bounded approval-table growth without
 	// running external cron).
+	var pushPruneCancel context.CancelFunc
+	var pushPruneDone <-chan struct{}
 	if pushApprovalStore != nil {
 		opts = appendReadyCheck(opts, "sqlite-push-approvals", pushApprovalStore)
+		if pi := cfg.MFA.Provider.Push.PruneInterval; pi > 0 {
+			pruneCtx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			pushPruneCancel = cancel
+			pushPruneDone = done
+			go runPushApprovalPrune(pruneCtx, done, pushApprovalStore, pi, logger)
+			logger.Info("push approvals: prune scheduler enabled", "interval", pi)
+		}
 	}
 
 	tenantStore, err := buildTenantStore(cfg, logger)
@@ -2498,8 +2525,41 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		auditRetentionDone:      auditRetentionDone,
 		snapshotRetentionCancel: snapshotRetentionCancel,
 		snapshotRetentionDone:   snapshotRetentionDone,
+		pushPruneCancel:         pushPruneCancel,
+		pushPruneDone:           pushPruneDone,
 		netStop:                 netStop,
 	}, nil
+}
+
+// runPushApprovalPrune wakes every interval and calls
+// PushApprovalStore.PruneExpired to bound the table size.
+// Operators wanting bounded push-approval growth across an
+// indefinite deployment lifetime wire this through
+// mfa.provider.push.prune_interval rather than running external
+// cron.
+//
+// Same shutdown contract as the audit / snapshot retention loops:
+// close done on exit; Prune errors logged but don't tear down the
+// loop. First prune fires after the first interval, not immediately.
+func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger sso.Logger) {
+	defer close(done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			deleted, err := store.PruneExpired(ctx)
+			if err != nil {
+				logger.Error("push approvals prune failed", "error", err)
+				continue
+			}
+			if deleted > 0 {
+				logger.Info("push approvals pruned", "deleted", deleted)
+			}
+		}
+	}
 }
 
 // runSnapshotRetention is the background loop cmd launches when

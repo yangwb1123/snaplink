@@ -211,6 +211,9 @@ func (s *PushApprovalStore) Delete(ctx context.Context, id string) error {
 // access, so an issued-but-never-polled approval sticks around
 // until pruned.
 func (s *PushApprovalStore) PruneExpired(ctx context.Context) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("sqlite: push approval store closed")
+	}
 	res, err := s.db.ExecContext(ctx, `DELETE FROM push_approvals WHERE expires_at < ?`, time.Now().UnixNano())
 	if err != nil {
 		return 0, fmt.Errorf("sqlite: prune expired push_approvals: %w", err)

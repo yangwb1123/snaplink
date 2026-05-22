@@ -888,6 +888,11 @@ mfa:
       transport: "log"     # log (only ship-included)
       poll_interval: 1s
       max_wait: 60s
+      # Background cron-like prune of expired push approvals
+      # (PushApprovalStore.PruneExpired). SQLite backend only —
+      # the memory store self-prunes on Get via expiry check.
+      # 0 disables; positive value enables a background goroutine.
+      prune_interval: 0
       sqlite:
         # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000"
         dsn: ""
