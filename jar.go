@@ -45,10 +45,14 @@ import (
 //   - Ed25519 (EdDSA) only. The signature-algorithm allowlist
 //     mirrors supportedJWTAlgs in defaultimpl/ — extending it
 //     requires updating both sites.
-//   - `request` parameter inline only. RFC 9101 also allows
-//     `request_uri` for a URI-fetched JWT — NOT YET wired
-//     because PAR already covers the "push the request
-//     server-side" case with stronger semantics.
+//   - Both `request` (inline JWT) and `request_uri` (URI-fetched
+//     JWT) are wired. The URI-fetch path lives in jar_fetch.go,
+//     opts in via WithJARFetcher + Client.AllowedRequestURIs, is
+//     HTTPS-only with no-redirect, and is advertised in discovery
+//     as `request_uri_parameter_supported: true` when the fetcher
+//     is registered. PAR (RFC 9126) is offered alongside for the
+//     "push the request server-side" case with stronger
+//     single-use + replay-resistant semantics.
 //   - JWT claims win on conflict with URL/body parameters, but
 //     non-conflicting fields outside the JWT are still applied.
 //     This is the "merge-with-JWT-priority" semantic also used

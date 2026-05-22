@@ -126,12 +126,3 @@ var (
 type httpError string
 
 func (e httpError) Error() string { return string(e) }
-
-// mtlsBoundTokenTypeOr returns the appropriate token_type response
-// value. Today, mTLS-bound tokens still report "Bearer" per RFC
-// 8705 §3 (it does NOT introduce a new type; the binding is implicit
-// in the cnf claim). This helper exists so future spec evolution
-// (or a strict-mode flag) can swap the value at one site.
-func mtlsBoundTokenTypeOr(defaultType string, _ string) string {
-	return defaultType
-}

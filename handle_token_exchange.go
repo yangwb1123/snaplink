@@ -2,6 +2,7 @@ package sso
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -40,12 +41,15 @@ import (
 // v1 supports:
 //   - Subject token type access_token (the common case — exchange a
 //     bearer for a more narrowly-audienced bearer).
-//   - Requested token type access_token (default).
+//   - Requested token type access_token (default) and refresh_token
+//     (when WithRefreshTokenStore is wired — opts in the family
+//     rotation + RFC 8693 §2.2 issued_token_type=refresh_token
+//     response shape).
 //   - resource + audience (merged into the new token's aud claim).
 //   - Scope narrowing (subset of the subject token's scopes).
+//   - actor_token replay protection via WithJTIReplayStore.
 //
 // Future-scope (deliberately deferred for v1):
-//   - Refresh token output (no compelling caller need yet).
 //   - JWT / SAML subject tokens (requires bespoke validators).
 //   - Actor token delegation chain in the issued token's claims.
 //
@@ -311,12 +315,7 @@ func acrMatchesAny(inbound string, demanded []string) bool {
 	if inbound == "" || len(demanded) == 0 {
 		return false
 	}
-	for _, d := range demanded {
-		if d == inbound {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(demanded, inbound)
 }
 
 // mergeTargets deduplicates a slice of resource / audience URIs
