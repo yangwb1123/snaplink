@@ -3249,27 +3249,76 @@ components:
             multiple values; in JSON, supply an array.
         subject_token:
           type: string
-          description: RFC 8693 subject_token (the token being exchanged).
+          description: |
+            RFC 8693 subject_token — the token being exchanged. The
+            server validates signature + expiry + audience + revocation
+            via the standard validation path; an inactive token
+            collapses to `invalid_grant`. When the subject token
+            carries an `act` claim (i.e. it was itself a delegated
+            token), the issued token's `act` PREPENDS the new actor
+            and nests the previous chain underneath — outside-in
+            reads walk delegation in time-order.
         subject_token_type:
           type: string
+          enum:
+            - urn:ietf:params:oauth:token-type:access_token
+            - urn:ietf:params:oauth:token-type:refresh_token
+            - urn:ietf:params:oauth:token-type:id_token
+            - urn:ietf:params:oauth:token-type:jwt
           example: urn:ietf:params:oauth:token-type:access_token
+          description: |
+            RFC 8693 §3 token-type URI naming the subject_token's
+            shape. Determines which store / validator the SSO server
+            looks the token up in.
         actor_token:
           type: string
-          description: RFC 8693 actor_token for delegation / impersonation.
+          description: |
+            RFC 8693 actor_token for delegation / impersonation. When
+            supplied, the issued token carries an `act` claim naming
+            this party's subject. `actor_token` + `actor_token_type`
+            MUST both be present or both absent (mismatch =
+            `invalid_request`). When a JTIReplayStore is wired and
+            the actor_token has a `jti`, replay within the token's
+            expiry window is rejected with `invalid_grant`.
         actor_token_type:
           type: string
+          enum:
+            - urn:ietf:params:oauth:token-type:access_token
+            - urn:ietf:params:oauth:token-type:jwt
+          description: |
+            RFC 8693 token-type URI for the actor token. Only
+            access_token + jwt are accepted today (refresh / id_token
+            as actor proofs are out-of-scope per §2.1's typical
+            patterns).
         audience:
           type: array
           items: { type: string }
-          description: RFC 8693 audience list.
+          description: |
+            RFC 8693 audience list. Merged with `resource` (RFC 8707)
+            into the issued token's `aud` claim; both parameter
+            forms accepted to bridge legacy callers. The merged set
+            is deduplicated in-order, validated against the client's
+            `AllowedResources` (rejected with `invalid_target` on
+            scope expansion).
         requested_token_type:
           type: string
+          enum:
+            - urn:ietf:params:oauth:token-type:access_token
+            - urn:ietf:params:oauth:token-type:refresh_token
+          description: |
+            RFC 8693 §2.1 — the token type the caller wants minted.
+            Absent → defaults to access_token. Refresh-token output
+            requires `WithRefreshTokenStore` wired (else
+            `invalid_request` rather than silently minting an access
+            token).
         acr_values:
           type: string
           description: |
             Space-delimited ACR list. On exchange, the dispatcher
             refuses to mint when the inbound `subject_token.acr`
-            doesn't satisfy this demand (RFC 9470 step-up).
+            doesn't satisfy this demand (RFC 9470 step-up). Surfaces
+            as `insufficient_user_authentication` — same wire shape
+            resource servers issue, so SPAs branch uniformly.
         client_assertion:
           type: string
           description: |
@@ -3316,9 +3365,31 @@ components:
             `WithIDTokenIssuer` is wired. RFC 9068-shaped JWT.
         issued_token_type:
           type: string
+          enum:
+            - urn:ietf:params:oauth:token-type:access_token
+            - urn:ietf:params:oauth:token-type:refresh_token
           description: |
             RFC 8693 §2.2.1 — present on token-exchange responses.
-            Mirrors the inbound `requested_token_type`.
+            Mirrors the inbound `requested_token_type` (or defaults
+            to access_token when the caller omitted that field).
+
+            For token-exchange responses where the inbound
+            subject_token carried an `act` claim, the issued JWT's
+            `act` claim is a NESTED object:
+
+                {
+                  "sub": "<the most recent actor>",
+                  "act": {
+                    "sub": "<the earlier actor>",
+                    "act": { ... }       // continues nesting
+                  }
+                }
+
+            Outside-in reads walk delegation in time-order
+            (outermost = most recent). Downstream resource servers
+            walk this chain to reconstruct provenance for audit +
+            authorization decisions. RFC 8693 §4.1.1 permits
+            arbitrary nesting depth.
 
     IntrospectRequest:
       type: object
