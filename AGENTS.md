@@ -268,23 +268,17 @@ gates methods. **password**: cmd verifies bcrypt hashes loaded from
 per-user files; unknown users hit a cost-matched dummy hash for timing
 parity.
 
-**WebAuthn** (CTAP/FIDO2) ships at `authenticators/webauthn/`. The
-four-call begin/finish ceremony doesn't fit the single-step
-Authenticator interface, so the package exposes
-`Helper.{BeginRegistration, FinishRegistration, BeginLogin,
-FinishLogin}`. cmd mounts `/webauthn/{registration,login}/{begin,finish}`
-on the SSO router via `Server.Handle(method, path, http.HandlerFunc)`
-when `webauthn.enabled`, sharing the standard middleware stack.
-
-`/webauthn/login/finish?client_id=...` mints tokens for the
-authenticated subject (AMR=`["webauthn"]`, scopes default to client's
-`AllowedScopes`). `id_token` rides along when client has `openid` +
-`WithIDTokenIssuer` wired; `refresh_token` when `WithRefreshTokenStore`
-wired; missing deps degrade silently. Without `client_id` the response
-is the v1 credential-verification shape (embedders unaffected).
-
-Pluggable `UserStore` + `SessionStore`; SQLite peers at
-`authenticators/webauthn/sqlite/` for multi-replica deploys
+**WebAuthn** (CTAP/FIDO2) ships at `authenticators/webauthn/` —
+the four-call ceremony (`Helper.{BeginRegistration,
+FinishRegistration, BeginLogin, FinishLogin}`) doesn't fit the
+single-step Authenticator SPI, so cmd mounts
+`/webauthn/{registration,login}/{begin,finish}` via
+`Server.Handle` when `webauthn.enabled`. `/webauthn/login/finish?
+client_id=...` mints tokens (AMR=`["webauthn"]`; `id_token` when
+client has `openid` + `WithIDTokenIssuer`; `refresh_token` when
+`WithRefreshTokenStore`); without `client_id` the response is
+credential-verification only. Pluggable `UserStore` + `SessionStore`
+with SQLite peers at `authenticators/webauthn/sqlite/`
 (`UserStore` upserts inside `BEGIN IMMEDIATE`; `SessionStore` uses
 `DELETE … RETURNING` for single-use ceremony state). Built on
 `github.com/go-webauthn/webauthn`.
@@ -305,30 +299,25 @@ TABLE IF NOT EXISTS` at construction. Constructor: `New<Provider>(dsn)`
 **The next multi-table backend MUST bring goose/golang-migrate.**
 
 ### Audit (`audit/`)
-`audit.Recorder` fans Events to `Sink`s. Built-in: `MemorySink`,
-`WriterSink`, `WebhookSink`, `MultiSink`, plus SQLite at `audit/sqlite`
-(queryable, restart-durable, replica-shared via shared DSN). Every
-Event carries W3C `TraceID` / `SpanID` / `ParentSpanID`.
+`audit.Recorder` fans Events to `Sink`s. Built-in sinks:
+`MemorySink`, `WriterSink`, `WebhookSink`, `MultiSink`; SQLite
+peer (`audit/sqlite`) is queryable + restart-durable + replica-
+shared. Every Event carries W3C `TraceID` / `SpanID` /
+`ParentSpanID`.
 
-Optional wrappers:
-- **Hash chain** (`audit.WithHashChain`): stamps `PrevHash` + `Hash`;
-  `audit.VerifyChain(events)` validates oldest-first. The
-  `sso-audit-verify` CLI pages `/api/v1/audit/events` (or reads a JSON
-  file), reverses, validates, exits non-zero on a break.
-- **PII redaction** (`audit.WithRedactor`): runs BEFORE the chainer.
-  Helpers: `RedactActorIDHash(salt)`, `RedactIPTruncate`,
-  `RedactUserAgent`, `RedactMetadataKeys(...)`,
-  `DefaultPIIRedactor(salt)`.
-- **Retry** (`audit.NewRetryingSink`): exponential backoff + jitter.
-  Options for max attempts, backoff bounds, error classifier.
-- **Async** (`audit.NewAsyncSink(...).Start()`): bounded buffer +
-  worker pool; Record never blocks the request path. Drop reasons:
-  `ErrAsyncQueueFull` / `ErrAsyncSinkClosed` / inner errors. Caller
-  ctx intentionally dropped (TraceID rides on Event). Use for
-  WebhookSink; skip for Memory/Writer. Observability via
-  `metrics.NewAsyncSinkCollector(asyncSink)` — exposes all 5 series
-  (`sso_audit_async_drops_*`, `sso_audit_async_queue_*`) without a
-  polling goroutine.
+Optional wrappers (compose in order: Async → Multi → Retry → leaf):
+- `WithHashChain` — `PrevHash` + `Hash` on every Event;
+  `VerifyChain` validates oldest-first; `sso-audit-verify` CLI
+  walks `/api/v1/audit/events` or a JSON file.
+- `WithRedactor` — runs BEFORE chainer. Helpers:
+  `RedactActorIDHash(salt)`, `RedactIPTruncate`, `RedactUserAgent`,
+  `RedactMetadataKeys(...)`, `DefaultPIIRedactor(salt)`.
+- `NewRetryingSink` — exponential backoff + jitter; tune max
+  attempts + backoff bounds + error classifier.
+- `NewAsyncSink(...).Start()` — bounded buffer + worker pool;
+  Record never blocks. Drops: `ErrAsyncQueueFull` /
+  `ErrAsyncSinkClosed` / inner. Use for WebhookSink. Wire
+  `metrics.NewAsyncSinkCollector(asyncSink)` for drop/queue series.
 
 Recommended cluster composition:
 `AsyncSink(MultiSink(SQLitePrimary, RetryingSink(WebhookSink)))`.
@@ -494,29 +483,23 @@ Status (no backdoor suspension via UpdateTenant). DeleteTenant also
 fires the invalidation callback.
 
 ### ssoclient
+Per-capability client choice (Auth / Authz / Audit) — pick
+`ssoclient/local` (in-process; pass the SDK provider directly) or
+`ssoclient/remote` (gRPC + JWKS) per capability:
+
 ```go
-// Embedded:
 handler := &appcore.Handler{
     Auth:  local.NewAuthClient(issuer, local.WithSessionManager(sessions)),
-    Authz: local.NewAuthzClient(prov),
-    Audit: local.NewAuditClient(recorder),
-}
-// Centralized:
-handler := &appcore.Handler{
-    Auth:  remote.NewAuthClient(remote.NewJWKSCache(jwksURL)),
     Authz: remote.NewAuthzClient(grpcConn),
     Audit: remote.NewAuditClient(grpcConn),
 }
 ```
 
-Each capability chooses independently. `remote.JWKSCache` does
-background refresh + single-flight refetch on unknown `kid`.
-
-`ssoclient/dev` provides bypass stubs for local UI iteration:
-`ValidateToken` → fake Subject, `Check` → AllowAll, `Record` → no-op.
-**Every constructor emits a one-time stderr `AUTH BYPASS ACTIVE`
-warning.** Suppress in tests via `WithSilent` / `WithSilentAuthz` /
-`WithSilentAudit`.
+`remote.JWKSCache` does background refresh + single-flight
+refetch on unknown `kid`. `ssoclient/dev` provides bypass stubs
+for local UI iteration (`AllowAll`, no-op audit). **Every dev
+constructor emits a one-time stderr `AUTH BYPASS ACTIVE` warning;**
+suppress via `WithSilent*` opts in tests.
 
 ### Edge (`deploy/`)
 - **OpenResty** — `lua-resty-jwt` verifies via our JWKS; sets
