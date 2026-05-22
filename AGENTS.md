@@ -431,6 +431,11 @@ menus, netpolicies, bootstrap high-water).
 BEFORE the seed Runner so `AdvanceBootstrap` skips already-covered
 seeds. Default mode: Overwrite.
 
+**Retention** (`snapshot.PruneOldest`): keep last N by lexical
+order of the `snap_<RFC3339>_<rand>` SnapshotID — chronological by
+construction. cmd's `snapshot.retention.{enabled,keep,interval}`
+launches a background loop; cancels cleanly during shutdown.
+
 ### Releases (`releases/`)
 Admin app version pin / rollback. `Release` pairs frontend+backend
 `Artifact` halves; `Validate` refuses one-sided releases.
@@ -599,69 +604,61 @@ don't pad `RiskRequest`.
 ### MFA orchestration (`mfa.go` + `handle_mfa.go`)
 Two-leg step-up flow gated by `RiskScorer` returning `DecisionRequireMFA`.
 Without `WithMFAProvider` + `WithMFAChallengeStore` wired, RequireMFA
-decays to Allow (back-compat for callers shipping a forward-looking
-scorer ahead of MFA orchestration).
+decays to Allow (back-compat for forward-looking scorers).
 
-Wire shape:
-- `/auth/login` returns `{error: mfa_required, mfa_challenge_id,
-  mfa_methods: ["totp"], iss}` instead of tokens (HTTP 200 — the
-  primary credential validated, it's just pending step-up).
-- Client POSTs `/auth/mfa` with `{mfa_challenge_id, mfa_method, code |
-  assertion | params}`; on success the server replays `finishLogin`
-  against the frozen state and returns the standard direct-mint /
-  code / form_post response. The caller can't tell an MFA-gated login
-  from a non-gated one.
-- Oracle-leak hardening: missing / expired / consumed challenge,
-  unsupported method, wrong factor — all collapse to `400 mfa_invalid`.
-  Operator-visible reasons ride on `mfa_failure` audit events only.
-- Single-use: `MFAChallengeStore.Consume` atomically deletes; replay
-  → `mfa_invalid`.
-- Client / tenant re-validated on resume (deactivated between login
-  and /auth/mfa surfaces as `inactive_client`, distinct from `mfa_invalid`
-  so SIEM can tell it wasn't the factor that failed).
-- Discovery: when wired, `mfa_endpoint` + `mfa_methods_supported`
-  appear in `/.well-known/openid-configuration`.
+**Wire shape:** `/auth/login` returns `{error: mfa_required,
+mfa_challenge_id, mfa_methods, iss}` (HTTP 200 — primary credential
+validated, pending step-up). Two-call providers (WebAuthn, Push)
+additionally populate `mfa_method_data[<method>]` via `MFABeginner`.
+Client POSTs `/auth/mfa` with `{mfa_challenge_id, mfa_method,
+code|assertion|params}`; server replays `finishLogin` against the
+frozen state and returns the standard direct-mint / code / form_post
+response — caller can't distinguish MFA-gated from non-gated.
 
-`MFAProvider` is pluggable; ship-included impls:
-- `authenticators.TOTPMFAProvider` adapts an existing
-  `TOTPAuthenticator` so the same TOTPStore + skew config serves
-  primary auth (when wired) AND step-up. Single-call factor.
-- `authenticators/webauthn.WebAuthnMFAProvider` adapts an existing
-  WebAuthn `Helper` so the same UserStore + SessionStore + RP config
-  serves primary `/webauthn/login/{begin,finish}` AND step-up.
-  Two-call factor — implements `MFABeginner` so the server
-  pre-issues the assertion challenge into
-  `mfa_method_data["webauthn"]` on the `mfa_required` response;
-  client signs and replays via /auth/mfa params. Subject binding
-  (resolved user ≡ SubjectID) enforced on Verify.
+**Oracle-leak hardening:** missing / expired / consumed challenge,
+unsupported method, wrong factor — all collapse to `400 mfa_invalid`.
+Operator-visible reasons surface only via `mfa_failure` audit events.
+Client / tenant deactivated between login and /auth/mfa surfaces as
+`inactive_client` (distinct from `mfa_invalid` so SIEM can tell it
+wasn't the factor that failed). Single-use: `MFAChallengeStore.Consume`
+atomically deletes.
 
-Two-call factors implement the optional `MFABeginner` interface
-(`Begin(ctx, subjectID, method) (map[string]string, error)`). The
-SSO server type-asserts during `issueMFAChallenge`: providers
-implementing the interface get one Begin call per supported method,
-results bucketed under the response's `mfa_method_data` key.
-Single-call factors (TOTP) don't implement the interface; the
-response omits the key. Per-method Begin failure is non-fatal —
-method stays in `mfa_methods`, just without an attached
-`mfa_method_data` entry.
+**Discovery:** when wired, `mfa_endpoint` + `mfa_methods_supported`
+appear in `/.well-known/openid-configuration`.
 
-Custom factors (push notification, hardware FIDO2 outside WebAuthn,
-upstream IdP step-up) implement `MFAProvider` directly + `MFABeginner`
-when they need server-side challenge issuance. `SupportedMethods()`
-populates the wire `mfa_methods` array; `Verify()` returns nil on
-success, any error on failure (collapsed to `mfa_invalid`).
+**`MFAProvider` impls** (all in `defaultimpl/` + `authenticators/`):
+- `TOTPMFAProvider` — single-call. Reuses `TOTPAuthenticator` store +
+  skew (one enrollment, two roles).
+- `WebAuthnMFAProvider` — two-call (`MFABeginner`). Reuses Helper
+  (UserStore + SessionStore + RP config). Subject binding enforced.
+- `PushMFAProvider` — two-call (`MFABeginner`). Begin issues approval
+  via `PushTransport` (operator-supplied; cmd ships log-only stub);
+  Verify polls `PushApprovalStore` until the device-driven callback
+  resolves the entry (operators build the callback handler;
+  `SetStatus` is the SDK seam). Subject binding enforced.
+- `MultiMFAProvider` — composes leaf providers; method-name conflicts
+  rejected at construction. Always implements `MFABeginner` so
+  single-call providers in the mix don't break Begin dispatch.
 
-`MFAChallengeStore`: in-process `defaultimpl.MemoryMFAChallengeStore`
-for single-replica deploys; `defaultimpl/sqlite.MFAChallengeStore`
-for cluster-shared state (atomic `DELETE … RETURNING` Consume; row
-deletion enforces single-use even on expired-entry consume). Default
-TTL 5min (`DefaultMFAChallengeTTL`); tune via the ttl arg on
-`WithMFAChallengeStore`.
+**`MFABeginner` optional interface** (`Begin(ctx, subjectID, method)
+(map[string]string, error)`): type-asserted at `issueMFAChallenge`;
+implementing providers get one Begin call per supported method,
+results bucketed under `mfa_method_data`. Per-method Begin failure
+non-fatal — method stays in `mfa_methods` without an attached
+`mfa_method_data` entry. Custom factors implement
+`MFAProvider` + optionally `MFABeginner`.
 
-Audit events: `mfa_required` (challenge issued), `mfa_success`
-(factor verified), `mfa_failure` (factor rejected). The standard
-`login_success` event still fires on the resume, so existing SIEM
-queries continue to work — MFA gating is additive observability.
+**`MFAChallengeStore` + `PushApprovalStore`**: memory peer for
+single-replica; SQLite peer for cluster-shared state (atomic
+`DELETE … RETURNING` / single-resolve via `UPDATE ... WHERE status
+= 'pending'`; row-deletion semantics enforce single-use even on
+expired-entry consume). Default challenge TTL 5min
+(`DefaultMFAChallengeTTL`).
+
+**Audit events**: `mfa_required` (challenge issued), `mfa_success`
+(factor verified), `mfa_failure` (factor rejected). Standard
+`login_success` event still fires on resume — MFA gating is
+additive observability.
 
 ---
 
@@ -719,32 +716,22 @@ the operator surface needs explanation:
 - **backchannel_logout.index.backend(memory|sqlite)** — sqlite shares
   fan-out set across the cluster.
 - **webauthn.storage.{users,sessions}.backend(memory|sqlite)**.
-- **mfa** — opts into step-up orchestration gated by Risk's
-  `DecisionRequireMFA`. Four `provider.kind` values: `totp` reuses
-  the `authenticators.totp` secret store + skew (single enrollment,
-  two consumer roles); `webauthn` reuses the `webauthn.enabled`
-  Helper (UserStore + SessionStore + RP config — same enrollment
-  as primary `/webauthn/login`); `push` wires the reference
-  `defaultimpl.PushMFAProvider` with `push.backend(memory|sqlite)`
-  and `push.transport=log` (operators fork cmd for FCM/APNs/webhook
-  — the SDK's `PushTransport` interface is stable); `multi`
-  composes several leaf kinds via `defaultimpl.MultiMFAProvider`,
-  listed under `provider.kinds:` — operators offering concurrent
-  TOTP fallback + WebAuthn primary use this.
-  `challenge.backend(memory|sqlite)` shares in-flight MFA
-  challenges across replicas. Disabled or unwired → RequireMFA
-  decays to Allow (back-compat). cmd refuses `kind=totp` unless
-  `authenticators.totp.enabled=true`, `kind=webauthn` unless
-  `webauthn.enabled=true`, `kind=push` with unknown
-  backend/transport or sqlite without DSN, and `kind=multi` with
-  empty / single-entry / duplicate / nested-multi `kinds` lists.
-  Two-call providers (WebAuthn, Push) implement [MFABeginner] so
-  the `mfa_required` response surfaces
-  `mfa_method_data["<method>"] = {...}` for the client; multi
-  inherits this via the composite's MFABeginner. Push-approval
-  user-device callbacks (PENDING → APPROVED/DENIED) are NOT
-  shipped from cmd — operators build the handler against the
-  SDK's `PushApprovalStore.SetStatus`.
+- **mfa** — step-up orchestration gated by Risk's
+  `DecisionRequireMFA`. `provider.kind`: `totp` / `webauthn` / `push`
+  (each shares its underlying authenticator/helper — one enrollment,
+  two roles) / `multi` with `provider.kinds: [...]` composing leaves
+  via `defaultimpl.MultiMFAProvider`. `challenge.backend(memory|sqlite)`
+  shares in-flight challenges; `push.backend(memory|sqlite)` shares
+  approvals. cmd fails loud on missing leaf deps (totp needs
+  `authenticators.totp.enabled`, webauthn needs `webauthn.enabled`,
+  push needs DSN when backend=sqlite + a known transport, multi needs
+  ≥2 / non-nested / non-dup `kinds`). Two-call providers (WebAuthn,
+  Push) implement `MFABeginner` → `mfa_method_data[<method>]` in
+  the `mfa_required` response. Disabled/unwired → RequireMFA decays
+  to Allow. Push transport ships log-only stub; operators fork cmd
+  for FCM/APNs/webhook against the stable `PushTransport` SPI. The
+  user-device callback that resolves push approvals (PENDING →
+  APPROVED/DENIED) is operator-built against `PushApprovalStore.SetStatus`.
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.
