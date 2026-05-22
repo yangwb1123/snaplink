@@ -511,6 +511,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /token/revoke-all:
+    post:
+      tags: [auth]
+      summary: Bulk revoke every refresh token bound to the bearer's subject.
+      description: |
+        "Sign out of all devices" — given a valid bearer access token,
+        kills every refresh token bound to the same (subject, client_id)
+        pair, then revokes the presented access token across all issuers
+        so it stops working immediately.
+
+        Authentication is **bearer-only** (unlike /token/revoke which
+        accepts client credentials). The actor is the user — they are
+        authorizing the revocation of their own tokens. The client_id
+        for the bulk delete is read from the bearer's `aud` claim;
+        pairwise subjects are translated to local before the lookup
+        (OIDC §8) so the bulk delete actually finds the rows.
+
+        Requires the wired `RefreshTokenStore` to implement the optional
+        `RefreshTokenSubjectIndex` extension. Without it the response
+        is `501 refresh_token_not_configured` — operators relying on
+        this endpoint must wire a store that supports bulk lookup
+        (SQLite + memory both do; custom backends opt in).
+      operationId: postRevokeAll
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Bulk revocation succeeded; count returned.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  refresh_tokens_revoked:
+                    type: integer
+                    description: Number of refresh tokens deleted.
+                    example: 3
+        "401":
+          description: |
+            Missing or invalid bearer. WWW-Authenticate carries the
+            Bearer challenge per RFC 6750 §3.
+          headers:
+            WWW-Authenticate:
+              schema: { type: string, example: 'Bearer realm="sso", error="invalid_token"' }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Pairwise resolution or bulk delete failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            Wired RefreshTokenStore doesn't implement
+            RefreshTokenSubjectIndex; bulk delete is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /par:
     post:
       tags: [auth]
