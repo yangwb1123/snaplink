@@ -788,9 +788,19 @@ snapshot:
     file:
       dir: "./snapshots"
   encryption:
-    backend: "none"           # none | passphrase
+    # none: plaintext JSON envelopes (dev / test).
+    # passphrase: argon2id-derived + XChaCha20-Poly1305; for
+    # human-typed secrets. Set passphrase (literal, fine for
+    # tests) OR passphrase_file (recommended).
+    # aes-gcm: direct 32-byte AES-256 key + AES-GCM. Aimed at
+    # operators with a KMS that hands them raw DEKs. Set
+    # key (inline, discouraged) OR key_file (recommended; raw 32
+    # bytes / hex / base64 all accepted).
+    backend: "none"           # none | passphrase | aes-gcm
     passphrase: ""
     passphrase_file: ""
+    # key: ""               # inline hex/base64 (discouraged)
+    # key_file: "/etc/sso/snapshot-dek"
   restore_from: ""            # file:///abs/path or inline:<base64>
   # Background pruning of old snapshot envelopes. Operators take
   # snapshots on a schedule (admin SnapshotService or external

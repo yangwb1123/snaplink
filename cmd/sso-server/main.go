@@ -6,9 +6,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
@@ -67,6 +69,7 @@ import (
 	releasefile "github.com/snaplink/sso/releases/store/file"
 	releasememory "github.com/snaplink/sso/releases/store/memory"
 	"github.com/snaplink/sso/snapshot"
+	encryptionaes "github.com/snaplink/sso/snapshot/encryption/aesgcm"
 	encryptionnone "github.com/snaplink/sso/snapshot/encryption/none"
 	encryptionpass "github.com/snaplink/sso/snapshot/encryption/passphrase"
 	storagefile "github.com/snaplink/sso/snapshot/storage/file"
@@ -1686,11 +1689,62 @@ func buildSnapshotSubsystem(cfg *config.Config, logger sso.Logger) (*snapshot.Pi
 		}
 		sealer = encryptionpass.NewFromString(pass)
 		logger.Info("snapshot encryption: passphrase (argon2id+chacha20poly1305)")
+	case "aes-gcm", "aes-256-gcm":
+		key, err := loadAESGCMKey(cfg.Snapshot.Encryption)
+		if err != nil {
+			return nil, nil, err
+		}
+		s, err := encryptionaes.New(key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("snapshot aes-gcm: %w", err)
+		}
+		sealer = s
+		logger.Info("snapshot encryption: aes-256-gcm (direct key from KMS)")
 	default:
-		return nil, nil, fmt.Errorf("unknown snapshot.encryption.backend %q", cfg.Snapshot.Encryption.Backend)
+		return nil, nil, fmt.Errorf("unknown snapshot.encryption.backend %q (supported: none, passphrase, aes-gcm)", cfg.Snapshot.Encryption.Backend)
 	}
 
 	return &snapshot.Pipeline{Sealer: sealer}, store, nil
+}
+
+// loadAESGCMKey resolves the snapshot AES-GCM key from inline YAML
+// (cfg.Key — discouraged, secrets in YAML hit git logs) or a file
+// (cfg.KeyFile — recommended; KMS-fetched DEKs land there). The
+// file or string can be raw 32 bytes, hex-encoded 64 chars, or
+// base64-encoded ~44 chars; the helper tries each in turn so
+// operators don't have to remember which encoder their KMS emits.
+//
+// Fails loud when neither source is set OR when no decoding scheme
+// produces exactly 32 bytes — silent fallback would surface as
+// cryptic AEAD errors at first Seal/Open.
+func loadAESGCMKey(cfg config.SnapshotEncryptionConfig) ([]byte, error) {
+	raw := []byte(cfg.Key)
+	if len(raw) == 0 && cfg.KeyFile != "" {
+		b, err := os.ReadFile(cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot aes-gcm key file: %w", err)
+		}
+		raw = bytes.TrimRight(b, "\r\n")
+	}
+	if len(raw) == 0 {
+		return nil, errors.New("snapshot.encryption.backend=aes-gcm requires key or key_file")
+	}
+	// Try raw bytes first (exactly 32).
+	if len(raw) == 32 {
+		return raw, nil
+	}
+	// Then hex (64 chars).
+	if decoded, err := hex.DecodeString(string(raw)); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	// Then base64 (~44 chars).
+	if decoded, err := base64.StdEncoding.DecodeString(string(raw)); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(string(raw)); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	return nil, fmt.Errorf("snapshot aes-gcm: key must decode to exactly 32 bytes (raw / hex / base64)")
 }
 
 // buildReleaseSubsystem materialises the releases.ReleaseStore +

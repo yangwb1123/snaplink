@@ -762,14 +762,22 @@ type SnapshotFileConfig struct {
 	Dir string `yaml:"dir"`
 }
 
-// SnapshotEncryptionConfig picks the Sealer. Backend is "none" (default,
-// envelopes are plaintext JSON) or "passphrase" (argon2id +
-// XChaCha20-Poly1305). For passphrase mode set either Passphrase
-// (literal, fine for tests) or PassphraseFile (read from disk on boot).
+// SnapshotEncryptionConfig picks the Sealer.
+//
+// Backend choices:
+//   - "none" (default) — envelopes are plaintext JSON.
+//   - "passphrase" — argon2id + XChaCha20-Poly1305; supply
+//     Passphrase (literal, fine for tests) or PassphraseFile.
+//   - "aes-gcm" — direct 32-byte AES-256 key + AES-GCM AEAD;
+//     supply Key (hex/base64; not recommended) or KeyFile (raw 32
+//     bytes). Aimed at operators with a KMS that hands them DEKs
+//     (skip the human-passphrase + argon2id derivation step).
 type SnapshotEncryptionConfig struct {
 	Backend        string `yaml:"backend"`
 	Passphrase     string `yaml:"passphrase"`
 	PassphraseFile string `yaml:"passphrase_file"`
+	Key            string `yaml:"key"`      // hex- or base64-encoded 32 bytes
+	KeyFile        string `yaml:"key_file"` // file containing raw 32-byte key OR base64/hex
 }
 
 // ReleasesConfig configures the admin app version pin / rollback
