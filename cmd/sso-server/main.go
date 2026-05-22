@@ -1838,6 +1838,16 @@ func (b bootstrapLogger) Error(msg string, kv ...any) { b.inner.Error(msg, kv...
 // buildApp wires every SDK component the config asks for and returns them
 // as a bundle so HTTP and gRPC entrypoints can share instances.
 func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
+	// Metrics constructed early so the retention schedulers can emit
+	// counters when they fire. The asyncSink collector + WithMetrics
+	// wiring still happen later (after the audit subsystem builds
+	// asyncSink). Nil-safe — schedulers tolerate metricsRegistry=nil
+	// when metrics are disabled.
+	var metricsRegistry *metrics.Metrics
+	if cfg.Metrics.Enabled {
+		metricsRegistry = metrics.New()
+	}
+
 	clientStore, err := buildClientStore(cfg.Identity)
 	if err != nil {
 		return nil, fmt.Errorf("identity client_store: %w", err)
@@ -1949,7 +1959,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			done := make(chan struct{})
 			auditRetentionCancel = cancel
 			auditRetentionDone = done
-			go runAuditRetention(retentionCtx, done, sqliteSink, interval, rc.MaxAge, logger)
+			go runAuditRetention(retentionCtx, done, sqliteSink, interval, rc.MaxAge, logger, metricsRegistry)
 			logger.Info("audit: retention scheduler enabled",
 				"max_age", rc.MaxAge, "interval", interval)
 		}
@@ -2148,7 +2158,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 			done := make(chan struct{})
 			pushPruneCancel = cancel
 			pushPruneDone = done
-			go runPushApprovalPrune(pruneCtx, done, pushApprovalStore, pi, logger)
+			go runPushApprovalPrune(pruneCtx, done, pushApprovalStore, pi, logger, metricsRegistry)
 			logger.Info("push approvals: prune scheduler enabled", "interval", pi)
 		}
 	}
@@ -2308,14 +2318,14 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 	if cfg.Metrics.Enabled {
-		m := metrics.New()
-		// When the audit async wrapper is active, expose its drop
-		// counters + queue gauges on the same registry so a single
-		// scrape job covers HTTP + auth + audit-backpressure signals.
+		// metricsRegistry was constructed at the top of buildApp so
+		// retention schedulers could emit during their loops; here
+		// we attach the AsyncSinkCollector (which needs the asyncSink
+		// built by the audit subsystem) + wire the WithMetrics option.
 		if asyncSink != nil {
-			m.Registry.MustRegister(metrics.NewAsyncSinkCollector(asyncSink))
+			metricsRegistry.Registry.MustRegister(metrics.NewAsyncSinkCollector(asyncSink))
 		}
-		opts = append(opts, sso.WithMetrics(m))
+		opts = append(opts, sso.WithMetrics(metricsRegistry))
 		logger.Info("metrics: prometheus /metrics enabled")
 	}
 	if n := cfg.Security.BodyLimit.MaxBytes; n > 0 {
@@ -2450,7 +2460,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		done := make(chan struct{})
 		snapshotRetentionCancel = cancel
 		snapshotRetentionDone = done
-		go runSnapshotRetention(retentionCtx, done, snapStorage, interval, rc.Keep, logger)
+		go runSnapshotRetention(retentionCtx, done, snapStorage, interval, rc.Keep, logger, metricsRegistry)
 		logger.Info("snapshot: retention scheduler enabled",
 			"keep", rc.Keep, "interval", interval)
 	}
@@ -2541,7 +2551,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 // Same shutdown contract as the audit / snapshot retention loops:
 // close done on exit; Prune errors logged but don't tear down the
 // loop. First prune fires after the first interval, not immediately.
-func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger sso.Logger) {
+func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger sso.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2553,10 +2563,16 @@ func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqli
 			deleted, err := store.PruneExpired(ctx)
 			if err != nil {
 				logger.Error("push approvals prune failed", "error", err)
+				if m != nil {
+					m.RetentionPruneErrorTotal.WithLabelValues("push_approvals").Inc()
+				}
 				continue
 			}
 			if deleted > 0 {
 				logger.Info("push approvals pruned", "deleted", deleted)
+				if m != nil {
+					m.RetentionPrunedTotal.WithLabelValues("push_approvals").Add(float64(deleted))
+				}
 			}
 		}
 	}
@@ -2570,7 +2586,7 @@ func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqli
 // PruneOldest errors don't tear down the loop — a transient
 // storage outage shouldn't suspend retention forever; the loop
 // logs + waits for the next tick.
-func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger sso.Logger) {
+func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger sso.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2582,11 +2598,17 @@ func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage sna
 			deleted, err := snapshot.PruneOldest(ctx, storage, keep)
 			if err != nil {
 				logger.Error("snapshot retention prune failed", "error", err, "keep", keep)
+				if m != nil {
+					m.RetentionPruneErrorTotal.WithLabelValues("snapshot").Inc()
+				}
 				continue
 			}
 			if len(deleted) > 0 {
 				logger.Info("snapshot retention pruned envelopes",
 					"deleted_count", len(deleted), "keep", keep)
+				if m != nil {
+					m.RetentionPrunedTotal.WithLabelValues("snapshot").Add(float64(len(deleted)))
+				}
 			}
 		}
 	}
@@ -2603,7 +2625,7 @@ func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage sna
 //
 // Prune errors are logged but don't stop the loop — a transient
 // SQLite contention shouldn't tear down retention forever.
-func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger sso.Logger) {
+func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger sso.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2616,11 +2638,17 @@ func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsql
 			deleted, err := sink.Prune(ctx, cutoff)
 			if err != nil {
 				logger.Error("audit retention prune failed", "error", err, "cutoff", cutoff)
+				if m != nil {
+					m.RetentionPruneErrorTotal.WithLabelValues("audit").Inc()
+				}
 				continue
 			}
 			if deleted > 0 {
 				logger.Info("audit retention pruned events",
 					"deleted", deleted, "cutoff", cutoff)
+				if m != nil {
+					m.RetentionPrunedTotal.WithLabelValues("audit").Add(float64(deleted))
+				}
 			}
 		}
 	}

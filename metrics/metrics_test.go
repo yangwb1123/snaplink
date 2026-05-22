@@ -125,6 +125,20 @@ func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
 	mustContain(t, scrape, `sso_mfa_completions_total{mfa_method="totp",outcome="success"} 1`)
 	mustContain(t, scrape, `sso_mfa_completions_total{mfa_method="totp",outcome="failure"} 4`)
 	mustContain(t, scrape, `sso_mfa_completions_total{mfa_method="webauthn",outcome="success"} 1`)
+
+	// Retention metrics — one counter per (subsystem) for prunes
+	// + errors. Cardinality bounded by the three known subsystem
+	// names (audit / snapshot / push_approvals).
+	m.RetentionPrunedTotal.WithLabelValues("audit").Add(42)
+	m.RetentionPrunedTotal.WithLabelValues("snapshot").Add(7)
+	m.RetentionPrunedTotal.WithLabelValues("push_approvals").Add(3)
+	m.RetentionPruneErrorTotal.WithLabelValues("audit").Inc()
+
+	scrape = scrapeMetrics(t, m)
+	mustContain(t, scrape, `sso_retention_pruned_total{subsystem="audit"} 42`)
+	mustContain(t, scrape, `sso_retention_pruned_total{subsystem="snapshot"} 7`)
+	mustContain(t, scrape, `sso_retention_pruned_total{subsystem="push_approvals"} 3`)
+	mustContain(t, scrape, `sso_retention_prune_errors_total{subsystem="audit"} 1`)
 }
 
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {

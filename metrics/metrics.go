@@ -54,6 +54,16 @@ type Metrics struct {
 	// the wire-stable strings totp/webauthn/push/etc, not per-user.
 	MFAChallengesTotal  *prometheus.CounterVec // labels: mfa_method
 	MFACompletionsTotal *prometheus.CounterVec // labels: mfa_method, outcome
+
+	// Retention scheduler observability. Single counter pair shared
+	// across the three subsystems (audit, snapshot, push_approvals)
+	// so operators can graph "what got pruned recently" with a
+	// single PromQL query. Bounded subsystem cardinality (3 known
+	// values). Operators alert on the errors series rising relative
+	// to the pruned series — sustained errors with no successes
+	// means retention is silently failing.
+	RetentionPrunedTotal     *prometheus.CounterVec // labels: subsystem
+	RetentionPruneErrorTotal *prometheus.CounterVec // labels: subsystem
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -142,6 +152,22 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "MFA verification outcomes at /auth/mfa, by mfa_method (totp/webauthn/push/...) and outcome (success/failure). Operators alert on a rising failure rate.",
 			},
 			[]string{LabelMFAMethod, LabelOutcome},
+		),
+
+		RetentionPrunedTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameRetentionPrunedTotal,
+				Help: "Rows deleted by background retention loops, by subsystem (audit/snapshot/push_approvals). Sum is total prunes since start; rate is throughput. Zero traffic when no retention loop is configured.",
+			},
+			[]string{LabelSubsystem},
+		),
+
+		RetentionPruneErrorTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameRetentionPruneErrTotal,
+				Help: "Retention prune calls that returned an error, by subsystem. Operators alert on a rising error rate relative to retention_pruned_total — sustained errors with no successes means retention is silently failing.",
+			},
+			[]string{LabelSubsystem},
 		),
 	}
 }
