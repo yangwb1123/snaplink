@@ -885,7 +885,12 @@ mfa:
     # their own gateway.
     push:
       backend: "memory"    # memory | sqlite
-      transport: "log"     # log (only ship-included)
+      # log: writes the approval id + subject to the structured log
+      # (dev / smoke-test). webhook: POSTs JSON to operator URL
+      # (see webhook: block below). Custom transports (FCM / APNs
+      # SDK) ship via cmd fork — the SDK's PushTransport interface
+      # is stable.
+      transport: "log"     # log | webhook
       poll_interval: 1s
       max_wait: 60s
       # Background cron-like prune of expired push approvals
@@ -896,6 +901,23 @@ mfa:
       sqlite:
         # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000"
         dsn: ""
+      # HTTP webhook delivery. The SSO server POSTs
+      # {approval_id, subject_id, metadata} as JSON to the URL;
+      # the operator's gateway translates to FCM/APNs/etc and
+      # calls /push/approval/:id/:decision (or SetStatus directly)
+      # to resolve. bearer_token sets Authorization; headers adds
+      # arbitrary extra headers; timeout bounds the per-attempt
+      # HTTP call; retry_* tunes exponential backoff.
+      webhook:
+        # url: "https://gateway.internal/push/notify"
+        url: ""
+        bearer_token: ""
+        headers: {}
+        # - X-Source: sso-server
+        timeout: 5s
+        retry_max_attempts: 3
+        retry_initial_backoff: 250ms
+        retry_max_backoff: 5s
       # Reference HTTP callback the SSO server mounts at
       # POST /push/approval/{id}/{decision} where decision is
       # approve|deny. Operators with their own gateway leave

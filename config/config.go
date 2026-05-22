@@ -148,12 +148,34 @@ type MFAProviderConfig struct {
 // SetStatus method and route it through their own gateway.
 type MFAPushConfig struct {
 	Backend       string                `yaml:"backend"`       // memory | sqlite
-	Transport     string                `yaml:"transport"`     // log (only ship-included)
+	Transport     string                `yaml:"transport"`     // log | webhook
 	PollInterval  time.Duration         `yaml:"poll_interval"` // 0 → SDK default
 	MaxWait       time.Duration         `yaml:"max_wait"`      // 0 → SDK default
 	SQLite        MFAPushSQLiteConfig   `yaml:"sqlite"`
 	PruneInterval time.Duration         `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
+	Webhook       MFAPushWebhookConfig  `yaml:"webhook"`        // used when transport=webhook
 	Callback      MFAPushCallbackConfig `yaml:"callback"`
+}
+
+// MFAPushWebhookConfig wires the HTTP webhook PushTransport. The
+// SSO server POSTs JSON {approval_id, subject_id, metadata} to the
+// configured URL; the operator's gateway translates to FCM/APNs/
+// SMS-proxy/etc and later calls /push/approval/:id/:decision (or
+// SetStatus directly) to resolve the approval.
+//
+// URL is required when transport=webhook. BearerToken sets
+// Authorization: Bearer; Headers sets arbitrary additional headers;
+// Timeout bounds the per-attempt HTTP call. RetryMaxAttempts /
+// RetryInitialBackoff / RetryMaxBackoff tune exponential backoff
+// (defaults: 3 / 250ms / 5s).
+type MFAPushWebhookConfig struct {
+	URL                 string            `yaml:"url"`
+	BearerToken         string            `yaml:"bearer_token"`
+	Headers             map[string]string `yaml:"headers"`
+	Timeout             time.Duration     `yaml:"timeout"`
+	RetryMaxAttempts    int               `yaml:"retry_max_attempts"`
+	RetryInitialBackoff time.Duration     `yaml:"retry_initial_backoff"`
+	RetryMaxBackoff     time.Duration     `yaml:"retry_max_backoff"`
 }
 
 type MFAPushSQLiteConfig struct {

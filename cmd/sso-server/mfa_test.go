@@ -572,7 +572,8 @@ func TestBuildMFA_PushKindRejectsUnknownBackend(t *testing.T) {
 }
 
 // TestBuildMFA_PushKindRejectsUnknownTransport covers the typo case
-// for the transport selector (only "log" ships today).
+// for the transport selector (log + webhook ship today; others
+// would surprise an operator into silent push-delivery failures).
 func TestBuildMFA_PushKindRejectsUnknownTransport(t *testing.T) {
 	_, _, _, _, _, err := buildMFA(config.MFAConfig{
 		Enabled: true,
@@ -584,6 +585,48 @@ func TestBuildMFA_PushKindRejectsUnknownTransport(t *testing.T) {
 	}, nil, nil, quietLogger())
 	if err == nil {
 		t.Fatal("want error on unknown push transport")
+	}
+}
+
+// TestBuildMFA_PushWebhookHappyPath proves transport=webhook with
+// a URL builds successfully. The transport itself is exercised in
+// defaultimpl/push_webhook_test.go.
+func TestBuildMFA_PushWebhookHappyPath(t *testing.T) {
+	provider, _, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{
+				Transport: "webhook",
+				Webhook: config.MFAPushWebhookConfig{
+					URL: "https://gateway.internal/push",
+				},
+			},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("provider nil with transport=webhook")
+	}
+}
+
+// TestBuildMFA_PushWebhookRequiresURL fails loud — operators who
+// flip transport=webhook without setting URL would otherwise get
+// silent push-delivery failures.
+func TestBuildMFA_PushWebhookRequiresURL(t *testing.T) {
+	_, _, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{Transport: "webhook"}, // URL missing
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err == nil {
+		t.Fatal("want error when webhook URL missing")
 	}
 }
 

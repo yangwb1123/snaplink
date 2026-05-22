@@ -736,8 +736,10 @@ the operator surface needs explanation:
   ≥2 / non-nested / non-dup `kinds`). Two-call providers (WebAuthn,
   Push) implement `MFABeginner` → `mfa_method_data[<method>]` in
   the `mfa_required` response. Disabled/unwired → RequireMFA decays
-  to Allow. Push transport ships log-only stub; operators fork cmd
-  for FCM/APNs/webhook against the stable `PushTransport` SPI. The
+  to Allow. Push transport: `log` (writes to structured log) or
+  `webhook` (POSTs JSON to operator URL — `mfa.provider.push.webhook.*`
+  for URL + auth + retry tuning). Custom transports (FCM/APNs
+  SDK) ship via cmd fork against the stable `PushTransport` SPI. The
   user-device callback that resolves push approvals (PENDING →
   APPROVED/DENIED) is operator-built against `PushApprovalStore.SetStatus`,
   OR cmd ships a reference handler at `POST /push/approval/:id/:decision`

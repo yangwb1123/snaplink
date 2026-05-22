@@ -1495,6 +1495,35 @@ func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFA
 // the optional PruneExpired loop. Error path: nil/nil/<err> when
 // backend / transport / SQLite validation fails — kind=push is a
 // misconfig if any of those components are absent.
+// buildPushWebhookTransport validates the webhook config + returns
+// the constructed transport. URL is required; everything else is
+// optional + defaults apply. Operators wiring transport=webhook
+// without a URL see a boot-time error rather than runtime delivery
+// failures.
+func buildPushWebhookTransport(cfg config.MFAPushWebhookConfig) (defaultimpl.PushTransport, error) {
+	if cfg.URL == "" {
+		return nil, errors.New("mfa.provider.push.webhook.url required when transport=webhook")
+	}
+	opts := []defaultimpl.PushWebhookOption{}
+	if cfg.BearerToken != "" {
+		opts = append(opts, defaultimpl.WithPushWebhookBearerToken(cfg.BearerToken))
+	}
+	for k, v := range cfg.Headers {
+		opts = append(opts, defaultimpl.WithPushWebhookHeader(k, v))
+	}
+	if cfg.Timeout > 0 {
+		opts = append(opts, defaultimpl.WithPushWebhookClient(&http.Client{Timeout: cfg.Timeout}))
+	}
+	if cfg.RetryMaxAttempts > 0 || cfg.RetryInitialBackoff > 0 || cfg.RetryMaxBackoff > 0 {
+		opts = append(opts, defaultimpl.WithPushWebhookRetry(
+			cfg.RetryMaxAttempts,
+			cfg.RetryInitialBackoff,
+			cfg.RetryMaxBackoff,
+		))
+	}
+	return defaultimpl.NewHTTPWebhookPushTransport(cfg.URL, opts...)
+}
+
 func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAProvider, *sqlitestores.PushApprovalStore, error) {
 	// Backend: memory for single-replica; sqlite for cluster.
 	var (
@@ -1519,7 +1548,9 @@ func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAP
 		return nil, nil, fmt.Errorf("unknown mfa.provider.push.backend %q (supported: memory, sqlite)", backend)
 	}
 
-	// Transport: log only (operators fork for real push delivery).
+	// Transport: log (default; writes to log) or webhook (POSTs to
+	// operator-supplied URL via HTTPWebhookPushTransport). Custom
+	// transports (FCM/APNs SDK) ship via SDK fork.
 	transport := strings.ToLower(strings.TrimSpace(cfg.Transport))
 	if transport == "" {
 		transport = "log"
@@ -1528,12 +1559,18 @@ func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAP
 	switch transport {
 	case "log":
 		pushTransport = defaultimpl.PushTransportFunc(func(_ context.Context, id, subject string, _ map[string]string) error {
-			logger.Info("push approval delivered (log-only transport — fork cmd for real push)",
+			logger.Info("push approval delivered (log-only transport — set transport=webhook for real push)",
 				"approval_id", id, "subject", subject)
 			return nil
 		})
+	case "webhook":
+		t, err := buildPushWebhookTransport(cfg.Webhook)
+		if err != nil {
+			return nil, nil, err
+		}
+		pushTransport = t
 	default:
-		return nil, nil, fmt.Errorf("unknown mfa.provider.push.transport %q (supported: log)", transport)
+		return nil, nil, fmt.Errorf("unknown mfa.provider.push.transport %q (supported: log, webhook)", transport)
 	}
 
 	var opts []defaultimpl.PushMFAOption
