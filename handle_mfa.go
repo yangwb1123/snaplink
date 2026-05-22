@@ -69,12 +69,38 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 		s.auditor.Record(ctx.Request().Context(), evt)
 	}
 
+	methods := s.mfaProvider.SupportedMethods()
 	resp := map[string]any{
 		KeyError:          ErrMFARequired, // top-level error field so SPAs treating non-2xx-but-pending uniformly still surface it
 		KeyMFAChallengeID: id,
-		KeyMFAMethods:     s.mfaProvider.SupportedMethods(),
+		KeyMFAMethods:     methods,
 		KeyIss:            s.resolveIssuer(ctx),
 	}
+
+	// MFABeginner dispatch: providers needing server-side state
+	// (WebAuthn challenge issuance, push notification fan-out, …)
+	// get one Begin call per supported method. Results are bucketed
+	// per method so clients picking method X read only their slice.
+	// Per-method failure is non-fatal — the method stays in
+	// mfa_methods but without an attached method_data entry; the
+	// client can retry out-of-band or pick a different factor.
+	if beginner, ok := s.mfaProvider.(MFABeginner); ok && len(methods) > 0 {
+		methodData := make(map[string]map[string]string, len(methods))
+		for _, method := range methods {
+			data, berr := beginner.Begin(ctx.Request().Context(), result.UserID, method)
+			if berr != nil {
+				s.logger.Error("mfa: begin failed", "method", method, "user", result.UserID, "error", berr)
+				continue
+			}
+			if len(data) > 0 {
+				methodData[method] = data
+			}
+		}
+		if len(methodData) > 0 {
+			resp[KeyMFAMethodData] = methodData
+		}
+	}
+
 	if req.State != "" {
 		resp[KeyState] = req.State
 	}

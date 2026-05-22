@@ -106,9 +106,18 @@ const (
 	// KeyMFAMethods is the array of supported factor names; SPAs render
 	// UI per entry. KeyMFAMethod is the body field on /auth/mfa naming
 	// which factor the caller is responding with.
+	//
+	// KeyMFAMethodData carries per-method server-issued challenge data
+	// from providers that implement [MFABeginner] — e.g. WebAuthn's
+	// CredentialAssertion options + ceremony session id. Shape is
+	// {method_name: {key: value}}; methods that don't need Begin
+	// state are absent. Clients echo the relevant keys back into the
+	// /auth/mfa params payload so the server can match ceremony state
+	// during Verify.
 	KeyMFAChallengeID = "mfa_challenge_id"
 	KeyMFAMethods     = "mfa_methods"
 	KeyMFAMethod      = "mfa_method"
+	KeyMFAMethodData  = "mfa_method_data"
 
 	// ScopeOpenID triggers OIDC ID Token issuance when an IDTokenIssuer
 	// is wired (OIDC Core §3.1.2.1).

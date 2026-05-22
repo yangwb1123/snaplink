@@ -335,6 +335,185 @@ func TestMFA_NoProviderWired_FallsThroughToAllow(t *testing.T) {
 	}
 }
 
+// stubBeginnerProvider implements both sso.MFAProvider and
+// sso.MFABeginner so the dispatch path can be exercised without
+// pulling in WebAuthn's go-jose dependency tree. methods is the
+// SupportedMethods return; beginErr controls whether Begin succeeds
+// (returns the data map) or errors (skipped non-fatally per the SPI
+// contract). verifyErr drives Verify the same way.
+type stubBeginnerProvider struct {
+	methods   []string
+	beginData map[string]map[string]string // method → key/value blob
+	beginErr  map[string]error             // method → forced Begin error
+	verifyErr error                        // forced Verify error
+}
+
+func (s *stubBeginnerProvider) SupportedMethods() []string { return s.methods }
+func (s *stubBeginnerProvider) Verify(_ context.Context, _, _ string, _ map[string]string) error {
+	return s.verifyErr
+}
+func (s *stubBeginnerProvider) Begin(_ context.Context, _, method string) (map[string]string, error) {
+	if err, ok := s.beginErr[method]; ok {
+		return nil, err
+	}
+	return s.beginData[method], nil
+}
+
+// buildMFAHarnessWithProvider mirrors buildMFAHarness but lets the
+// caller supply a custom MFAProvider — exercises Beginner dispatch
+// + multi-method paths without inheriting buildMFAHarness's hard-
+// coded TOTP wiring.
+func buildMFAHarnessWithProvider(t *testing.T, provider sso.MFAProvider) (*httptest.Server, *audit.MemorySink) {
+	t.Helper()
+
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("mfa-test"))
+	sessions := defaultimpl.NewMemorySessionManager()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "alice"})
+
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID:                    "mfa-app",
+		AllowedAuthenticators: []string{authenticators.MethodPassword},
+		TokenStrategy:         "jwt",
+		Active:                true,
+	})
+
+	pwAuth := authenticators.NewPasswordAuthenticator(
+		authenticators.PasswordVerifierFunc(func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if u == "alice" && p == "s3cret" {
+				return &sso.AuthResult{UserID: "alice"}, nil
+			}
+			return nil, errors.New("bad creds")
+		}),
+	)
+
+	prov := permissions.NewMemoryProvider()
+	sink := audit.NewMemorySink(50)
+	recorder := audit.New(sink)
+	scorer := newStubScorer(sso.DecisionRequireMFA)
+	store := defaultimpl.NewMemoryMFAChallengeStore()
+
+	srv := sso.NewServer(
+		sso.WithIssuer("mfa-test"),
+		sso.WithUserProvider(users),
+		sso.WithClientStore(clients),
+		sso.WithSessionManager(sessions),
+		sso.WithAuthenticator(pwAuth),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithPermissionProvider(prov),
+		sso.WithAuditRecorder(recorder),
+		sso.WithRiskScorer(scorer),
+		sso.WithMFAProvider(provider),
+		sso.WithMFAChallengeStore(store, 0),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+	return httpSrv, sink
+}
+
+// TestMFA_BeginnerDispatch_PopulatesMethodData proves that when a
+// provider implements MFABeginner, the mfa_required response carries
+// the per-method server-issued challenge data under mfa_method_data.
+// This is what unblocks two-call factors like WebAuthn — the client
+// needs the assertion options + session id before it can sign.
+func TestMFA_BeginnerDispatch_PopulatesMethodData(t *testing.T) {
+	provider := &stubBeginnerProvider{
+		methods: []string{"factor-a", "factor-b"},
+		beginData: map[string]map[string]string{
+			"factor-a": {"challenge": "ch-a-base64", "session": "sess-a"},
+			"factor-b": {"challenge": "ch-b-base64", "session": "sess-b"},
+		},
+	}
+	srv, _ := buildMFAHarnessWithProvider(t, provider)
+
+	_, body := loginMFA(t, srv)
+	if body["error"] != sso.ErrMFARequired {
+		t.Fatalf("error = %v want mfa_required", body["error"])
+	}
+	raw, ok := body["mfa_method_data"].(map[string]any)
+	if !ok {
+		t.Fatalf("mfa_method_data missing or wrong type; body=%v", body)
+	}
+	for _, method := range []string{"factor-a", "factor-b"} {
+		bucket, ok := raw[method].(map[string]any)
+		if !ok {
+			t.Errorf("mfa_method_data[%q] missing or wrong type: %v", method, raw[method])
+			continue
+		}
+		if bucket["challenge"] != "ch-"+method[len(method)-1:]+"-base64" {
+			t.Errorf("mfa_method_data[%q][challenge] = %v, want ch-%s-base64", method, bucket["challenge"], method[len(method)-1:])
+		}
+		if bucket["session"] != "sess-"+method[len(method)-1:] {
+			t.Errorf("mfa_method_data[%q][session] = %v, want sess-%s", method, bucket["session"], method[len(method)-1:])
+		}
+	}
+}
+
+// TestMFA_BeginnerOptional_TOTPHasNoMethodData proves the dispatch is
+// strictly opt-in via interface assertion — the shipped TOTPMFAProvider
+// doesn't need Begin (codes are computed client-side from the shared
+// secret) and the response intentionally omits mfa_method_data.
+// Back-compat: existing TOTP-only deployments see no wire change.
+func TestMFA_BeginnerOptional_TOTPHasNoMethodData(t *testing.T) {
+	srv, _, _ := buildMFAHarness(t)
+	_, body := loginMFA(t, srv)
+	if body["error"] != sso.ErrMFARequired {
+		t.Fatalf("error = %v want mfa_required", body["error"])
+	}
+	if _, present := body["mfa_method_data"]; present {
+		t.Errorf("mfa_method_data should be absent for TOTP-only provider; body=%v", body)
+	}
+}
+
+// TestMFA_BeginnerError_NonFatal_MethodStillListed proves a Begin
+// failure for one method doesn't fault the whole mfa_required
+// response — the method stays in mfa_methods, just without an
+// attached method_data entry. The client can retry the begin path
+// out-of-band or pick a different factor.
+func TestMFA_BeginnerError_NonFatal_MethodStillListed(t *testing.T) {
+	provider := &stubBeginnerProvider{
+		methods:   []string{"good", "broken"},
+		beginData: map[string]map[string]string{"good": {"k": "v"}},
+		beginErr:  map[string]error{"broken": errors.New("boom")},
+	}
+	srv, _ := buildMFAHarnessWithProvider(t, provider)
+
+	_, body := loginMFA(t, srv)
+	methods, _ := body["mfa_methods"].([]any)
+	if len(methods) != 2 {
+		t.Fatalf("mfa_methods = %v want both methods listed even when one Begin fails", methods)
+	}
+	data, _ := body["mfa_method_data"].(map[string]any)
+	if data == nil {
+		t.Fatal("mfa_method_data missing — Begin failure shouldn't suppress the good method's data")
+	}
+	if _, ok := data["good"]; !ok {
+		t.Errorf("mfa_method_data[good] missing despite successful Begin")
+	}
+	if _, ok := data["broken"]; ok {
+		t.Errorf("mfa_method_data[broken] unexpectedly present despite Begin failure: %v", data["broken"])
+	}
+}
+
+// TestMFA_BeginnerAllErrors_OmitsMethodDataKey proves the harness
+// doesn't emit an empty mfa_method_data object when every method's
+// Begin fails — the key should be absent (smaller response, simpler
+// client parsing).
+func TestMFA_BeginnerAllErrors_OmitsMethodDataKey(t *testing.T) {
+	provider := &stubBeginnerProvider{
+		methods:  []string{"a"},
+		beginErr: map[string]error{"a": errors.New("nope")},
+	}
+	srv, _ := buildMFAHarnessWithProvider(t, provider)
+
+	_, body := loginMFA(t, srv)
+	if _, present := body["mfa_method_data"]; present {
+		t.Errorf("mfa_method_data unexpectedly present when every Begin failed: %v", body["mfa_method_data"])
+	}
+}
+
 // sinkEvents fetches every event the MemorySink holds via the standard
 // Query SPI (Snapshot doesn't exist on MemorySink; use Limit:0 → server
 // default which is plenty for tests that only emit a handful).

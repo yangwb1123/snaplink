@@ -41,6 +41,35 @@ type MFAProvider interface {
 	Verify(ctx context.Context, subjectID, method string, params map[string]string) error
 }
 
+// MFABeginner is an optional interface [MFAProvider] implementations
+// satisfy when their factor requires server-side state before the
+// client can construct the /auth/mfa response. The canonical example
+// is WebAuthn — the client cannot sign an assertion until the server
+// has chosen a fresh per-ceremony challenge and bound it to a session.
+//
+// When wired, the SSO server calls Begin during the mfa_required
+// response construction (after challenge persistence, before writing
+// the response). The returned map is forwarded to the client under
+// the response's mfa_method_data["<method>"] bucket; clients echo
+// the relevant keys back into the /auth/mfa params payload so the
+// provider's Verify can resume the ceremony.
+//
+// Providers that don't need server-side setup (TOTP, simple OTP, an
+// IdP redirect that the client initiates itself) MUST NOT implement
+// this interface — the SSO server type-asserts so unimplemented is
+// the default. Begin failures are non-fatal: the method is still
+// listed in mfa_methods, just without an attached method_data entry
+// (client can retry the Begin out-of-band if it wants).
+//
+// Begin MUST be safe to call before any user interaction has
+// occurred for the method — the user picks which method they want
+// AFTER seeing the mfa_required response, so the server pre-issues
+// for every method whose provider supports Begin. Bounded resource
+// consumption is the implementer's responsibility.
+type MFABeginner interface {
+	Begin(ctx context.Context, subjectID, method string) (map[string]string, error)
+}
+
 // MFAChallenge is the persisted in-flight MFA state between the
 // initial /auth/login response (which returns mfa_required + the
 // challenge ID) and the /auth/mfa completion call. Bound to a single
