@@ -541,6 +541,10 @@ func WithTracingMiddleware() Option {
 
 // WithRequestIDMiddleware is a back-compat alias for WithTracingMiddleware.
 // New code should call WithTracingMiddleware directly.
+//
+// Deprecated: use WithTracingMiddleware. The middleware was renamed once
+// it grew W3C Traceparent propagation alongside the original X-Request-Id
+// stamping; the name is kept here so existing call sites still compile.
 func WithRequestIDMiddleware() Option { return WithTracingMiddleware() }
 
 // WithPermissionProvider enables the per-user permission/role/menu lookup
