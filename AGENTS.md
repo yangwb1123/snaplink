@@ -739,7 +739,11 @@ the operator surface needs explanation:
   to Allow. Push transport ships log-only stub; operators fork cmd
   for FCM/APNs/webhook against the stable `PushTransport` SPI. The
   user-device callback that resolves push approvals (PENDING →
-  APPROVED/DENIED) is operator-built against `PushApprovalStore.SetStatus`.
+  APPROVED/DENIED) is operator-built against `PushApprovalStore.SetStatus`,
+  OR cmd ships a reference handler at `POST /push/approval/:id/:decision`
+  toggleable via `mfa.provider.push.callback.{enabled,bearer_token,allowed_cidrs}`
+  — bearer + IP allowlist (one or both); empty both = open (only safe
+  behind an auth-enforcing edge).
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.

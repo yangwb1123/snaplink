@@ -1,0 +1,220 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"path"
+	"strings"
+
+	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/defaultimpl"
+)
+
+// pushCallbackDeps bundles the dependencies the push approval
+// callback handler needs to mark approvals APPROVED / DENIED.
+// Constructed from the cmd MFA wiring when
+// mfa.provider.push.callback.enabled is true.
+//
+// User-device callbacks are deployment-specific in real
+// production setups (mobile app proxies through the operator's
+// gateway, transport-specific signing, etc) — this handler is the
+// reference impl. Operators wanting custom auth / payload shapes
+// fork it; the SDK's PushApprovalStore.SetStatus is the stable
+// seam.
+type pushCallbackDeps struct {
+	Store        defaultimpl.PushApprovalStore
+	BearerToken  string       // empty disables bearer-token check
+	AllowedCIDRs []*net.IPNet // empty disables IP gate
+	Logger       sso.Logger
+}
+
+// buildPushCallbackDeps assembles pushCallbackDeps from the YAML
+// config — parses the CIDR strings into *net.IPNet (failing loud
+// on bad input rather than silently dropping the entry).
+func buildPushCallbackDeps(cfg config.MFAPushCallbackConfig, store defaultimpl.PushApprovalStore, logger sso.Logger) (*pushCallbackDeps, error) {
+	allowed := make([]*net.IPNet, 0, len(cfg.AllowedCIDRs))
+	for _, c := range cfg.AllowedCIDRs {
+		_, ipnet, err := net.ParseCIDR(strings.TrimSpace(c))
+		if err != nil {
+			return nil, fmt.Errorf("mfa.provider.push.callback.allowed_cidrs[%q]: %w", c, err)
+		}
+		allowed = append(allowed, ipnet)
+	}
+	return &pushCallbackDeps{
+		Store:        store,
+		BearerToken:  cfg.BearerToken,
+		AllowedCIDRs: allowed,
+		Logger:       logger,
+	}, nil
+}
+
+// mountPushCallbackRoute registers POST /push/approval/{id}/{decision}
+// on the SSO router. decision MUST be approve | deny. The handler:
+//
+//  1. Validates the configured bearer token (when set) — constant-
+//     time compare.
+//  2. Validates the configured IP allowlist (when set) — parses
+//     RemoteAddr OR the first X-Forwarded-For hop. Trust the XFF
+//     hop only if the deploy has a trusted reverse proxy stripping
+//     untrusted client-supplied headers; same threat model as the
+//     rest of the cmd's XFF surfaces.
+//  3. Calls Store.SetStatus(id, status).
+//  4. Returns 204 on success, 400/401/403/404/409 for the
+//     enumerated failure modes.
+//
+// Returns nil when deps is nil (operator disabled the callback).
+func mountPushCallbackRoute(srv *sso.Server, deps *pushCallbackDeps) error {
+	if deps == nil || deps.Store == nil {
+		return nil
+	}
+	const route = "/push/approval/:id/:decision"
+	return srv.Handle(http.MethodPost, route, pushCallbackHandler(deps))
+}
+
+func pushCallbackHandler(deps *pushCallbackDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Bearer-token check first — short-circuit before doing
+		// any work. Constant-time compare via subtleEqualByte.
+		if deps.BearerToken != "" {
+			hdr := r.Header.Get("Authorization")
+			if !strings.HasPrefix(hdr, "Bearer ") {
+				writePushCallbackError(w, http.StatusUnauthorized, "missing_bearer", "Authorization: Bearer required")
+				return
+			}
+			supplied := strings.TrimPrefix(hdr, "Bearer ")
+			if !constantTimeEq(supplied, deps.BearerToken) {
+				writePushCallbackError(w, http.StatusUnauthorized, "invalid_bearer", "bearer token mismatch")
+				return
+			}
+		}
+		// IP allowlist.
+		if len(deps.AllowedCIDRs) > 0 {
+			ip := callbackClientIP(r)
+			if ip == nil {
+				writePushCallbackError(w, http.StatusForbidden, "ip_not_allowed", "could not parse client IP")
+				return
+			}
+			allowed := false
+			for _, cidr := range deps.AllowedCIDRs {
+				if cidr.Contains(ip) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				writePushCallbackError(w, http.StatusForbidden, "ip_not_allowed", "source IP not in allowlist")
+				return
+			}
+		}
+
+		// Decision routing — path params via the SDK router's
+		// :param syntax. Use path.Base on the URL.Path as a
+		// fallback for routers that don't expose params via
+		// context (current SDK does, but be defensive).
+		id, decision := parsePushCallbackPath(r.URL.Path)
+		if id == "" || decision == "" {
+			writePushCallbackError(w, http.StatusBadRequest, "invalid_path", "expected /push/approval/{id}/{decision}")
+			return
+		}
+		var status defaultimpl.PushApprovalStatus
+		switch decision {
+		case "approve":
+			status = defaultimpl.PushApprovalApproved
+		case "deny":
+			status = defaultimpl.PushApprovalDenied
+		default:
+			writePushCallbackError(w, http.StatusBadRequest, "invalid_decision", "decision must be approve|deny")
+			return
+		}
+
+		err := deps.Store.SetStatus(r.Context(), id, status)
+		switch {
+		case err == nil:
+			w.WriteHeader(http.StatusNoContent)
+		case errors.Is(err, defaultimpl.ErrPushApprovalNotFound):
+			writePushCallbackError(w, http.StatusNotFound, "not_found", "approval id unknown or expired")
+		case errors.Is(err, defaultimpl.ErrPushApprovalResolved):
+			writePushCallbackError(w, http.StatusConflict, "already_resolved", "approval already approved/denied")
+		default:
+			if deps.Logger != nil {
+				deps.Logger.Error("push callback SetStatus", "error", err, "approval_id", id, "decision", decision)
+			}
+			writePushCallbackError(w, http.StatusInternalServerError, "server_error", "internal error")
+		}
+	}
+}
+
+// parsePushCallbackPath extracts (id, decision) from
+// /push/approval/{id}/{decision}. Returns ("", "") when the path
+// shape doesn't match.
+func parsePushCallbackPath(urlPath string) (string, string) {
+	// Strip a trailing slash + the /push/approval prefix.
+	urlPath = strings.TrimSuffix(urlPath, "/")
+	const prefix = "/push/approval/"
+	if !strings.HasPrefix(urlPath, prefix) {
+		return "", ""
+	}
+	rest := urlPath[len(prefix):]
+	if rest == "" {
+		return "", ""
+	}
+	// Take the LAST path component as decision; everything before
+	// it (after the prefix) is the id. Use path.Split.
+	dir, file := path.Split(rest)
+	if file == "" || dir == "" {
+		return "", ""
+	}
+	return strings.TrimSuffix(dir, "/"), file
+}
+
+// callbackClientIP returns the request's client IP — XFF-aware,
+// falls back to RemoteAddr. Same threat model as the rest of the
+// cmd's XFF surfaces (trust the first hop iff the operator has a
+// trusted reverse proxy stripping untrusted headers).
+func callbackClientIP(r *http.Request) net.IP {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.IndexByte(xff, ','); idx > 0 {
+			xff = xff[:idx]
+		}
+		if ip := net.ParseIP(strings.TrimSpace(xff)); ip != nil {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return net.ParseIP(host)
+}
+
+// writePushCallbackError emits a small JSON envelope matching the
+// rest of cmd's webauthn/MFA error shape so SPAs that already
+// handle those don't need a special case for push.
+func writePushCallbackError(w http.ResponseWriter, status int, code, desc string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body, _ := json.Marshal(map[string]string{
+		"error":             code,
+		"error_description": desc,
+	})
+	_, _ = fmt.Fprintln(w, string(body))
+}
+
+// constantTimeEq compares two strings in constant time WRT their
+// length (length mismatch is observable, but the per-byte compare
+// is not). Used for bearer-token check to keep timing attacks off
+// the table.
+func constantTimeEq(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var diff byte
+	for i := 0; i < len(a); i++ {
+		diff |= a[i] ^ b[i]
+	}
+	return diff == 0
+}

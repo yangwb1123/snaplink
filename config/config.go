@@ -147,16 +147,34 @@ type MFAProviderConfig struct {
 // handler against the SDK's [defaultimpl.PushApprovalStore]
 // SetStatus method and route it through their own gateway.
 type MFAPushConfig struct {
-	Backend       string              `yaml:"backend"`       // memory | sqlite
-	Transport     string              `yaml:"transport"`     // log (only ship-included)
-	PollInterval  time.Duration       `yaml:"poll_interval"` // 0 → SDK default
-	MaxWait       time.Duration       `yaml:"max_wait"`      // 0 → SDK default
-	SQLite        MFAPushSQLiteConfig `yaml:"sqlite"`
-	PruneInterval time.Duration       `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
+	Backend       string                `yaml:"backend"`       // memory | sqlite
+	Transport     string                `yaml:"transport"`     // log (only ship-included)
+	PollInterval  time.Duration         `yaml:"poll_interval"` // 0 → SDK default
+	MaxWait       time.Duration         `yaml:"max_wait"`      // 0 → SDK default
+	SQLite        MFAPushSQLiteConfig   `yaml:"sqlite"`
+	PruneInterval time.Duration         `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
+	Callback      MFAPushCallbackConfig `yaml:"callback"`
 }
 
 type MFAPushSQLiteConfig struct {
 	DSN string `yaml:"dsn"`
+}
+
+// MFAPushCallbackConfig opts into the reference HTTP callback the
+// SSO server mounts at POST /push/approval/{id}/{decision} where
+// decision is approve|deny. Operators who already proxy through
+// their own gateway can leave Enabled=false and call
+// PushApprovalStore.SetStatus from their own handler.
+//
+// Authentication: BearerToken + AllowedCIDRs. Wire one or both —
+// a token alone is fine for trusted internal networks; an IP
+// allowlist alone for VPC-only deployments. Disabled (empty
+// both) → handler accepts ALL requests; only safe behind an edge
+// that enforces auth.
+type MFAPushCallbackConfig struct {
+	Enabled      bool     `yaml:"enabled"`
+	BearerToken  string   `yaml:"bearer_token"`
+	AllowedCIDRs []string `yaml:"allowed_cidrs"`
 }
 
 // MFAChallengeConfig selects the MFAChallengeStore backend + per-

@@ -240,6 +240,11 @@ type app struct {
 	pushPruneCancel context.CancelFunc
 	pushPruneDone   <-chan struct{}
 
+	// pushApprovalStore is the SQLite-backed handle (or nil for
+	// memory backend / no push factor). Held so buildHTTPHandler
+	// can wire the reference callback handler against it.
+	pushApprovalStore defaultimpl.PushApprovalStore
+
 	// metrics handle is held so subsystems wired after the SSO
 	// server (e.g. WebAuthn route mounting in buildHTTPHandler)
 	// can emit on their own counters. Nil when cfg.Metrics.Enabled
@@ -489,6 +494,23 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 			"login_begin", pathWebAuthnLoginBegin,
 			"login_finish", pathWebAuthnLoginFinish,
 		)
+	}
+	// Push approval callback (reference impl). Operators with a
+	// custom gateway leave callback.enabled=false and SetStatus
+	// directly from their own handler.
+	if cfg.MFA.Provider.Push.Callback.Enabled && a.pushApprovalStore != nil {
+		callbackDeps, err := buildPushCallbackDeps(cfg.MFA.Provider.Push.Callback, a.pushApprovalStore, logger)
+		if err != nil {
+			return nil, fmt.Errorf("push callback: %w", err)
+		}
+		if err := mountPushCallbackRoute(a.server, callbackDeps); err != nil {
+			return nil, fmt.Errorf("mount push callback: %w", err)
+		}
+		logger.Info("push approval callback mounted at /push/approval/:id/:decision",
+			"bearer_token_required", callbackDeps.BearerToken != "",
+			"ip_allowlist_size", len(callbackDeps.AllowedCIDRs))
+	} else if cfg.MFA.Provider.Push.Callback.Enabled {
+		logger.Info("push callback.enabled=true but push backend not configured — callback mount skipped")
 	}
 	// Wrap base with the admin middleware so /api/v1/audit/* and
 	// /api/v1/netpolicy/policies* + /classify get the same Bearer +
@@ -2544,9 +2566,21 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		snapshotRetentionDone:   snapshotRetentionDone,
 		pushPruneCancel:         pushPruneCancel,
 		pushPruneDone:           pushPruneDone,
+		pushApprovalStore:       pushApprovalStoreIface(pushApprovalStore),
 		metrics:                 metricsRegistry,
 		netStop:                 netStop,
 	}, nil
+}
+
+// pushApprovalStoreIface adapts the sqlite-typed handle into the
+// defaultimpl interface — nil handle in → nil interface out so the
+// callback wiring's nil-check works (a typed-nil-in-interface
+// would slip past it).
+func pushApprovalStoreIface(s *sqlitestores.PushApprovalStore) defaultimpl.PushApprovalStore {
+	if s == nil {
+		return nil
+	}
+	return s
 }
 
 // runPushApprovalPrune wakes every interval and calls

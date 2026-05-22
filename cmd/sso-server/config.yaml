@@ -891,11 +891,24 @@ mfa:
       # Background cron-like prune of expired push approvals
       # (PushApprovalStore.PruneExpired). SQLite backend only —
       # the memory store self-prunes on Get via expiry check.
-      # 0 disables; positive value enables a background goroutine.
-      prune_interval: 0
+      # 0s disables; positive value enables a background goroutine.
+      prune_interval: 0s
       sqlite:
         # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000"
         dsn: ""
+      # Reference HTTP callback the SSO server mounts at
+      # POST /push/approval/{id}/{decision} where decision is
+      # approve|deny. Operators with their own gateway leave
+      # enabled=false and call PushApprovalStore.SetStatus from
+      # their custom handler. Auth: bearer_token + allowed_cidrs;
+      # wire one or both, or accept ALL requests (only safe behind
+      # an edge enforcing auth).
+      callback:
+        enabled: false
+        bearer_token: ""
+        allowed_cidrs: []
+        # - "10.0.0.0/8"
+        # - "192.168.1.0/24"
   challenge:
     backend: "memory"      # memory | sqlite
     ttl: 5m                # 0 = SDK default (5m)
