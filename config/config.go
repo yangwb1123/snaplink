@@ -98,9 +98,9 @@ type MFAConfig struct {
 }
 
 // MFAProviderConfig selects the step-up factor implementation.
-// "totp" and "webauthn" ship as YAML-toggleable kinds; richer
-// providers (push, IdP step-up) ship in the SDK and embedders wire
-// them via [sso.WithMFAProvider] directly.
+// "totp", "webauthn", and "push" ship as YAML-toggleable kinds;
+// richer providers (IdP step-up, hardware OTP) ship in the SDK
+// and embedders wire them via [sso.WithMFAProvider] directly.
 //
 // kind=multi composes several leaf kinds via the SDK's
 // [defaultimpl.MultiMFAProvider] — operators wanting concurrent
@@ -108,9 +108,54 @@ type MFAConfig struct {
 // so users with a registered authenticator get the WebAuthn flow
 // while users without one fall back to TOTP. Kinds dedup at
 // construction; nested multi is rejected (no recursion).
+//
+// kind=push activates the reference [defaultimpl.PushMFAProvider]
+// shipped with this binary — Begin records a PENDING approval and
+// invokes the configured transport (today: log-only stub; operators
+// fork cmd to drop in FCM/APNs/webhook). Verify polls the approval
+// store until the user's device callback resolves the entry. See
+// MFAPushConfig + cmd buildPushMFAProvider for the wiring.
 type MFAProviderConfig struct {
-	Kind  string   `yaml:"kind"`
-	Kinds []string `yaml:"kinds"` // used when Kind=multi
+	Kind  string        `yaml:"kind"`
+	Kinds []string      `yaml:"kinds"` // used when Kind=multi
+	Push  MFAPushConfig `yaml:"push"`  // used when Kind=push (or in Kinds)
+}
+
+// MFAPushConfig wires the push-notification MFA factor. Backend
+// selects the PushApprovalStore implementation: memory for single-
+// replica dev/demo; sqlite for cluster-shared state (Begin on
+// replica A → callback on replica B → Verify on replica C all
+// see the same approval row).
+//
+// Transport selects how the approval id reaches the user's device.
+// "log" is the default reference transport — it writes the
+// approval id + subject to the server's structured log, matching
+// the SMS/email "stub" pattern. Production deployments fork cmd to
+// drop in FCM/APNs/webhook; the SDK's PushTransport interface is
+// stable.
+//
+// PollInterval and MaxWait tune the Verify polling cadence + the
+// total wait the server holds /auth/mfa open. MaxWait MUST be <=
+// the parent MFAChallengeTTL; otherwise the challenge expires
+// mid-Verify and operators see ErrMFAChallengeNotFound instead of
+// ErrPushApprovalTimeout. cmd validates this at boot.
+//
+// The user-device callback that resolves a PushApproval (PENDING
+// → APPROVED/DENIED) is intentionally NOT shipped from cmd —
+// authentication, transport-specific deep-link handling, and the
+// callback URL itself are operator-decisions. Operators build the
+// handler against the SDK's [defaultimpl.PushApprovalStore]
+// SetStatus method and route it through their own gateway.
+type MFAPushConfig struct {
+	Backend      string              `yaml:"backend"`       // memory | sqlite
+	Transport    string              `yaml:"transport"`     // log (only ship-included)
+	PollInterval time.Duration       `yaml:"poll_interval"` // 0 → SDK default
+	MaxWait      time.Duration       `yaml:"max_wait"`      // 0 → SDK default
+	SQLite       MFAPushSQLiteConfig `yaml:"sqlite"`
+}
+
+type MFAPushSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // MFAChallengeConfig selects the MFAChallengeStore backend + per-

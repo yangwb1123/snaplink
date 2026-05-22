@@ -708,24 +708,31 @@ the operator surface needs explanation:
   fan-out set across the cluster.
 - **webauthn.storage.{users,sessions}.backend(memory|sqlite)**.
 - **mfa** — opts into step-up orchestration gated by Risk's
-  `DecisionRequireMFA`. `provider.kind=totp` reuses the
-  `authenticators.totp` secret store + skew (single enrollment, two
-  consumer roles); `kind=webauthn` reuses the `webauthn.enabled`
-  Helper (UserStore + SessionStore + RP config — same enrollment as
-  primary `/webauthn/login`); `kind=multi` composes several leaf
-  kinds via `defaultimpl.MultiMFAProvider`, listed under
-  `provider.kinds:` — operators offering concurrent TOTP fallback +
-  WebAuthn primary use this. `challenge.backend(memory|sqlite)`
-  shares in-flight MFA challenges across replicas. Disabled or
-  unwired → RequireMFA decays to Allow (back-compat). cmd refuses
-  `kind=totp` unless `authenticators.totp.enabled=true`,
-  `kind=webauthn` unless `webauthn.enabled=true` (shared-store
-  contract), and `kind=multi` with empty / single-entry / duplicate
-  / nested-multi `kinds` lists. The WebAuthn provider implements
-  [MFABeginner] so the `mfa_required` response surfaces
-  `mfa_method_data["webauthn"] = {options, session}` for the client
-  to feed to `navigator.credentials.get`; multi inherits this via
-  the composite's MFABeginner.
+  `DecisionRequireMFA`. Four `provider.kind` values: `totp` reuses
+  the `authenticators.totp` secret store + skew (single enrollment,
+  two consumer roles); `webauthn` reuses the `webauthn.enabled`
+  Helper (UserStore + SessionStore + RP config — same enrollment
+  as primary `/webauthn/login`); `push` wires the reference
+  `defaultimpl.PushMFAProvider` with `push.backend(memory|sqlite)`
+  and `push.transport=log` (operators fork cmd for FCM/APNs/webhook
+  — the SDK's `PushTransport` interface is stable); `multi`
+  composes several leaf kinds via `defaultimpl.MultiMFAProvider`,
+  listed under `provider.kinds:` — operators offering concurrent
+  TOTP fallback + WebAuthn primary use this.
+  `challenge.backend(memory|sqlite)` shares in-flight MFA
+  challenges across replicas. Disabled or unwired → RequireMFA
+  decays to Allow (back-compat). cmd refuses `kind=totp` unless
+  `authenticators.totp.enabled=true`, `kind=webauthn` unless
+  `webauthn.enabled=true`, `kind=push` with unknown
+  backend/transport or sqlite without DSN, and `kind=multi` with
+  empty / single-entry / duplicate / nested-multi `kinds` lists.
+  Two-call providers (WebAuthn, Push) implement [MFABeginner] so
+  the `mfa_required` response surfaces
+  `mfa_method_data["<method>"] = {...}` for the client; multi
+  inherits this via the composite's MFABeginner. Push-approval
+  user-device callbacks (PENDING → APPROVED/DENIED) are NOT
+  shipped from cmd — operators build the handler against the
+  SDK's `PushApprovalStore.SetStatus`.
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.

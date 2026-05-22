@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/defaultimpl"
 )
 
 // TestBuildMFA_DisabledReturnsZeroes proves cmd skips MFA wiring
@@ -427,5 +428,163 @@ func TestBuildMFA_MultiPropagatesInnerKindError(t *testing.T) {
 	}, totpAuth, nil, quietLogger()) // webauthnHelper=nil
 	if err == nil {
 		t.Fatal("want error when inner webauthn kind has no helper")
+	}
+}
+
+// TestBuildMFA_PushKindWithMemoryStore proves kind=push wires the
+// reference PushMFAProvider with the default log transport + in-
+// process MemoryPushApprovalStore. Backend="" → memory fallthrough.
+func TestBuildMFA_PushKindWithMemoryStore(t *testing.T) {
+	provider, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{}, // all defaults
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("provider nil with kind=push + defaults")
+	}
+	methods := provider.SupportedMethods()
+	if len(methods) != 1 || methods[0] != defaultimpl.MethodPush {
+		t.Fatalf("SupportedMethods = %v, want [push]", methods)
+	}
+	// Push provider implements MFABeginner so the mfa_required
+	// response can carry the approval_id back to the client.
+	if _, ok := provider.(sso.MFABeginner); !ok {
+		t.Error("push provider should satisfy sso.MFABeginner")
+	}
+}
+
+// TestBuildMFA_PushKindWithSQLiteStore proves the cluster-shared
+// path: PushApprovalStore backed by SQLite so Begin on one replica
+// is resolvable by the callback on another.
+func TestBuildMFA_PushKindWithSQLiteStore(t *testing.T) {
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL"
+	provider, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{
+				Backend: "sqlite",
+				SQLite:  config.MFAPushSQLiteConfig{DSN: dsn},
+			},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("provider nil with kind=push + sqlite backend")
+	}
+}
+
+// TestBuildMFA_PushKindRequiresSQLiteDSN proves cmd refuses
+// kind=push backend=sqlite without a DSN (same fail-loud pattern
+// as every other sqlite backend slot).
+func TestBuildMFA_PushKindRequiresSQLiteDSN(t *testing.T) {
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{Backend: "sqlite"}, // DSN unset
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err == nil {
+		t.Fatal("want error when push sqlite backend missing DSN")
+	}
+}
+
+// TestBuildMFA_PushKindRejectsUnknownBackend covers the typo case.
+func TestBuildMFA_PushKindRejectsUnknownBackend(t *testing.T) {
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{Backend: "redis"},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err == nil {
+		t.Fatal("want error on unknown push backend")
+	}
+}
+
+// TestBuildMFA_PushKindRejectsUnknownTransport covers the typo case
+// for the transport selector (only "log" ships today).
+func TestBuildMFA_PushKindRejectsUnknownTransport(t *testing.T) {
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{Transport: "fcm"},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err == nil {
+		t.Fatal("want error on unknown push transport")
+	}
+}
+
+// TestBuildMFA_PushKindAppliesPollAndMaxWait proves the timing
+// overrides flow through to the provider construction. We can't
+// inspect the provider state directly, but if the constructor
+// silently dropped them the build would still succeed (no test
+// signal) — so this is a smoke test that buildMFA at least accepts
+// the YAML knobs without erroring.
+func TestBuildMFA_PushKindAppliesPollAndMaxWait(t *testing.T) {
+	provider, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind: "push",
+			Push: config.MFAPushConfig{
+				PollInterval: 250 * time.Millisecond,
+				MaxWait:      30 * time.Second,
+			},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, nil, nil, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("provider nil")
+	}
+}
+
+// TestBuildMFA_MultiWithPushInner proves push works alongside
+// totp + webauthn in a kind=multi composition.
+func TestBuildMFA_MultiWithPushInner(t *testing.T) {
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
+	provider, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind:  "multi",
+			Kinds: []string{"totp", "push"},
+			Push:  config.MFAPushConfig{}, // memory + log defaults
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, totpAuth, nil, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	methods := provider.SupportedMethods()
+	wantSet := map[string]bool{authenticators.MethodTOTP: false, defaultimpl.MethodPush: false}
+	for _, m := range methods {
+		if _, ok := wantSet[m]; ok {
+			wantSet[m] = true
+		}
+	}
+	for m, seen := range wantSet {
+		if !seen {
+			t.Errorf("composite missing method %q (got %v)", m, methods)
+		}
 	}
 }

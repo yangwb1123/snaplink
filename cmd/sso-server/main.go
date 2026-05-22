@@ -1205,7 +1205,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 	if kind == "" {
 		kind = "totp"
 	}
-	provider, err := buildMFAProviderByKind(kind, cfg.Provider.Kinds, totpAuth, webauthnHelper)
+	provider, err := buildMFAProviderByKind(kind, cfg.Provider.Kinds, cfg.Provider.Push, totpAuth, webauthnHelper, logger)
 	if err != nil {
 		return nil, nil, 0, "", err
 	}
@@ -1249,14 +1249,14 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 // buildMFAProviderByKind constructs the MFA provider tree for the
 // requested kind. Recursive for kind=multi (one level only — nested
 // multi is rejected to keep the operator surface flat). Leaf kinds
-// (totp, webauthn) fail loud when their underlying dependency
-// (totpAuth or webauthnHelper) is nil.
+// (totp, webauthn, push) fail loud when their underlying
+// dependency is nil / misconfigured.
 //
 // outerKinds is the cfg.Provider.Kinds slice — used only when
 // kind=multi to list the inner leaf kinds. Empty or single-entry
 // Kinds when kind=multi → error (a multi with zero or one inner
 // provider is a misconfiguration; use the leaf kind directly).
-func buildMFAProviderByKind(kind string, outerKinds []string, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper) (sso.MFAProvider, error) {
+func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFAPushConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger) (sso.MFAProvider, error) {
 	switch kind {
 	case "totp":
 		if totpAuth == nil {
@@ -1272,6 +1272,8 @@ func buildMFAProviderByKind(kind string, outerKinds []string, totpAuth *authenti
 			return nil, fmt.Errorf("mfa.provider.kind=webauthn: %w", err)
 		}
 		return p, nil
+	case "push":
+		return buildPushMFAProvider(pushCfg, logger)
 	case "multi":
 		if len(outerKinds) < 2 {
 			return nil, errors.New("mfa.provider.kind=multi requires at least two entries in mfa.provider.kinds")
@@ -1290,7 +1292,7 @@ func buildMFAProviderByKind(kind string, outerKinds []string, totpAuth *authenti
 				return nil, fmt.Errorf("mfa.provider.kinds duplicate entry %q", innerKind)
 			}
 			seen[innerKind] = struct{}{}
-			p, err := buildMFAProviderByKind(innerKind, nil, totpAuth, webauthnHelper)
+			p, err := buildMFAProviderByKind(innerKind, nil, pushCfg, totpAuth, webauthnHelper, logger)
 			if err != nil {
 				return nil, fmt.Errorf("mfa.provider.kinds[%s]: %w", innerKind, err)
 			}
@@ -1298,8 +1300,65 @@ func buildMFAProviderByKind(kind string, outerKinds []string, totpAuth *authenti
 		}
 		return defaultimpl.NewMultiMFAProvider(innerProviders...)
 	default:
-		return nil, fmt.Errorf("unknown mfa.provider.kind %q (supported: totp, webauthn, multi)", kind)
+		return nil, fmt.Errorf("unknown mfa.provider.kind %q (supported: totp, webauthn, push, multi)", kind)
 	}
+}
+
+// buildPushMFAProvider wires the reference push MFA factor —
+// PushApprovalStore backend + PushTransport selection + pollInterval
+// + maxWait. Today the only ship-included transport is the
+// log-only stub (mirrors the cmd SMS/email "stub" pattern); operators
+// fork cmd to drop in FCM/APNs/webhook. The reference impl is
+// useful for development + smoke-test deployments.
+//
+// Returns nil + error when the backend / transport / SQLite
+// validation fails — kind=push is a misconfig if any of those
+// components are absent.
+func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAProvider, error) {
+	// Backend: memory for single-replica; sqlite for cluster.
+	var store defaultimpl.PushApprovalStore
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "", "memory":
+		store = defaultimpl.NewMemoryPushApprovalStore()
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("mfa.provider.push.sqlite.dsn required when backend=sqlite")
+		}
+		s, err := sqlitestores.NewPushApprovalStore(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("mfa.provider.push.sqlite: %w", err)
+		}
+		store = s
+	default:
+		return nil, fmt.Errorf("unknown mfa.provider.push.backend %q (supported: memory, sqlite)", backend)
+	}
+
+	// Transport: log only (operators fork for real push delivery).
+	transport := strings.ToLower(strings.TrimSpace(cfg.Transport))
+	if transport == "" {
+		transport = "log"
+	}
+	var pushTransport defaultimpl.PushTransport
+	switch transport {
+	case "log":
+		pushTransport = defaultimpl.PushTransportFunc(func(_ context.Context, id, subject string, _ map[string]string) error {
+			logger.Info("push approval delivered (log-only transport — fork cmd for real push)",
+				"approval_id", id, "subject", subject)
+			return nil
+		})
+	default:
+		return nil, fmt.Errorf("unknown mfa.provider.push.transport %q (supported: log)", transport)
+	}
+
+	var opts []defaultimpl.PushMFAOption
+	if cfg.PollInterval > 0 {
+		opts = append(opts, defaultimpl.WithPushPollInterval(cfg.PollInterval))
+	}
+	if cfg.MaxWait > 0 {
+		opts = append(opts, defaultimpl.WithPushMaxWait(cfg.MaxWait))
+	}
+	return defaultimpl.NewPushMFAProvider(store, pushTransport, opts...)
 }
 
 // buildNetworkStore materializes the netpolicy.Store for cmd.
