@@ -744,6 +744,27 @@ the operator surface needs explanation:
   toggleable via `mfa.provider.push.callback.{enabled,bearer_token,allowed_cidrs}`
   — bearer + IP allowlist (one or both); empty both = open (only safe
   behind an auth-enforcing edge).
+- **permissions.backend(memory|sqlite)** — sqlite shares
+  roles + assignments + menus across replicas; admin AddRole /
+  AssignRoles / SetMenus on one replica surface on every
+  replica's next lookup. Seed steps (apps + user_roles) are
+  idempotent on re-runs (AddRole-then-UpdateRole fallback).
+
+### Retention schedulers
+
+cmd ships three background prune loops, all wired uniformly:
+cancel + bounded-wait on Done during shutdown, log + emit
+`sso_retention_pruned_total{subsystem}` /
+`sso_retention_prune_errors_total{subsystem}`, transient errors
+don't tear down the loop, first prune fires AFTER the first
+interval (boot-safe). Each requires its SQLite backend to be
+wired (memory peers self-prune by capacity or expiry).
+
+| YAML knob | Function | Subsystem label |
+|---|---|---|
+| `audit.retention.{enabled,max_age,interval}` | `audit/sqlite.Sink.Prune` | `audit` |
+| `snapshot.retention.{enabled,keep,interval}` | `snapshot.PruneOldest` | `snapshot` |
+| `mfa.provider.push.prune_interval` | `defaultimpl/sqlite.PushApprovalStore.PruneExpired` | `push_approvals` |
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.
