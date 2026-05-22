@@ -898,13 +898,29 @@ type TenantDomainConfig struct {
 	Branding        map[string]string `yaml:"branding"`
 }
 
-// PermissionsConfig configures role/menu authorization. When disabled, the
-// /permissions/me, /menus/me, /roles/me endpoints reply 501.
+// PermissionsConfig configures role/menu authorization. When disabled,
+// the /permissions/me, /menus/me, /roles/me endpoints reply 501.
+//
+// Backend selects which permissions.Provider implementation is wired:
+// memory keeps the process-local map (single-replica only); sqlite
+// shares roles + assignments + menus across the cluster (admin
+// AddRole / AssignRoles / SetMenus on one replica surface on every
+// replica's next lookup). Apps + UserRoles seeds run against the
+// chosen backend at boot — duplicate seeds across replicas pointed
+// at the same SQLite DSN deduplicate via the ON CONFLICT UPSERT
+// the backend uses.
 type PermissionsConfig struct {
-	Enabled      bool                   `yaml:"enabled"`
-	EmbedInLogin bool                   `yaml:"embed_in_login"`
-	Apps         []AppPermissionsConfig `yaml:"apps"`
-	UserRoles    []UserRoleAssignment   `yaml:"user_roles"`
+	Enabled      bool                    `yaml:"enabled"`
+	Backend      string                  `yaml:"backend"` // memory | sqlite
+	SQLite       PermissionsSQLiteConfig `yaml:"sqlite"`
+	EmbedInLogin bool                    `yaml:"embed_in_login"`
+	Apps         []AppPermissionsConfig  `yaml:"apps"`
+	UserRoles    []UserRoleAssignment    `yaml:"user_roles"`
+}
+
+// PermissionsSQLiteConfig is the SQLite backend's DSN.
+type PermissionsSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // AppPermissionsConfig declares the roles and menu tree for one APP. Roles

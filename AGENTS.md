@@ -334,10 +334,14 @@ Recommended cluster composition:
 `AsyncSink(MultiSink(SQLitePrimary, RetryingSink(WebhookSink)))`.
 
 ### Permissions (`permissions/`)
-`MemoryProvider`: per-APP role registries, wildcard matcher (`user:*`
-matches `user:read`, `*` matches all), menu filtering, login-response
-embedding via `WithEmbedPermissionsInLogin()`. `MenuLister` is the
-extension snapshots + admin RPCs use.
+Per-APP role registries, wildcard matcher (`user:*` matches
+`user:read`, `*` matches all), menu filtering (`FilterMenuTree` +
+`FilterButtons`), login-response embedding via
+`WithEmbedPermissionsInLogin()`. `MenuLister` is the extension
+snapshots + admin RPCs use. Backends: `memory` (process-local,
+single-replica) and `sqlite` (`permissions/sqlite`, cluster-shared
+via three tables: roles, assignments, menus; RemoveRole transactionally
+strips the code from every assignment under the client).
 
 ### Service registry (`registry/`)
 `memory` (TTL + Watch) and `etcd` (lease + KeepAlive). cmd's

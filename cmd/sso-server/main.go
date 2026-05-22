@@ -54,6 +54,7 @@ import (
 	"github.com/snaplink/sso/netpolicy"
 	netpolicyetcd "github.com/snaplink/sso/netpolicy/etcd"
 	"github.com/snaplink/sso/permissions"
+	permsqlite "github.com/snaplink/sso/permissions/sqlite"
 	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/registry"
 	registryetcd "github.com/snaplink/sso/registry/etcd"
@@ -1186,6 +1187,78 @@ func resolveServiceID(explicit, issuer string) string {
 	return issuer + "-" + host
 }
 
+// buildPermissionsProvider returns the wired permissions.Provider
+// (memory or sqlite per config) seeded with cfg.Permissions.Apps +
+// cfg.Permissions.UserRoles. Returns (nil, nil) when permissions
+// disabled.
+//
+// SQLite backend: seed step uses AddRole which returns ErrRoleExists
+// on conflict — operators re-running cmd against an already-seeded
+// DSN see harmless duplicate-seed warnings rather than wedged
+// startup. AssignRoles overwrites (matches the memory peer's SET
+// semantics) so re-seeds idempotently re-apply the YAML state.
+func buildPermissionsProvider(cfg *config.Config, logger sso.Logger) (permissions.Provider, error) {
+	if !cfg.Permissions.Enabled {
+		return nil, nil
+	}
+	var p permissions.Provider
+	backend := strings.ToLower(strings.TrimSpace(cfg.Permissions.Backend))
+	switch backend {
+	case "", "memory":
+		p = permissions.NewMemoryProvider()
+		logger.Info("permissions provider: memory (single-replica only)")
+	case "sqlite":
+		if cfg.Permissions.SQLite.DSN == "" {
+			return nil, errors.New("permissions.sqlite.dsn required when permissions.backend=sqlite")
+		}
+		sp, err := permsqlite.New(cfg.Permissions.SQLite.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("permissions sqlite: %w", err)
+		}
+		p = sp
+		logger.Info("permissions provider: sqlite (cluster-shared)", "dsn", cfg.Permissions.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown permissions.backend %q (supported: memory, sqlite)", cfg.Permissions.Backend)
+	}
+
+	ctx := context.Background()
+	var seededRoles, seededAssignments int
+	for _, app := range cfg.Permissions.Apps {
+		for _, role := range app.Roles {
+			if err := p.AddRole(ctx, app.ClientID, role); err != nil {
+				if errors.Is(err, permissions.ErrRoleExists) {
+					// Idempotent re-seed: UpdateRole carries the
+					// current permissions list to the existing row.
+					if uerr := p.UpdateRole(ctx, app.ClientID, role); uerr != nil {
+						logger.Error("permissions seed: role update failed", "client", app.ClientID, "role", role.Code, "error", uerr)
+						continue
+					}
+				} else {
+					logger.Error("permissions seed: role add failed", "client", app.ClientID, "role", role.Code, "error", err)
+					continue
+				}
+			}
+			seededRoles++
+		}
+		if app.Menus != nil {
+			if err := p.SetMenus(ctx, app.ClientID, app.Menus); err != nil {
+				logger.Error("permissions seed: set menus failed", "client", app.ClientID, "error", err)
+			}
+		}
+	}
+	for _, a := range cfg.Permissions.UserRoles {
+		if err := p.AssignRoles(ctx, a.UserID, a.ClientID, a.Roles); err != nil {
+			logger.Error("permissions seed: assign roles failed", "user", a.UserID, "client", a.ClientID, "error", err)
+			continue
+		}
+		seededAssignments++
+	}
+	logger.Info("permissions seed complete",
+		"roles", seededRoles,
+		"assignments", seededAssignments)
+	return p, nil
+}
+
 // buildRiskScorer materializes the reference rule-based
 // [defaultimpl.RuleBasedRiskScorer] from RiskConfig. Returns nil
 // when risk.enabled=false so cmd skips WithRiskScorer entirely
@@ -1947,10 +2020,13 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = appendReadyCheck(opts, "audit-"+primaryName, primary)
 	}
 
-	var provider permissions.Provider
-	if p := cfg.BuildPermissionProvider(); p != nil {
-		provider = p
+	provider, err := buildPermissionsProvider(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("permissions: %w", err)
+	}
+	if provider != nil {
 		opts = append(opts, sso.WithPermissionProvider(provider))
+		opts = appendReadyCheck(opts, "sqlite-permissions", provider)
 		if cfg.Permissions.EmbedInLogin {
 			opts = append(opts, sso.WithEmbedPermissionsInLogin())
 		}

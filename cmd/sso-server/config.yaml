@@ -184,6 +184,15 @@ audit:
 
 permissions:
   enabled: true
+  # memory: single-replica only; sqlite: cluster-shared so admin
+  # AddRole/AssignRoles/SetMenus on one replica surface on every
+  # replica's next lookup. Seed steps (apps + user_roles below) run
+  # against the chosen backend at boot — duplicates across replicas
+  # pointed at the same DSN dedupe via the UPSERT the backend uses.
+  backend: "memory"       # memory | sqlite
+  sqlite:
+    # dsn: "file:/var/lib/sso/permissions.db?_journal=WAL&_busy_timeout=5000"
+    dsn: ""
   embed_in_login: true    # attach roles/permissions/menus to /auth/login response
   apps:
     - client_id: web-app
