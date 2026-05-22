@@ -2959,6 +2959,7 @@ components:
 
     HealthResponse:
       type: object
+      required: [status, issuer, version]
       properties:
         status:
           type: string
@@ -2966,6 +2967,29 @@ components:
         issuer:
           type: string
           example: snaplink-sso
+        version:
+          type: string
+          description: |
+            Module version from runtime/debug.ReadBuildInfo. Falls
+            back to "(devel)" for non-tagged builds or "(unknown)"
+            when build info is absent — operators always see a
+            value rather than an empty field.
+          example: v0.42.1
+        vcs_revision:
+          type: string
+          description: |
+            Git commit SHA the binary was built from. Populated only
+            when the binary was built with `-buildvcs=true` (default
+            for `go build`) from a clean VCS tree. Useful to confirm
+            which commit a production replica is running without
+            shelling in.
+          example: 9bfbe85f01c0fa7da2342f4d22cee8716ebe0b4d
+        vcs_time:
+          type: string
+          description: |
+            ISO 8601 commit timestamp, paired with vcs_revision when
+            available.
+          example: "2026-05-22T06:49:13Z"
 
     AuthorizationDetail:
       type: object

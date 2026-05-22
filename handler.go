@@ -62,10 +62,23 @@ func clientTenantOK(ctx HandlerContext, client *Client) bool {
 }
 
 func (s *Server) handleHealth(ctx HandlerContext) {
-	ctx.JSON(http.StatusOK, map[string]string{
-		KeyStatus: StatusOK,
-		KeyIssuer: s.issuer,
-	})
+	// BuildInfo surfaces version + VCS revision so operators can
+	// confirm which commit a production replica is running without
+	// shelling into the container. Cached after first call so this
+	// stays cheap on the unauthenticated probe path.
+	bi := ReadBuildInfo()
+	resp := map[string]string{
+		KeyStatus:  StatusOK,
+		KeyIssuer:  s.issuer,
+		KeyVersion: bi.Version,
+	}
+	if bi.VCSRevision != "" {
+		resp[KeyVCSRevision] = bi.VCSRevision
+	}
+	if bi.VCSTime != "" {
+		resp[KeyVCSTime] = bi.VCSTime
+	}
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // loginRequest is the bound /auth/login request payload. Promoted from
