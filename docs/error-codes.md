@@ -85,6 +85,9 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `pkce_required`              | 400  | Client has `RequirePKCE` set (or OAuth 2.1 strict) and the request omitted PKCE         | Add `code_challenge` + `code_challenge_method`      |
 | `invalid_request_uri`        | 400  | RFC 9126 PAR — `request_uri` is unknown, expired, consumed, or bound to a different RP  | Re-POST `/par` for a fresh one                      |
 | `par_not_configured`         | 501  | `/par` hit but no `WithPARStore` wired                                                  | Operator wires the store                            |
+| `invalid_request_object`     | 400  | RFC 9101 JAR — `request` / `request_uri` carried a signed or encrypted request object that failed to parse / verify / decrypt (bad signature, unknown alg, wrong key, JWE decryption failure)  | Fix the JWT / JWE; verify it's signed by a key in the client's `JWKS` (and encrypted to the AS's `use:enc` JWK when JWE)  |
+| `invalid_authorization_details` | 400  | RFC 9396 RAR — `authorization_details` parameter is malformed (not a JSON array, element missing `type`, or element `type` not in the client's `allowed_authorization_details_types`)  | Drop the offending element or get its type allowlisted on the client                            |
+| `insufficient_user_authentication` | 401 (RS) / 400 (AS exchange) | RFC 9470 — caller demanded `acr_values` the subject_token's existing ACR doesn't satisfy. On `/token` grant=token-exchange and on resource-server `WWW-Authenticate` challenges. | Route user through `/auth/login` with the same `acr_values` to step up    |
 
 ### Token endpoint (`/token`)
 

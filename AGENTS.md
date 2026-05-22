@@ -784,9 +784,10 @@ Update `docs/openapi.yaml` in the same commit as any documented
 endpoint change. CI runs `make docs-validate`.
 
 `docs/error-codes.md` is the stable wire-contract catalog of every
-`error` value. **Adding a new `Err*` in `consts.go` requires updating
-the catalog in the same commit.** SPAs branch on `error`, never on
-`error_description`.
+`error` value. **Adding a new `Err*` anywhere (`consts.go` OR a
+per-handler file like `jar.go` / `rar.go` / `step_up_auth.go`)
+requires updating the catalog in the same commit.** SPAs branch on
+`error`, never on `error_description`.
 
 ---
 
