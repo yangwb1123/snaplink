@@ -3073,6 +3073,34 @@ components:
             Factor names the wired MFAProvider can verify. SPAs render
             UI per entry; mobile apps pick the strongest they support.
           example: [totp, webauthn]
+        mfa_method_data:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+          description: |
+            Per-method server-issued challenge data for factors needing
+            two-call ceremonies (e.g. WebAuthn). The outer key is the
+            method name (`webauthn`); the inner object carries the
+            method-specific payload (for `webauthn`: `options` =
+            CredentialAssertion options JSON, `session` = ceremony id).
+            Methods that don't need server-side setup (`totp`) are
+            absent — callers branch on key presence.
+
+            Clients echo the relevant entries back into the
+            `/auth/mfa` `params` payload so the provider's Verify can
+            resume the ceremony (e.g. `params: {session: "<echo>",
+            assertion: "<signed JSON>"}` for WebAuthn).
+
+            Per-method Begin failure is non-fatal: the method stays
+            in `mfa_methods` but its entry is omitted from
+            `mfa_method_data` — the client either retries the begin
+            phase out-of-band or picks a different factor.
+          example:
+            webauthn:
+              options: '{"publicKey":{"challenge":"<base64url>","timeout":60000,"rpId":"sso.example.com","allowCredentials":[]}}'
+              session: "sess-OPAQUE-256bit-id"
         iss:
           type: string
           description: RFC 9207 authorization-response issuer identifier.
@@ -3104,9 +3132,10 @@ components:
         assertion:
           type: string
           description: |
-            WebAuthn assertion (CBOR or base64url-encoded JSON,
-            method-defined) for the `webauthn` method. Convenience
-            field; equivalent to `params: {assertion: "..."}`.
+            WebAuthn signed-assertion JSON (the response body
+            navigator.credentials.get would have POSTed) for the
+            `webauthn` method. Convenience field; equivalent to
+            `params: {assertion: "..."}`.
         params:
           type: object
           additionalProperties:
@@ -3116,6 +3145,17 @@ components:
             over the flat `code` / `assertion` convenience fields, so
             callers using arbitrary providers can pass whatever the
             provider expects.
+
+            For `webauthn`: `session` MUST echo the value from the
+            mfa_required response's
+            `mfa_method_data["webauthn"]["session"]`, and `assertion`
+            MUST be the raw JSON body navigator.credentials.get
+            produced. The server-side WebAuthn helper parses both to
+            verify the signed assertion against the per-ceremony
+            challenge it issued during Begin.
+          example:
+            session: "sess-echoed-from-mfa_method_data"
+            assertion: '{"id":"...","rawId":"...","type":"public-key","response":{"clientDataJSON":"...","authenticatorData":"...","signature":"...","userHandle":"..."}}'
 
     SendCodeRequest:
       type: object
