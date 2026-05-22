@@ -71,6 +71,14 @@ type Metrics struct {
 	// outcome ∈ {success, failure} (bounded cardinality).
 	WebAuthnRegistrationsTotal *prometheus.CounterVec // labels: outcome
 	WebAuthnAssertionsTotal    *prometheus.CounterVec // labels: outcome
+
+	// Login + MFA latency histograms. Distinct from the generic HTTP
+	// duration so operators can graph login-specific latency
+	// (authenticator round-trips, password verification, risk scorer
+	// time) without conflating it with /token / /userinfo / /metrics
+	// noise. Labels: provider (login only) / outcome (login + mfa).
+	LoginDuration         *prometheus.HistogramVec // labels: provider, outcome
+	MFACompletionDuration *prometheus.HistogramVec // labels: outcome
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -189,6 +197,24 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 			prometheus.CounterOpts{
 				Name: NameWebAuthnAssertionsTotal,
 				Help: "WebAuthn login assertion completions at /webauthn/login/finish, by outcome (success/failure). Operators alert on a rising failure rate as a credential-stuffing signal.",
+			},
+			[]string{LabelOutcome},
+		),
+
+		LoginDuration: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    NameLoginDuration,
+				Help:    "End-to-end /auth/login latency by authenticator provider + outcome (success/failure). Distinct from sso_http_request_duration_seconds so operators can detect a slow authenticator (TOTPStore lookup, OIDC federation roundtrip) without conflating it with /token + /userinfo latency.",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{LabelProvider, LabelOutcome},
+		),
+
+		MFACompletionDuration: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    NameMFACompletionDuration,
+				Help:    "End-to-end /auth/mfa latency by outcome (success/failure). The Push factor's polling loop dominates this — operators alerting on push-flow stalls graph p95 of {mfa_method=push}.",
+				Buckets: prometheus.DefBuckets,
 			},
 			[]string{LabelOutcome},
 		),

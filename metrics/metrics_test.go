@@ -153,6 +153,16 @@ func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
 	mustContain(t, scrape, `sso_webauthn_registrations_total{outcome="failure"} 1`)
 	mustContain(t, scrape, `sso_webauthn_assertions_total{outcome="success"} 99`)
 	mustContain(t, scrape, `sso_webauthn_assertions_total{outcome="failure"} 2`)
+
+	// Histograms. Just observe one bucket entry; the actual bucket
+	// boundaries are prometheus.DefBuckets, exposed via the metric
+	// vector — _count + _sum suffixes show up on the scrape regardless
+	// of bucket count.
+	m.LoginDuration.WithLabelValues("password", "success").Observe(0.05)
+	m.MFACompletionDuration.WithLabelValues("success").Observe(1.5)
+	scrape = scrapeMetrics(t, m)
+	mustContain(t, scrape, `sso_login_duration_seconds_count{outcome="success",provider="password"} 1`)
+	mustContain(t, scrape, `sso_mfa_completion_duration_seconds_count{outcome="success"} 1`)
 }
 
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {

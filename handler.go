@@ -110,6 +110,14 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(ctx HandlerContext) {
+	// Stamp the request start time onto the context for the
+	// sso_login_duration_seconds histogram observation in
+	// recordLoginSuccess / recordLoginFailure. The Login-specific
+	// histogram is separate from sso_http_request_duration_seconds
+	// because it carries the provider label — operators graphing
+	// "is the OIDC federation upstream slow" need per-provider
+	// slicing the bounded HTTP histogram doesn't provide.
+	ctx.Set(ctxKeyLoginStart, time.Now())
 	// RFC 6749 §5.1: token responses MUST stamp Cache-Control:
 	// no-store + Pragma: no-cache. /auth/login bodies carry
 	// access_token + refresh_token (and PKCE-flow code values

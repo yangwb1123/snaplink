@@ -16,6 +16,8 @@ const (
 	NameRetentionPruneErrTotal     = "sso_retention_prune_errors_total"
 	NameWebAuthnRegistrationsTotal = "sso_webauthn_registrations_total"
 	NameWebAuthnAssertionsTotal    = "sso_webauthn_assertions_total"
+	NameLoginDuration              = "sso_login_duration_seconds"
+	NameMFACompletionDuration      = "sso_mfa_completion_duration_seconds"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

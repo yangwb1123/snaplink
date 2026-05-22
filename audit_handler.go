@@ -215,6 +215,26 @@ func setMeta(e *audit.Event, key, val string) {
 	e.Metadata[key] = val
 }
 
+// ctxKeyLoginStart is the HandlerContext.Set/Get key holding the
+// time.Time stamped at /auth/login entry. Used by recordLogin* to
+// observe the per-provider login duration histogram.
+const ctxKeyLoginStart = "_sso_login_start"
+
+// observeLoginDuration computes elapsed since the stamp + observes
+// the histogram. Safe no-op when metrics aren't wired or the stamp
+// is absent (defensive — tests may bypass handleLogin).
+func (s *Server) observeLoginDuration(ctx HandlerContext, provider, outcome string) {
+	if s.metrics == nil {
+		return
+	}
+	v := ctx.Get(ctxKeyLoginStart)
+	start, ok := v.(time.Time)
+	if !ok {
+		return
+	}
+	s.metrics.LoginDuration.WithLabelValues(provider, outcome).Observe(time.Since(start).Seconds())
+}
+
 // recordLoginFailure emits a login-failure audit event AND bumps the
 // failure counter on the metrics registry (nil-safe). Reason is one of
 // the Err* constants describing why authentication was refused.
@@ -222,6 +242,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	if s.metrics != nil {
 		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "failure").Inc()
 	}
+	s.observeLoginDuration(ctx, provider, "failure")
 	if s.auditor == nil {
 		return
 	}
@@ -242,6 +263,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "success").Inc()
 		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
 	}
+	s.observeLoginDuration(ctx, provider, "success")
 	if s.auditor == nil {
 		return
 	}

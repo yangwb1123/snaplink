@@ -126,6 +126,19 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 // HTTP 400 + error=mfa_invalid response so probes can't distinguish
 // the cases.
 func (s *Server) handleMFAComplete(ctx HandlerContext) {
+	// Observe /auth/mfa duration with outcome label. defer + named
+	// outcome lets every return path (auth-invalid, factor-failed,
+	// success, transport-error) account uniformly. The Push factor's
+	// long polling loop dominates this histogram — operators
+	// alerting on push-flow stalls graph p95 here.
+	start := time.Now()
+	outcome := "failure"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.MFACompletionDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+		}
+	}()
+
 	tokenNoStoreHeaders(ctx)
 	if s.mfaProvider == nil || s.mfaChallengeStore == nil {
 		// Endpoint is registered unconditionally so discovery doesn't
@@ -135,6 +148,9 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 		ctx.JSON(http.StatusNotFound, s.authzErrorBody(ctx, ErrMFAInvalid))
 		return
 	}
+	// Mark outcome on the one success path; left as "failure" for
+	// every other return point.
+	_ = outcome
 
 	var req struct {
 		ChallengeID string            `json:"mfa_challenge_id"`
@@ -185,6 +201,7 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 		return
 	}
 	s.recordMFACompletion(req.Method, "success")
+	outcome = "success"
 
 	// Factor verified. Decode the frozen state, re-look-up the client
 	// (could have been deactivated / tenant-suspended in the window
