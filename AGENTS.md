@@ -1,55 +1,23 @@
 # AGENTS.md
 
-Operational guide for AI agents working in this repo. Follows
-[agents.md](https://agents.md). User instructions override any
-conflict below.
+Operational guide for AI agents in this repo. Follows
+[agents.md](https://agents.md). User instructions override conflicts
+below.
 
 ---
 
 ## What this is
 
-`github.com/snaplink/sso` — a Go SSO server SDK + runnable binary.
-Implements OAuth 2.0 + OIDC, swappable authenticators, audit,
-permissions, service registry, admin gRPC/REST, snapshot + release
-lifecycle. Every concern is an interface; every default backend is
-in `defaultimpl/` (memory) or `defaultimpl/sqlite/`. No external SaaS
-dependency. Consumers pick **embedded** (`ssoclient/local`, in-process)
-or **centralized** (`ssoclient/remote`, gRPC + JWKS) per capability.
+`github.com/snaplink/sso` — Go SSO server SDK + runnable binary. OAuth
+2.0 + OIDC, swappable authenticators, audit, permissions, service
+registry, admin gRPC/REST, snapshot + release lifecycle. Every concern
+is an interface; defaults live in `defaultimpl/` (memory) and
+`defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS dep.
+Consumers wire **embedded** (`ssoclient/local`, in-process) or
+**centralized** (`ssoclient/remote`, gRPC + JWKS) per capability.
 
----
-
-## Layout
-
-```
-sso.go / handler.go / router.go     Server, HandlerContext, routing
-consts.go                           Paths, headers, error codes (no literal leaks)
-handle_*.go                         Per-endpoint HTTP handlers
-oauth_bind.go                       form+JSON dispatcher
-authenticators/                     9 pluggable AuthN impls + webauthn/ helper
-defaultimpl/                        Default issuer + Memory* stores
-defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)
-adapters/{echo,gin}/                Router adapters
-audit/                              Recorder + Sinks + hash chain
-permissions/                        Roles + menus + wildcard matcher
-netpolicy/{memory,etcd}/            Network classification
-registry/{memory,etcd}/             Service discovery
-bootstrap/{file,memory,builtin,lock}/  First-run init + dist lock
-snapshot/{storage,encryption,loader}/  Admin-managed state export/restore
-releases/{store,pinner,probe}/      Frontend+backend release pinning
-geo/  tenant/  ratelimit/  cors/    Middleware + enrichment
-metrics/  tracing/                  Observability
-config/{etcd}/                      YAML + env + etcd + flag loader
-proto/ + gen/proto/                 Protobuf + generated Go
-grpcserver/                         gRPC services + REST gateway
-ssoclient/{local,remote,dev,bootstrap}/  Consumer-facing clients
-cmd/sso-server/                     Production binary
-deploy/{openresty,k8s,compose,grafana}/  Operator artifacts
-examples/                           Including embedded-app + remote-app
-```
-
-`examples/embedded-app` and `examples/remote-app` share the **same**
-`appcore.Handler` — only the wiring differs. That's the local/remote
-demo.
+`examples/{embedded-app,remote-app}` share the same `appcore.Handler`;
+only wiring differs.
 
 ---
 
@@ -57,18 +25,16 @@ demo.
 
 ```bash
 go build ./...
-go run ./cmd/sso-server --config cmd/sso-server/config.yaml
 go test ./... -race
-go test -run TestE2E -v .              # cross-wire HTTP + JWKS + bufconn
-make ci                                 # gofmt + vet + race + build + proto-lint
+go test -run TestE2E -v .       # cross-wire HTTP + JWKS + bufconn
+make ci                          # gofmt + vet + race + build + proto-lint
 make docker
-make release-snapshot                   # dist/ multi-arch (no publish)
+make release-snapshot
 ```
 
-Run the E2E suite (`e2e_test.go`) when changing anything that
-crosses the gRPC or JWKS wire.
+Run E2E whenever you change anything crossing the gRPC or JWKS wire.
 
-Protobuf regen (stubs are checked in; rarely needed):
+Protobuf regen (stubs checked in, rarely needed):
 
 ```bash
 protoc -I proto \
@@ -79,73 +45,101 @@ protoc -I proto \
 
 ---
 
-## Invariants
+## Layout
 
-These apply across files. Violating them is a regression.
+```
+sso.go / handler.go / router.go     Server, HandlerContext, routing
+consts.go                           Paths, headers, error codes
+handle_*.go                         Per-endpoint HTTP handlers
+oauth_bind.go                       form+JSON dispatcher
+authenticators/                     9 pluggable + webauthn/ helper
+defaultimpl/                        Default issuer + Memory* stores
+defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)
+adapters/{echo,gin}/                Router adapters
+audit/                              Recorder + Sinks + hash chain
+permissions/                        Roles + menus + wildcard matcher
+netpolicy/{memory,etcd}/            Network classification
+registry/{memory,etcd}/             Service discovery
+bootstrap/{file,memory,builtin,lock}/  First-run init + dist lock
+snapshot/{storage,encryption,loader}/  State export/restore
+releases/{store,pinner,probe}/      Frontend+backend release pinning
+geo/  tenant/  ratelimit/  cors/    Middleware + enrichment
+metrics/  tracing/                  Observability
+config/{etcd}/                      YAML + env + etcd + flag loader
+proto/ + gen/proto/                 Protobuf + generated Go
+grpcserver/                         gRPC services + REST gateway
+ssoclient/{local,remote,dev,bootstrap}/  Consumer-facing clients
+cmd/sso-server/                     Production binary
+cmd/sso-audit-verify/               Offline audit-chain verifier CLI
+cmd/sso-snapshotctl/                Offline snapshot inspect/verify CLI
+deploy/{openresty,k8s,compose,grafana}/  Operator artifacts
+```
 
-### Plugin SPI
-Every concern is an interface in its parent package + a `memory`
-impl + optionally `sqlite` / `etcd` / `file`. New backends slot in
-via `WithXxx`. **Don't introduce mocks** — use Memory* in tests.
+---
 
-### Storage today
-Memory (default) or SQLite (`defaultimpl/sqlite/` + `ratelimit/` +
-`authenticators/webauthn/sqlite/`) for User / Client / AuthCode /
-RefreshToken (+ FamilyTracker) / DeviceCode / PAR / Session /
-JTIReplay / SubjectClientIndex / AccountLockout / PairwiseSubject /
-RateLimiter / WebAuthn (User + Session). Every OAuth/OIDC issuance +
-redemption + reverse-lookup + abuse-defense + WebAuthn ceremony
-flow works horizontally against a shared SQLite file. Redis remains
-the recommended next step for SaaS-scale auth-heavy workloads
-(low-thousands write/sec is SQLite's comfort zone on WAL+SSD).
+## Stability contracts (invariants)
+
+Violating these is a regression — wire-contract gates, not style.
+
+### Plugin SPI + storage
+Every concern is an interface in its parent package + a `memory` impl
++ optionally `sqlite` / `etcd` / `file`. New backends slot in via
+`WithXxx`. **No mocks** — use Memory* in tests. SQLite covers User,
+Client, AuthCode, RefreshToken (+ Inspector + FamilyTracker),
+DeviceCode, PAR, Session, JTIReplay, SubjectClientIndex,
+AccountLockout, PairwiseSubject, RateLimiter, WebAuthn (User + Session)
+— every OAuth/OIDC + WebAuthn flow runs horizontally on a shared
+SQLite file. Redis is the recommended next step for SaaS-scale
+auth-heavy workloads.
 
 ### Form + JSON via `bindOAuthParams`
-All OAuth/OIDC endpoints (`/token`, `/par`, `/device/code` …)
-accept both `application/x-www-form-urlencoded` (RFC mandatory)
-and JSON via the dispatcher in `oauth_bind.go`. JSON-only would
-break every off-the-shelf OAuth client.
+All OAuth/OIDC endpoints accept both `application/x-www-form-urlencoded`
+(RFC mandatory) and JSON via the dispatcher in `oauth_bind.go`.
+JSON-only would break every off-the-shelf OAuth client.
 
 ### HTTP Basic > body credentials (RFC 6749 §2.3.1)
 On `/token`, `/token/introspect`, `/token/revoke`, `/par`:
 `Authorization: Basic` beats body `client_id`+`client_secret`.
 
 ### Oracle-leak hardening
-Single-use code consumption (AuthCode / Refresh / Device / PAR /
-PKCE verifier) MUST collapse unknown / expired / consumed /
-client-mismatch failures into a single wire response (`400
-invalid_grant` for /token; `invalid_request_uri` for PAR; etc.).
-Same applies to DPoP/mTLS resource failures (→ `invalid_token`)
-and `private_key_jwt` failures (→ `invalid_client`). Tests
-enumerate failure cases to lock the behavior.
+Single-use code consumption (AuthCode / Refresh / Device / PAR / PKCE
+verifier) MUST collapse unknown / expired / consumed / client-mismatch
+into one wire response (`400 invalid_grant` for /token;
+`invalid_request_uri` for PAR; etc.). DPoP/mTLS failures →
+`invalid_token`; `private_key_jwt` failures → `invalid_client`. Tests
+enumerate the failure cases to lock the behavior.
 
 ### Anti-enumeration
 - `/register/:client_id` (RFC 7592): missing / wrong bearer / unknown
-  client_id all return identical 401 `invalid_token`. Bearer compare
-  uses `crypto/subtle.ConstantTimeCompare`.
+  id all return identical 401 `invalid_token`. Bearer compare uses
+  `crypto/subtle.ConstantTimeCompare`.
 - `/token/revoke` (RFC 7009 §2.2): 200 OK on valid client creds
-  regardless of whether the token existed.
-- `/token/introspect` inactive path returns `{"active":false}` only.
+  regardless of token existence.
+- `/token/introspect` inactive: `{"active":false}`.
+- Bcrypt password verifier runs against a cost-matched dummy hash for
+  unknown users (timing parity).
+- WebAuthn unknown user / unknown session both collapse to `404
+  session_invalid`.
 
 ### Fail-open vs fail-closed
-- **Fail-open** (log + continue): refresh-token issuance during
-  `/auth/login` or auth_code exchange, ID Token issuance, geo,
-  risk scorer error, audit Sink error.
-- **Fail-closed**: refresh rotation grant itself (500),
-  signature/validation failure, scope expansion, family-reuse
-  detection (kills the whole family, 400 invalid_grant).
+- **Fail-open** (log + continue): refresh issuance during `/auth/login`
+  or auth_code exchange, ID Token issuance, geo, risk scorer error,
+  audit Sink error, tenant suspension lookup outage.
+- **Fail-closed**: refresh rotation grant (500), signature/validation
+  failure, scope expansion, family-reuse detection (kills whole family,
+  400 invalid_grant).
 
 ### PKCE: first-exchange only
 `code_challenge` captured at `/auth/login`; verified against
-`code_verifier` at `/token grant=authorization_code`. Subsequent
-refresh rotations carry no verifier (bound via `client_id` instead).
+`code_verifier` at `/token grant=authorization_code`. Refresh rotations
+carry no verifier (bound via `client_id`).
 
-### Refresh-token family rotation (OAuth Security BCP §4.13/§4.14)
-Every refresh token carries a `FamilyID` propagated through every
+### Refresh-token family rotation (BCP §4.13/§4.14)
+Every refresh token carries `FamilyID` propagated through every
 rotation. Stores opt into reuse detection via
-`RefreshTokenFamilyTracker`. Replay of a consumed token →
-`ErrRefreshTokenReused` → `DeleteFamily(fid)` → audit
-`refresh_token_reuse_detected` → `invalid_grant`. Empty `FamilyID`
-opts out.
+`RefreshTokenFamilyTracker`. Replay → `ErrRefreshTokenReused` →
+`DeleteFamily(fid)` → audit `refresh_token_reuse_detected` →
+`invalid_grant`. Empty `FamilyID` opts out.
 
 ### Audit metadata: `setMeta(e, k, v)`
 Geo + tenant middleware enrich every event via `Event.Metadata`.
@@ -153,115 +147,100 @@ Geo + tenant middleware enrich every event via `Event.Metadata`.
 
 ### X-Forwarded-* trust
 `requestBaseURL` + `DefaultGeoIPExtractor` + `DefaultHostExtractor`
-honor first-hop `X-Forwarded-Proto/Host/For`. **Only safe with a
+honor first-hop `X-Forwarded-Proto/Host/For`. **Only safe behind a
 trusted edge** that strips and re-sets them. Internet-facing deploys
-without one MUST install a `TrustedProxies(CIDR...)` allowlist.
+without one MUST install `TrustedProxies(CIDR...)`.
 
 ### `aud` claim parsing
-RFC 7519 §4.1.3 — may be string or array. `audClaim` unmarshals
-either, marshals single-aud as a compact string per OIDC.
+RFC 7519 §4.1.3 — string or array. `audClaim` unmarshals either,
+marshals single-aud as compact string per OIDC.
 
 ### `alg` + `typ` allowlist on Validate (RFC 9068 §4)
-Checked BEFORE signature verify so alg-confusion attacks
-(`alg=none`, wrong-key-shape spoof) fail early. Adding a new signer
-→ extend `supportedJWTAlgs` explicitly.
+Checked BEFORE signature verify so alg-confusion attacks (`alg=none`,
+wrong-key-shape spoof) fail early. New signer → extend
+`supportedJWTAlgs` explicitly.
 
 ### RFC 9068 access-token claim population
 Every Issue call site MUST set `Subject.ClientID` (REQUIRED §2.2).
-Login / auth_code / device set `AuthTime` + `AMR` from the live
-auth event. Refresh propagates the original `AMR` without resetting
-`AuthTime`. Token-exchange propagates `AuthTime` + `ACR` + `AMR` +
-`SID` from the inbound subject_token. `client_credentials`
-populates `ClientID` only. `jti` always auto-generated.
+Login / auth_code / device set `AuthTime` + `AMR` from the live auth
+event. Refresh propagates original `AMR` without resetting `AuthTime`.
+Token-exchange propagates `AuthTime` + `ACR` + `AMR` + `SID` from the
+inbound subject_token. `client_credentials` populates `ClientID` only.
+`jti` always auto-generated.
 
 ### Discovery is derived
 `/.well-known/openid-configuration` computed from server state:
-endpoints from request base URL, scopes from union of `openid` +
-every client's `AllowedScopes`, opt-in features (PAR, DCR,
-JARFetcher, mTLS, BCL) flip flags only when wired. Adding a new
-opt-in → branch the discovery doc.
+endpoints from request base URL, scopes from union of `openid` + every
+client's `AllowedScopes`, opt-in features (PAR, DCR, JARFetcher, mTLS,
+BCL) flip flags only when wired. New opt-in → branch the doc.
 
 ### `iss` on authorization responses (RFC 9207)
-Every `/auth/login` response — success, error, provider-list —
-carries `iss` via `s.resolveIssuer(ctx)`, which MUST equal the
-discovery doc's `issuer` field. New authorization-flow handlers
-MUST use `s.authzErrorBody(ctx, code)` — not plain `errorBody`.
+Every `/auth/login` response — success, error, provider-list — carries
+`iss` via `s.resolveIssuer(ctx)`, which MUST equal discovery `issuer`.
+New authorization-flow handlers MUST use `s.authzErrorBody(ctx, code)`,
+not plain `errorBody`.
 
-### JWKS caching
-`/.well-known/jwks.json`: `Cache-Control: public, max-age=<ttl>` +
-`ETag = sha256(body)[:8]`. Default TTL is 5 minutes; tune via
-`WithJWKSCacheTTL(d)`. During rotation, both outgoing and incoming
-keys are served so pre-rotation tokens still verify.
-
-### Discovery doc caching
-`/.well-known/openid-configuration` is double-cached:
-`WithDiscoveryCacheTTL(d)` (default 5s) caches the
-clientDiscoverySnapshot so projection fields don't re-iterate the
-client store on every hit; `WithDiscoveryDocCacheTTL(d)` (default 5s)
-caches the marshaled body + `ETag = sha256(body)[:8]` keyed by the
-request base URL (multi-host SSO safe) and honors `If-None-Match`
-→ 304. `Cache-Control: public, max-age=ttl` is stamped on every
-200. Setting body TTL to 0 disables both the in-process cache AND
-the response headers (every request renders fresh; CDNs / RP
-libraries told not to cache).
+### JWKS + discovery caching
+- JWKS: `Cache-Control: public, max-age=<ttl>` + `ETag = sha256(body)[:8]`.
+  Default TTL 5min via `WithJWKSCacheTTL`. Rotation serves both
+  outgoing and incoming keys.
+- Discovery double-cached: `WithDiscoveryCacheTTL` (default 5s) caches
+  the snapshot; `WithDiscoveryDocCacheTTL` (default 5s) caches body +
+  `ETag = sha256(body)[:8]` keyed by request base URL (multi-host
+  safe), honors `If-None-Match` → 304. Body TTL 0 disables both the
+  in-process cache AND response headers.
 
 ### Cache headers on credential endpoints (RFC 6749 §5.1)
 `/token`, `/token/introspect`, `/token/revoke`, `/token/revoke-all`,
-`/par`, `/auth/login`, `/userinfo`, and `/register*` (RFC 7591 +
-7592 DCR) all stamp `Cache-Control: no-store` + `Pragma: no-cache`
-at handler entry via `tokenNoStoreHeaders(ctx)`. Same rule applies
-to error responses, not just successes — a 401 from /userinfo or a
-400 from /register without the headers would let an intermediary
-cache the body and serve it cross-user / cross-tenant. New
-credential endpoints opt in with one line.
+`/par`, `/auth/login`, `/userinfo`, `/register*` stamp `Cache-Control:
+no-store` + `Pragma: no-cache` via `tokenNoStoreHeaders(ctx)` — same
+rule applies to error responses (a 401 from /userinfo cached cross-user
+would be catastrophic). New credential endpoint: one-line opt-in.
 
 ### WWW-Authenticate on 401 (RFC 6750 §3)
-Resource endpoints (`/userinfo`, `/token/revoke-all`, admin REST,
-`/register*`) stamp a Bearer challenge via `setBearerChallenge`.
+Resource endpoints stamp a Bearer challenge via `setBearerChallenge`.
 Missing-token omits `error=`; validation failure carries
-`error="invalid_token"`. Description values pass through
-`quoteAuthParam` to prevent auth-param injection.
+`error="invalid_token"`. Descriptions pass `quoteAuthParam` to prevent
+auth-param injection.
 
 ---
 
-## OAuth 2.0 / OIDC
+## OAuth 2.0 / OIDC surface
 
-One row per spec; file is the owner. Gotchas above apply across
-every grant.
+One row per spec; file is the owner. Gotchas above apply across grants.
 
 | Spec | Endpoint(s) | Opt-in | File |
 |---|---|---|---|
 | RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `auth_code.go` |
 | RFC 6749 §4.4 client_credentials | `/token` | always | `handle_token_*.go` |
 | RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore` | `refresh_token.go` |
-| RFC 7636 PKCE | param on /auth/login + /token | per-request / `Client.RequirePKCE` | `auth_code.go` |
+| RFC 7636 PKCE | /auth/login + /token | per-request / `Client.RequirePKCE` | `auth_code.go` |
 | RFC 7662 introspection | `/token/introspect` | always | `handle_introspect.go` |
-| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk needs `RefreshTokenSubjectIndex` | `handle_revoke.go` |
+| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk via `RefreshTokenSubjectIndex` | `handle_revoke.go` |
 | RFC 8628 device | `/device/code`, `/device/verify`, `/token` | `WithDeviceCodeStore` | `handle_device.go` |
-| RFC 8693 token-exchange | `/token` (urn:...:token-exchange) | always; refresh-output needs `WithRefreshTokenStore`; actor_token JTI replay via `WithJTIReplayStore` | `handle_token_exchange.go` |
+| RFC 8693 token-exchange | `/token` | always; refresh-output via `WithRefreshTokenStore`; actor replay via `WithJTIReplayStore` | `handle_token_exchange.go` |
 | RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | per-grant |
 | RFC 9126 PAR | `/par` | `WithPARStore` | `handle_par.go` |
-| RFC 7591 DCR | `/register` | `WithDynamicClientRegistration` | `handle_register.go` |
-| RFC 7592 DCR mgmt | `/register/:id` | same as 7591 | `handle_register.go` |
-| OIDC Core ID Token | `id_token` w/ `openid` scope | `WithIDTokenIssuer` | `oidc.go` |
+| RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `handle_register.go` |
+| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer` | `oidc.go` |
 | OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `oidc_discovery.go` |
 | OIDC RP-Initiated Logout | `/end_session` | always | `handle_end_session.go` |
 | OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP via `WithSubjectClientIndex` | `backchannel_logout.go` |
-| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI`; multi-RP via `WithSubjectClientIndex` | `frontchannel_logout.go` |
-| OIDC `sid` claim | access + id + logout tokens | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
-| OIDC `login_hint` | `/auth/login`, `/par`, JAR | always accepted | `handler.go` + `par.go` + `jar.go` |
-| OIDC Form Post Response Mode 1.0 | `/auth/login`, `/par`, JAR | always (`response_mode=form_post`) | `form_post_response_mode.go` |
+| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `frontchannel_logout.go` |
+| OIDC `sid` claim | access + id + logout | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
+| OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `handler.go` + `par.go` + `jar.go` |
+| OIDC Form Post Response Mode | `/auth/login`, `/par`, JAR | always | `form_post_response_mode.go` |
 | RFC 7521 + 7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `jwt_client_assertion.go` |
 | OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `prompt.go` |
-| RFC 9207 AS Issuer Id | every `/auth/login` response | always | `iss_response.go` |
+| RFC 9207 AS Issuer Id | every `/auth/login` | always | `iss_response.go` |
 | RFC 9068 JWT Access Token | `Ed25519JWTIssuer` | always | `defaultimpl/ed25519_jwt_issuer.go` |
-| RFC 8705 mTLS-bound tokens + endpoint aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `mtls_bound.go` |
+| RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `mtls_bound.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `step_up_auth.go` |
-| RFC 9449 DPoP | `/token` + `/userinfo` | always when header present; replay via `WithJTIReplayStore`; §8 nonce via `WithDPoPNonceProvider` | `dpop.go` + `dpop_nonce.go` |
-| RFC 8414 §2.1 signed_metadata | `/.well-known/openid-configuration` | `WithMetadataSigner` (Ed25519JWTIssuer satisfies the interface) | `oidc_discovery.go` |
+| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider` | `dpop.go` + `dpop_nonce.go` |
+| RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` (Ed25519JWTIssuer satisfies) | `oidc_discovery.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
-| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch via `WithJARFetcher` + `AllowedRequestURIs`; require via `Client.RequireSignedRequestObject` | `jar.go` + `jar_fetch.go` |
+| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `jar.go` + `jar_fetch.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `account_lockout.go` |
 
 **Token strategies** are per-client (`token_strategy: jwt|session`):
@@ -277,138 +256,92 @@ Register via `sso.WithTokenIssuer(name, issuer)`.
 
 ### Authenticators (`authenticators/`)
 9 pluggable: `password`, `phone`, `email`, `temp_token`, `keypair`,
-`apikey`, `certificate`, `totp` (RFC 6238), and `oidc_federation`
-(upstream OAuth 2.0 / OIDC IdP delegation — Google, Microsoft,
-GitHub, Auth0, Keycloak; configured per-provider, accessible at
-`/auth/login?provider=<name>`). `allowed_authenticators:` on a
-client gates which methods are permitted.
+`apikey`, `certificate`, `totp` (RFC 6238), `oidc_federation` (Google /
+Microsoft / GitHub / Auth0 / Keycloak at
+`/auth/login?provider=<name>`). `allowed_authenticators` per client
+gates methods. **password**: cmd verifies bcrypt hashes loaded from
+per-user files; unknown users hit a cost-matched dummy hash for timing
+parity.
 
-WebAuthn (CTAP/FIDO2) ships separately at
-`authenticators/webauthn/` — the four-call begin/finish ceremony
-doesn't fit the single-step Authenticator interface, so the
-package exposes `Helper.{BeginRegistration, FinishRegistration,
-BeginLogin, FinishLogin}` that embedders mount on their own routes.
-`cmd/sso-server` does this automatically when `webauthn.enabled` is
-set: four POST routes mount on the SSO router via the public
-`Server.Handle(method, path, http.HandlerFunc)` extension API —
-`/webauthn/{registration,login}/{begin,finish}` — sharing the same
-middleware stack the built-in endpoints use. Unknown sessions and
-unknown users both collapse to `404 session_invalid` so probes
-can't enumerate registered users.
+**WebAuthn** (CTAP/FIDO2) ships at `authenticators/webauthn/`. The
+four-call begin/finish ceremony doesn't fit the single-step
+Authenticator interface, so the package exposes
+`Helper.{BeginRegistration, FinishRegistration, BeginLogin,
+FinishLogin}`. cmd mounts `/webauthn/{registration,login}/{begin,finish}`
+on the SSO router via `Server.Handle(method, path, http.HandlerFunc)`
+when `webauthn.enabled`, sharing the standard middleware stack.
 
-**Token-issuance integration**: `/webauthn/login/finish` accepts an
-optional `?client_id=` query parameter. When supplied, cmd looks up
-the Client + the configured `TokenIssuer` for its `token_strategy`
-and mints tokens for the WebAuthn-authenticated subject
-(AMR=`["webauthn"]`, Provider=`"webauthn"`, scopes default to the
-client's `AllowedScopes`). The Finish response carries
-`access_token`, `token_type`, `expires_in`, `scope` alongside
-`username` + `credential_id`. The same emission rules /auth/login
-uses apply: `id_token` rides along when the client's scopes contain
-`openid` AND `WithIDTokenIssuer` is wired; `refresh_token` rides
-along when `WithRefreshTokenStore` is wired (cmd's `oauth.refresh_token.enabled`).
-Either dep missing degrades silently — the response just omits that
-field. Per-client `RefreshTokenTTL` beats the global TTL when set.
-Without `client_id` the v1 credential-verification response is
-unchanged — embedders that integrate their own token path aren't
-disturbed.
+`/webauthn/login/finish?client_id=...` mints tokens for the
+authenticated subject (AMR=`["webauthn"]`, scopes default to client's
+`AllowedScopes`). `id_token` rides along when client has `openid` +
+`WithIDTokenIssuer` wired; `refresh_token` when `WithRefreshTokenStore`
+wired; missing deps degrade silently. Without `client_id` the response
+is the v1 credential-verification shape (embedders unaffected).
 
-Pluggable `UserStore` + `SessionStore` with memory implementations
-included; SQLite-backed peers ship at
-`authenticators/webauthn/sqlite/` for multi-replica deployments
-(`UserStore` upserts credentials inside `BEGIN IMMEDIATE` so two
-concurrent registrations across replicas can't drop one of the
-appends; `SessionStore` uses `DELETE … RETURNING` for single-use
-ceremony state). Built on `github.com/go-webauthn/webauthn` for
-the CBOR + attestation heavy-lifting.
+Pluggable `UserStore` + `SessionStore`; SQLite peers at
+`authenticators/webauthn/sqlite/` for multi-replica deploys
+(`UserStore` upserts inside `BEGIN IMMEDIATE`; `SessionStore` uses
+`DELETE … RETURNING` for single-use ceremony state). Built on
+`github.com/go-webauthn/webauthn`.
 
 ### SQLite (`defaultimpl/sqlite/`)
-Pure-Go via `modernc.org/sqlite` — no CGO. Backends: User, Client,
-AuthCode, RefreshToken (+ Inspector + FamilyTracker), DeviceCode,
-PAR, Session, JTIReplay, SubjectClientIndex, AccountLockout,
-PairwiseSubject. Single-use stores (AuthCode, DeviceCode,
-RefreshToken, PAR) use `DELETE … RETURNING` for race-free
-consumption; Session uses `UPDATE … RETURNING` on Refresh; JTIReplay
-uses `INSERT … ON CONFLICT DO NOTHING` + RowsAffected for atomic
-first-sighting; SubjectClientIndex + PairwiseSubject use
-`INSERT … ON CONFLICT … DO UPDATE` for idempotent upsert;
-AccountLockout wraps read-modify-write in `BEGIN IMMEDIATE` so
-concurrent failure increments across replicas can't both observe
-count=N-1 and miss the threshold trigger.
+Pure-Go via `modernc.org/sqlite`. Race-free patterns by store:
+- single-use (AuthCode, DeviceCode, RefreshToken, PAR): `DELETE … RETURNING`
+- Session refresh: `UPDATE … RETURNING`
+- JTI replay: `INSERT … ON CONFLICT DO NOTHING` + RowsAffected
+- index upserts (SubjectClientIndex, PairwiseSubject): `INSERT … ON CONFLICT DO UPDATE`
+- AccountLockout: read-modify-write inside `BEGIN IMMEDIATE`
 
-DSN cookbook:
-| DSN | Use |
-|---|---|
-| `file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000` | Production |
-| `:memory:` | Per-connection isolated DB |
-| `file::memory:?cache=shared` | Shared pool (tests) |
-
-Schema migration: `CREATE TABLE IF NOT EXISTS` at construction. The
-next multi-table backend MUST bring goose/golang-migrate. Pattern:
-`New<Provider>(dsn)`, `Close()`, `New<Provider>WithDB(db)` for shared
-pool. `sql.ErrNoRows` → typed `ErrNoSuchX`. Timestamps as Unix-ns
-INTEGER.
+Production DSN: `file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000`.
+Shared-pool tests: `file::memory:?cache=shared`. Schema via `CREATE
+TABLE IF NOT EXISTS` at construction. Constructor: `New<Provider>(dsn)`
+/ `Close()` / `New<Provider>WithDB(db)` for shared pools.
+`sql.ErrNoRows` → typed `ErrNoSuchX`. Timestamps as Unix-ns INTEGER.
+**The next multi-table backend MUST bring goose/golang-migrate.**
 
 ### Audit (`audit/`)
 `audit.Recorder` fans Events to `Sink`s. Built-in: `MemorySink`,
-`WriterSink`, `WebhookSink`, `MultiSink`. Every Event carries W3C
-`TraceID` / `SpanID` / `ParentSpanID`.
+`WriterSink`, `WebhookSink`, `MultiSink`, plus SQLite at `audit/sqlite`
+(queryable, restart-durable, replica-shared via shared DSN). Every
+Event carries W3C `TraceID` / `SpanID` / `ParentSpanID`.
 
-- **Hash chain** (opt-in): `audit.WithHashChain()` stamps
-  `PrevHash` + `Hash`; `audit.VerifyChain(events)` validates.
-  In-process only, oldest-first required, last event not
-  detectable without external attestation. Operators verify the
-  live chain via the `sso-audit-verify` CLI
-  (`cmd/sso-audit-verify`) — pages through `/api/v1/audit/events`
-  (or reads a JSON file), reverses to chain order, runs
-  `VerifyChain`, exits non-zero on a break.
-- **PII redaction** (opt-in): `audit.WithRedactor(r)` runs BEFORE
-  the chainer. Helpers: `RedactActorIDHash(salt)`, `RedactIPTruncate`,
+Optional wrappers:
+- **Hash chain** (`audit.WithHashChain`): stamps `PrevHash` + `Hash`;
+  `audit.VerifyChain(events)` validates oldest-first. The
+  `sso-audit-verify` CLI pages `/api/v1/audit/events` (or reads a JSON
+  file), reverses, validates, exits non-zero on a break.
+- **PII redaction** (`audit.WithRedactor`): runs BEFORE the chainer.
+  Helpers: `RedactActorIDHash(salt)`, `RedactIPTruncate`,
   `RedactUserAgent`, `RedactMetadataKeys(...)`,
   `DefaultPIIRedactor(salt)`.
-- **Retry wrapper** (opt-in): `audit.NewRetryingSink(inner, ...)` retries
-  Record on transient errors with exponential backoff + jitter.
-  Options: `WithRetryMaxAttempts(n)` (default 3), `WithRetryInitialBackoff(d)`,
-  `WithRetryMaxBackoff(d)`, `WithRetryClassifier(c)` to mark some
-  errors permanent (default: every error is transient). Compose as
-  `AsyncSink(RetryingSink(WebhookSink))` — retry runs inside the
-  AsyncSink worker so total backoff time must stay under the queue
-  capacity / arrival rate, or backpressure shows up as drops.
-- **Async wrapper** (opt-in): `audit.NewAsyncSink(inner, ...).Start()`
-  drains a bounded buffer on a worker pool — Record never blocks the
-  request path. Options: `WithAsyncBuffer(n)` (default 1024),
-  `WithAsyncWorkers(n)` (default 1), `WithAsyncDropHandler(fn)`,
-  `WithAsyncRecordTimeout(d)`. Drop reasons: `ErrAsyncQueueFull`,
-  `ErrAsyncSinkClosed`, plus surfaced inner errors. Caller-side
-  context is intentionally dropped (TraceID rides on the Event, not
-  ctx) so request-goroutine cancellation can't abort delivery. Use
-  this for `WebhookSink`; skip for `MemorySink` / `WriterSink`.
-  Observability: `Pending()` / `Capacity()` for queue depth gauge;
-  `DropsQueueFull()` / `DropsClosed()` / `DropsInnerError()` for
-  monotonic drop counters operators scrape into Prometheus.
-  Ready-made collector: `metrics.NewAsyncSinkCollector(asyncSink)`
-  → register on the Prometheus registry to expose all 5 series
-  (`sso_audit_async_drops_*`, `sso_audit_async_queue_*`) without
-  a polling goroutine.
+- **Retry** (`audit.NewRetryingSink`): exponential backoff + jitter.
+  Options for max attempts, backoff bounds, error classifier.
+- **Async** (`audit.NewAsyncSink(...).Start()`): bounded buffer +
+  worker pool; Record never blocks the request path. Drop reasons:
+  `ErrAsyncQueueFull` / `ErrAsyncSinkClosed` / inner errors. Caller
+  ctx intentionally dropped (TraceID rides on Event). Use for
+  WebhookSink; skip for Memory/Writer. Observability via
+  `metrics.NewAsyncSinkCollector(asyncSink)` — exposes all 5 series
+  (`sso_audit_async_drops_*`, `sso_audit_async_queue_*`) without a
+  polling goroutine.
+
+Recommended cluster composition:
+`AsyncSink(MultiSink(SQLitePrimary, RetryingSink(WebhookSink)))`.
 
 ### Permissions (`permissions/`)
-`MemoryProvider` gives per-APP role registries, wildcard matcher
-(`user:*` matches `user:read`, `*` matches all), menu filtering,
-login response embedding via `WithEmbedPermissionsInLogin()`.
-`MenuLister` is the extension snapshots/admin RPCs use.
+`MemoryProvider`: per-APP role registries, wildcard matcher (`user:*`
+matches `user:read`, `*` matches all), menu filtering, login-response
+embedding via `WithEmbedPermissionsInLogin()`. `MenuLister` is the
+extension snapshots + admin RPCs use.
 
 ### Service registry (`registry/`)
 `memory` (TTL + Watch) and `etcd` (lease + KeepAlive). cmd's
-`buildRegistry` selects on `registry.backend` (default `memory`);
-the etcd path is materialized in cmd (not in the SPI) so the etcd
-transitive dep stays out of the registry package's import surface.
-`cmd/sso-server` self-registers under `Name: "sso"` with
-`Service.ID = registry.service_id` (falls back to
-`<issuer>-<short-hostname>` so two replicas of the same issuer
-don't clobber each other's etcd key). Service.TTL defaults to 30s
-under etcd so a dead replica falls off discovery within one lease
-window; under memory the field is ignored. The etcd Registry's
-`Ping(ctx)` surfaces as `etcd-registry` on /readyz.
+`buildRegistry` selects on `registry.backend`; etcd path materialized
+in cmd to keep the transitive dep out of the registry SPI. cmd
+self-registers as `Name: "sso"`, `Service.ID = registry.service_id`
+(defaults `<issuer>-<short-hostname>` to prevent replica clobber).
+`Service.TTL` defaults 30s under etcd. etcd `Ping(ctx)` →
+`etcd-registry` on /readyz.
 
 ### gRPC (`proto/` + `grpcserver/`)
 
@@ -421,156 +354,130 @@ window; under memory the field is ignored. The etcd Registry's
 | E tenant | `admin.v1.TenantAdminService` | `/api/v1/admin/{tenants,domains}` |
 
 gRPC services **reuse the same** audit.Recorder / permissions.Provider
-/ registry.Registry instances the HTTP layer uses.
+/ registry.Registry instances HTTP uses.
 
-Admin auth: `sso.AdminMiddleware` validates Bearer via
-`(*sso.Server).ValidateToken`, requires `admin:read` for read /
-`admin:write` for mutations (`admin:*` matches both), stashes actor
-via `AdminActorFromContext`. 401s carry a `Bearer realm="admin"`
-challenge. Every mutation emits `admin_*` audit. The HTTP middleware
-gates more than just `/api/v1/admin/` — `isAdminProtectedPath` also
-covers `/api/v1/audit/*` (event query API leaks subject IDs / IPs /
-geo / outcomes; PII-grade) and `/api/v1/netpolicy/policies*` +
-`/classify` (network topology). `/netpolicy/resolve-me` stays open
-because it's the client-facing "what network am I from" lookup.
-cmd wraps the base SSO handler with the admin middleware so these
-gates fire even on the SSO router; when admin is disabled, audit +
-netpolicy stay open and cmd logs a startup warning.
+`sso.AdminMiddleware` validates Bearer via `(*sso.Server).ValidateToken`,
+requires `admin:read` for read / `admin:write` for mutations
+(`admin:*` matches both), stashes actor via `AdminActorFromContext`.
+401s carry `Bearer realm="admin"`. Every mutation emits `admin_*`
+audit. `isAdminProtectedPath` also covers `/api/v1/audit/*` (PII-grade
+event query) and `/api/v1/netpolicy/policies*` + `/classify`;
+`/netpolicy/resolve-me` stays open as the client-facing lookup. When
+admin is disabled, cmd leaves audit + netpolicy open and logs a
+startup warning.
 
 `Discovery.Watch` flushes initial headers via `SendHeader` so clients
 can block on `stream.Header()` before mutations.
 
 ### Network policy (`netpolicy/`)
 Named classes (intranet/public/dmz/…) of CIDRs + hostnames + URLs.
-Classifier: hostname-beats-CIDR, priority breaks ties. `Classifier`
-holds a hot snapshot subscribed to `Store.Watch` via `Start`
-(subscribe before seed Reload to avoid lost events). HTTP at
+Hostname-beats-CIDR; priority breaks ties. `Classifier` holds a hot
+snapshot subscribed to `Store.Watch` via `Start` — subscribe before
+seed Reload to avoid lost events. HTTP at
 `/api/v1/netpolicy/{policies,classify,resolve-me}`. Server helper:
-`(*sso.Server).ClassifyRequest(r)`.
-
-Backends: `memory` (single-replica, in-process) and `etcd`
-(cluster-shared). cmd's `buildNetworkStore` selects on
-`network.store`; the etcd path is materialized in cmd (not in
-`config`) so the config package keeps the etcd transitive dep out
-of its SPI. Both paths funnel seed policies through
-`config.ApplyNetworkPolicySeeds` so semantics + error wrapping stay
-identical. The etcd Store exposes `Ping(ctx)` that walks every
-configured endpoint and succeeds as soon as one responds — cmd
-registers it as `etcd-netpolicy` on /readyz.
+`(*sso.Server).ClassifyRequest(r)`. Backends: `memory`, `etcd`
+(cluster-shared, etcd path materialized in cmd); both funnel seeds
+through `config.ApplyNetworkPolicySeeds`. etcd `Ping(ctx)` →
+`etcd-netpolicy` on /readyz.
 
 ### Bootstrap (`bootstrap/`)
 Versioned first-run init. `Step = Name()/Version()/Run(ctx)`; Runner
 re-runs only `Version > high-water`. Trackers: `memory` (tests),
 `file` (atomic JSON, single-node default). Lock SPI in `lock/`:
-`noop` / `file` (flock) / `etcd` (lease+Txn). Wired via `WithLock`+
-`WithLockTTL`+`WithLockBlocking`. Lock loss cancels in-flight Steps
-+ surfaces `ErrLockLost`.
+`noop`, `file` (flock), `etcd` (lease+Txn). Wired via
+`WithLock`/`WithLockTTL`/`WithLockBlocking`. Lock loss cancels
+in-flight Steps + surfaces `ErrLockLost`.
 
 Built-in `bootstrap/builtin/` Steps under namespace `"sso-server"`:
 
 | v | Effect |
 |---|---|
 | 0 | `restore_from_snapshot` (when `snapshot.restore_from` set) |
-| 1 | `seed_admin_role` (sso-admin role, admin:*) |
+| 1 | `seed_admin_role` (sso-admin, admin:*) |
 | 2 | `seed_admin_user` — prints generated password ONCE to stdout |
-| 3 | `seed_default_netpolicy` (intranet RFC1918 if none exist) |
+| 3 | `seed_default_netpolicy` (intranet RFC1918 if none) |
 | 4 | `seed_admin_client` |
 
 **Capture the admin password from boot log.** `ssoclient/bootstrap`
-wraps file tracker + namespaced runner. `"sso-server"` namespace is
+wraps file tracker + namespaced runner. `"sso-server"` namespace
 reserved.
 
 ### Snapshot (`snapshot/`)
-Export/restore operator state (clients, users, roles, role
-assignments, menus, netpolicies, bootstrap high-water).
+Export/restore operator state (clients, users, roles, role assignments,
+menus, netpolicies, bootstrap high-water).
 
 - `Snapshotter.Export` pulls every wired backend's `List()`.
-- `Restorer.Restore` applies in dependency order. Modes:
-  `ModeMerge` (insert-only) / `ModeOverwrite` (upsert) / `ModeReplace`
-  (wipe+seed, requires `Confirm == SnapshotID`). `DryRun` returns
-  counts only. `AdvanceBootstrap` bumps Tracker to snapshot version.
-- `Codec` (JSON canonical, schema `"1"`), `Sealer` (`none` typed
-  no-op; `passphrase` argon2id + XChaCha20-Poly1305 OWASP-2024),
-  `Storage` (`file` atomic 0o600; `inline` memory). `Pipeline`
-  composes with sha256 verify (`ErrChecksumMismatch`).
-- `snapshot/loader.FromURI` parses `file:///abs/path` +
-  `inline:<base64>`.
-- Admin RPCs at `admin.v1.SnapshotAdminService` (admin:* gate).
-- Offline CLI: `sso-snapshotctl` (`cmd/sso-snapshotctl`) — `list` /
-  `inspect` / `verify` against a storage dir without running a
-  server. Useful for backup-pipeline integrity checks and
-  disaster-recovery drills where the admin RPC isn't reachable.
-  `verify` accepts `--passphrase` / `--passphrase-file` for the
-  encrypted-snapshot case.
+- `Restorer.Restore` modes: `ModeMerge` (insert-only) / `ModeOverwrite`
+  (upsert) / `ModeReplace` (wipe+seed, requires `Confirm == SnapshotID`).
+  `DryRun` returns counts only. `AdvanceBootstrap` bumps Tracker.
+- Codec: JSON canonical, schema `"1"`. Sealers: `none` (typed no-op),
+  `passphrase` (argon2id + XChaCha20-Poly1305 OWASP-2024). Storage:
+  `file` (atomic 0o600), `inline` (memory). `Pipeline` composes with
+  sha256 verify (`ErrChecksumMismatch`).
+- `snapshot/loader.FromURI` parses `file:///abs/path` + `inline:<base64>`.
+- Admin RPC: `admin.v1.SnapshotAdminService` (admin:* gate).
+- Offline CLI: `sso-snapshotctl list|inspect|verify` against a storage
+  dir — bypasses the running server, useful for backup-pipeline
+  integrity + DR drills. `verify` accepts `--passphrase` /
+  `--passphrase-file` for the encrypted case.
 
-**First-boot auto-restore**: `snapshot.restore_from` YAML key +
-`--bootstrap-restore-from` CLI (CLI wins). Runs in `bootstrap/builtin`
-v0 step BEFORE the seed Runner so `AdvanceBootstrap` can skip
-already-covered seeds. Default mode: Overwrite.
+**First-boot auto-restore**: `snapshot.restore_from` YAML (or CLI
+`--bootstrap-restore-from`, which wins) runs as `bootstrap/builtin` v0
+BEFORE the seed Runner so `AdvanceBootstrap` skips already-covered
+seeds. Default mode: Overwrite.
 
 ### Releases (`releases/`)
 Admin app version pin / rollback. `Release` pairs frontend+backend
 `Artifact` halves; `Validate` refuses one-sided releases.
 
-- `ReleaseStore` separates current-pointer from registration.
-  Backends: `memory`, `file` (atomic 0o600).
+- `ReleaseStore` separates current-pointer from registration:
+  `memory`, `file` (atomic 0o600).
 - `Pinner.PinForward` + `PinRollback` encode asymmetric ordering
-  (backend-first forward, frontend-first rollback). Backends:
-  `noop`, `static` (atomic symlink swap), `docker` (rewrite `.env`
-  + `docker compose pull && up -d`).
+  (backend-first forward, frontend-first rollback). Backends: `noop`,
+  `static` (atomic symlink swap), `docker` (rewrite `.env` +
+  `docker compose pull && up -d`).
 - `Registry` composes Store + Pinner. Forward Pin rejects schema
   regression with `ErrSchemaRegress` — use Rollback.
-- `HealthProbe` (e.g. `releases/probe/http`) gates forward Pin;
-  all-fail → auto-rollback. No probe on Rollback.
-- `SnapshotRestorer` hook on Rollback: when target's
-  `ConfigSnapshot` is non-empty, restore admin state BEFORE the
-  Pinner flips.
+- `HealthProbe` (e.g. `releases/probe/http`) gates forward Pin; all-fail
+  → auto-rollback. No probe on Rollback.
+- `SnapshotRestorer` hook on Rollback: non-empty `ConfigSnapshot`
+  restores admin state BEFORE the Pinner flips.
 
-Admin REST: `POST/GET /api/v1/admin/releases`,
-`/api/v1/admin/releases:current`,
-`/api/v1/admin/releases/{id}[:pin,:rollback]`. `GetCurrent` returns
-empty when nothing pinned.
+Admin REST: `POST/GET /api/v1/admin/releases`, `/releases:current`,
+`/releases/{id}[:pin,:rollback]`.
 
 ### Geo (`geo/`)
 IP → enrichment as **UX hint, NOT security**. 200ms timeout;
-`ErrNotFound` non-fatal; nil Provider = no-op. `geo/static` is
-CIDR longest-prefix. Login response carries `country_code` +
-`recommended_language` when the authenticator didn't supply
-stronger signal. Every Event gets `geo.*` keys (presence-check
-friendly).
+`ErrNotFound` non-fatal; nil Provider = no-op. `geo/static` is CIDR
+longest-prefix. Login response carries `country_code` +
+`recommended_language` when stronger signal absent. Every Event gets
+`geo.*` keys.
 
 ### Tenant (`tenant/`)
 Multi-tenant + multi-domain routing. Tenant = business boundary;
-Domain = hostname → Tenant (lowercase + trailing-dot-stripped per
-RFC 1035). **Tenant sits above `Client`** — one tenant typically
-owns many clients (admin / customer / mobile) sharing one audit.
+Domain = hostname → Tenant (lowercase + trailing-dot-stripped per RFC
+1035). **Tenant sits above `Client`** — one tenant typically owns many
+clients sharing one audit.
 
-`Client.TenantID` (YAML `tenant_id`): when set, login + token endpoints
-reject mismatches with 403 `tenant_mismatch` audited as `login_failure`.
-Empty = served from any tenant (single-tenant + platform-admin clients).
-`TenantScopedClientStore.ListByTenant` is the optional extension for
-admin UIs. Suspended tenants resolve to "no tenant" by default. Every
-Event gets `tenant.*` keys.
+`Client.TenantID`: when set, login + token endpoints reject mismatches
+with 403 `tenant_mismatch` audited as `login_failure`. Empty = served
+from any tenant. `TenantScopedClientStore.ListByTenant` is the optional
+admin-UI extension. Suspended tenants resolve to "no tenant" by
+default. Every Event gets `tenant.*` keys.
 
-**Active suspension** (opt-in): `WithTenantSuspensionCheck(ttl)`
-installs a post-validation gate — every token whose
-`Client.TenantID` is set has its tenant Status looked up; tokens whose
-tenant is `Suspended` fail with `ErrTenantSuspended` (→ `invalid_token`
-at resource paths, `inactive` at introspect). Without this option,
-existing tokens continue to work after suspension (only new issuance
-is blocked). Lookups cached for `ttl` (default 30s); admin SetStatus
-handlers MUST call `(*Server).InvalidateTenantSuspensionCache(id)` so
-the flip takes effect on the next validate. Tenant store outage is
-fail-open by design — don't 401 the world during a partition.
+**Active suspension** (`WithTenantSuspensionCheck(ttl)`): every token
+whose `Client.TenantID` is set has its tenant Status looked up;
+Suspended → `ErrTenantSuspended` (→ `invalid_token` at resource paths,
+`inactive` at introspect). Without this option, existing tokens
+continue post-suspension (only new issuance blocked). Cached `ttl`
+(default 30s); admin SetStatus MUST call
+`(*Server).InvalidateTenantSuspensionCache(id)`. Store outage is
+fail-open by design.
 
-**Admin RPCs**: `admin.v1.TenantAdminService` ships CRUD on Tenants
-+ Domains plus the surgical `SetTenantStatus(id, status)` flip.
-Update intentionally preserves the current Status so callers can't
-backdoor a suspension via UpdateTenant — the flip MUST go through
-SetStatus, which fires the cache invalidation callback wired in cmd
-to `(*Server).InvalidateTenantSuspensionCache`. DeleteTenant also
-fires the callback (deleted tenant must re-resolve as "no tenant"
-on the next request, not stay cached as Active until TTL expiry).
+**Admin RPCs**: `admin.v1.TenantAdminService` ships CRUD on Tenants +
+Domains plus surgical `SetTenantStatus`. Update preserves current
+Status (no backdoor suspension via UpdateTenant). DeleteTenant also
+fires the invalidation callback.
 
 ### ssoclient
 ```go
@@ -580,7 +487,6 @@ handler := &appcore.Handler{
     Authz: local.NewAuthzClient(prov),
     Audit: local.NewAuditClient(recorder),
 }
-
 // Centralized:
 handler := &appcore.Handler{
     Auth:  remote.NewAuthClient(remote.NewJWKSCache(jwksURL)),
@@ -593,10 +499,9 @@ Each capability chooses independently. `remote.JWKSCache` does
 background refresh + single-flight refetch on unknown `kid`.
 
 `ssoclient/dev` provides bypass stubs for local UI iteration:
-`ValidateToken` returns a fake Subject, `Check` defaults to
-AllowAll, `Record` no-ops. **Every constructor emits a one-time
-stderr `AUTH BYPASS ACTIVE` warning** on first non-silent call.
-Suppress in tests via `WithSilent` / `WithSilentAuthz` /
+`ValidateToken` → fake Subject, `Check` → AllowAll, `Record` → no-op.
+**Every constructor emits a one-time stderr `AUTH BYPASS ACTIVE`
+warning.** Suppress in tests via `WithSilent` / `WithSilentAuthz` /
 `WithSilentAudit`.
 
 ### Edge (`deploy/`)
@@ -605,14 +510,14 @@ Suppress in tests via `WithSilent` / `WithSilentAuthz` /
   fast-reject, not a trust boundary** — the Go server re-validates.
 - **Kubernetes** — Kustomize base, distroless pod security
   (`runAsNonRoot`, `readOnlyRootFilesystem`, drop ALL caps,
-  `seccompProfile: RuntimeDefault`). `configMapGenerator` hashes
-  names for rolling restarts. Ingress / HPA / NetworkPolicy / PDB
-  / ServiceMonitor in overlays.
-- **docker compose** — sso-server + etcd + optional
-  `--profile observability` (Prometheus + Grafana). Onboarding /
-  smoke tests, NOT production-grade.
-- **Grafana** — `sso-overview.json` (12 panels, `$instance` template)
-  + `alerts.yaml` (6 rules). Thresholds are starting points.
+  `seccompProfile: RuntimeDefault`). `configMapGenerator` hashes names
+  for rolling restarts. Ingress / HPA / NetworkPolicy / PDB /
+  ServiceMonitor in overlays.
+- **docker compose** — sso-server + etcd + optional `--profile
+  observability` (Prometheus + Grafana). Onboarding / smoke tests,
+  NOT production-grade.
+- **Grafana** — `sso-overview.json` + `alerts.yaml`. Thresholds are
+  starting points.
 
 ### Middleware order
 Probes registered OUTSIDE the stack so kubelet can't be throttled.
@@ -624,11 +529,8 @@ tracing → ratelimit → bodyLimit → metrics → CORS → router
 ```
 
 Wire each with `sso.With{Tracing, RateLimit, BodyLimit, Metrics, CORS}`.
-In `cmd/sso-server`, `security.{body_limit,rate_limit,cors}` + `metrics.enabled`
-configure these from YAML — rate-limit keys per HTTP-Basic `client_id` first,
-falling back to IP (see [ratelimit.KeyByClientIDOrIP]).
 
-**Metrics** are bounded by design (no per-path / per-user labels):
+**Metrics** bounded by design (no per-path / per-user labels):
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -643,150 +545,96 @@ Per-endpoint breakdowns come from traces, not labels.
 **Tracing**: `tracing.Init(ctx, ...)`; OTLP gRPC enabled by
 `OTEL_EXPORTER_OTLP_ENDPOINT`. No-op when unset.
 
-**Ratelimit**: `Default` + ordered `Prefixes`. `KeyByClientIP`
-honors XFF/X-Real-IP/RemoteAddr — **trust an edge or wrap in
-TrustedProxies upstream**. `KeyByClientIDOrIP` keys by `client_id`
-when an HTTP Basic-authed /token-style request supplies one, falling
-back to IP — sensible for /token, /par, /token/introspect, /token/revoke
-where the natural noisy-neighbor is the client (not a NAT'd source IP).
-Body-supplied credentials (client_secret_post) intentionally hit the
-IP fallback to avoid consuming r.Body. Composes with `RiskScorer`
-(limiter rejects bots before scoring).
+**Ratelimit**: `Default` + ordered `Prefixes`. `KeyByClientIP` honors
+XFF/X-Real-IP/RemoteAddr — **trust an edge or wrap in TrustedProxies
+upstream**. `KeyByClientIDOrIP` keys by `client_id` for HTTP
+Basic-authed /token-style requests, falling back to IP — body-supplied
+credentials hit the IP fallback (avoids consuming r.Body). Composes
+with `RiskScorer` (limiter rejects bots before scoring).
 
-**ReadyCheck**: pluggable SPI; any failing check → 503. Bounded by
-3s context deadline. Every SQLite-backed store ships a `Ping(ctx)`
-method (`db.PingContext`); cmd auto-registers one `WithReadyCheck`
-per wired SQLite store via `appendReadyCheck`, naming each check
-after the subsystem (`sqlite-identity-clients`,
-`sqlite-oauth-refresh-tokens`, `sqlite-jti-replay`,
-`sqlite-account-lockout`, `sqlite-pairwise-subjects`,
-`sqlite-bcl-subject-client-index`, `sqlite-webauthn-{users,sessions}`,
-etc.). The SQLite rate limiter participates too — when
-`security.rate_limit.backend: sqlite`, cmd registers
-`sqlite-ratelimit-default` for the policy's default bucket and
-`sqlite-ratelimit-<prefix>` for each declared prefix (slashes
-collapse to hyphens, so `/token/revoke` surfaces as
-`sqlite-ratelimit-token-revoke`). The etcd-backed netpolicy Store
-participates as `etcd-netpolicy` when wired, and the etcd-backed
-service registry as `etcd-registry`. Memory backends don't
-implement Ping, so the type assertion silently no-ops — exactly the
-right cadence (no readiness signal from a process-local map). The
-check payload is `{"status":"ready|unready","checks":{name:
-"ok"|err}}` so kubelet + operators see exactly which dependency
-tripped the 503.
+**ReadyCheck**: pluggable SPI; any failing check → 503. Bounded 3s
+deadline. Every SQLite store ships a `Ping(ctx)`; cmd auto-registers
+one per wired store via `appendReadyCheck`, naming each after the
+subsystem (`sqlite-identity-clients`, `sqlite-oauth-refresh-tokens`,
+`sqlite-jti-replay`, `sqlite-account-lockout`,
+`sqlite-pairwise-subjects`, `sqlite-bcl-subject-client-index`,
+`sqlite-webauthn-{users,sessions}`, etc.). SQLite rate limiter
+participates too: `sqlite-ratelimit-default` + `sqlite-ratelimit-<prefix>`
+per declared prefix (slashes collapse to hyphens). etcd backends
+register as `etcd-netpolicy` / `etcd-registry`. Memory backends
+silently no-op. Payload:
+`{"status":"ready|unready","checks":{name: "ok"|err}}`.
 
 ### Risk scoring (`risk.go`)
-`RiskScorer` runs on `/auth/login` AFTER credential validation,
-BEFORE token issuance. Returns `Allow` / `RequireMFA` (reserved,
-treated as Allow today) / `Deny` (403 + audit `login_failure
-reason=risk_denied`).
-
-- **Fail-open** on scorer error (alert on the log line).
-- **Zero overhead** when option unset.
+`RiskScorer` runs on `/auth/login` AFTER credential validation, BEFORE
+token issuance. Returns `Allow` / `RequireMFA` (reserved, treated as
+Allow today) / `Deny` (403 + audit `login_failure reason=risk_denied`).
+**Fail-open** on scorer error (alert on the log line). **Zero overhead**
+when option unset.
 
 Reference impls in `defaultimpl/`:
-- `NoopRiskScorer` — typed Allow-always (tests / explicit no-op).
-- `RuleBasedRiskScorer` — declarative IP / country deny-and-allow
-  lists. cmd wires this when `risk.enabled` is set. Eval order is
-  deny-first (IP deny → IP allow default-deny → country deny →
-  country allow); `deny_on_geo_missing` flips country allow into
-  hard-required when geo enrichment was unavailable.
+- `NoopRiskScorer` — typed Allow-always.
+- `RuleBasedRiskScorer` — declarative IP / country deny-and-allow lists.
+  cmd wires when `risk.enabled`. Eval order: IP deny → IP allow
+  default-deny → country deny → country allow; `deny_on_geo_missing`
+  promotes country allow to hard-required when geo enrichment is
+  absent.
 
-Scorers needing richer signals (impossible-travel, device
-fingerprint deltas, ML scoring) implement [sso.RiskScorer]
-directly and query their own store inside `Score` — don't pad
-`RiskRequest`.
+Richer scorers (impossible-travel, device fingerprint, ML) implement
+[sso.RiskScorer] directly and query their own store inside `Score` —
+don't pad `RiskRequest`.
 
 ---
 
 ## Configuration
 
-`cmd/sso-server/config.yaml` is the reference. Top-level keys:
+`cmd/sso-server/config.yaml` is the canonical reference. Top-level
+keys map 1:1 to YAML; field coverage matches the SDK SPI. Areas where
+the operator surface needs explanation:
 
-```yaml
-server:        # listen, issuer (REQUIRED to differ from sso.DefaultIssuer
-               # sentinel; cmd default is "sso-server"; production SHOULD
-               # set the canonical public URL — the same value is stamped
-               # into the JWT iss claim, the discovery doc's issuer field,
-               # and every RFC 9207 iss param so they cannot diverge),
-               # TTLs, default_token_strategy, max_clock_skew,
-               # discovery_doc_cache_ttl, discovery_cache_ttl, jwks_cache_ttl,
-               # signed_metadata, oauth_21_strict_mode,
-               # supported_acr_values[], operator_metadata: {policy_uri, tos_uri, service_documentation}
-               # pairwise_subjects: { enabled, salt, salt_file, backend(memory|sqlite), sqlite.dsn }
-               #   sqlite shares (pairwise → local) reverse lookup so /userinfo resolves on any replica
-logging:       # level: debug|info|error
-audit:         # enabled, api_enabled, memory_capacity, hash_chain
-               # backend(memory|sqlite), sqlite.dsn — primary sink under the
-               #   composition; sqlite persists across restarts + shares state
-               #   across replicas pointed at the same DSN (audit-sqlite ReadyCheck)
-               # async: { enabled, buffer_size, workers, record_timeout_ms }
-               # pii_redaction: { enabled, salt, salt_file } — DefaultPIIRedactor (actor hash, ip truncate, ua strip)
-               # webhook: { enabled, url, timeout, headers, retry.{max_attempts, initial_backoff, max_backoff} }
-               #   composed as AsyncSink(MultiSink(Primary, RetryingSink(WebhookSink))) — fan-out to a downstream collector
-permissions:   # apps[] (roles + menus per client_id), user_roles[], embed_in_login
-network:       # enabled, api_enabled, store(memory|etcd), policies[]
-               # etcd_endpoints[], etcd_prefix, etcd_dial_timeout, etcd_username, etcd_password
-               #   etcd backend constructed in cmd; cluster-shared classifier state survives replica churn
-registry:      # backend(memory|etcd), service_id, service_address, service_tags[], service_ttl
-               # etcd_endpoints[], etcd_prefix, etcd_dial_timeout, etcd_username, etcd_password
-               #   etcd registry registers under a TTL lease; service_id defaults to <issuer>-<short-hostname>
-clients:       # id, secret, allowed_authenticators, token_strategy,
-               # redirect_uris, post_logout_redirect_uris, allowed_scopes,
-               # allowed_resources, allowed_authorization_details_types,
-               # allowed_pkce_methods, require_pkce, require_par,
-               # require_signed_request_object, allowed_request_uris,
-               # tenant_id, refresh_token_ttl, access_token_ttl,
-               # device_code_ttl, device_code_poll_interval,
-               # userinfo_signed_response_alg, backchannel_logout_uri,
-               # frontchannel_logout_uri, subject_type, sector_identifier_uri,
-               # jwks (RFC 9101 JAR + RFC 7521/7523 private_key_jwt verifier)
-               #   every field maps 1:1 to the sso.Client SPI — cmd's YAML
-               #   surface used to drop ~15 of these silently; now full coverage
-authenticators: # per-method enable + tuning; oidc_federation[] lists upstream IdPs
-admin:         # enabled, api_rest_enabled
-bootstrap:     # disabled, state_path, admin_user_id, admin_client_id, admin_role_code, admin_password_file
-               # lock: { backend, key, ttl, blocking, file.dir, etcd.endpoints }
-snapshot:      # enabled, restore_from (URI; --bootstrap-restore-from overrides)
-               # storage: { backend(file|inline), file.dir }
-               # encryption: { backend(none|passphrase), passphrase, passphrase_file }
-releases:      # enabled, store, pinner, probe, snapshot_integration
-geo:           # enabled, backend(static), lookup_timeout, static.entries[]
-security:      # body_limit, cors
-               # rate_limit: { enabled, backend(memory|sqlite), sqlite.dsn, default_per_sec, default_burst, prefixes[] }
-               #   sqlite shares token-bucket state across replicas
-               # dpop_nonce: { enabled, key_file, ttl }
-               # jti_replay: { enabled, backend(memory|sqlite), sqlite.dsn } — sqlite shares jti set across the cluster
-               # account_lockout: { enabled, backend(memory|sqlite), sqlite.dsn, max_failures, lockout_duration, failure_window }
-               #   sqlite shares the failure counter so cross-replica attackers can't evade the threshold
-               # mtls: { enabled, backend(tls|header), header.{name, encoding(url-pem|pem|base64-der)} }
-               #   tls    — DefaultTLSPeerCertExtractor (in-process TLS termination)
-               #   header — HeaderClientCertExtractor for reverse-proxy edges (nginx X-SSL-Client-Cert,
-               #            AWS ALB X-Amzn-Mtls-Clientcert, Apache mod_ssl Ssl-Client-Cert). Edge MUST
-               #            strip the header from untrusted traffic — same threat model as XFF
-tenant:        # enabled, backend, lookup_timeout, include_suspended,
-               # tenants[], domains[],
-               # suspension_check: { enabled, cache_ttl }
-metrics:       # enabled — mounts /metrics; auto-registers audit AsyncSink collector when audit.async is on
-oauth:         # backend(memory|sqlite), sqlite.dsn
-               # auth_code, refresh_token, device_code, par — each {enabled, ttl}
-               # jar: { enabled, timeout, max_bytes } — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect)
-identity:      # backend(memory|sqlite), sqlite.dsn — User + Client + Session store substrate
-backchannel_logout:  # enabled, max_concurrent, index.{backend(memory|sqlite), sqlite.dsn} — OIDC BCL 1.0; sqlite index shares fan-out set across the cluster
-client_registration: # RFC 7591/7592 — enabled, initial_access_token, allow_open_registration, defaults
-webauthn:      # CTAP/FIDO2 — enabled, rp_id, rp_display_name, rp_origins[], session_ttl
-               # storage.users: { backend(memory|sqlite), sqlite.dsn }
-               # storage.sessions: { backend(memory|sqlite), sqlite.dsn }
-               #   cmd mounts /webauthn/{registration,login}/{begin,finish} on the SSO router
-```
+- **server.issuer** MUST differ from `sso.DefaultIssuer` sentinel (cmd
+  default `"sso-server"`; production SHOULD set the canonical public
+  URL — same value stamped into JWT `iss`, discovery `issuer`, every
+  RFC 9207 `iss` param).
+- **server.pairwise_subjects.backend(memory|sqlite)** — sqlite shares
+  reverse lookup so /userinfo resolves on any replica.
+- **audit.backend(memory|sqlite)** — sqlite persists across restarts
+  + shares state across replicas. `webhook` composes as
+  `AsyncSink(MultiSink(Primary, RetryingSink(WebhookSink)))`.
+- **network.store / registry.backend (memory|etcd)** — etcd path
+  materialized in cmd to keep the transitive dep out of the SPI. etcd
+  registry uses TTL lease; `service_id` defaults
+  `<issuer>-<short-hostname>`.
+- **clients[]** — every field maps 1:1 to `sso.Client` SPI (the cmd
+  YAML surface used to drop ~15 of these silently; now full coverage).
+- **bootstrap.lock.backend (noop|file|etcd)** — lock loss cancels
+  in-flight Steps and surfaces `ErrLockLost`.
+- **snapshot.restore_from** — URI for first-boot auto-restore (CLI
+  `--bootstrap-restore-from` wins).
+- **security** — every storage-backed defense (`rate_limit`,
+  `jti_replay`, `account_lockout`) supports `backend(memory|sqlite)`
+  for cluster-shared state. `mtls.backend(tls|header)`: tls for
+  in-process termination; header for reverse-proxy edges (nginx
+  `X-SSL-Client-Cert`, AWS ALB `X-Amzn-Mtls-Clientcert`, Apache
+  `Ssl-Client-Cert`) — **edge MUST strip the header from untrusted
+  traffic**, same threat model as XFF.
+- **tenant.suspension_check.cache_ttl** controls Active-suspension
+  cache; admin SetStatus invalidates.
+- **oauth** — per-store `enabled` + `ttl`; `backend(memory|sqlite)`
+  shared substrate. `oauth.jar` = RFC 9101 §5.2.2 request_uri fetcher
+  (HTTPS, no-redirect).
+- **identity.backend(memory|sqlite)** — User + Client + Session
+  substrate.
+- **backchannel_logout.index.backend(memory|sqlite)** — sqlite shares
+  fan-out set across the cluster.
+- **webauthn.storage.{users,sessions}.backend(memory|sqlite)**.
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.
 
 ### Multi-source loader
 
-`config.Loader` composes prioritized `Source`s (lowest first; last
-wins per key):
+`config.Loader` composes prioritized `Source`s (lowest first; last wins):
 
 | Source | When |
 |---|---|
@@ -801,16 +649,29 @@ int. `config.Load(path)` is the legacy single-source entry point.
 
 ---
 
+## Operational tooling
+
+| Binary | Purpose |
+|---|---|
+| `cmd/sso-server` | Production binary |
+| `cmd/sso-audit-verify` | Offline hash-chain integrity check (`--from-url` paginates, `--from-file` reads JSON) |
+| `cmd/sso-snapshotctl` | Offline snapshot `list|inspect|verify` against a storage dir (passphrase-capable) |
+
+Both CLIs operate directly against wire artifacts — no running server
+required. Backup-pipeline integrity + DR drills.
+
+---
+
 ## Release pipeline
 
 `goreleaser` driven from `.github/workflows/release.yml` on `vX.Y.Z`
-tags. Matrix: linux+darwin × amd64+arm64 + windows/amd64. Each
-archive bundles LICENSE + SECURITY.md + CHANGELOG.md;
-`checksums.txt` + per-archive syft SBOMs.
+tags. Matrix: linux+darwin × amd64+arm64 + windows/amd64. Each archive
+bundles LICENSE + SECURITY.md + CHANGELOG.md; `checksums.txt` +
+per-archive syft SBOMs.
 
 Today `release.disable: true` short-circuits publish — CI runs the
-full build+SBOM matrix without uploading. Flip to `false` when a
-target lands. Locally: `make release-snapshot` → `dist/`.
+full build+SBOM matrix without uploading. Flip when a target lands.
+Locally: `make release-snapshot` → `dist/`.
 
 ---
 
@@ -821,48 +682,45 @@ target lands. Locally: `make release-snapshot` → `dist/`.
 | HTTP | `docs/openapi.yaml` (OpenAPI 3.0) | swagger-ui, Postman, OpenAPI Generator |
 | gRPC | `proto/*.proto` | `protoc` / `buf`, BSR, grpc-gateway |
 
-OpenAPI covers core auth + self-service. Admin REST, audit query,
-netpolicy CRUD are additive.
-
-When you change a documented HTTP endpoint, update `docs/openapi.yaml`
-in the same commit. CI runs `make docs-validate`.
+Update `docs/openapi.yaml` in the same commit as any documented
+endpoint change. CI runs `make docs-validate`.
 
 `docs/error-codes.md` is the stable wire-contract catalog of every
-`error` value. **Adding a new `Err*` in `consts.go` requires
-updating the catalog in the same commit.** SPAs branch on `error`,
-never on `error_description`.
+`error` value. **Adding a new `Err*` in `consts.go` requires updating
+the catalog in the same commit.** SPAs branch on `error`, never on
+`error_description`.
 
 ---
 
 ## Conventions
 
-- **No literal leaks** — paths, headers, error codes live in root
-  `consts.go` or the package's own.
-- **No mocks for storage** — use real `MemoryProvider` / `MemorySink`
-  / `memory.Registry`.
+- **No literal leaks** — paths, headers, error codes live in
+  `consts.go` (root or per-package).
+- **No mocks for storage** — use real `MemoryProvider` / `MemorySink` /
+  `memory.Registry`.
 - **No emojis** in code, comments, or commits.
 - **Comments explain WHY**, not what. Reach for one only for hidden
   constraints, invariants, or workarounds.
-- **Interface guards in implementation packages**, e.g.
-  `var _ ssoclient.AuthClient = (*remote.AuthClient)(nil)` in
+- **Interface guards in implementation packages**, e.g. `var _
+  ssoclient.AuthClient = (*remote.AuthClient)(nil)` in
   `ssoclient/remote/` — never in `ssoclient/` (cycle).
-- **gRPC name renames** — protoc-gen-go does `ID→Id`, `URL→Url`.
-- **Tests in the same package** as behavior. Race / ordering fixes
-  prove with `-count=10+`.
+- **gRPC name renames**: protoc-gen-go does `ID→Id`, `URL→Url`.
+- **Tests in same package** as behavior. Race / ordering fixes prove
+  with `-count=10+`.
 
 ---
 
 ## Things not to do
 
-- Don't run `git reset --hard`, `git push --force`, or `branch -D`
-  without explicit authorization.
+- Don't run `git reset --hard`, `git push --force`, `branch -D` without
+  explicit authorization.
 - Don't init or modify git config.
 - Don't bypass pre-commit hooks (`--no-verify`, `--no-gpg-sign`).
 - Don't introduce mocks where a real in-memory impl exists.
 - Don't add "while I'm here" cleanup or refactors.
-- Don't write Markdown files unless the user asked.
-- Don't violate the oracle-leak / anti-enumeration patterns — they
-  are stability contracts, not stylistic.
+- Don't write Markdown files unless asked.
+- Don't violate oracle-leak / anti-enumeration patterns — stability
+  contracts, not style.
 - Don't bypass `setMeta` for audit metadata.
 
 ---
@@ -876,7 +734,7 @@ never on `error_description`.
 4. Whitelist under a client's `allowed_authenticators:` to test.
 
 ### New audit Sink
-1. Implement `audit.Sink` (`Write(ctx, *Event) error`).
+1. Implement `audit.Sink` (`Record(ctx, *Event) error`).
 2. If lifecycle, also implement `audit.Closer`.
 3. Wire via `audit.New(s1, s2, ...)` or `audit.MultiSink`.
 
@@ -887,7 +745,7 @@ never on `error_description`.
 
 ### New netpolicy at runtime
 1. `POST /api/v1/netpolicy/policies` (or gRPC `PolicyService.Apply`).
-2. Watchers (OpenResty cache, in-process Classifier) pick up via Watch.
+2. Watchers pick up via Watch.
 3. To seed at boot: add to `network.policies:`.
 
 ### New gRPC service
@@ -916,7 +774,7 @@ never on `error_description`.
 
 ## Commits
 
-- Conventional: `feat(area): summary`, `fix(area): summary`,
-  `chore:`, `docs:`. Imperative subject; blank line; body explains why.
+- Conventional: `feat(area): summary`, `fix(area): summary`, `chore:`,
+  `docs:`. Imperative subject; blank line; body explains why.
 - Co-author trailer when AI-assisted.
 - Don't commit binaries — `sso-server` is ignored.
