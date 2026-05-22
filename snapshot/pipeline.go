@@ -54,6 +54,7 @@ type Sealer interface {
 const (
 	EncryptionNone       = "none"
 	EncryptionPassphrase = "passphrase-argon2id-chacha20poly1305"
+	EncryptionAESGCM     = "aes-256-gcm"
 )
 
 // EnvelopeVersion is the wire-format version of SealedEnvelope. Bumped on
