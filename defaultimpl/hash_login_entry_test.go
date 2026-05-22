@@ -4,14 +4,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
 	"github.com/snaplink/sso/geo"
 )
 
 func TestHashLoginEntry_PopulatesAllFields(t *testing.T) {
 	now := time.Now().UTC()
-	event := &sso.LoginEvent{
+	event := &anomaly.LoginEvent{
 		SubjectID: "alice",
 		ClientID:  "web",
 		Outcome:   "success",
@@ -52,14 +52,14 @@ func TestHashLoginEntry_NilEventReturnsNil(t *testing.T) {
 }
 
 func TestHashLoginEntry_EmptySubjectReturnsNil(t *testing.T) {
-	event := &sso.LoginEvent{Outcome: "failure"}
+	event := &anomaly.LoginEvent{Outcome: "failure"}
 	if got := defaultimpl.HashLoginEntry(event, []byte("salt")); got != nil {
 		t.Errorf("empty subject: got %v, want nil", got)
 	}
 }
 
 func TestHashLoginEntry_EmptyUASkipsUAHash(t *testing.T) {
-	event := &sso.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
+	event := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
 	entry := defaultimpl.HashLoginEntry(event, []byte("salt"))
 	if entry.UAFingerprintHash != "" {
 		t.Errorf("empty UA: should not hash, got %q", entry.UAFingerprintHash)
@@ -67,7 +67,7 @@ func TestHashLoginEntry_EmptyUASkipsUAHash(t *testing.T) {
 }
 
 func TestHashLoginEntry_NilGeoSkipsGeoFields(t *testing.T) {
-	event := &sso.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
+	event := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
 	entry := defaultimpl.HashLoginEntry(event, []byte("salt"))
 	if entry.CountryCode != "" || entry.Latitude != 0 || entry.Longitude != 0 {
 		t.Errorf("nil geo: should leave geo fields zero, got %+v", entry)
@@ -75,7 +75,7 @@ func TestHashLoginEntry_NilGeoSkipsGeoFields(t *testing.T) {
 }
 
 func TestHashLoginEntry_SaltAffectsIPHash(t *testing.T) {
-	event := &sso.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
+	event := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
 	a := defaultimpl.HashLoginEntry(event, []byte("salt-a"))
 	b := defaultimpl.HashLoginEntry(event, []byte("salt-b"))
 	if a.IPHash == b.IPHash {
@@ -87,8 +87,8 @@ func TestHashLoginEntry_SameSubjectSameUAStableHash(t *testing.T) {
 	// Replay invariant: two events with same subject + UA + salt
 	// produce same fingerprint, so the new-device detector can
 	// compare across login events.
-	event1 := &sso.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1", UserAgent: "Browser/1"}
-	event2 := &sso.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.2", UserAgent: "Browser/1"}
+	event1 := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1", UserAgent: "Browser/1"}
+	event2 := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.2", UserAgent: "Browser/1"}
 	a := defaultimpl.HashLoginEntry(event1, []byte("salt"))
 	b := defaultimpl.HashLoginEntry(event2, []byte("salt"))
 	if a.UAFingerprintHash != b.UAFingerprintHash {
@@ -100,8 +100,8 @@ func TestHashLoginEntry_SameSubjectSameUAStableHash(t *testing.T) {
 func TestHashLoginEntry_DifferentSubjectsDifferentUAHash(t *testing.T) {
 	// Privacy invariant: same UA across two users produces
 	// different hashes (per-subject salt).
-	event1 := &sso.LoginEvent{SubjectID: "alice", UserAgent: "Browser/1"}
-	event2 := &sso.LoginEvent{SubjectID: "bob", UserAgent: "Browser/1"}
+	event1 := &anomaly.LoginEvent{SubjectID: "alice", UserAgent: "Browser/1"}
+	event2 := &anomaly.LoginEvent{SubjectID: "bob", UserAgent: "Browser/1"}
 	a := defaultimpl.HashLoginEntry(event1, []byte("salt"))
 	b := defaultimpl.HashLoginEntry(event2, []byte("salt"))
 	if a.UAFingerprintHash == b.UAFingerprintHash {

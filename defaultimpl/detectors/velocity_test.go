@@ -1,32 +1,32 @@
-package anomaly_test
+package detectors_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/defaultimpl/anomaly"
+	"github.com/snaplink/sso/defaultimpl/detectors"
 )
 
-func newVelocity(t *testing.T, opts ...anomaly.VelocityOption) (*anomaly.VelocityDetector, sso.RecentLoginStore) {
+func newVelocity(t *testing.T, opts ...detectors.VelocityOption) (*detectors.VelocityDetector, anomaly.RecentLoginStore) {
 	t.Helper()
 	store := defaultimpl.NewMemoryRecentLoginStore()
-	d, err := anomaly.NewVelocityDetector(store, opts...)
+	d, err := detectors.NewVelocityDetector(store, opts...)
 	if err != nil {
 		t.Fatalf("NewVelocityDetector: %v", err)
 	}
 	return d, store
 }
 
-func seedRecent(t *testing.T, store sso.RecentLoginStore, subject string, count int, spread time.Duration, end time.Time) {
+func seedRecent(t *testing.T, store anomaly.RecentLoginStore, subject string, count int, spread time.Duration, end time.Time) {
 	t.Helper()
 	ctx := context.Background()
 	step := spread / time.Duration(count)
 	for i := range count {
 		ts := end.Add(-time.Duration(i) * step)
-		if err := store.Append(ctx, &sso.LoginEntry{
+		if err := store.Append(ctx, &anomaly.LoginEntry{
 			SubjectID: subject,
 			Outcome:   "failure",
 			Timestamp: ts,
@@ -38,7 +38,7 @@ func seedRecent(t *testing.T, store sso.RecentLoginStore, subject string, count 
 
 func TestVelocity_NoHistoryNoSignal(t *testing.T) {
 	d, _ := newVelocity(t)
-	got, err := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, err := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: time.Now(),
 	})
@@ -51,11 +51,11 @@ func TestVelocity_NoHistoryNoSignal(t *testing.T) {
 }
 
 func TestVelocity_BelowHourlyThresholdNoSignal(t *testing.T) {
-	d, store := newVelocity(t, anomaly.WithVelocityHourlyLimit(10))
+	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(10))
 	now := time.Now()
 	// 5 attempts in past hour — under threshold.
 	seedRecent(t, store, "alice", 5, 30*time.Minute, now.Add(-5*time.Second))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	// 5 seeded + 1 current = 6 ≤ 10, no anomaly.
@@ -65,17 +65,17 @@ func TestVelocity_BelowHourlyThresholdNoSignal(t *testing.T) {
 }
 
 func TestVelocity_HourlyThresholdWarn(t *testing.T) {
-	d, store := newVelocity(t, anomaly.WithVelocityHourlyLimit(10))
+	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(10))
 	now := time.Now()
 	seedRecent(t, store, "alice", 15, 30*time.Minute, now.Add(-5*time.Second))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	if len(got) != 1 {
 		t.Fatalf("hourly threshold: want 1 anomaly, got %d", len(got))
 	}
 	a := got[0]
-	if a.Severity != sso.AnomalySeverityWarn {
+	if a.Severity != anomaly.SeverityWarn {
 		t.Errorf("hourly severity = %q, want warn", a.Severity)
 	}
 	if a.Evidence["window"] != "1h" {
@@ -85,55 +85,55 @@ func TestVelocity_HourlyThresholdWarn(t *testing.T) {
 
 func TestVelocity_DailyThresholdCritical(t *testing.T) {
 	d, store := newVelocity(t,
-		anomaly.WithVelocityHourlyLimit(0), // disable hourly to isolate daily
-		anomaly.WithVelocityDailyLimit(50),
+		detectors.WithVelocityHourlyLimit(0), // disable hourly to isolate daily
+		detectors.WithVelocityDailyLimit(50),
 	)
 	now := time.Now()
 	// Spread 60 attempts across 12h so they're outside the 1h
 	// window — only daily fires.
 	seedRecent(t, store, "alice", 60, 12*time.Hour, now.Add(-2*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	if len(got) != 1 {
 		t.Fatalf("daily only: want 1 anomaly, got %d", len(got))
 	}
-	if got[0].Severity != sso.AnomalySeverityCritical {
+	if got[0].Severity != anomaly.SeverityCritical {
 		t.Errorf("daily severity = %q, want critical", got[0].Severity)
 	}
 }
 
 func TestVelocity_BothThresholdsFireTwoAnomalies(t *testing.T) {
 	d, store := newVelocity(t,
-		anomaly.WithVelocityHourlyLimit(10),
-		anomaly.WithVelocityDailyLimit(50),
+		detectors.WithVelocityHourlyLimit(10),
+		detectors.WithVelocityDailyLimit(50),
 	)
 	now := time.Now()
 	// 60 attempts in past 30min → exceeds both 10/hour AND 50/day.
 	seedRecent(t, store, "alice", 60, 30*time.Minute, now.Add(-5*time.Second))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	if len(got) != 2 {
 		t.Fatalf("both thresholds: want 2 anomalies, got %d", len(got))
 	}
-	severities := map[sso.AnomalySeverity]bool{}
+	severities := map[anomaly.Severity]bool{}
 	for _, a := range got {
 		severities[a.Severity] = true
 	}
-	if !severities[sso.AnomalySeverityWarn] || !severities[sso.AnomalySeverityCritical] {
+	if !severities[anomaly.SeverityWarn] || !severities[anomaly.SeverityCritical] {
 		t.Errorf("should have both warn (hourly) + critical (daily): %v", severities)
 	}
 }
 
 func TestVelocity_ZeroLimitDisablesCheck(t *testing.T) {
 	d, store := newVelocity(t,
-		anomaly.WithVelocityHourlyLimit(0),
-		anomaly.WithVelocityDailyLimit(0),
+		detectors.WithVelocityHourlyLimit(0),
+		detectors.WithVelocityDailyLimit(0),
 	)
 	now := time.Now()
 	seedRecent(t, store, "alice", 500, 12*time.Hour, now.Add(-5*time.Second))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	if len(got) != 0 {
@@ -143,15 +143,15 @@ func TestVelocity_ZeroLimitDisablesCheck(t *testing.T) {
 
 func TestVelocity_OutOfWindowAttemptsExcluded(t *testing.T) {
 	// Seed many entries 25+ hours old — outside daily window.
-	d, store := newVelocity(t, anomaly.WithVelocityHourlyLimit(5))
+	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(5))
 	now := time.Now()
 	for i := range 50 {
-		_ = store.Append(context.Background(), &sso.LoginEntry{
+		_ = store.Append(context.Background(), &anomaly.LoginEntry{
 			SubjectID: "alice",
 			Timestamp: now.Add(-30*time.Hour - time.Duration(i)*time.Minute),
 		})
 	}
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	if len(got) != 0 {
@@ -161,7 +161,7 @@ func TestVelocity_OutOfWindowAttemptsExcluded(t *testing.T) {
 
 func TestVelocity_EmptySubjectNoSignal(t *testing.T) {
 	d, _ := newVelocity(t)
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{Outcome: "failure"})
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{Outcome: "failure"})
 	if got != nil {
 		t.Errorf("empty subject: %v", got)
 	}
@@ -176,7 +176,7 @@ func TestVelocity_NilEventNoSignal(t *testing.T) {
 }
 
 func TestVelocity_NilStoreErrors(t *testing.T) {
-	_, err := anomaly.NewVelocityDetector(nil)
+	_, err := detectors.NewVelocityDetector(nil)
 	if err == nil {
 		t.Error("nil store should error")
 	}
@@ -184,11 +184,11 @@ func TestVelocity_NilStoreErrors(t *testing.T) {
 
 func TestVelocity_NameIsStableWireString(t *testing.T) {
 	d, _ := newVelocity(t)
-	if got := d.Name(); got != anomaly.DetectorTypeVelocity {
-		t.Errorf("Name = %q, want %q", got, anomaly.DetectorTypeVelocity)
+	if got := d.Name(); got != detectors.DetectorTypeVelocity {
+		t.Errorf("Name = %q, want %q", got, detectors.DetectorTypeVelocity)
 	}
-	if anomaly.DetectorTypeVelocity != "velocity_burst" {
-		t.Errorf("wire string drifted: %q", anomaly.DetectorTypeVelocity)
+	if detectors.DetectorTypeVelocity != "velocity_burst" {
+		t.Errorf("wire string drifted: %q", detectors.DetectorTypeVelocity)
 	}
 }
 
@@ -196,7 +196,7 @@ func TestVelocity_DoesNotWriteToStore(t *testing.T) {
 	// Velocity is read-only — impossible-travel owns the writes.
 	d, store := newVelocity(t)
 	now := time.Now()
-	_, _ = d.Inspect(context.Background(), &sso.LoginEvent{
+	_, _ = d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	got, _ := store.Recent(context.Background(), "alice", time.Time{}, 0)
@@ -207,10 +207,10 @@ func TestVelocity_DoesNotWriteToStore(t *testing.T) {
 
 func TestVelocity_ScoreCappedAt100(t *testing.T) {
 	// Score is in the anomaly Score field 0..100.
-	d, store := newVelocity(t, anomaly.WithVelocityHourlyLimit(2))
+	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(2))
 	now := time.Now()
 	seedRecent(t, store, "alice", 50, 30*time.Minute, now.Add(-1*time.Second))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice", Timestamp: now,
 	})
 	if len(got) == 0 {

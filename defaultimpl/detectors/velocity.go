@@ -1,4 +1,4 @@
-package anomaly
+package detectors
 
 import (
 	"context"
@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
-// DetectorTypeVelocity is the wire-stable [sso.Anomaly.Type]
+// DetectorTypeVelocity is the wire-stable [anomaly.Signal.Type]
 // surfaced by [VelocityDetector]. Used in SIEM rules + metric
 // labels; renaming silently breaks operator dashboards.
 const DetectorTypeVelocity = "velocity_burst"
@@ -22,7 +22,7 @@ const DetectorTypeVelocity = "velocity_burst"
 //   - Compromised credentials being replayed by an attacker bot
 //     (success burst on an account that normally sees 1 login/day).
 //
-// The detector consults the same [sso.RecentLoginStore] as the
+// The detector consults the same [anomaly.RecentLoginStore] as the
 // impossible-travel detector — both read history; impossible-travel
 // writes; velocity is read-only. (Centralizing writes in
 // impossible-travel keeps the SPI flat and matches the
@@ -45,7 +45,7 @@ const DetectorTypeVelocity = "velocity_burst"
 // hammering with successful logins to mass-exfiltrate before the
 // account is locked.
 type VelocityDetector struct {
-	store       sso.RecentLoginStore
+	store       anomaly.RecentLoginStore
 	hourlyLimit int
 	dailyLimit  int
 	// readLimit bounds the store query to prevent runaway scans
@@ -81,7 +81,7 @@ func WithVelocityDailyLimit(n int) VelocityOption {
 // Store nil → error (no history = no signal). Both limit knobs
 // default — operators tune per-deployment based on traffic
 // baseline.
-func NewVelocityDetector(store sso.RecentLoginStore, opts ...VelocityOption) (*VelocityDetector, error) {
+func NewVelocityDetector(store anomaly.RecentLoginStore, opts ...VelocityOption) (*VelocityDetector, error) {
 	if store == nil {
 		return nil, errors.New("anomaly/velocity: store required")
 	}
@@ -107,7 +107,7 @@ func (d *VelocityDetector) Name() string { return DetectorTypeVelocity }
 // hour + last 24h, surfaces anomalies when either threshold is
 // breached. Pure read — does NOT append (impossible-travel owns
 // the writes).
-func (d *VelocityDetector) Inspect(ctx context.Context, event *sso.LoginEvent) ([]sso.Anomaly, error) {
+func (d *VelocityDetector) Inspect(ctx context.Context, event *anomaly.LoginEvent) ([]anomaly.Signal, error) {
 	if event == nil || event.SubjectID == "" {
 		return nil, nil
 	}
@@ -135,11 +135,11 @@ func (d *VelocityDetector) Inspect(ctx context.Context, event *sso.LoginEvent) (
 	hourlyCount++
 	dailyCount++
 
-	var anomalies []sso.Anomaly
+	var anomalies []anomaly.Signal
 	if d.hourlyLimit > 0 && hourlyCount > d.hourlyLimit {
-		anomalies = append(anomalies, sso.Anomaly{
+		anomalies = append(anomalies, anomaly.Signal{
 			Type:      DetectorTypeVelocity,
-			Severity:  sso.AnomalySeverityWarn,
+			Severity:  anomaly.SeverityWarn,
 			Score:     velocityScore(hourlyCount, d.hourlyLimit),
 			SubjectID: event.SubjectID,
 			Evidence: map[string]string{
@@ -151,9 +151,9 @@ func (d *VelocityDetector) Inspect(ctx context.Context, event *sso.LoginEvent) (
 		})
 	}
 	if d.dailyLimit > 0 && dailyCount > d.dailyLimit {
-		anomalies = append(anomalies, sso.Anomaly{
+		anomalies = append(anomalies, anomaly.Signal{
 			Type:      DetectorTypeVelocity,
-			Severity:  sso.AnomalySeverityCritical,
+			Severity:  anomaly.SeverityCritical,
 			Score:     velocityScore(dailyCount, d.dailyLimit),
 			SubjectID: event.SubjectID,
 			Evidence: map[string]string{
@@ -189,4 +189,4 @@ func velocityScore(count, threshold int) int {
 	return score
 }
 
-var _ sso.AnomalyDetector = (*VelocityDetector)(nil)
+var _ anomaly.Detector = (*VelocityDetector)(nil)

@@ -1,4 +1,4 @@
-package anomaly
+package detectors
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
@@ -24,7 +24,7 @@ const (
 //   - First login from a stolen physical device (UA changes if the
 //     attacker switches browser).
 //
-// Reads from [sso.RecentLoginStore] — no separate device store.
+// Reads from [anomaly.RecentLoginStore] — no separate device store.
 // The detector treats the subject's UA fingerprint history (last
 // baselineWindow's worth) as "known devices." New = current
 // fingerprint not in that set.
@@ -43,7 +43,7 @@ const (
 //     "RELATIVE to baseline" signal).
 //   - Within bootstrap grace period.
 type NewDeviceDetector struct {
-	store                sso.RecentLoginStore
+	store                anomaly.RecentLoginStore
 	ipSalt               []byte
 	baselineWindow       time.Duration
 	bootstrapGracePeriod time.Duration
@@ -81,7 +81,7 @@ func WithNewDeviceBootstrapGracePeriod(d time.Duration) NewDeviceOption {
 // store nil → error. ipSalt is the deployment-stable secret used
 // by the UA hashing helper (same value passed to
 // impossible-travel + the AnomalyRunner stamper).
-func NewNewDeviceDetector(store sso.RecentLoginStore, ipSalt []byte, opts ...NewDeviceOption) (*NewDeviceDetector, error) {
+func NewNewDeviceDetector(store anomaly.RecentLoginStore, ipSalt []byte, opts ...NewDeviceOption) (*NewDeviceDetector, error) {
 	if store == nil {
 		return nil, errors.New("anomaly/new_device: store required")
 	}
@@ -102,7 +102,7 @@ func (d *NewDeviceDetector) Name() string { return DetectorTypeNewDevice }
 
 // Inspect compares the current event's UA fingerprint to the
 // subject's last baselineWindow of entries.
-func (d *NewDeviceDetector) Inspect(ctx context.Context, event *sso.LoginEvent) ([]sso.Anomaly, error) {
+func (d *NewDeviceDetector) Inspect(ctx context.Context, event *anomaly.LoginEvent) ([]anomaly.Signal, error) {
 	if event == nil || event.SubjectID == "" || event.UserAgent == "" {
 		return nil, nil
 	}
@@ -129,9 +129,9 @@ func (d *NewDeviceDetector) Inspect(ctx context.Context, event *sso.LoginEvent) 
 			return nil, nil // known device
 		}
 	}
-	return []sso.Anomaly{{
+	return []anomaly.Signal{{
 		Type:      DetectorTypeNewDevice,
-		Severity:  sso.AnomalySeverityWarn,
+		Severity:  anomaly.SeverityWarn,
 		Score:     50,
 		SubjectID: event.SubjectID,
 		Evidence: map[string]string{
@@ -149,7 +149,7 @@ func (d *NewDeviceDetector) Inspect(ctx context.Context, event *sso.LoginEvent) 
 //
 // Same bootstrap grace period semantics as new-device.
 type NewCountryDetector struct {
-	store                sso.RecentLoginStore
+	store                anomaly.RecentLoginStore
 	baselineWindow       time.Duration
 	bootstrapGracePeriod time.Duration
 }
@@ -181,7 +181,7 @@ func WithNewCountryBootstrapGracePeriod(d time.Duration) NewCountryOption {
 }
 
 // NewNewCountryDetector builds a detector against the given store.
-func NewNewCountryDetector(store sso.RecentLoginStore, opts ...NewCountryOption) (*NewCountryDetector, error) {
+func NewNewCountryDetector(store anomaly.RecentLoginStore, opts ...NewCountryOption) (*NewCountryDetector, error) {
 	if store == nil {
 		return nil, errors.New("anomaly/new_country: store required")
 	}
@@ -201,7 +201,7 @@ func (d *NewCountryDetector) Name() string { return DetectorTypeNewCountry }
 
 // Inspect compares the current event's country to the subject's
 // baseline country set.
-func (d *NewCountryDetector) Inspect(ctx context.Context, event *sso.LoginEvent) ([]sso.Anomaly, error) {
+func (d *NewCountryDetector) Inspect(ctx context.Context, event *anomaly.LoginEvent) ([]anomaly.Signal, error) {
 	if event == nil || event.SubjectID == "" || event.Geo == nil || event.Geo.CountryCode == "" {
 		return nil, nil
 	}
@@ -241,9 +241,9 @@ func (d *NewCountryDetector) Inspect(ctx context.Context, event *sso.LoginEvent)
 		}
 		baselineList += c
 	}
-	return []sso.Anomaly{{
+	return []anomaly.Signal{{
 		Type:      DetectorTypeNewCountry,
-		Severity:  sso.AnomalySeverityWarn,
+		Severity:  anomaly.SeverityWarn,
 		Score:     50,
 		SubjectID: event.SubjectID,
 		Evidence: map[string]string{
@@ -259,7 +259,7 @@ func (d *NewCountryDetector) Inspect(ctx context.Context, event *sso.LoginEvent)
 // same fingerprint. Pulled out as a helper because both new-device
 // (write-time hash check) and the runner's stamp (write-time hash
 // generation) need it.
-func computeUAHash(event *sso.LoginEvent, ipSalt []byte) string {
+func computeUAHash(event *anomaly.LoginEvent, ipSalt []byte) string {
 	if event == nil || event.UserAgent == "" {
 		return ""
 	}
@@ -272,6 +272,6 @@ func computeUAHash(event *sso.LoginEvent, ipSalt []byte) string {
 
 // Compile-time interface assertions.
 var (
-	_ sso.AnomalyDetector = (*NewDeviceDetector)(nil)
-	_ sso.AnomalyDetector = (*NewCountryDetector)(nil)
+	_ anomaly.Detector = (*NewDeviceDetector)(nil)
+	_ anomaly.Detector = (*NewCountryDetector)(nil)
 )

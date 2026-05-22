@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 )
 
@@ -256,7 +257,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
-// dispatchLoginAnomaly hands a LoginEvent to the AnomalyRunner.
+// dispatchLoginAnomaly hands a anomaly.LoginEvent to the AnomalyRunner.
 // Nil-safe — no runner = no-op zero overhead. SubjectID is
 // optional on failure paths (the credential validator may not
 // have resolved a user); detectors needing it skip the subject-
@@ -266,7 +267,7 @@ func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, p
 		return
 	}
 	r := ctx.Request()
-	event := &LoginEvent{
+	event := &anomaly.LoginEvent{
 		SubjectID:     subjectID,
 		ClientID:      clientID,
 		Provider:      provider,

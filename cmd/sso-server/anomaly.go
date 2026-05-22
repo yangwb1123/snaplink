@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/defaultimpl/anomaly"
+	"github.com/snaplink/sso/defaultimpl/detectors"
 	sqlitestores "github.com/snaplink/sso/defaultimpl/sqlite"
 	"github.com/snaplink/sso/metrics"
 )
@@ -22,11 +23,11 @@ import (
 // SQLite stores if they were opened. Each may be nil when anomaly
 // is disabled OR the backend is memory.
 type anomalyRuntime struct {
-	runner         *sso.AsyncAnomalyRunner
+	runner         *anomaly.Runner
 	recentSQLite   *sqlitestores.RecentLoginStore
 	ipFailSQLite   *sqlitestores.IPFailureCounter
-	recentStore    sso.RecentLoginStore // memory or sqlite — for retention scheduler
-	ipFailCounter  sso.IPFailureCounter
+	recentStore    anomaly.RecentLoginStore // memory or sqlite — for retention scheduler
+	ipFailCounter  anomaly.IPFailureCounter
 	recentLoginAge time.Duration
 	ipFailureAge   time.Duration
 }
@@ -67,39 +68,39 @@ func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics
 	rt.ipFailCounter = ipCounter
 	rt.ipFailSQLite = ipSQL
 
-	detectors, err := buildAnomalyDetectors(cfg.Detectors, recentStore, ipCounter, ipSalt)
+	built, err := buildAnomalyDetectors(cfg.Detectors, recentStore, ipCounter, ipSalt)
 	if err != nil {
 		return nil, err
 	}
-	if len(detectors) == 0 {
+	if len(built) == 0 {
 		logger.Error("anomaly.enabled=true but no detector enabled — subsystem inert")
 		return nil, nil
 	}
 
-	var sink sso.AnomalySink
+	var sink anomaly.Sink
 	if recorder != nil {
-		sink = sso.NewRecorderAnomalySink(recorder)
+		sink = anomaly.NewRecorderSink(recorder)
 	}
-	opts := []sso.AnomalyRunnerOption{
-		sso.WithAnomalyLogger(logger),
+	opts := []anomaly.Option{
+		anomaly.WithLogger(logger),
 	}
 	if cfg.Runner.QueueSize > 0 {
-		opts = append(opts, sso.WithAnomalyQueueSize(cfg.Runner.QueueSize))
+		opts = append(opts, anomaly.WithQueueSize(cfg.Runner.QueueSize))
 	}
 	if cfg.Runner.Workers > 0 {
-		opts = append(opts, sso.WithAnomalyWorkers(cfg.Runner.Workers))
+		opts = append(opts, anomaly.WithWorkers(cfg.Runner.Workers))
 	}
 	if cfg.Runner.DropPolicy != "" {
-		opts = append(opts, sso.WithAnomalyDropPolicy(sso.AnomalyDropPolicy(cfg.Runner.DropPolicy)))
+		opts = append(opts, anomaly.WithDropPolicy(anomaly.DropPolicy(cfg.Runner.DropPolicy)))
 	}
 	if m != nil {
-		opts = append(opts, sso.WithAnomalyMetricsCallbacks(
+		opts = append(opts, anomaly.WithMetricsCallbacks(
 			func(t, sev string) { m.AnomaliesDetectedTotal.WithLabelValues(t, sev).Inc() },
 			func(reason string) { m.AnomalyDispatchDropsTotal.WithLabelValues(reason).Inc() },
 			func(detector string) { m.AnomalyInspectErrorsTotal.WithLabelValues(detector).Inc() },
 		))
 	}
-	rt.runner = sso.NewAsyncAnomalyRunner(detectors, sink, opts...)
+	rt.runner = anomaly.NewRunner(built, sink, opts...)
 	if rt.runner == nil {
 		// NewAsyncAnomalyRunner returns nil when the detector list
 		// is empty — we already guarded above, but defense-in-depth.
@@ -127,7 +128,7 @@ func decodeAnomalySalt(s string) ([]byte, error) {
 }
 
 // openRecentLoginStore selects backend per cfg.Backend.
-func openRecentLoginStore(cfg config.AnomalyStoreConfig) (sso.RecentLoginStore, *sqlitestores.RecentLoginStore, error) {
+func openRecentLoginStore(cfg config.AnomalyStoreConfig) (anomaly.RecentLoginStore, *sqlitestores.RecentLoginStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryRecentLoginStore(), nil, nil
@@ -146,7 +147,7 @@ func openRecentLoginStore(cfg config.AnomalyStoreConfig) (sso.RecentLoginStore, 
 }
 
 // openIPFailureCounter selects backend per cfg.Backend.
-func openIPFailureCounter(cfg config.AnomalyStoreConfig) (sso.IPFailureCounter, *sqlitestores.IPFailureCounter, error) {
+func openIPFailureCounter(cfg config.AnomalyStoreConfig) (anomaly.IPFailureCounter, *sqlitestores.IPFailureCounter, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryIPFailureCounter(), nil, nil
@@ -167,73 +168,73 @@ func openIPFailureCounter(cfg config.AnomalyStoreConfig) (sso.IPFailureCounter, 
 // buildAnomalyDetectors constructs the enabled detectors. Returns
 // empty slice when all detectors are disabled — caller treats this
 // as "subsystem inert" and skips runner creation.
-func buildAnomalyDetectors(cfg config.AnomalyDetectorsConfig, recent sso.RecentLoginStore, ipCounter sso.IPFailureCounter, ipSalt []byte) ([]sso.AnomalyDetector, error) {
-	var detectors []sso.AnomalyDetector
+func buildAnomalyDetectors(cfg config.AnomalyDetectorsConfig, recent anomaly.RecentLoginStore, ipCounter anomaly.IPFailureCounter, ipSalt []byte) ([]anomaly.Detector, error) {
+	var built []anomaly.Detector
 	if cfg.ImpossibleTravel.Enabled {
-		opts := []anomaly.ImpossibleTravelOption{}
+		opts := []detectors.ImpossibleTravelOption{}
 		if cfg.ImpossibleTravel.MaxSpeedKmh > 0 {
-			opts = append(opts, anomaly.WithImpossibleTravelMaxSpeed(cfg.ImpossibleTravel.MaxSpeedKmh))
+			opts = append(opts, detectors.WithImpossibleTravelMaxSpeed(cfg.ImpossibleTravel.MaxSpeedKmh))
 		}
 		if cfg.ImpossibleTravel.HistoryWindow > 0 {
-			opts = append(opts, anomaly.WithImpossibleTravelWindow(cfg.ImpossibleTravel.HistoryWindow))
+			opts = append(opts, detectors.WithImpossibleTravelWindow(cfg.ImpossibleTravel.HistoryWindow))
 		}
-		d, err := anomaly.NewImpossibleTravelDetector(recent, ipSalt, opts...)
+		d, err := detectors.NewImpossibleTravelDetector(recent, ipSalt, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("impossible_travel: %w", err)
 		}
-		detectors = append(detectors, d)
+		built = append(built, d)
 	}
 	if cfg.Velocity.Enabled {
-		opts := []anomaly.VelocityOption{}
+		opts := []detectors.VelocityOption{}
 		// Honor 0 as "explicitly disable this check" (not "use default").
 		opts = append(opts,
-			anomaly.WithVelocityHourlyLimit(cfg.Velocity.HourlyLimit),
-			anomaly.WithVelocityDailyLimit(cfg.Velocity.DailyLimit),
+			detectors.WithVelocityHourlyLimit(cfg.Velocity.HourlyLimit),
+			detectors.WithVelocityDailyLimit(cfg.Velocity.DailyLimit),
 		)
-		d, err := anomaly.NewVelocityDetector(recent, opts...)
+		d, err := detectors.NewVelocityDetector(recent, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("velocity: %w", err)
 		}
-		detectors = append(detectors, d)
+		built = append(built, d)
 	}
 	if cfg.NewDevice.Enabled {
-		opts := []anomaly.NewDeviceOption{}
+		opts := []detectors.NewDeviceOption{}
 		if cfg.NewDevice.BaselineWindow > 0 {
-			opts = append(opts, anomaly.WithNewDeviceBaselineWindow(cfg.NewDevice.BaselineWindow))
+			opts = append(opts, detectors.WithNewDeviceBaselineWindow(cfg.NewDevice.BaselineWindow))
 		}
-		opts = append(opts, anomaly.WithNewDeviceBootstrapGracePeriod(cfg.NewDevice.BootstrapGracePeriod))
-		d, err := anomaly.NewNewDeviceDetector(recent, ipSalt, opts...)
+		opts = append(opts, detectors.WithNewDeviceBootstrapGracePeriod(cfg.NewDevice.BootstrapGracePeriod))
+		d, err := detectors.NewNewDeviceDetector(recent, ipSalt, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("new_device: %w", err)
 		}
-		detectors = append(detectors, d)
+		built = append(built, d)
 	}
 	if cfg.NewCountry.Enabled {
-		opts := []anomaly.NewCountryOption{}
+		opts := []detectors.NewCountryOption{}
 		if cfg.NewCountry.BaselineWindow > 0 {
-			opts = append(opts, anomaly.WithNewCountryBaselineWindow(cfg.NewCountry.BaselineWindow))
+			opts = append(opts, detectors.WithNewCountryBaselineWindow(cfg.NewCountry.BaselineWindow))
 		}
-		opts = append(opts, anomaly.WithNewCountryBootstrapGracePeriod(cfg.NewCountry.BootstrapGracePeriod))
-		d, err := anomaly.NewNewCountryDetector(recent, opts...)
+		opts = append(opts, detectors.WithNewCountryBootstrapGracePeriod(cfg.NewCountry.BootstrapGracePeriod))
+		d, err := detectors.NewNewCountryDetector(recent, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("new_country: %w", err)
 		}
-		detectors = append(detectors, d)
+		built = append(built, d)
 	}
 	if cfg.BruteForceShadow.Enabled {
-		opts := []anomaly.BruteForceShadowOption{}
+		opts := []detectors.BruteForceShadowOption{}
 		if cfg.BruteForceShadow.Window > 0 {
-			opts = append(opts, anomaly.WithBruteForceShadowWindow(cfg.BruteForceShadow.Window))
+			opts = append(opts, detectors.WithBruteForceShadowWindow(cfg.BruteForceShadow.Window))
 		}
-		opts = append(opts, anomaly.WithBruteForceShadowFailureLimit(cfg.BruteForceShadow.FailureLimit))
-		opts = append(opts, anomaly.WithBruteForceShadowDistinctSubjectLimit(cfg.BruteForceShadow.DistinctSubjectLimit))
-		d, err := anomaly.NewBruteForceShadowDetector(ipCounter, ipSalt, opts...)
+		opts = append(opts, detectors.WithBruteForceShadowFailureLimit(cfg.BruteForceShadow.FailureLimit))
+		opts = append(opts, detectors.WithBruteForceShadowDistinctSubjectLimit(cfg.BruteForceShadow.DistinctSubjectLimit))
+		d, err := detectors.NewBruteForceShadowDetector(ipCounter, ipSalt, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("brute_force_shadow: %w", err)
 		}
-		detectors = append(detectors, d)
+		built = append(built, d)
 	}
-	return detectors, nil
+	return built, nil
 }
 
 // close drains the runner + closes SQLite handles. Caller wraps ctx

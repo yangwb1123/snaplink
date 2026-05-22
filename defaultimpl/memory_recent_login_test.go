@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
@@ -15,7 +15,7 @@ func TestMemoryRecentLoginStore_AppendAndRecentRoundtrip(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	entries := []*sso.LoginEntry{
+	entries := []*anomaly.LoginEntry{
 		{SubjectID: "alice", Outcome: "success", IPHash: "ip1", Timestamp: now.Add(-30 * time.Second)},
 		{SubjectID: "alice", Outcome: "failure", IPHash: "ip2", Timestamp: now.Add(-20 * time.Second)},
 		{SubjectID: "alice", Outcome: "success", IPHash: "ip3", Timestamp: now.Add(-10 * time.Second)},
@@ -40,15 +40,15 @@ func TestMemoryRecentLoginStore_AppendAndRecentRoundtrip(t *testing.T) {
 
 func TestMemoryRecentLoginStore_AppendEmptySubjectErrors(t *testing.T) {
 	s := defaultimpl.NewMemoryRecentLoginStore()
-	err := s.Append(context.Background(), &sso.LoginEntry{Outcome: "failure"})
-	if !errors.Is(err, sso.ErrInvalidLoginEntry) {
+	err := s.Append(context.Background(), &anomaly.LoginEntry{Outcome: "failure"})
+	if !errors.Is(err, anomaly.ErrInvalidLoginEntry) {
 		t.Fatalf("got %v, want ErrInvalidLoginEntry", err)
 	}
 }
 
 func TestMemoryRecentLoginStore_AppendNilErrors(t *testing.T) {
 	s := defaultimpl.NewMemoryRecentLoginStore()
-	if err := s.Append(context.Background(), nil); !errors.Is(err, sso.ErrInvalidLoginEntry) {
+	if err := s.Append(context.Background(), nil); !errors.Is(err, anomaly.ErrInvalidLoginEntry) {
 		t.Fatalf("got %v, want ErrInvalidLoginEntry", err)
 	}
 }
@@ -58,8 +58,8 @@ func TestMemoryRecentLoginStore_RecentRespectsSince(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	_ = s.Append(ctx, &sso.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Hour)})
-	_ = s.Append(ctx, &sso.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Minute)})
+	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Hour)})
+	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Minute)})
 
 	got, _ := s.Recent(ctx, "alice", now.Add(-2*time.Minute), 0)
 	if len(got) != 1 {
@@ -72,7 +72,7 @@ func TestMemoryRecentLoginStore_RecentRespectsLimit(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	for i := range 5 {
-		_ = s.Append(ctx, &sso.LoginEntry{
+		_ = s.Append(ctx, &anomaly.LoginEntry{
 			SubjectID: "alice",
 			Timestamp: now.Add(-time.Duration(i) * time.Second),
 		})
@@ -100,7 +100,7 @@ func TestMemoryRecentLoginStore_PerSubjectCapEnforced(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	for i := range 5 {
-		_ = s.Append(ctx, &sso.LoginEntry{
+		_ = s.Append(ctx, &anomaly.LoginEntry{
 			SubjectID: "alice",
 			IPHash:    string(rune('a' + i)),
 			Timestamp: now.Add(time.Duration(i) * time.Second),
@@ -121,9 +121,9 @@ func TestMemoryRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	_ = s.Append(ctx, &sso.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-2 * time.Hour)})
-	_ = s.Append(ctx, &sso.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Minute)})
-	_ = s.Append(ctx, &sso.LoginEntry{SubjectID: "bob", Timestamp: now.Add(-3 * time.Hour)})
+	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-2 * time.Hour)})
+	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: now.Add(-1 * time.Minute)})
+	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "bob", Timestamp: now.Add(-3 * time.Hour)})
 
 	deleted, err := s.PruneOlder(ctx, now.Add(-1*time.Hour))
 	if err != nil {
@@ -146,7 +146,7 @@ func TestMemoryRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
 func TestMemoryRecentLoginStore_PruneOlderZeroIsNoop(t *testing.T) {
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
-	_ = s.Append(ctx, &sso.LoginEntry{SubjectID: "alice", Timestamp: time.Now()})
+	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: time.Now()})
 	deleted, _ := s.PruneOlder(ctx, time.Time{})
 	if deleted != 0 {
 		t.Errorf("zero cutoff: deleted %d, want 0", deleted)
@@ -158,7 +158,7 @@ func TestMemoryRecentLoginStore_CallerMutationDoesNotLeak(t *testing.T) {
 	// the stored row by holding onto the input pointer.
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
-	entry := &sso.LoginEntry{SubjectID: "alice", IPHash: "original", Timestamp: time.Now()}
+	entry := &anomaly.LoginEntry{SubjectID: "alice", IPHash: "original", Timestamp: time.Now()}
 	_ = s.Append(ctx, entry)
 	entry.IPHash = "MUTATED"
 	got, _ := s.Recent(ctx, "alice", time.Time{}, 0)

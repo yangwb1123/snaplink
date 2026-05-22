@@ -1,15 +1,15 @@
-// Package anomaly ships the reference [sso.AnomalyDetector]
+// Package detectors ships the reference [anomaly.Detector]
 // implementations. Each detector is independent + composable —
 // operators wire any subset via WithAnomalyRunner; richer custom
-// scorers implement [sso.AnomalyDetector] directly + query their
+// scorers implement [anomaly.Detector] directly + query their
 // own state.
 //
 // All detectors in this package read state via the operator-supplied
-// [sso.RecentLoginStore] / [sso.KnownDeviceStore] etc — they do NOT
+// [anomaly.RecentLoginStore] / [sso.KnownDeviceStore] etc — they do NOT
 // own a database connection. The state stores are wired separately
 // (memory peer for single-replica, sqlite peer for cluster-shared),
 // and detectors compose with whichever the operator chose.
-package anomaly
+package detectors
 
 import (
 	"context"
@@ -18,11 +18,11 @@ import (
 	"math"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
-// DetectorTypeImpossibleTravel is the wire-stable [sso.Anomaly.Type]
+// DetectorTypeImpossibleTravel is the wire-stable [anomaly.Signal.Type]
 // surfaced by [ImpossibleTravelDetector]. Operators alerting on this
 // detector branch on this string in their SIEM rules.
 const DetectorTypeImpossibleTravel = "impossible_travel"
@@ -46,7 +46,7 @@ const MaxRealisticSpeedKmh = 800.0
 //
 // State requirements:
 //
-//   - Reads the previous login from a [sso.RecentLoginStore]. Empty
+//   - Reads the previous login from a [anomaly.RecentLoginStore]. Empty
 //     history → first login for the subject → no anomaly (the
 //     detector needs at least one prior data point).
 //   - Both the current event AND the previous entry must carry
@@ -76,7 +76,7 @@ const MaxRealisticSpeedKmh = 800.0
 //     itself only fires against the latest entry regardless of its
 //     outcome.
 type ImpossibleTravelDetector struct {
-	store    sso.RecentLoginStore
+	store    anomaly.RecentLoginStore
 	ipSalt   []byte
 	maxSpeed float64
 	// historyWindow bounds how far back we'll consider a "previous"
@@ -111,14 +111,14 @@ func WithImpossibleTravelWindow(d time.Duration) ImpossibleTravelOption {
 }
 
 // NewImpossibleTravelDetector returns a detector that consults the
-// given [sso.RecentLoginStore]. ipSalt is the deployment-stable
+// given [anomaly.RecentLoginStore]. ipSalt is the deployment-stable
 // secret used by [defaultimpl.HashLoginEntry] — pass the same
 // value used when the AnomalyRunner stamps LoginEntries elsewhere.
 //
 // store nil → error (the detector is useless without history).
 // Empty ipSalt is accepted (memory-only deploys can opt out of
 // salting), but production should always supply one.
-func NewImpossibleTravelDetector(store sso.RecentLoginStore, ipSalt []byte, opts ...ImpossibleTravelOption) (*ImpossibleTravelDetector, error) {
+func NewImpossibleTravelDetector(store anomaly.RecentLoginStore, ipSalt []byte, opts ...ImpossibleTravelOption) (*ImpossibleTravelDetector, error) {
 	if store == nil {
 		return nil, errors.New("anomaly/impossible_travel: store required")
 	}
@@ -139,20 +139,20 @@ func (d *ImpossibleTravelDetector) Name() string { return DetectorTypeImpossible
 
 // Inspect computes the implied travel speed between the current
 // event and the most recent prior entry (within historyWindow). If
-// the speed exceeds maxSpeed, surfaces one [sso.Anomaly] with
+// the speed exceeds maxSpeed, surfaces one [anomaly.Signal] with
 // evidence: distance_km, elapsed_seconds, implied_speed_kmh, plus
 // the two endpoints' country codes for operator context.
 //
 // Appends the current event to the store unconditionally (even
 // when no anomaly fires) so subsequent calls see it as "previous."
-func (d *ImpossibleTravelDetector) Inspect(ctx context.Context, event *sso.LoginEvent) ([]sso.Anomaly, error) {
+func (d *ImpossibleTravelDetector) Inspect(ctx context.Context, event *anomaly.LoginEvent) ([]anomaly.Signal, error) {
 	if event == nil || event.SubjectID == "" {
 		return nil, nil
 	}
 	// Compute the result against the existing history BEFORE
 	// appending the current event — otherwise the "previous"
 	// entry is just the current event.
-	var anomalies []sso.Anomaly
+	var anomalies []anomaly.Signal
 	if event.Geo != nil && (event.Geo.Latitude != 0 || event.Geo.Longitude != 0) {
 		since := event.Timestamp.Add(-d.historyWindow)
 		// limit=1 — only the most recent matters for the speed check.
@@ -185,12 +185,12 @@ func (d *ImpossibleTravelDetector) Inspect(ctx context.Context, event *sso.Login
 // evaluate computes the haversine distance between two
 // (lat,lon) points + the implied speed; returns the anomaly +
 // true when speed > maxSpeed.
-func (d *ImpossibleTravelDetector) evaluate(event *sso.LoginEvent, prior *sso.LoginEntry) (sso.Anomaly, bool) {
+func (d *ImpossibleTravelDetector) evaluate(event *anomaly.LoginEvent, prior *anomaly.LoginEntry) (anomaly.Signal, bool) {
 	elapsed := event.Timestamp.Sub(prior.Timestamp)
 	if elapsed <= 0 {
 		// Clock skew or out-of-order events — skip rather than
 		// produce nonsense speeds.
-		return sso.Anomaly{}, false
+		return anomaly.Signal{}, false
 	}
 	distanceKm := haversineKm(
 		event.Geo.Latitude, event.Geo.Longitude,
@@ -200,26 +200,26 @@ func (d *ImpossibleTravelDetector) evaluate(event *sso.LoginEvent, prior *sso.Lo
 	// 10km floor avoids flagging gateway IP changes that map to
 	// the same metro.
 	if distanceKm < 10 {
-		return sso.Anomaly{}, false
+		return anomaly.Signal{}, false
 	}
 	hours := elapsed.Hours()
 	if hours <= 0 {
-		return sso.Anomaly{}, false
+		return anomaly.Signal{}, false
 	}
 	speedKmh := distanceKm / hours
 	if speedKmh < d.maxSpeed {
-		return sso.Anomaly{}, false
+		return anomaly.Signal{}, false
 	}
 	// Severity scales with how implausible the speed is.
 	// 800-2000 km/h ≈ supersonic possible (warn);
 	// 2000+ km/h ≈ definitely two real humans (critical).
-	severity := sso.AnomalySeverityWarn
+	severity := anomaly.SeverityWarn
 	score := 60
 	if speedKmh >= 2000 {
-		severity = sso.AnomalySeverityCritical
+		severity = anomaly.SeverityCritical
 		score = 90
 	}
-	return sso.Anomaly{
+	return anomaly.Signal{
 		Type:      DetectorTypeImpossibleTravel,
 		Severity:  severity,
 		Score:     score,
@@ -254,7 +254,7 @@ func degToRad(deg float64) float64 {
 }
 
 // geoCountry pulls country_code from event.Geo safely (nil-checked).
-func geoCountry(event *sso.LoginEvent) string {
+func geoCountry(event *anomaly.LoginEvent) string {
 	if event.Geo == nil {
 		return ""
 	}
@@ -327,4 +327,4 @@ func formatInt(n int64) string {
 }
 
 // Compile-time interface assertion.
-var _ sso.AnomalyDetector = (*ImpossibleTravelDetector)(nil)
+var _ anomaly.Detector = (*ImpossibleTravelDetector)(nil)

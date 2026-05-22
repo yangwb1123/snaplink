@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/geo"
@@ -52,7 +53,7 @@ type Server struct {
 	mfaProvider                    MFAProvider
 	mfaChallengeStore              MFAChallengeStore
 	mfaChallengeTTL                time.Duration
-	anomalyRunner                  *AsyncAnomalyRunner
+	anomalyRunner                  *anomaly.Runner
 	metrics                        *metrics.Metrics
 	rateLimitPolicy                *ratelimit.Policy
 	bodyLimit                      int64
@@ -678,17 +679,17 @@ func WithMFAProvider(p MFAProvider) Option {
 	return func(s *Server) { s.mfaProvider = p }
 }
 
-// WithAnomalyRunner wires an [AsyncAnomalyRunner] — the worker pool
+// WithAnomalyRunner wires an [anomaly.Runner] — the worker pool
 // that fans LoginEvents (success + failure) out to registered
-// [AnomalyDetector]s off the request hot path. The runner runs
+// [anomaly.Detector]s off the request hot path. The runner runs
 // AFTER the login response is built; detectors surface anomalies
-// via the configured [AnomalySink] (audit + optional webhook),
+// via the configured [anomaly.Sink] (audit + optional webhook),
 // NEVER back into the login decision.
 //
 // nil runner → no-op dispatch (zero overhead). Pre-call
 // runner.Start() before passing here so workers are alive when the
 // first event arrives.
-func WithAnomalyRunner(r *AsyncAnomalyRunner) Option {
+func WithAnomalyRunner(r *anomaly.Runner) Option {
 	return func(s *Server) { s.anomalyRunner = r }
 }
 

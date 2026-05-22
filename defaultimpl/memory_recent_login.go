@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
-// MemoryRecentLoginStore is the in-process [sso.RecentLoginStore].
+// MemoryRecentLoginStore is the in-process [anomaly.RecentLoginStore].
 // State lives in a per-subject ring-buffer keyed by SubjectID,
 // guarded by a single mutex. Suitable for single-replica deploys +
 // tests; cluster deploys want the SQLite peer (defaultimpl/sqlite)
@@ -23,7 +23,7 @@ import (
 // budget = subjects * 256 * sizeof(LoginEntry) ≈ a few hundred MB.
 type MemoryRecentLoginStore struct {
 	mu                sync.Mutex
-	entries           map[string][]*sso.LoginEntry
+	entries           map[string][]*anomaly.LoginEntry
 	perSubjectMaxSize int
 }
 
@@ -44,7 +44,7 @@ func WithRecentLoginPerSubjectCap(n int) MemoryRecentLoginStoreOption {
 // NewMemoryRecentLoginStore returns an empty in-process store.
 func NewMemoryRecentLoginStore(opts ...MemoryRecentLoginStoreOption) *MemoryRecentLoginStore {
 	s := &MemoryRecentLoginStore{
-		entries:           make(map[string][]*sso.LoginEntry),
+		entries:           make(map[string][]*anomaly.LoginEntry),
 		perSubjectMaxSize: 256,
 	}
 	for _, opt := range opts {
@@ -55,9 +55,9 @@ func NewMemoryRecentLoginStore(opts ...MemoryRecentLoginStoreOption) *MemoryRece
 
 // Append persists entry. Empty SubjectID → ErrInvalidLoginEntry
 // (anonymous failures shouldn't enter the per-subject store).
-func (s *MemoryRecentLoginStore) Append(_ context.Context, entry *sso.LoginEntry) error {
+func (s *MemoryRecentLoginStore) Append(_ context.Context, entry *anomaly.LoginEntry) error {
 	if entry == nil || entry.SubjectID == "" {
-		return sso.ErrInvalidLoginEntry
+		return anomaly.ErrInvalidLoginEntry
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -76,7 +76,7 @@ func (s *MemoryRecentLoginStore) Append(_ context.Context, entry *sso.LoginEntry
 
 // Recent returns up to limit most-recent entries newer than since,
 // ordered newest-first.
-func (s *MemoryRecentLoginStore) Recent(_ context.Context, subjectID string, since time.Time, limit int) ([]*sso.LoginEntry, error) {
+func (s *MemoryRecentLoginStore) Recent(_ context.Context, subjectID string, since time.Time, limit int) ([]*anomaly.LoginEntry, error) {
 	if subjectID == "" {
 		return nil, nil
 	}
@@ -84,7 +84,7 @@ func (s *MemoryRecentLoginStore) Recent(_ context.Context, subjectID string, sin
 	bucket := s.entries[subjectID]
 	// Copy out under the lock — caller iterating shouldn't see
 	// concurrent Append mutations.
-	cp := make([]*sso.LoginEntry, 0, len(bucket))
+	cp := make([]*anomaly.LoginEntry, 0, len(bucket))
 	for _, e := range bucket {
 		if !since.IsZero() && e.Timestamp.Before(since) {
 			continue
@@ -132,4 +132,4 @@ func (s *MemoryRecentLoginStore) PruneOlder(_ context.Context, cutoff time.Time)
 }
 
 // Compile-time interface assertion.
-var _ sso.RecentLoginStore = (*MemoryRecentLoginStore)(nil)
+var _ anomaly.RecentLoginStore = (*MemoryRecentLoginStore)(nil)

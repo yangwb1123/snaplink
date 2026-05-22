@@ -4,10 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
-// HashLoginEntry builds a [sso.LoginEntry] from a [sso.LoginEvent]
+// HashLoginEntry builds a [anomaly.LoginEntry] from a [anomaly.LoginEvent]
 // + an IP salt + a per-subject UA salt. The canonical helper —
 // detector implementations call this rather than reaching for
 // crypto/sha256 themselves, so the hash schema stays uniform
@@ -21,12 +21,12 @@ import (
 //
 // Returns nil + empty error when event.SubjectID is empty
 // (anonymous failure that detectors should skip).
-func HashLoginEntry(event *sso.LoginEvent, ipSalt []byte) *sso.LoginEntry {
+func HashLoginEntry(event *anomaly.LoginEvent, ipSalt []byte) *anomaly.LoginEntry {
 	if event == nil || event.SubjectID == "" {
 		return nil
 	}
 	uaSubjectSalt := deriveUASubjectSalt(event.SubjectID, ipSalt)
-	entry := &sso.LoginEntry{
+	entry := &anomaly.LoginEntry{
 		SubjectID: event.SubjectID,
 		ClientID:  event.ClientID,
 		Outcome:   event.Outcome,

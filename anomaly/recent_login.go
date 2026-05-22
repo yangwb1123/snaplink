@@ -1,4 +1,4 @@
-package sso
+package anomaly
 
 import (
 	"context"
@@ -7,10 +7,10 @@ import (
 )
 
 // RecentLoginStore persists a windowed per-subject history of login
-// attempts — the substrate every behavioral [AnomalyDetector] needs
+// attempts — the substrate every behavioral [Detector] needs
 // when it asks "what did this subject do in the last N minutes?"
 //
-// Designed for OFF the request hot path (the [AsyncAnomalyRunner]
+// Designed for OFF the request hot path (the [Runner]
 // consumes it). Writes are append-only; reads are bounded by
 // subject + time window. Backends own retention — entries older
 // than the operator's policy MAY be pruned at any time (including

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
 // recentLoginSchema persists per-subject login history for behavioral
@@ -16,7 +16,7 @@ import (
 // the Recent query — "newest N entries for this subject newer than
 // since" — is one index scan with backward order.
 //
-// Field shape mirrors [sso.LoginEntry] verbatim. The expires_at
+// Field shape mirrors [anomaly.LoginEntry] verbatim. The expires_at
 // index supports the retention scheduler's PruneOlder call (mirrors
 // the audit / push retention pattern).
 const recentLoginSchema = `
@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_recent_logins_ts
     ON recent_logins(ts_unix_ns);
 `
 
-// RecentLoginStore is the SQLite-backed [sso.RecentLoginStore].
+// RecentLoginStore is the SQLite-backed [anomaly.RecentLoginStore].
 // Cluster-shared: detectors on replica B see entries appended by
 // replica A. Schema migration via CREATE TABLE IF NOT EXISTS at
 // construction.
@@ -93,9 +93,9 @@ func (s *RecentLoginStore) Ping(ctx context.Context) error {
 }
 
 // Append persists entry. Empty SubjectID → ErrInvalidLoginEntry.
-func (s *RecentLoginStore) Append(ctx context.Context, entry *sso.LoginEntry) error {
+func (s *RecentLoginStore) Append(ctx context.Context, entry *anomaly.LoginEntry) error {
 	if entry == nil || entry.SubjectID == "" {
-		return sso.ErrInvalidLoginEntry
+		return anomaly.ErrInvalidLoginEntry
 	}
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO recent_logins (
@@ -116,7 +116,7 @@ func (s *RecentLoginStore) Append(ctx context.Context, entry *sso.LoginEntry) er
 // Recent returns up to limit most-recent entries for subjectID
 // newer than since. Backend cap = 100 when limit <= 0 (matches the
 // SPI contract).
-func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since time.Time, limit int) ([]*sso.LoginEntry, error) {
+func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since time.Time, limit int) ([]*anomaly.LoginEntry, error) {
 	if subjectID == "" {
 		return nil, nil
 	}
@@ -143,10 +143,10 @@ func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since t
 		return nil, fmt.Errorf("sqlite: recent recent_logins: %w", err)
 	}
 	defer rows.Close()
-	var out []*sso.LoginEntry
+	var out []*anomaly.LoginEntry
 	for rows.Next() {
 		var (
-			e    sso.LoginEntry
+			e    anomaly.LoginEntry
 			tsNs int64
 		)
 		if err := rows.Scan(
@@ -182,4 +182,4 @@ func (s *RecentLoginStore) PruneOlder(ctx context.Context, cutoff time.Time) (in
 	return res.RowsAffected()
 }
 
-var _ sso.RecentLoginStore = (*RecentLoginStore)(nil)
+var _ anomaly.RecentLoginStore = (*RecentLoginStore)(nil)

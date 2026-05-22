@@ -1,13 +1,13 @@
-package anomaly_test
+package detectors_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/defaultimpl/anomaly"
+	"github.com/snaplink/sso/defaultimpl/detectors"
 	"github.com/snaplink/sso/geo"
 )
 
@@ -20,10 +20,10 @@ var (
 	lhr = struct{ lat, lon float64 }{51.4700, -0.4543}   // London Heathrow
 )
 
-func newDetector(t *testing.T, opts ...anomaly.ImpossibleTravelOption) (*anomaly.ImpossibleTravelDetector, sso.RecentLoginStore) {
+func newDetector(t *testing.T, opts ...detectors.ImpossibleTravelOption) (*detectors.ImpossibleTravelDetector, anomaly.RecentLoginStore) {
 	t.Helper()
 	store := defaultimpl.NewMemoryRecentLoginStore()
-	d, err := anomaly.NewImpossibleTravelDetector(store, []byte("salt"), opts...)
+	d, err := detectors.NewImpossibleTravelDetector(store, []byte("salt"), opts...)
 	if err != nil {
 		t.Fatalf("NewImpossibleTravelDetector: %v", err)
 	}
@@ -33,7 +33,7 @@ func newDetector(t *testing.T, opts ...anomaly.ImpossibleTravelOption) (*anomaly
 func TestImpossibleTravel_NewSubjectNoAnomaly(t *testing.T) {
 	// First login for a subject → no prior history → no signal.
 	d, _ := newDetector(t)
-	event := &sso.LoginEvent{
+	event := &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Outcome:   "success",
 		Timestamp: time.Now(),
@@ -53,12 +53,12 @@ func TestImpossibleTravel_SameCityNoAnomaly(t *testing.T) {
 	d, _ := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-5 * time.Minute),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		// Same SFO airport coords.
@@ -75,12 +75,12 @@ func TestImpossibleTravel_SF_to_NY_24h_NoAnomaly(t *testing.T) {
 	d, _ := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-24 * time.Hour),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: jfk.lat, Longitude: jfk.lon, CountryCode: "US"},
@@ -96,12 +96,12 @@ func TestImpossibleTravel_SF_to_NY_5min_Critical(t *testing.T) {
 	d, _ := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-5 * time.Minute),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: jfk.lat, Longitude: jfk.lon, CountryCode: "US"},
@@ -110,10 +110,10 @@ func TestImpossibleTravel_SF_to_NY_5min_Critical(t *testing.T) {
 		t.Fatalf("5min SF→NY should flag exactly 1 anomaly; got %d", len(got))
 	}
 	a := got[0]
-	if a.Type != anomaly.DetectorTypeImpossibleTravel {
+	if a.Type != detectors.DetectorTypeImpossibleTravel {
 		t.Errorf("type = %q, want impossible_travel", a.Type)
 	}
-	if a.Severity != sso.AnomalySeverityCritical {
+	if a.Severity != anomaly.SeverityCritical {
 		t.Errorf("severity = %q, want critical at this speed", a.Severity)
 	}
 	if a.Evidence["prior_country_code"] != "US" || a.Evidence["current_country_code"] != "US" {
@@ -130,17 +130,17 @@ func TestImpossibleTravel_SF_to_London_30min_Warn(t *testing.T) {
 	d, _ := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-30 * time.Minute),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: lhr.lat, Longitude: lhr.lon, CountryCode: "GB"},
 	})
-	if len(got) != 1 || got[0].Severity != sso.AnomalySeverityCritical {
+	if len(got) != 1 || got[0].Severity != anomaly.SeverityCritical {
 		t.Errorf("SF→London in 30min should be critical: %+v", got)
 	}
 }
@@ -152,12 +152,12 @@ func TestImpossibleTravel_BorderlineSpeedIsWarn(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	// SF → JFK distance ≈ 4100 km. In 3.42h ≈ 1199 km/h.
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-205 * time.Minute), // 3.42h
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: jfk.lat, Longitude: jfk.lon, CountryCode: "US"},
@@ -165,7 +165,7 @@ func TestImpossibleTravel_BorderlineSpeedIsWarn(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("borderline should flag: %v", got)
 	}
-	if got[0].Severity != sso.AnomalySeverityWarn {
+	if got[0].Severity != anomaly.SeverityWarn {
 		t.Errorf("borderline (~1200 kmh) should be warn, got %q", got[0].Severity)
 	}
 }
@@ -176,12 +176,12 @@ func TestImpossibleTravel_MissingGeoSkipsCheck(t *testing.T) {
 	d, _ := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-5 * time.Minute),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       nil, // no geo provider available for this login
@@ -198,13 +198,13 @@ func TestImpossibleTravel_PriorMissingLatLonSkipsCheck(t *testing.T) {
 	d, store := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_ = store.Append(ctx, &sso.LoginEntry{
+	_ = store.Append(ctx, &anomaly.LoginEntry{
 		SubjectID:   "alice",
 		CountryCode: "US",
 		Timestamp:   now.Add(-5 * time.Minute),
 		// Latitude/Longitude both 0 (geo provider didn't populate).
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: jfk.lat, Longitude: jfk.lon, CountryCode: "US"},
@@ -217,15 +217,15 @@ func TestImpossibleTravel_PriorMissingLatLonSkipsCheck(t *testing.T) {
 func TestImpossibleTravel_OutOfWindowPriorIgnored(t *testing.T) {
 	// Prior login from 48h ago — outside default 24h window. Even
 	// if computed speed exceeded ceiling, we shouldn't flag.
-	d, _ := newDetector(t, anomaly.WithImpossibleTravelWindow(24*time.Hour))
+	d, _ := newDetector(t, detectors.WithImpossibleTravelWindow(24*time.Hour))
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-48 * time.Hour),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: pek.lat, Longitude: pek.lon, CountryCode: "CN"},
@@ -238,15 +238,15 @@ func TestImpossibleTravel_OutOfWindowPriorIgnored(t *testing.T) {
 func TestImpossibleTravel_CustomMaxSpeedHonored(t *testing.T) {
 	// Tighten ceiling to 200 km/h — a 4100km SF→JFK in 24h
 	// (170 km/h normally fine) now flags.
-	d, _ := newDetector(t, anomaly.WithImpossibleTravelMaxSpeed(100))
+	d, _ := newDetector(t, detectors.WithImpossibleTravelMaxSpeed(100))
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now.Add(-24 * time.Hour),
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
 	})
-	got, _ := d.Inspect(ctx, &sso.LoginEvent{
+	got, _ := d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: jfk.lat, Longitude: jfk.lon, CountryCode: "US"},
@@ -269,7 +269,7 @@ func TestImpossibleTravel_NilEventReturnsNoAnomaly(t *testing.T) {
 
 func TestImpossibleTravel_EmptySubjectReturnsNoAnomaly(t *testing.T) {
 	d, _ := newDetector(t)
-	got, err := d.Inspect(context.Background(), &sso.LoginEvent{Outcome: "failure"})
+	got, err := d.Inspect(context.Background(), &anomaly.LoginEvent{Outcome: "failure"})
 	if err != nil {
 		t.Fatalf("empty subject: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestImpossibleTravel_AppendsEvenWhenNoAnomaly(t *testing.T) {
 	d, store := newDetector(t)
 	ctx := context.Background()
 	now := time.Now()
-	_, _ = d.Inspect(ctx, &sso.LoginEvent{
+	_, _ = d.Inspect(ctx, &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Timestamp: now,
 		Geo:       &geo.GeoInfo{Latitude: sfo.lat, Longitude: sfo.lon, CountryCode: "US"},
@@ -296,7 +296,7 @@ func TestImpossibleTravel_AppendsEvenWhenNoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_NilStoreErrors(t *testing.T) {
-	_, err := anomaly.NewImpossibleTravelDetector(nil, []byte("salt"))
+	_, err := detectors.NewImpossibleTravelDetector(nil, []byte("salt"))
 	if err == nil {
 		t.Fatal("nil store should error")
 	}
@@ -304,10 +304,10 @@ func TestImpossibleTravel_NilStoreErrors(t *testing.T) {
 
 func TestImpossibleTravel_NameIsStableWireString(t *testing.T) {
 	d, _ := newDetector(t)
-	if got := d.Name(); got != anomaly.DetectorTypeImpossibleTravel {
-		t.Errorf("Name() = %q, want %q", got, anomaly.DetectorTypeImpossibleTravel)
+	if got := d.Name(); got != detectors.DetectorTypeImpossibleTravel {
+		t.Errorf("Name() = %q, want %q", got, detectors.DetectorTypeImpossibleTravel)
 	}
-	if anomaly.DetectorTypeImpossibleTravel != "impossible_travel" {
-		t.Errorf("wire string drifted: %q", anomaly.DetectorTypeImpossibleTravel)
+	if detectors.DetectorTypeImpossibleTravel != "impossible_travel" {
+		t.Errorf("wire string drifted: %q", detectors.DetectorTypeImpossibleTravel)
 	}
 }

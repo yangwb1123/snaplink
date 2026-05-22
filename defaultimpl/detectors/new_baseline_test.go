@@ -1,4 +1,4 @@
-package anomaly_test
+package detectors_test
 
 import (
 	"context"
@@ -6,27 +6,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/defaultimpl/anomaly"
+	"github.com/snaplink/sso/defaultimpl/detectors"
 	"github.com/snaplink/sso/geo"
 )
 
 // --- NewDeviceDetector ---
 
-func newDeviceDetector(t *testing.T, opts ...anomaly.NewDeviceOption) (*anomaly.NewDeviceDetector, sso.RecentLoginStore) {
+func newDeviceDetector(t *testing.T, opts ...detectors.NewDeviceOption) (*detectors.NewDeviceDetector, anomaly.RecentLoginStore) {
 	t.Helper()
 	store := defaultimpl.NewMemoryRecentLoginStore()
-	d, err := anomaly.NewNewDeviceDetector(store, []byte("salt"), opts...)
+	d, err := detectors.NewNewDeviceDetector(store, []byte("salt"), opts...)
 	if err != nil {
 		t.Fatalf("NewNewDeviceDetector: %v", err)
 	}
 	return d, store
 }
 
-func seedDeviceHistory(t *testing.T, store sso.RecentLoginStore, subject, ua string, ipSalt []byte, ts time.Time) {
+func seedDeviceHistory(t *testing.T, store anomaly.RecentLoginStore, subject, ua string, ipSalt []byte, ts time.Time) {
 	t.Helper()
-	entry := defaultimpl.HashLoginEntry(&sso.LoginEvent{
+	entry := defaultimpl.HashLoginEntry(&anomaly.LoginEvent{
 		SubjectID: subject,
 		UserAgent: ua,
 		Timestamp: ts,
@@ -41,7 +41,7 @@ func seedDeviceHistory(t *testing.T, store sso.RecentLoginStore, subject, ua str
 
 func TestNewDevice_FirstLoginNoSignal(t *testing.T) {
 	d, _ := newDeviceDetector(t)
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "Browser/1",
 		Timestamp: time.Now(),
@@ -52,11 +52,11 @@ func TestNewDevice_FirstLoginNoSignal(t *testing.T) {
 }
 
 func TestNewDevice_KnownUANoSignal(t *testing.T) {
-	d, store := newDeviceDetector(t, anomaly.WithNewDeviceBootstrapGracePeriod(0))
+	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	// Seed alice with Browser/1 ten days ago (past grace).
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-10*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "Browser/1", // same UA
 		Timestamp: now,
@@ -67,10 +67,10 @@ func TestNewDevice_KnownUANoSignal(t *testing.T) {
 }
 
 func TestNewDevice_NewUAFlags(t *testing.T) {
-	d, store := newDeviceDetector(t, anomaly.WithNewDeviceBootstrapGracePeriod(0))
+	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-10*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "Browser/2", // different UA
 		Timestamp: now,
@@ -78,10 +78,10 @@ func TestNewDevice_NewUAFlags(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("new UA should flag: %v", got)
 	}
-	if got[0].Type != anomaly.DetectorTypeNewDevice {
+	if got[0].Type != detectors.DetectorTypeNewDevice {
 		t.Errorf("type = %q", got[0].Type)
 	}
-	if got[0].Severity != sso.AnomalySeverityWarn {
+	if got[0].Severity != anomaly.SeverityWarn {
 		t.Errorf("severity = %q, want warn", got[0].Severity)
 	}
 	if got[0].Evidence["baseline_entries"] != "1" {
@@ -90,10 +90,10 @@ func TestNewDevice_NewUAFlags(t *testing.T) {
 }
 
 func TestNewDevice_EmptyUASkips(t *testing.T) {
-	d, store := newDeviceDetector(t, anomaly.WithNewDeviceBootstrapGracePeriod(0))
+	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-10*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "", // no UA header
 		Timestamp: now,
@@ -105,12 +105,12 @@ func TestNewDevice_EmptyUASkips(t *testing.T) {
 
 func TestNewDevice_BootstrapGraceSuppressesFlag(t *testing.T) {
 	d, store := newDeviceDetector(t,
-		anomaly.WithNewDeviceBootstrapGracePeriod(7*24*time.Hour),
+		detectors.WithNewDeviceBootstrapGracePeriod(7*24*time.Hour),
 	)
 	now := time.Now()
 	// Seed first login 2 days ago (within 7-day grace).
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-2*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "Browser/2", // would-be new device
 		Timestamp: now,
@@ -122,11 +122,11 @@ func TestNewDevice_BootstrapGraceSuppressesFlag(t *testing.T) {
 
 func TestNewDevice_OutsideGraceFlagsNewUA(t *testing.T) {
 	d, store := newDeviceDetector(t,
-		anomaly.WithNewDeviceBootstrapGracePeriod(7*24*time.Hour),
+		detectors.WithNewDeviceBootstrapGracePeriod(7*24*time.Hour),
 	)
 	now := time.Now()
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-10*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "Browser/2",
 		Timestamp: now,
@@ -138,10 +138,10 @@ func TestNewDevice_OutsideGraceFlagsNewUA(t *testing.T) {
 
 func TestNewDevice_OutOfBaselineWindowSkips(t *testing.T) {
 	// Seeded entry is 60 days ago — outside the 30-day default window.
-	d, store := newDeviceDetector(t, anomaly.WithNewDeviceBootstrapGracePeriod(0))
+	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-60*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		UserAgent: "Browser/2",
 		Timestamp: now,
@@ -152,7 +152,7 @@ func TestNewDevice_OutOfBaselineWindowSkips(t *testing.T) {
 }
 
 func TestNewDevice_NilStoreErrors(t *testing.T) {
-	_, err := anomaly.NewNewDeviceDetector(nil, []byte("salt"))
+	_, err := detectors.NewNewDeviceDetector(nil, []byte("salt"))
 	if err == nil {
 		t.Error("nil store should error")
 	}
@@ -167,19 +167,19 @@ func TestNewDevice_NameStableWireString(t *testing.T) {
 
 // --- NewCountryDetector ---
 
-func newCountryDetector(t *testing.T, opts ...anomaly.NewCountryOption) (*anomaly.NewCountryDetector, sso.RecentLoginStore) {
+func newCountryDetector(t *testing.T, opts ...detectors.NewCountryOption) (*detectors.NewCountryDetector, anomaly.RecentLoginStore) {
 	t.Helper()
 	store := defaultimpl.NewMemoryRecentLoginStore()
-	d, err := anomaly.NewNewCountryDetector(store, opts...)
+	d, err := detectors.NewNewCountryDetector(store, opts...)
 	if err != nil {
 		t.Fatalf("NewNewCountryDetector: %v", err)
 	}
 	return d, store
 }
 
-func seedCountryHistory(t *testing.T, store sso.RecentLoginStore, subject, cc string, ts time.Time) {
+func seedCountryHistory(t *testing.T, store anomaly.RecentLoginStore, subject, cc string, ts time.Time) {
 	t.Helper()
-	if err := store.Append(context.Background(), &sso.LoginEntry{
+	if err := store.Append(context.Background(), &anomaly.LoginEntry{
 		SubjectID:   subject,
 		CountryCode: cc,
 		Timestamp:   ts,
@@ -189,10 +189,10 @@ func seedCountryHistory(t *testing.T, store sso.RecentLoginStore, subject, cc st
 }
 
 func TestNewCountry_KnownCountryNoSignal(t *testing.T) {
-	d, store := newCountryDetector(t, anomaly.WithNewCountryBootstrapGracePeriod(0))
+	d, store := newCountryDetector(t, detectors.WithNewCountryBootstrapGracePeriod(0))
 	now := time.Now()
 	seedCountryHistory(t, store, "alice", "US", now.Add(-30*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Geo:       &geo.GeoInfo{CountryCode: "US"},
 		Timestamp: now,
@@ -203,11 +203,11 @@ func TestNewCountry_KnownCountryNoSignal(t *testing.T) {
 }
 
 func TestNewCountry_NewCountryFlags(t *testing.T) {
-	d, store := newCountryDetector(t, anomaly.WithNewCountryBootstrapGracePeriod(0))
+	d, store := newCountryDetector(t, detectors.WithNewCountryBootstrapGracePeriod(0))
 	now := time.Now()
 	seedCountryHistory(t, store, "alice", "US", now.Add(-30*24*time.Hour))
 	seedCountryHistory(t, store, "alice", "CA", now.Add(-15*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Geo:       &geo.GeoInfo{CountryCode: "RU"},
 		Timestamp: now,
@@ -216,7 +216,7 @@ func TestNewCountry_NewCountryFlags(t *testing.T) {
 		t.Fatalf("new country should flag: %v", got)
 	}
 	a := got[0]
-	if a.Type != anomaly.DetectorTypeNewCountry {
+	if a.Type != detectors.DetectorTypeNewCountry {
 		t.Errorf("type = %q", a.Type)
 	}
 	if a.Evidence["current_country"] != "RU" {
@@ -230,11 +230,11 @@ func TestNewCountry_NewCountryFlags(t *testing.T) {
 
 func TestNewCountry_BootstrapGraceSuppresses(t *testing.T) {
 	d, store := newCountryDetector(t,
-		anomaly.WithNewCountryBootstrapGracePeriod(7*24*time.Hour),
+		detectors.WithNewCountryBootstrapGracePeriod(7*24*time.Hour),
 	)
 	now := time.Now()
 	seedCountryHistory(t, store, "alice", "US", now.Add(-3*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Geo:       &geo.GeoInfo{CountryCode: "GB"},
 		Timestamp: now,
@@ -246,7 +246,7 @@ func TestNewCountry_BootstrapGraceSuppresses(t *testing.T) {
 
 func TestNewCountry_NoGeoSkips(t *testing.T) {
 	d, _ := newCountryDetector(t)
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Geo:       nil,
 		Timestamp: time.Now(),
@@ -258,7 +258,7 @@ func TestNewCountry_NoGeoSkips(t *testing.T) {
 
 func TestNewCountry_EmptyCountrySkips(t *testing.T) {
 	d, _ := newCountryDetector(t)
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Geo:       &geo.GeoInfo{CountryCode: ""}, // geo lookup miss
 		Timestamp: time.Now(),
@@ -269,7 +269,7 @@ func TestNewCountry_EmptyCountrySkips(t *testing.T) {
 }
 
 func TestNewCountry_NilStoreErrors(t *testing.T) {
-	_, err := anomaly.NewNewCountryDetector(nil)
+	_, err := detectors.NewNewCountryDetector(nil)
 	if err == nil {
 		t.Error("nil store should error")
 	}
@@ -285,10 +285,10 @@ func TestNewCountry_NameStableWireString(t *testing.T) {
 func TestNewCountry_OutOfBaselineWindowNoBaseline(t *testing.T) {
 	// 180 days ago > 90-day default window → no baseline → first
 	// login behavior (no signal).
-	d, store := newCountryDetector(t, anomaly.WithNewCountryBootstrapGracePeriod(0))
+	d, store := newCountryDetector(t, detectors.WithNewCountryBootstrapGracePeriod(0))
 	now := time.Now()
 	seedCountryHistory(t, store, "alice", "US", now.Add(-180*24*time.Hour))
-	got, _ := d.Inspect(context.Background(), &sso.LoginEvent{
+	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
 		Geo:       &geo.GeoInfo{CountryCode: "RU"},
 		Timestamp: now,

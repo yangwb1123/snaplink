@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
 // ipFailureCounterSchema persists (ip_hash, subject_id, ts) for
@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_ip_failures_ts
     ON ip_failures(ts_unix_ns);
 `
 
-// IPFailureCounter is the SQLite-backed [sso.IPFailureCounter].
+// IPFailureCounter is the SQLite-backed [anomaly.IPFailureCounter].
 // Cluster-shared: brute-force counters keyed by IP work across
 // replicas because every replica writes to the same SQLite file.
 type IPFailureCounter struct {
@@ -131,4 +131,4 @@ func (s *IPFailureCounter) PruneOlder(ctx context.Context, cutoff time.Time) (in
 	return res.RowsAffected()
 }
 
-var _ sso.IPFailureCounter = (*IPFailureCounter)(nil)
+var _ anomaly.IPFailureCounter = (*IPFailureCounter)(nil)

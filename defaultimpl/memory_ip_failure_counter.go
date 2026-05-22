@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
-// MemoryIPFailureCounter is the in-process [sso.IPFailureCounter].
+// MemoryIPFailureCounter is the in-process [anomaly.IPFailureCounter].
 // Per-IP slice of (subject, ts) tuples guarded by single mutex.
 // Suitable for single-replica + tests; SQLite peer for cluster.
 type MemoryIPFailureCounter struct {
@@ -88,4 +88,4 @@ func (m *MemoryIPFailureCounter) PruneOlder(_ context.Context, cutoff time.Time)
 	return deleted, nil
 }
 
-var _ sso.IPFailureCounter = (*MemoryIPFailureCounter)(nil)
+var _ anomaly.IPFailureCounter = (*MemoryIPFailureCounter)(nil)

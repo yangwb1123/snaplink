@@ -46,9 +46,11 @@ sso.go / handler.go / router.go     Server, HandlerContext, routing
 consts.go                           Paths, headers, error codes
 handle_*.go                         Per-endpoint HTTP handlers
 oauth_bind.go                       form+JSON dispatcher
+anomaly/                            Async behavioral detection SPIs
 authenticators/                     9 pluggable + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)
+defaultimpl/detectors/              Reference anomaly detector impls
 adapters/{echo,gin}/                Router adapters
 audit/                              Recorder + Sinks + hash chain
 permissions/                        Roles + menus + wildcard matcher
@@ -340,7 +342,7 @@ Richer scorers (impossible-travel, device fingerprint, ML) implement
 `sso.RiskScorer` directly and query their own store inside `Score` —
 don't pad `RiskRequest`.
 
-### Anomaly detection (`anomaly.go` + `defaultimpl/anomaly/`)
+### Anomaly detection (`anomaly/` + `defaultimpl/detectors/`)
 Async behavioral-anomaly path that complements the synchronous
 [RiskScorer]. The synchronous scorer can only afford ms-level
 decisions; anomaly detectors run OFF the request path on every
@@ -357,7 +359,7 @@ nil → zero overhead. Per-detector 5s ctx bound; one slow detector
 can't pile up siblings. Per-detector errors logged + metric'd,
 never propagated.
 
-Reference detectors (`defaultimpl/anomaly/`):
+Reference detectors (`defaultimpl/detectors/`):
 - `ImpossibleTravelDetector` — haversine distance + speed ceiling
   (default 800 km/h). 800-2000 = warn; 2000+ = critical. 10km
   same-metro floor; 24h history window. Owns the

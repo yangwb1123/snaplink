@@ -1,4 +1,4 @@
-package anomaly
+package detectors
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/anomaly"
 )
 
-// DetectorTypeBruteForceShadow is the wire-stable [sso.Anomaly.Type]
+// DetectorTypeBruteForceShadow is the wire-stable [anomaly.Signal.Type]
 // for the brute-force shadow detector.
 const DetectorTypeBruteForceShadow = "brute_force_shadow"
 
@@ -22,7 +22,7 @@ const DetectorTypeBruteForceShadow = "brute_force_shadow"
 // the typical 5-fail lockout); from the IP's perspective it's
 // hammered 4 × N = 400 failures across 100 accounts.
 //
-// Reads + writes to a separate [sso.IPFailureCounter] — the schema
+// Reads + writes to a separate [anomaly.IPFailureCounter] — the schema
 // is IP-keyed (not subject-keyed) so the count + distinct-subjects
 // aggregation is one indexed query.
 //
@@ -43,7 +43,7 @@ const DetectorTypeBruteForceShadow = "brute_force_shadow"
 // the counter — the counter is "how loud is this IP being wrong?"
 // not "how loud is this IP overall."
 type BruteForceShadowDetector struct {
-	counter              sso.IPFailureCounter
+	counter              anomaly.IPFailureCounter
 	ipSalt               []byte
 	window               time.Duration
 	failureLimit         int
@@ -89,7 +89,7 @@ func WithBruteForceShadowDistinctSubjectLimit(n int) BruteForceShadowOption {
 // counter. counter nil → error. ipSalt is the same deployment salt
 // used by HashLoginEntry so the IP hash schema matches across
 // detectors.
-func NewBruteForceShadowDetector(counter sso.IPFailureCounter, ipSalt []byte, opts ...BruteForceShadowOption) (*BruteForceShadowDetector, error) {
+func NewBruteForceShadowDetector(counter anomaly.IPFailureCounter, ipSalt []byte, opts ...BruteForceShadowOption) (*BruteForceShadowDetector, error) {
 	if counter == nil {
 		return nil, errors.New("anomaly/brute_force_shadow: counter required")
 	}
@@ -112,7 +112,7 @@ func (d *BruteForceShadowDetector) Name() string { return DetectorTypeBruteForce
 // Inspect records this failure (if it IS a failure) + checks both
 // thresholds against the IP's total count + distinct-subjects
 // count in the window.
-func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *sso.LoginEvent) ([]sso.Anomaly, error) {
+func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *anomaly.LoginEvent) ([]anomaly.Signal, error) {
 	if event == nil || event.RemoteIP == "" {
 		return nil, nil
 	}
@@ -134,11 +134,11 @@ func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *sso.Login
 		return nil, fmt.Errorf("anomaly/brute_force_shadow: count: %w", err)
 	}
 
-	var anomalies []sso.Anomaly
+	var anomalies []anomaly.Signal
 	if d.failureLimit > 0 && total > d.failureLimit {
-		anomalies = append(anomalies, sso.Anomaly{
+		anomalies = append(anomalies, anomaly.Signal{
 			Type:      DetectorTypeBruteForceShadow,
-			Severity:  sso.AnomalySeverityWarn,
+			Severity:  anomaly.SeverityWarn,
 			Score:     bfScore(total, d.failureLimit),
 			SubjectID: event.SubjectID,
 			Evidence: map[string]string{
@@ -151,9 +151,9 @@ func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *sso.Login
 		})
 	}
 	if d.distinctSubjectLimit > 0 && distinct > d.distinctSubjectLimit {
-		anomalies = append(anomalies, sso.Anomaly{
+		anomalies = append(anomalies, anomaly.Signal{
 			Type:      DetectorTypeBruteForceShadow,
-			Severity:  sso.AnomalySeverityCritical,
+			Severity:  anomaly.SeverityCritical,
 			Score:     bfScore(distinct, d.distinctSubjectLimit),
 			SubjectID: event.SubjectID,
 			Evidence: map[string]string{
@@ -204,4 +204,4 @@ func bfScore(count, threshold int) int {
 	return score
 }
 
-var _ sso.AnomalyDetector = (*BruteForceShadowDetector)(nil)
+var _ anomaly.Detector = (*BruteForceShadowDetector)(nil)
