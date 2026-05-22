@@ -33,6 +33,16 @@ type GeoInfo struct {
 	City                string `json:"city,omitempty"`
 	TimeZone            string `json:"time_zone,omitempty"`            // IANA tz database id
 	RecommendedLanguage string `json:"recommended_language,omitempty"` // BCP-47
+
+	// Latitude + Longitude in decimal degrees, populated when the
+	// provider has lat/lon data (MaxMind GeoIP2 City, ipgeolocation.io,
+	// most commercial DBs). Both zero = unknown; consumers MUST
+	// NOT treat (0,0) as the Gulf of Guinea. Used by the
+	// impossible-travel anomaly detector — provider impls without
+	// lat/lon (`geo/static` shipped CIDR list) leave these zero
+	// and the detector skips the distance check.
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
 }
 
 // Provider looks up GeoInfo for an IP address. Implementations must
