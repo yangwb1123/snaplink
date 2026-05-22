@@ -248,6 +248,11 @@ type app struct {
 	// can wire the reference callback handler against it.
 	pushApprovalStore defaultimpl.PushApprovalStore
 
+	// anomalyRT is the lifecycle handle for the async anomaly
+	// detection subsystem. Nil when anomaly.enabled=false. Drained
+	// + closed during shutdown.
+	anomalyRT *anomalyRuntime
+
 	// metrics handle is held so subsystems wired after the SSO
 	// server (e.g. WebAuthn route mounting in buildHTTPHandler)
 	// can emit on their own counters. Nil when cfg.Metrics.Enabled
@@ -411,6 +416,12 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 				logger.Error("push approval pruner did not exit cleanly")
 			}
 		}
+	}
+	// Anomaly detection: drain queue + close SQLite stores. Bounded
+	// by the same shutdown ctx so a hung detector backend can't
+	// stall the whole process.
+	if a.anomalyRT != nil {
+		a.anomalyRT.close(ctx)
 	}
 	// Drain the audit AsyncSink queue under the same shutdown
 	// deadline. Events queued during the final ~milliseconds before
@@ -2283,6 +2294,27 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 
+	// Anomaly detection: async behavioral detector pipeline. Off the
+	// request hot path; runner.Dispatch is non-blocking; nil runtime
+	// when anomaly.enabled=false (zero overhead).
+	anomalyRT, err := buildAnomaly(cfg.Anomaly, recorder, metricsRegistry, logger)
+	if err != nil {
+		return nil, fmt.Errorf("anomaly: %w", err)
+	}
+	if anomalyRT != nil && anomalyRT.runner != nil {
+		opts = append(opts, sso.WithAnomalyRunner(anomalyRT.runner))
+		if anomalyRT.recentSQLite != nil {
+			opts = appendReadyCheck(opts, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
+		}
+		if anomalyRT.ipFailSQLite != nil {
+			opts = appendReadyCheck(opts, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
+		}
+		logger.Info("anomaly detection: enabled",
+			"recent_login_backend", cfg.Anomaly.RecentLogin.Backend,
+			"ip_failure_backend", cfg.Anomaly.IPFailure.Backend,
+		)
+	}
+
 	tenantStore, err := buildTenantStore(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("tenant store: %w", err)
@@ -2656,6 +2688,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		snapshotRetentionCancel: snapshotRetentionCancel,
 		snapshotRetentionDone:   snapshotRetentionDone,
 		pushPruneCancel:         pushPruneCancel,
+		anomalyRT:               anomalyRT,
 		pushPruneDone:           pushPruneDone,
 		pushApprovalStore:       pushApprovalStoreIface(pushApprovalStore),
 		metrics:                 metricsRegistry,

@@ -48,6 +48,115 @@ type Config struct {
 	Registry           RegistryConfig           `yaml:"registry"`
 	Risk               RiskConfig               `yaml:"risk"`
 	MFA                MFAConfig                `yaml:"mfa"`
+	Anomaly            AnomalyConfig            `yaml:"anomaly"`
+}
+
+// AnomalyConfig wires the async behavioral anomaly detection
+// subsystem (impossible_travel / velocity / new_device /
+// new_country / brute_force_shadow). Decoupled from RiskConfig
+// because anomaly detectors run OFF the request path on every
+// login event (success + failure) and surface anomalies via
+// audit + metrics — they NEVER block login by design.
+//
+// When Enabled=false the entire subsystem short-circuits: no
+// runner spawned, no store connections opened, zero overhead.
+// When Enabled=true, at least one detector must be enabled or
+// cmd boots with a warning (the runner is a no-op without
+// detectors registered).
+//
+// IPSalt is the deployment-stable hash salt used by
+// defaultimpl.HashLoginEntry — required for non-test deploys
+// (PII privacy depends on it). Empty IPSalt + Enabled=true →
+// boot warning. Operator MAY accept this for memory-only
+// single-replica deploys but MUST set IPSalt before persisting
+// to SQLite.
+type AnomalyConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// IPSalt is hex-encoded bytes that salt the IP + UA hash
+	// schemes. Deployment-stable; rotating breaks history
+	// continuity. Recommended: 32 hex chars (16 random bytes).
+	IPSalt string `yaml:"ip_salt"`
+
+	// RecentLogin selects backend for the per-subject login
+	// history store consumed by impossible_travel +
+	// new_device + new_country detectors.
+	RecentLogin AnomalyStoreConfig `yaml:"recent_login"`
+
+	// IPFailure selects backend for the IP-keyed failure
+	// counter consumed by brute_force_shadow.
+	IPFailure AnomalyStoreConfig `yaml:"ip_failure"`
+
+	// Detectors enables/configures each reference detector.
+	Detectors AnomalyDetectorsConfig `yaml:"detectors"`
+
+	// Runner tunes the AsyncAnomalyRunner worker pool.
+	Runner AnomalyRunnerConfig `yaml:"runner"`
+
+	// Retention wires the background prune loop against
+	// RecentLogin + IPFailure stores. Mirrors the audit /
+	// snapshot / push_approvals retention pattern.
+	Retention AnomalyRetentionConfig `yaml:"retention"`
+}
+
+// AnomalyStoreConfig is the standard backend selector — memory
+// for single-replica + tests, sqlite for cluster-shared state.
+type AnomalyStoreConfig struct {
+	Backend string                   `yaml:"backend"` // memory | sqlite
+	SQLite  AnomalyStoreSQLiteConfig `yaml:"sqlite"`
+}
+
+type AnomalyStoreSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+// AnomalyDetectorsConfig enables/tunes each reference detector.
+// All disabled by default — operators opt in per-detector after
+// reviewing the threshold trade-offs.
+type AnomalyDetectorsConfig struct {
+	ImpossibleTravel ImpossibleTravelDetectorConfig `yaml:"impossible_travel"`
+	Velocity         VelocityDetectorConfig         `yaml:"velocity"`
+	NewDevice        BaselineDetectorConfig         `yaml:"new_device"`
+	NewCountry       BaselineDetectorConfig         `yaml:"new_country"`
+	BruteForceShadow BruteForceShadowDetectorConfig `yaml:"brute_force_shadow"`
+}
+
+type ImpossibleTravelDetectorConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	MaxSpeedKmh   float64       `yaml:"max_speed_kmh"`  // 0 → SDK default 800
+	HistoryWindow time.Duration `yaml:"history_window"` // 0 → SDK default 24h
+}
+
+type VelocityDetectorConfig struct {
+	Enabled     bool `yaml:"enabled"`
+	HourlyLimit int  `yaml:"hourly_limit"` // 0 disables hourly check
+	DailyLimit  int  `yaml:"daily_limit"`  // 0 disables daily check
+}
+
+type BaselineDetectorConfig struct {
+	Enabled              bool          `yaml:"enabled"`
+	BaselineWindow       time.Duration `yaml:"baseline_window"`        // 0 → SDK default
+	BootstrapGracePeriod time.Duration `yaml:"bootstrap_grace_period"` // 0 → SDK default
+}
+
+type BruteForceShadowDetectorConfig struct {
+	Enabled              bool          `yaml:"enabled"`
+	Window               time.Duration `yaml:"window"`                 // 0 → SDK default 1h
+	FailureLimit         int           `yaml:"failure_limit"`          // 0 disables
+	DistinctSubjectLimit int           `yaml:"distinct_subject_limit"` // 0 disables
+}
+
+type AnomalyRunnerConfig struct {
+	QueueSize  int    `yaml:"queue_size"`  // 0 → SDK default 1024
+	Workers    int    `yaml:"workers"`     // 0 → SDK default 4
+	DropPolicy string `yaml:"drop_policy"` // drop_newest | block; default drop_newest
+}
+
+type AnomalyRetentionConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	RecentLoginAge time.Duration `yaml:"recent_login_age"` // 0 → 90d default; prune entries older than this
+	IPFailureAge   time.Duration `yaml:"ip_failure_age"`   // 0 → 2h default; aggressive — counters are short-window
+	Interval       time.Duration `yaml:"interval"`         // 0 → 1h default; loop cadence
 }
 
 // RiskConfig wires the reference rule-based [sso.RiskScorer] into

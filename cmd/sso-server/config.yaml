@@ -973,3 +973,83 @@ releases:
     #   url: "http://localhost:8080/health"
     #   timeout: 2s
   snapshot_integration: false
+
+# Async behavioral anomaly detection.
+#
+# Runs OFF the request hot path on every login event (success +
+# failure). Surfaces anomalies via audit + metrics; never blocks
+# login by design. The synchronous RiskScorer above can't catch
+# windowed behavioral signals like impossible-travel or brute-force
+# spray; this subsystem closes that gap.
+#
+# When enabled=false the entire pipeline is short-circuited (zero
+# overhead). Enable per-detector below.
+anomaly:
+  enabled: false
+
+  # Deployment-stable hash salt for IP + UA fingerprint hashing.
+  # Hex-encoded (recommended, 64 chars = 32 bytes) or raw bytes.
+  # MUST be set for production deployments — PII privacy depends
+  # on it. Rotating breaks history continuity.
+  ip_salt: ""
+
+  recent_login:
+    backend: "memory"    # memory | sqlite
+    sqlite:
+      # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000"
+      dsn: ""
+
+  ip_failure:
+    backend: "memory"    # memory | sqlite
+    sqlite:
+      dsn: ""
+
+  detectors:
+    # Haversine distance + 800km/h speed ceiling between consecutive
+    # logins. Requires geo provider with Latitude/Longitude.
+    impossible_travel:
+      enabled: false
+      max_speed_kmh: 800       # 0 = SDK default 800
+      history_window: 24h      # 0 = SDK default
+
+    # Sliding-window login count per subject. hourly=warn, daily=critical.
+    velocity:
+      enabled: false
+      hourly_limit: 25         # 0 disables hourly check
+      daily_limit: 200         # 0 disables daily check
+
+    # UA fingerprint comparison vs baseline_window history.
+    new_device:
+      enabled: false
+      baseline_window: 720h           # 30 days; 0 = SDK default
+      bootstrap_grace_period: 168h    # 7 days; 0 disables grace
+
+    # Country code comparison vs baseline_window history.
+    new_country:
+      enabled: false
+      baseline_window: 2160h          # 90 days; 0 = SDK default
+      bootstrap_grace_period: 168h    # 7 days; 0 disables grace
+
+    # Cross-account same-IP failure counter. Catches AccountLockout
+    # blind spot (spray across N accounts staying below per-account
+    # threshold).
+    brute_force_shadow:
+      enabled: false
+      window: 1h                     # 0 = SDK default
+      failure_limit: 50              # 0 disables failure check
+      distinct_subject_limit: 10     # 0 disables distinct check
+
+  runner:
+    queue_size: 1024     # 0 = SDK default
+    workers: 4           # 0 = SDK default
+    drop_policy: "drop_newest"  # drop_newest | block
+
+  # Background prune loop. Mirrors audit / snapshot / push_approvals
+  # retention pattern. Each store has its own age threshold —
+  # recent_login is long-window (90d baseline data); ip_failure is
+  # short-window (counters are 1h relevant).
+  retention:
+    enabled: false
+    recent_login_age: 2160h   # 90 days
+    ip_failure_age: 2h        # 2 hours
+    interval: 1h
