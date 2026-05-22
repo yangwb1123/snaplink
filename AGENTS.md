@@ -569,8 +569,8 @@ one per wired store via `appendReadyCheck`, naming each after the
 subsystem (`sqlite-identity-clients`, `sqlite-oauth-refresh-tokens`,
 `sqlite-jti-replay`, `sqlite-account-lockout`,
 `sqlite-pairwise-subjects`, `sqlite-bcl-subject-client-index`,
-`sqlite-webauthn-{users,sessions}`, `sqlite-mfa-challenges`, etc.).
-SQLite rate limiter
+`sqlite-webauthn-{users,sessions}`, `sqlite-mfa-challenges`,
+`sqlite-push-approvals`, etc.). SQLite rate limiter
 participates too: `sqlite-ratelimit-default` + `sqlite-ratelimit-<prefix>`
 per declared prefix (slashes collapse to hyphens). etcd backends
 register as `etcd-netpolicy` / `etcd-registry`. Memory backends

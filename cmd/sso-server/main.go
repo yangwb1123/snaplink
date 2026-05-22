@@ -1232,9 +1232,9 @@ func buildRiskScorer(cfg *config.RiskConfig, logger sso.Logger) (sso.RiskScorer,
 //
 // The returned mode string is a short backend identifier emitted in
 // the startup log + suitable for /readyz wiring suffixes.
-func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger) (sso.MFAProvider, sso.MFAChallengeStore, time.Duration, string, error) {
+func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger) (sso.MFAProvider, sso.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, error) {
 	if !cfg.Enabled {
-		return nil, nil, 0, "", nil
+		return nil, nil, 0, "", nil, nil
 	}
 
 	// Provider: "totp" and "webauthn" carry YAML toggles. "multi"
@@ -1246,9 +1246,10 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 	if kind == "" {
 		kind = "totp"
 	}
-	provider, err := buildMFAProviderByKind(kind, cfg.Provider.Kinds, cfg.Provider.Push, totpAuth, webauthnHelper, logger)
+	capture := &pushStoreCapture{}
+	provider, err := buildMFAProviderByKind(kind, cfg.Provider.Kinds, cfg.Provider.Push, totpAuth, webauthnHelper, logger, capture)
 	if err != nil {
-		return nil, nil, 0, "", err
+		return nil, nil, 0, "", nil, err
 	}
 
 	// Challenge store: memory for single-replica, sqlite for clusters.
@@ -1266,16 +1267,16 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		storeKind = "memory (single-replica only)"
 	case "sqlite":
 		if cfg.Challenge.SQLite.DSN == "" {
-			return nil, nil, 0, "", errors.New("mfa.challenge.sqlite.dsn required when backend=sqlite")
+			return nil, nil, 0, "", nil, errors.New("mfa.challenge.sqlite.dsn required when backend=sqlite")
 		}
 		s, err := sqlitestores.NewMFAChallengeStore(cfg.Challenge.SQLite.DSN)
 		if err != nil {
-			return nil, nil, 0, "", err
+			return nil, nil, 0, "", nil, err
 		}
 		store = s
 		storeKind = "sqlite (cluster-shared)"
 	default:
-		return nil, nil, 0, "", fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite)", backend)
+		return nil, nil, 0, "", nil, fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite)", backend)
 	}
 
 	logger.Info("mfa orchestration enabled",
@@ -1284,7 +1285,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		"store", storeKind,
 		"ttl", cfg.Challenge.TTL)
 
-	return provider, store, cfg.Challenge.TTL, storeKind, nil
+	return provider, store, cfg.Challenge.TTL, storeKind, capture.store, nil
 }
 
 // buildMFAProviderByKind constructs the MFA provider tree for the
@@ -1297,7 +1298,17 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 // kind=multi to list the inner leaf kinds. Empty or single-entry
 // Kinds when kind=multi → error (a multi with zero or one inner
 // provider is a misconfiguration; use the leaf kind directly).
-func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFAPushConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger) (sso.MFAProvider, error) {
+// pushStoreCapture is buildMFAProviderByKind's side-channel for
+// surfacing the SQLite PushApprovalStore handle through the
+// recursive multi-build. cmd's buildMFA inspects the capture's
+// handle to register a /readyz check + launch the PruneExpired
+// loop. Memory-backed push or absent push both leave the field
+// nil.
+type pushStoreCapture struct {
+	store *sqlitestores.PushApprovalStore
+}
+
+func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFAPushConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger, capture *pushStoreCapture) (sso.MFAProvider, error) {
 	switch kind {
 	case "totp":
 		if totpAuth == nil {
@@ -1314,7 +1325,14 @@ func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFA
 		}
 		return p, nil
 	case "push":
-		return buildPushMFAProvider(pushCfg, logger)
+		provider, sqliteStore, err := buildPushMFAProvider(pushCfg, logger)
+		if err != nil {
+			return nil, err
+		}
+		if capture != nil {
+			capture.store = sqliteStore
+		}
+		return provider, nil
 	case "multi":
 		if len(outerKinds) < 2 {
 			return nil, errors.New("mfa.provider.kind=multi requires at least two entries in mfa.provider.kinds")
@@ -1333,7 +1351,7 @@ func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFA
 				return nil, fmt.Errorf("mfa.provider.kinds duplicate entry %q", innerKind)
 			}
 			seen[innerKind] = struct{}{}
-			p, err := buildMFAProviderByKind(innerKind, nil, pushCfg, totpAuth, webauthnHelper, logger)
+			p, err := buildMFAProviderByKind(innerKind, nil, pushCfg, totpAuth, webauthnHelper, logger, capture)
 			if err != nil {
 				return nil, fmt.Errorf("mfa.provider.kinds[%s]: %w", innerKind, err)
 			}
@@ -1352,27 +1370,33 @@ func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFA
 // fork cmd to drop in FCM/APNs/webhook. The reference impl is
 // useful for development + smoke-test deployments.
 //
-// Returns nil + error when the backend / transport / SQLite
-// validation fails — kind=push is a misconfig if any of those
-// components are absent.
-func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAProvider, error) {
+// Returns the provider plus the SQLite store handle (or nil if
+// backend=memory). cmd uses the typed handle for /readyz wiring +
+// the optional PruneExpired loop. Error path: nil/nil/<err> when
+// backend / transport / SQLite validation fails — kind=push is a
+// misconfig if any of those components are absent.
+func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAProvider, *sqlitestores.PushApprovalStore, error) {
 	// Backend: memory for single-replica; sqlite for cluster.
-	var store defaultimpl.PushApprovalStore
+	var (
+		store       defaultimpl.PushApprovalStore
+		sqliteStore *sqlitestores.PushApprovalStore
+	)
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "", "memory":
 		store = defaultimpl.NewMemoryPushApprovalStore()
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
-			return nil, errors.New("mfa.provider.push.sqlite.dsn required when backend=sqlite")
+			return nil, nil, errors.New("mfa.provider.push.sqlite.dsn required when backend=sqlite")
 		}
 		s, err := sqlitestores.NewPushApprovalStore(cfg.SQLite.DSN)
 		if err != nil {
-			return nil, fmt.Errorf("mfa.provider.push.sqlite: %w", err)
+			return nil, nil, fmt.Errorf("mfa.provider.push.sqlite: %w", err)
 		}
 		store = s
+		sqliteStore = s
 	default:
-		return nil, fmt.Errorf("unknown mfa.provider.push.backend %q (supported: memory, sqlite)", backend)
+		return nil, nil, fmt.Errorf("unknown mfa.provider.push.backend %q (supported: memory, sqlite)", backend)
 	}
 
 	// Transport: log only (operators fork for real push delivery).
@@ -1389,7 +1413,7 @@ func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAP
 			return nil
 		})
 	default:
-		return nil, fmt.Errorf("unknown mfa.provider.push.transport %q (supported: log)", transport)
+		return nil, nil, fmt.Errorf("unknown mfa.provider.push.transport %q (supported: log)", transport)
 	}
 
 	var opts []defaultimpl.PushMFAOption
@@ -1399,7 +1423,11 @@ func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAP
 	if cfg.MaxWait > 0 {
 		opts = append(opts, defaultimpl.WithPushMaxWait(cfg.MaxWait))
 	}
-	return defaultimpl.NewPushMFAProvider(store, pushTransport, opts...)
+	provider, err := defaultimpl.NewPushMFAProvider(store, pushTransport, opts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return provider, sqliteStore, nil
 }
 
 // buildNetworkStore materializes the netpolicy.Store for cmd.
@@ -1994,7 +2022,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	// both Provider + Store opts, RequireMFA decays to Allow — same
 	// back-compat fall-through embedders see when they ship a Risk
 	// scorer ahead of MFA.
-	mfaProvider, mfaStore, mfaTTL, _, err := buildMFA(cfg.MFA, totpAuth, webauthnHelper, logger)
+	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, err := buildMFA(cfg.MFA, totpAuth, webauthnHelper, logger)
 	if err != nil {
 		return nil, fmt.Errorf("mfa: %w", err)
 	}
@@ -2002,6 +2030,13 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithMFAProvider(mfaProvider))
 		opts = append(opts, sso.WithMFAChallengeStore(mfaStore, mfaTTL))
 		opts = appendReadyCheck(opts, "sqlite-mfa-challenges", mfaStore)
+	}
+	// When push MFA wired with SQLite backend, surface the store
+	// handle for /readyz wiring + the optional PruneExpired loop
+	// (operators wanting bounded approval-table growth without
+	// running external cron).
+	if pushApprovalStore != nil {
+		opts = appendReadyCheck(opts, "sqlite-push-approvals", pushApprovalStore)
 	}
 
 	tenantStore, err := buildTenantStore(cfg, logger)
