@@ -1,12 +1,11 @@
 # AGENTS.md
 
 Operational guide for AI agents in this repo. Follows
-[agents.md](https://agents.md). User instructions override conflicts
-below.
+[agents.md](https://agents.md). User instructions override conflicts.
 
 ---
 
-## What this is
+## 1. Orient
 
 `github.com/snaplink/sso` — Go SSO server SDK + runnable binary. OAuth
 2.0 + OIDC, swappable authenticators, audit, permissions, service
@@ -15,13 +14,10 @@ is an interface; defaults live in `defaultimpl/` (memory) and
 `defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS dep.
 Consumers wire **embedded** (`ssoclient/local`, in-process) or
 **centralized** (`ssoclient/remote`, gRPC + JWKS) per capability.
+`examples/{embedded-app,remote-app}` share the same
+`appcore.Handler`; only wiring differs.
 
-`examples/{embedded-app,remote-app}` share the same `appcore.Handler`;
-only wiring differs.
-
----
-
-## Build, test
+### Build, test
 
 ```bash
 go build ./...
@@ -32,7 +28,7 @@ make docker
 make release-snapshot
 ```
 
-Run E2E whenever you change anything crossing the gRPC or JWKS wire.
+Run E2E whenever changing anything that crosses the gRPC or JWKS wire.
 
 Protobuf regen (stubs checked in, rarely needed):
 
@@ -43,9 +39,7 @@ protoc -I proto \
   proto/<svc>/v1/<svc>.proto
 ```
 
----
-
-## Layout
+### Layout
 
 ```
 sso.go / handler.go / router.go     Server, HandlerContext, routing
@@ -77,25 +71,22 @@ deploy/{openresty,k8s,compose,grafana}/  Operator artifacts
 
 ---
 
-## Stability contracts (invariants)
+## 2. Wire-contract invariants
 
-Violating these is a regression — wire-contract gates, not style.
+Violating these is a regression — gates, not style.
 
 ### Plugin SPI + storage
 Every concern is an interface in its parent package + a `memory` impl
 + optionally `sqlite` / `etcd` / `file`. New backends slot in via
-`WithXxx`. **No mocks** — use Memory* in tests. SQLite covers User,
-Client, AuthCode, RefreshToken (+ Inspector + FamilyTracker),
-DeviceCode, PAR, Session, JTIReplay, SubjectClientIndex,
-AccountLockout, PairwiseSubject, RateLimiter, WebAuthn (User + Session),
-MFAChallenge — every OAuth/OIDC + WebAuthn + MFA flow runs horizontally
-on a shared SQLite file. Redis is the recommended next step for
+`WithXxx`. **No mocks** — use Memory* in tests. SQLite covers every
+OAuth/OIDC + WebAuthn + MFA flow on a shared file (see §4
+backend-coverage table). Redis is the recommended next step for
 SaaS-scale auth-heavy workloads.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints accept both `application/x-www-form-urlencoded`
-(RFC mandatory) and JSON via the dispatcher in `oauth_bind.go`.
-JSON-only would break every off-the-shelf OAuth client.
+(RFC mandatory) and JSON via the `oauth_bind.go` dispatcher. JSON-only
+would break every off-the-shelf OAuth client.
 
 ### HTTP Basic > body credentials (RFC 6749 §2.3.1)
 On `/token`, `/token/introspect`, `/token/revoke`, `/par`:
@@ -105,13 +96,13 @@ On `/token`, `/token/introspect`, `/token/revoke`, `/par`:
 Single-use code consumption (AuthCode / Refresh / Device / PAR / PKCE
 verifier) MUST collapse unknown / expired / consumed / client-mismatch
 into one wire response (`400 invalid_grant` for /token;
-`invalid_request_uri` for PAR; etc.). DPoP/mTLS failures →
-`invalid_token`; `private_key_jwt` failures → `invalid_client`. Tests
-enumerate the failure cases to lock the behavior.
+`invalid_request_uri` for PAR). DPoP/mTLS failures → `invalid_token`;
+`private_key_jwt` failures → `invalid_client`. Tests enumerate the
+failure cases to lock the behavior.
 
 ### Anti-enumeration
 - `/register/:client_id` (RFC 7592): missing / wrong bearer / unknown
-  id all return identical 401 `invalid_token`. Bearer compare uses
+  id → identical 401 `invalid_token`. Bearer compare via
   `crypto/subtle.ConstantTimeCompare`.
 - `/token/revoke` (RFC 7009 §2.2): 200 OK on valid client creds
   regardless of token existence.
@@ -120,10 +111,9 @@ enumerate the failure cases to lock the behavior.
   unknown users (timing parity).
 - WebAuthn unknown user / unknown session both collapse to `404
   session_invalid`.
-- MFA orchestration: unknown / expired / already-consumed challenge,
+- MFA orchestration: unknown / expired / consumed challenge,
   unsupported method, wrong factor — all collapse to `400 mfa_invalid`
-  on `/auth/mfa`. Operator-visible detail surfaces via the
-  `mfa_failure` audit event only.
+  on `/auth/mfa`. Detail surfaces via `mfa_failure` audit event only.
 
 ### Fail-open vs fail-closed
 - **Fail-open** (log + continue): refresh issuance during `/auth/login`
@@ -145,9 +135,14 @@ rotation. Stores opt into reuse detection via
 `DeleteFamily(fid)` → audit `refresh_token_reuse_detected` →
 `invalid_grant`. Empty `FamilyID` opts out.
 
+### Session Refresh refuses expired/revoked
+Both Memory + SQLite peers of `SessionManager.Refresh` filter out
+expired/revoked rows BEFORE extending expiry. A captured session id
+past its expiry cannot be resurrected via Refresh.
+
 ### Audit metadata: `setMeta(e, k, v)`
 Geo + tenant middleware enrich every event via `Event.Metadata`.
-**Never** assign `e.Metadata = map{...}` — it clobbers enrichment.
+**Never** assign `e.Metadata = map{...}` — clobbers enrichment.
 
 ### X-Forwarded-* trust
 `requestBaseURL` + `DefaultGeoIPExtractor` + `DefaultHostExtractor`
@@ -169,34 +164,36 @@ Every Issue call site MUST set `Subject.ClientID` (REQUIRED §2.2).
 Login / auth_code / device set `AuthTime` + `AMR` from the live auth
 event. Refresh propagates original `AMR` without resetting `AuthTime`.
 Token-exchange propagates `AuthTime` + `ACR` + `AMR` + `SID` from the
-inbound subject_token. `client_credentials` populates `ClientID` only.
-`jti` always auto-generated.
+inbound subject_token (multi-hop `act` chain prepended, time-ordered).
+`client_credentials` populates `ClientID` only. `jti` always
+auto-generated.
 
 ### Discovery is derived
 `/.well-known/openid-configuration` computed from server state:
 endpoints from request base URL, scopes from union of `openid` + every
 client's `AllowedScopes`, opt-in features (PAR, DCR, JARFetcher, mTLS,
-BCL) flip flags only when wired. New opt-in → branch the doc.
+BCL, MFA, JWE-JAR) flip flags only when wired. New opt-in → branch the
+doc.
 
 ### `iss` on authorization responses (RFC 9207)
 Every `/auth/login` response — success, error, provider-list — carries
-`iss` via `s.resolveIssuer(ctx)`, which MUST equal discovery `issuer`.
-New authorization-flow handlers MUST use `s.authzErrorBody(ctx, code)`,
+`iss` via `s.resolveIssuer(ctx)`, MUST equal discovery `issuer`. New
+authorization-flow handlers MUST use `s.authzErrorBody(ctx, code)`,
 not plain `errorBody`.
 
 ### JWKS + discovery caching
-- JWKS: `Cache-Control: public, max-age=<ttl>` + `ETag = sha256(body)[:8]`.
-  Default TTL 5min via `WithJWKSCacheTTL`. Rotation serves both
-  outgoing and incoming keys.
+- JWKS: `Cache-Control: public, max-age=<ttl>` + `ETag =
+  sha256(body)[:8]`. Default TTL 5min via `WithJWKSCacheTTL`. Rotation
+  serves both outgoing and incoming keys.
 - Discovery double-cached: `WithDiscoveryCacheTTL` (default 5s) caches
   the snapshot; `WithDiscoveryDocCacheTTL` (default 5s) caches body +
-  `ETag = sha256(body)[:8]` keyed by request base URL (multi-host
-  safe), honors `If-None-Match` → 304. Body TTL 0 disables both the
-  in-process cache AND response headers.
+  `ETag` keyed by request base URL (multi-host safe); honors
+  `If-None-Match` → 304. Body TTL 0 disables both the in-process cache
+  AND response headers.
 
 ### Cache headers on credential endpoints (RFC 6749 §5.1)
-`/token`, `/token/introspect`, `/token/revoke`, `/token/revoke-all`,
-`/par`, `/auth/login`, `/userinfo`, `/register*` stamp `Cache-Control:
+`/token`, `/token/introspect`, `/token/revoke[-all]`, `/par`,
+`/auth/login`, `/userinfo`, `/register*` stamp `Cache-Control:
 no-store` + `Pragma: no-cache` via `tokenNoStoreHeaders(ctx)` — same
 rule applies to error responses (a 401 from /userinfo cached cross-user
 would be catastrophic). New credential endpoint: one-line opt-in.
@@ -209,7 +206,7 @@ auth-param injection.
 
 ---
 
-## OAuth 2.0 / OIDC surface
+## 3. OAuth 2.0 / OIDC surface
 
 One row per spec; file is the owner. Gotchas above apply across grants.
 
@@ -218,7 +215,7 @@ One row per spec; file is the owner. Gotchas above apply across grants.
 | RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `auth_code.go` |
 | RFC 6749 §4.4 client_credentials | `/token` | always | `handle_token_*.go` |
 | RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore` | `refresh_token.go` |
-| RFC 7636 PKCE | /auth/login + /token | per-request / `Client.RequirePKCE` | `auth_code.go` |
+| RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `auth_code.go` |
 | RFC 7662 introspection | `/token/introspect` | always | `handle_introspect.go` |
 | RFC 7009 revocation | `/token/revoke[-all]` | always; bulk via `RefreshTokenSubjectIndex` | `handle_revoke.go` |
 | RFC 8628 device | `/device/code`, `/device/verify`, `/token` | `WithDeviceCodeStore` | `handle_device.go` |
@@ -234,8 +231,8 @@ One row per spec; file is the owner. Gotchas above apply across grants.
 | OIDC `sid` claim | access + id + logout | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
 | OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `handler.go` + `par.go` + `jar.go` |
 | OIDC Form Post Response Mode | `/auth/login`, `/par`, JAR | always | `form_post_response_mode.go` |
-| RFC 7521 + 7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `jwt_client_assertion.go` |
 | OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `prompt.go` |
+| RFC 7521 + 7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `jwt_client_assertion.go` |
 | RFC 9207 AS Issuer Id | every `/auth/login` | always | `iss_response.go` |
 | RFC 9068 JWT Access Token | `Ed25519JWTIssuer` | always | `defaultimpl/ed25519_jwt_issuer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `mtls_bound.go` |
@@ -244,8 +241,9 @@ One row per spec; file is the owner. Gotchas above apply across grants.
 | RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` (Ed25519JWTIssuer satisfies) | `oidc_discovery.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
-| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `jar.go` + `jar_fetch.go` |
+| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `jar.go` + `jar_fetch.go` |
 | RFC 9101 §6.4 JWE JAR | `request` (JWE-wrapped) | `WithJARDecrypter`; default `defaultimpl.RSAJWEDecrypter` (RSA-OAEP-256 + A256GCM); enc public key auto-published in JWKS with `use:enc` | `jwe.go` + `defaultimpl/rsa_jwe_decrypter.go` |
+| MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by `RiskScorer.DecisionRequireMFA`) | `mfa.go` + `handle_mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `account_lockout.go` |
 
 **Token strategies** are per-client (`token_strategy: jwt|session`):
@@ -257,39 +255,20 @@ Register via `sso.WithTokenIssuer(name, issuer)`.
 
 ---
 
-## Subsystems
+## 4. Subsystems
 
-### Authenticators (`authenticators/`)
-9 pluggable: `password`, `phone`, `email`, `temp_token`, `keypair`,
-`apikey`, `certificate`, `totp` (RFC 6238), `oidc_federation` (Google /
-Microsoft / GitHub / Auth0 / Keycloak at
-`/auth/login?provider=<name>`). `allowed_authenticators` per client
-gates methods. **password**: cmd verifies bcrypt hashes loaded from
-per-user files; unknown users hit a cost-matched dummy hash for timing
-parity.
-
-**WebAuthn** (CTAP/FIDO2) ships at `authenticators/webauthn/` —
-the four-call ceremony (`Helper.{BeginRegistration,
-FinishRegistration, BeginLogin, FinishLogin}`) doesn't fit the
-single-step Authenticator SPI, so cmd mounts
-`/webauthn/{registration,login}/{begin,finish}` via
-`Server.Handle` when `webauthn.enabled`. `/webauthn/login/finish?
-client_id=...` mints tokens (AMR=`["webauthn"]`; `id_token` when
-client has `openid` + `WithIDTokenIssuer`; `refresh_token` when
-`WithRefreshTokenStore`); without `client_id` the response is
-credential-verification only. Pluggable `UserStore` + `SessionStore`
-with SQLite peers at `authenticators/webauthn/sqlite/`
-(`UserStore` upserts inside `BEGIN IMMEDIATE`; `SessionStore` uses
-`DELETE … RETURNING` for single-use ceremony state). Built on
-`github.com/go-webauthn/webauthn`.
-
-### SQLite (`defaultimpl/sqlite/`)
+### SQLite substrate (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite`. Race-free patterns by store:
-- single-use (AuthCode, DeviceCode, RefreshToken, PAR, MFAChallenge): `DELETE … RETURNING`
-- Session refresh: `UPDATE … RETURNING`
+- single-use (AuthCode, DeviceCode, RefreshToken, PAR, MFAChallenge):
+  `DELETE … RETURNING`
+- Session refresh: `UPDATE … RETURNING WHERE expires_at > now AND
+  revoked = 0`
 - JTI replay: `INSERT … ON CONFLICT DO NOTHING` + RowsAffected
-- index upserts (SubjectClientIndex, PairwiseSubject): `INSERT … ON CONFLICT DO UPDATE`
+- index upserts (SubjectClientIndex, PairwiseSubject): `INSERT … ON
+  CONFLICT DO UPDATE`
 - AccountLockout: read-modify-write inside `BEGIN IMMEDIATE`
+- PushApproval SetStatus: `UPDATE … WHERE status = 'pending'` (refuses
+  re-resolution)
 
 Production DSN: `file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000`.
 Shared-pool tests: `file::memory:?cache=shared`. Schema via `CREATE
@@ -298,25 +277,130 @@ TABLE IF NOT EXISTS` at construction. Constructor: `New<Provider>(dsn)`
 `sql.ErrNoRows` → typed `ErrNoSuchX`. Timestamps as Unix-ns INTEGER.
 **The next multi-table backend MUST bring goose/golang-migrate.**
 
+**Cluster-shared coverage** (every entry has memory + sqlite peer):
+
+| Subsystem | Memory | SQLite | YAML backend toggle |
+|---|---|---|---|
+| Identity (User/Client/Session) | ✓ | ✓ | `identity.backend` |
+| OAuth (AuthCode/Refresh/Device/PAR) | ✓ | ✓ | `oauth.<store>.backend` |
+| JTI replay | ✓ | ✓ | `security.jti_replay.backend` |
+| Account lockout | ✓ | ✓ | `security.account_lockout.backend` |
+| Pairwise subjects | ✓ | ✓ | `server.pairwise_subjects.backend` |
+| BCL subject-client index | ✓ | ✓ | `backchannel_logout.index.backend` |
+| Rate limiter | ✓ | ✓ | `security.rate_limit.backend` |
+| WebAuthn (users + sessions) | ✓ | ✓ | `webauthn.storage.{users,sessions}.backend` |
+| MFA challenges | ✓ | ✓ | `mfa.challenge.backend` |
+| Push approvals | ✓ | ✓ | `mfa.provider.push.backend` |
+| Audit sink | ✓ | ✓ | `audit.backend` |
+| Permissions (Provider) | ✓ | ✓ | `permissions.backend` |
+| Tenants + Domains | ✓ | ✓ | `tenant.backend` |
+| Network policy store | ✓ | etcd | `network.store.backend` |
+| Service registry | ✓ | etcd | `registry.backend` |
+
+Memory-backed `Ping(ctx)` is a no-op; cmd's `appendReadyCheck` auto-
+registers under `sqlite-<subsystem>` / `etcd-<subsystem>` only when
+the backend exposes it.
+
+### Authenticators (`authenticators/`)
+9 pluggable: `password`, `phone`, `email`, `temp_token`, `keypair`,
+`apikey`, `certificate`, `totp` (RFC 6238), `oidc_federation` (Google
+/ Microsoft / GitHub / Auth0 / Keycloak at
+`/auth/login?provider=<name>`). `allowed_authenticators` per client
+gates methods. **password**: cmd verifies bcrypt hashes loaded from
+per-user files; unknown users hit a cost-matched dummy hash for
+timing parity.
+
+**WebAuthn** (CTAP/FIDO2) ships at `authenticators/webauthn/` — the
+four-call ceremony (`Helper.{Begin,Finish}{Registration,Login}`)
+doesn't fit the single-step Authenticator SPI, so cmd mounts
+`/webauthn/{registration,login}/{begin,finish}` via `Server.Handle`
+when `webauthn.enabled`. `/webauthn/login/finish?client_id=...` mints
+tokens (AMR=`["webauthn"]`; `id_token` when client has `openid` +
+`WithIDTokenIssuer`; `refresh_token` when `WithRefreshTokenStore`);
+without `client_id`, credential-verification only. SQLite peers for
+UserStore + SessionStore at `authenticators/webauthn/sqlite/`. Built
+on `github.com/go-webauthn/webauthn`.
+
+### Risk scoring (`risk.go`)
+`RiskScorer` runs on `/auth/login` AFTER credential validation, BEFORE
+token issuance. Returns `Allow` / `RequireMFA` (gates the MFA flow) /
+`Deny` (403 + audit `login_failure reason=risk_denied`). **Fail-open**
+on scorer error. **Zero overhead** when option unset.
+
+Reference impls in `defaultimpl/`:
+- `NoopRiskScorer` — typed Allow-always.
+- `RuleBasedRiskScorer` — declarative IP / country deny-and-allow
+  lists. Eval order: IP deny → IP allow default-deny → country deny →
+  country allow; `deny_on_geo_missing` promotes country allow to
+  hard-required when geo enrichment is absent.
+
+Richer scorers (impossible-travel, device fingerprint, ML) implement
+`sso.RiskScorer` directly and query their own store inside `Score` —
+don't pad `RiskRequest`.
+
+### MFA orchestration (`mfa.go` + `handle_mfa.go`)
+Two-leg step-up flow gated by `RiskScorer` returning
+`DecisionRequireMFA`. Without both `WithMFAProvider` +
+`WithMFAChallengeStore`, RequireMFA decays to Allow (back-compat).
+
+**Wire shape:** `/auth/login` returns `{error: mfa_required,
+mfa_challenge_id, mfa_methods, iss}` (HTTP 200 — primary credential
+validated, pending step-up). Two-call providers additionally populate
+`mfa_method_data[<method>]` via `MFABeginner`. Client POSTs
+`/auth/mfa` with `{mfa_challenge_id, mfa_method, code|assertion|params}`;
+server replays `finishLogin` against the frozen state and returns the
+standard direct-mint / code / form_post response — caller can't
+distinguish MFA-gated from non-gated. Client / tenant deactivated
+between login and /auth/mfa surfaces as `inactive_client` (distinct
+from `mfa_invalid` so SIEM can tell it wasn't the factor that
+failed). Single-use: `MFAChallengeStore.Consume` atomically deletes.
+
+**Discovery:** when wired, `mfa_endpoint` + `mfa_methods_supported`
+appear in `/.well-known/openid-configuration`.
+
+**`MFAProvider` impls**:
+- `authenticators.TOTPMFAProvider` — single-call; reuses
+  `TOTPAuthenticator` store + skew.
+- `authenticators/webauthn.WebAuthnMFAProvider` — two-call
+  (`MFABeginner`); reuses Helper. Subject binding enforced.
+- `defaultimpl.PushMFAProvider` — two-call (`MFABeginner`). Begin
+  issues approval via `PushTransport` (cmd ships `log` + `webhook`;
+  custom transports via SDK fork); Verify polls `PushApprovalStore`
+  until the device-driven callback (operator-built OR cmd's
+  reference `POST /push/approval/:id/:decision`) resolves it.
+- `defaultimpl.MultiMFAProvider` — composes leaves; method-name
+  conflicts rejected at construction. Always implements `MFABeginner`
+  so single-call providers in the mix don't break Begin dispatch.
+
+**`MFABeginner` optional interface**
+(`Begin(ctx, subjectID, method) (map[string]string, error)`):
+type-asserted at `issueMFAChallenge`; implementing providers get one
+Begin call per supported method, results bucketed under
+`mfa_method_data`. Per-method Begin failure non-fatal — method stays
+in `mfa_methods` without an attached data entry.
+
+**Audit events**: `mfa_required` (challenge issued), `mfa_success`
+(factor verified), `mfa_failure` (factor rejected). Standard
+`login_success` event still fires on resume — MFA gating is additive
+observability.
+
 ### Audit (`audit/`)
-`audit.Recorder` fans Events to `Sink`s. Built-in sinks:
-`MemorySink`, `WriterSink`, `WebhookSink`, `MultiSink`; SQLite
-peer (`audit/sqlite`) is queryable + restart-durable + replica-
-shared. Every Event carries W3C `TraceID` / `SpanID` /
-`ParentSpanID`.
+`audit.Recorder` fans Events to `Sink`s. Built-in sinks: `MemorySink`,
+`WriterSink`, `WebhookSink`, `MultiSink`; SQLite peer (`audit/sqlite`)
+is queryable + restart-durable + replica-shared. Every Event carries
+W3C `TraceID` / `SpanID` / `ParentSpanID`.
 
 Optional wrappers (compose in order: Async → Multi → Retry → leaf):
 - `WithHashChain` — `PrevHash` + `Hash` on every Event;
-  `VerifyChain` validates oldest-first; `sso-audit-verify` CLI
-  walks `/api/v1/audit/events` or a JSON file.
-- `WithRedactor` — runs BEFORE chainer. Helpers:
-  `RedactActorIDHash(salt)`, `RedactIPTruncate`, `RedactUserAgent`,
-  `RedactMetadataKeys(...)`, `DefaultPIIRedactor(salt)`.
-- `NewRetryingSink` — exponential backoff + jitter; tune max
-  attempts + backoff bounds + error classifier.
-- `NewAsyncSink(...).Start()` — bounded buffer + worker pool;
-  Record never blocks. Drops: `ErrAsyncQueueFull` /
-  `ErrAsyncSinkClosed` / inner. Use for WebhookSink. Wire
+  `VerifyChain` validates oldest-first; `sso-audit-verify` CLI walks
+  `/api/v1/audit/events` or a JSON file.
+- `WithRedactor` (runs BEFORE chainer) — `RedactActorIDHash(salt)`,
+  `RedactIPTruncate`, `RedactUserAgent`, `RedactMetadataKeys(...)`,
+  `DefaultPIIRedactor(salt)`.
+- `NewRetryingSink` — exponential backoff + jitter.
+- `NewAsyncSink(...).Start()` — bounded buffer + worker pool; Record
+  never blocks. Drops: `ErrAsyncQueueFull` / `ErrAsyncSinkClosed` /
+  inner. Use for WebhookSink. Wire
   `metrics.NewAsyncSinkCollector(asyncSink)` for drop/queue series.
 
 Recommended cluster composition:
@@ -327,19 +411,19 @@ Per-APP role registries, wildcard matcher (`user:*` matches
 `user:read`, `*` matches all), menu filtering (`FilterMenuTree` +
 `FilterButtons`), login-response embedding via
 `WithEmbedPermissionsInLogin()`. `MenuLister` is the extension
-snapshots + admin RPCs use. Backends: `memory` (process-local,
-single-replica) and `sqlite` (`permissions/sqlite`, cluster-shared
-via three tables: roles, assignments, menus; RemoveRole transactionally
-strips the code from every assignment under the client).
+snapshots + admin RPCs use. SQLite peer
+(`permissions/sqlite`) uses three tables (roles, assignments, menus);
+RemoveRole transactionally strips the code from every assignment
+under the client. Shared `permissions/permissionstest.ConformanceSuite`
+locks memory/sqlite equivalence — both backends run it.
 
 ### Service registry (`registry/`)
 `memory` (TTL + Watch) and `etcd` (lease + KeepAlive). cmd's
 `buildRegistry` selects on `registry.backend`; etcd path materialized
-in cmd to keep the transitive dep out of the registry SPI. cmd
-self-registers as `Name: "sso"`, `Service.ID = registry.service_id`
-(defaults `<issuer>-<short-hostname>` to prevent replica clobber).
-`Service.TTL` defaults 30s under etcd. etcd `Ping(ctx)` →
-`etcd-registry` on /readyz.
+in cmd to keep the transitive dep out of the SPI. cmd self-registers
+as `Name: "sso"`, `Service.ID = registry.service_id` (defaults
+`<issuer>-<short-hostname>` to prevent replica clobber). `Service.TTL`
+defaults 30s under etcd.
 
 ### gRPC (`proto/` + `grpcserver/`)
 
@@ -374,15 +458,14 @@ snapshot subscribed to `Store.Watch` via `Start` — subscribe before
 seed Reload to avoid lost events. HTTP at
 `/api/v1/netpolicy/{policies,classify,resolve-me}`. Server helper:
 `(*sso.Server).ClassifyRequest(r)`. Backends: `memory`, `etcd`
-(cluster-shared, etcd path materialized in cmd); both funnel seeds
-through `config.ApplyNetworkPolicySeeds`. etcd `Ping(ctx)` →
-`etcd-netpolicy` on /readyz.
+(cluster-shared); both funnel seeds through
+`config.ApplyNetworkPolicySeeds`.
 
 ### Bootstrap (`bootstrap/`)
 Versioned first-run init. `Step = Name()/Version()/Run(ctx)`; Runner
-re-runs only `Version > high-water`. Trackers: `memory` (tests),
-`file` (atomic JSON, single-node default). Lock SPI in `lock/`:
-`noop`, `file` (flock), `etcd` (lease+Txn). Wired via
+re-runs only `Version > high-water`. Trackers: `memory` (tests), `file`
+(atomic JSON, single-node default). Lock SPI in `lock/`: `noop`, `file`
+(flock), `etcd` (lease+Txn). Wired via
 `WithLock`/`WithLockTTL`/`WithLockBlocking`. Lock loss cancels
 in-flight Steps + surfaces `ErrLockLost`.
 
@@ -401,48 +484,49 @@ wraps file tracker + namespaced runner. `"sso-server"` namespace
 reserved.
 
 ### Snapshot (`snapshot/`)
-Export/restore operator state (clients, users, roles, role assignments,
-menus, netpolicies, bootstrap high-water).
+Export/restore operator state (clients, users, roles, role
+assignments, menus, netpolicies, bootstrap high-water).
 
 - `Snapshotter.Export` pulls every wired backend's `List()`.
 - `Restorer.Restore` modes: `ModeMerge` (insert-only) / `ModeOverwrite`
-  (upsert) / `ModeReplace` (wipe+seed, requires `Confirm == SnapshotID`).
-  `DryRun` returns counts only. `AdvanceBootstrap` bumps Tracker.
+  (upsert) / `ModeReplace` (wipe+seed, requires `Confirm ==
+  SnapshotID`). `DryRun` returns counts only. `AdvanceBootstrap` bumps
+  Tracker.
 - Codec: JSON canonical, schema `"1"`. Sealers: `none` (typed no-op),
-  `passphrase` (argon2id + XChaCha20-Poly1305 OWASP-2024). Storage:
-  `file` (atomic 0o600), `inline` (memory). `Pipeline` composes with
-  sha256 verify (`ErrChecksumMismatch`).
+  `passphrase` (argon2id + XChaCha20-Poly1305 OWASP-2024), `aes-gcm`
+  (direct 32-byte AES-256 key, for KMS-emitted DEKs). Storage: `file`
+  (atomic 0o600), `inline` (memory). `Pipeline` composes with sha256
+  verify (`ErrChecksumMismatch`).
 - `snapshot/loader.FromURI` parses `file:///abs/path` + `inline:<base64>`.
 - Admin RPC: `admin.v1.SnapshotAdminService` (admin:* gate).
 - Offline CLI: `sso-snapshotctl list|inspect|verify` against a storage
   dir — bypasses the running server, useful for backup-pipeline
   integrity + DR drills. `verify` accepts `--passphrase` /
-  `--passphrase-file` for the encrypted case.
+  `--passphrase-file`.
 
 **First-boot auto-restore**: `snapshot.restore_from` YAML (or CLI
-`--bootstrap-restore-from`, which wins) runs as `bootstrap/builtin` v0
-BEFORE the seed Runner so `AdvanceBootstrap` skips already-covered
+`--bootstrap-restore-from`, which wins) runs as `bootstrap/builtin`
+v0 BEFORE the seed Runner so `AdvanceBootstrap` skips already-covered
 seeds. Default mode: Overwrite.
 
-**Retention** (`snapshot.PruneOldest`): keep last N by lexical
-order of the `snap_<RFC3339>_<rand>` SnapshotID — chronological by
-construction. cmd's `snapshot.retention.{enabled,keep,interval}`
-launches a background loop; cancels cleanly during shutdown.
+**Retention** (`snapshot.PruneOldest`): keep last N by lexical order
+of the `snap_<RFC3339>_<rand>` SnapshotID (chronological by
+construction). Wired via `snapshot.retention.{enabled,keep,interval}`.
 
 ### Releases (`releases/`)
 Admin app version pin / rollback. `Release` pairs frontend+backend
 `Artifact` halves; `Validate` refuses one-sided releases.
 
-- `ReleaseStore` separates current-pointer from registration:
-  `memory`, `file` (atomic 0o600).
+- `ReleaseStore`: `memory`, `file` (atomic 0o600). Separates
+  current-pointer from registration.
 - `Pinner.PinForward` + `PinRollback` encode asymmetric ordering
   (backend-first forward, frontend-first rollback). Backends: `noop`,
-  `static` (atomic symlink swap), `docker` (rewrite `.env` +
-  `docker compose pull && up -d`).
+  `static` (atomic symlink swap), `docker` (rewrite `.env` + `docker
+  compose pull && up -d`).
 - `Registry` composes Store + Pinner. Forward Pin rejects schema
   regression with `ErrSchemaRegress` — use Rollback.
-- `HealthProbe` (e.g. `releases/probe/http`) gates forward Pin; all-fail
-  → auto-rollback. No probe on Rollback.
+- `HealthProbe` (e.g. `releases/probe/http`) gates forward Pin;
+  all-fail → auto-rollback. No probe on Rollback.
 - `SnapshotRestorer` hook on Rollback: non-empty `ConfigSnapshot`
   restores admin state BEFORE the Pinner flips.
 
@@ -460,13 +544,15 @@ longest-prefix. Login response carries `country_code` +
 Multi-tenant + multi-domain routing. Tenant = business boundary;
 Domain = hostname → Tenant (lowercase + trailing-dot-stripped per RFC
 1035). **Tenant sits above `Client`** — one tenant typically owns many
-clients sharing one audit.
+clients sharing one audit. SQLite peer (`tenant/sqlite`) uses
+`tenants` + `tenant_domains` with `FOREIGN KEY ... ON DELETE CASCADE`
+so DeleteTenant doesn't leave orphan domain rows.
 
 `Client.TenantID`: when set, login + token endpoints reject mismatches
 with 403 `tenant_mismatch` audited as `login_failure`. Empty = served
-from any tenant. `TenantScopedClientStore.ListByTenant` is the optional
-admin-UI extension. Suspended tenants resolve to "no tenant" by
-default. Every Event gets `tenant.*` keys.
+from any tenant. `TenantScopedClientStore.ListByTenant` is the
+optional admin-UI extension. Suspended tenants resolve to "no tenant"
+by default. Every Event gets `tenant.*` keys.
 
 **Active suspension** (`WithTenantSuspensionCheck(ttl)`): every token
 whose `Client.TenantID` is set has its tenant Status looked up;
@@ -477,10 +563,9 @@ continue post-suspension (only new issuance blocked). Cached `ttl`
 `(*Server).InvalidateTenantSuspensionCache(id)`. Store outage is
 fail-open by design.
 
-**Admin RPCs**: `admin.v1.TenantAdminService` ships CRUD on Tenants +
-Domains plus surgical `SetTenantStatus`. Update preserves current
-Status (no backdoor suspension via UpdateTenant). DeleteTenant also
-fires the invalidation callback.
+**Admin RPCs**: `admin.v1.TenantAdminService` ships CRUD + surgical
+`SetTenantStatus`. UpdateTenant preserves Status (no backdoor
+suspension). DeleteTenant fires the invalidation callback.
 
 ### ssoclient
 Per-capability client choice (Auth / Authz / Audit) — pick
@@ -495,11 +580,11 @@ handler := &appcore.Handler{
 }
 ```
 
-`remote.JWKSCache` does background refresh + single-flight
-refetch on unknown `kid`. `ssoclient/dev` provides bypass stubs
-for local UI iteration (`AllowAll`, no-op audit). **Every dev
-constructor emits a one-time stderr `AUTH BYPASS ACTIVE` warning;**
-suppress via `WithSilent*` opts in tests.
+`remote.JWKSCache` does background refresh + single-flight refetch on
+unknown `kid`. `ssoclient/dev` provides bypass stubs for local UI
+iteration (`AllowAll`, no-op audit). **Every dev constructor emits a
+one-time stderr `AUTH BYPASS ACTIVE` warning;** suppress via
+`WithSilent*` opts in tests.
 
 ### Edge (`deploy/`)
 - **OpenResty** — `lua-resty-jwt` verifies via our JWKS; sets
@@ -527,33 +612,6 @@ tracing → ratelimit → bodyLimit → metrics → CORS → router
 
 Wire each with `sso.With{Tracing, RateLimit, BodyLimit, Metrics, CORS}`.
 
-**Metrics** bounded by design (no per-path / per-user labels):
-
-| Metric | Type | Labels |
-|---|---|---|
-| `sso_http_requests_total` | Counter | method, status_class |
-| `sso_http_request_duration_seconds` | Histogram | method |
-| `sso_login_attempts_total` | Counter | provider, outcome |
-| `sso_tokens_issued_total` | Counter | strategy |
-| `sso_risk_decisions_total` | Counter | decision |
-| `sso_mfa_challenges_total` | Counter | mfa_method |
-| `sso_mfa_completions_total` | Counter | mfa_method, outcome |
-| `sso_retention_pruned_total` | Counter | subsystem |
-| `sso_retention_prune_errors_total` | Counter | subsystem |
-| `sso_webauthn_registrations_total` | Counter | outcome |
-| `sso_webauthn_assertions_total` | Counter | outcome |
-| `sso_login_duration_seconds` | Histogram | provider, outcome |
-| `sso_mfa_completion_duration_seconds` | Histogram | outcome |
-
-Per-endpoint breakdowns come from traces, not labels. MFA labels
-are restricted to the wired provider's `SupportedMethods()` set
-(cmd-defined: `totp`, `webauthn`, `push`) — arbitrary user-controlled
-method values are dropped before the label hits the registry, so an
-attacker can't bloat metric cardinality.
-
-**Tracing**: `tracing.Init(ctx, ...)`; OTLP gRPC enabled by
-`OTEL_EXPORTER_OTLP_ENDPOINT`. No-op when unset.
-
 **Ratelimit**: `Default` + ordered `Prefixes`. `KeyByClientIP` honors
 XFF/X-Real-IP/RemoteAddr — **trust an edge or wrap in TrustedProxies
 upstream**. `KeyByClientIDOrIP` keys by `client_id` for HTTP
@@ -561,204 +619,120 @@ Basic-authed /token-style requests, falling back to IP — body-supplied
 credentials hit the IP fallback (avoids consuming r.Body). Composes
 with `RiskScorer` (limiter rejects bots before scoring).
 
-**ReadyCheck**: pluggable SPI; any failing check → 503. Bounded 3s
-deadline. Every SQLite store ships a `Ping(ctx)`; cmd auto-registers
-one per wired store via `appendReadyCheck`, naming each after the
-subsystem (`sqlite-identity-clients`, `sqlite-oauth-refresh-tokens`,
-`sqlite-jti-replay`, `sqlite-account-lockout`,
-`sqlite-pairwise-subjects`, `sqlite-bcl-subject-client-index`,
-`sqlite-webauthn-{users,sessions}`, `sqlite-mfa-challenges`,
-`sqlite-push-approvals`, etc.). SQLite rate limiter
-participates too: `sqlite-ratelimit-default` + `sqlite-ratelimit-<prefix>`
-per declared prefix (slashes collapse to hyphens). etcd backends
-register as `etcd-netpolicy` / `etcd-registry`. Memory backends
-silently no-op. Payload:
-`{"status":"ready|unready","checks":{name: "ok"|err}}`.
+**Tracing**: `tracing.Init(ctx, ...)`; OTLP gRPC enabled by
+`OTEL_EXPORTER_OTLP_ENDPOINT`. No-op when unset.
 
-### Risk scoring (`risk.go`)
-`RiskScorer` runs on `/auth/login` AFTER credential validation, BEFORE
-token issuance. Returns `Allow` / `RequireMFA` (gates the MFA flow
-below) / `Deny` (403 + audit `login_failure reason=risk_denied`).
-**Fail-open** on scorer error (alert on the log line). **Zero overhead**
-when option unset.
-
-Reference impls in `defaultimpl/`:
-- `NoopRiskScorer` — typed Allow-always.
-- `RuleBasedRiskScorer` — declarative IP / country deny-and-allow lists.
-  cmd wires when `risk.enabled`. Eval order: IP deny → IP allow
-  default-deny → country deny → country allow; `deny_on_geo_missing`
-  promotes country allow to hard-required when geo enrichment is
-  absent.
-
-Richer scorers (impossible-travel, device fingerprint, ML) implement
-[sso.RiskScorer] directly and query their own store inside `Score` —
-don't pad `RiskRequest`.
-
-### MFA orchestration (`mfa.go` + `handle_mfa.go`)
-Two-leg step-up flow gated by `RiskScorer` returning `DecisionRequireMFA`.
-Without `WithMFAProvider` + `WithMFAChallengeStore` wired, RequireMFA
-decays to Allow (back-compat for forward-looking scorers).
-
-**Wire shape:** `/auth/login` returns `{error: mfa_required,
-mfa_challenge_id, mfa_methods, iss}` (HTTP 200 — primary credential
-validated, pending step-up). Two-call providers (WebAuthn, Push)
-additionally populate `mfa_method_data[<method>]` via `MFABeginner`.
-Client POSTs `/auth/mfa` with `{mfa_challenge_id, mfa_method,
-code|assertion|params}`; server replays `finishLogin` against the
-frozen state and returns the standard direct-mint / code / form_post
-response — caller can't distinguish MFA-gated from non-gated.
-
-**Oracle-leak hardening:** missing / expired / consumed challenge,
-unsupported method, wrong factor — all collapse to `400 mfa_invalid`.
-Operator-visible reasons surface only via `mfa_failure` audit events.
-Client / tenant deactivated between login and /auth/mfa surfaces as
-`inactive_client` (distinct from `mfa_invalid` so SIEM can tell it
-wasn't the factor that failed). Single-use: `MFAChallengeStore.Consume`
-atomically deletes.
-
-**Discovery:** when wired, `mfa_endpoint` + `mfa_methods_supported`
-appear in `/.well-known/openid-configuration`.
-
-**`MFAProvider` impls** (all in `defaultimpl/` + `authenticators/`):
-- `TOTPMFAProvider` — single-call. Reuses `TOTPAuthenticator` store +
-  skew (one enrollment, two roles).
-- `WebAuthnMFAProvider` — two-call (`MFABeginner`). Reuses Helper
-  (UserStore + SessionStore + RP config). Subject binding enforced.
-- `PushMFAProvider` — two-call (`MFABeginner`). Begin issues approval
-  via `PushTransport` (operator-supplied; cmd ships log-only stub);
-  Verify polls `PushApprovalStore` until the device-driven callback
-  resolves the entry (operators build the callback handler;
-  `SetStatus` is the SDK seam). Subject binding enforced.
-- `MultiMFAProvider` — composes leaf providers; method-name conflicts
-  rejected at construction. Always implements `MFABeginner` so
-  single-call providers in the mix don't break Begin dispatch.
-
-**`MFABeginner` optional interface** (`Begin(ctx, subjectID, method)
-(map[string]string, error)`): type-asserted at `issueMFAChallenge`;
-implementing providers get one Begin call per supported method,
-results bucketed under `mfa_method_data`. Per-method Begin failure
-non-fatal — method stays in `mfa_methods` without an attached
-`mfa_method_data` entry. Custom factors implement
-`MFAProvider` + optionally `MFABeginner`.
-
-**`MFAChallengeStore` + `PushApprovalStore`**: memory peer for
-single-replica; SQLite peer for cluster-shared state (atomic
-`DELETE … RETURNING` / single-resolve via `UPDATE ... WHERE status
-= 'pending'`; row-deletion semantics enforce single-use even on
-expired-entry consume). Default challenge TTL 5min
-(`DefaultMFAChallengeTTL`).
-
-**Audit events**: `mfa_required` (challenge issued), `mfa_success`
-(factor verified), `mfa_failure` (factor rejected). Standard
-`login_success` event still fires on resume — MFA gating is
-additive observability.
+**ReadyCheck**: pluggable SPI; any failing check → 503. Aggregate 3s
+deadline, with per-check override via `WithReadyCheckTimeout(name,
+ttl)` (operator wires the timeout option before or after the check
+option — they merge by name). Every SQLite store ships `Ping(ctx)`;
+cmd auto-registers under `sqlite-<subsystem>` (memory backends silent
+no-op). Payload: `{"status":"ready|unready","checks":{name:
+"ok"|err}}`.
 
 ---
 
-## Configuration
+## 5. Observability
 
-`cmd/sso-server/config.yaml` is the canonical reference. Top-level
-keys map 1:1 to YAML; field coverage matches the SDK SPI. Areas where
-the operator surface needs explanation:
+**Metrics** (bounded cardinality by design — no per-path / per-user
+labels):
 
-- **server.issuer** MUST differ from `sso.DefaultIssuer` sentinel (cmd
-  default `"sso-server"`; production SHOULD set the canonical public
-  URL — same value stamped into JWT `iss`, discovery `issuer`, every
-  RFC 9207 `iss` param).
-- **server.pairwise_subjects.backend(memory|sqlite)** — sqlite shares
-  reverse lookup so /userinfo resolves on any replica.
-- **audit.backend(memory|sqlite)** — sqlite persists across restarts
-  + shares state across replicas. `webhook` composes as
-  `AsyncSink(MultiSink(Primary, RetryingSink(WebhookSink)))`.
-  `audit.retention.{enabled,max_age,interval}` opts into a
-  background prune loop against the SQLite primary (memory
-  self-prunes by capacity); cmd cancels the loop during shutdown
-  before draining the AsyncSink to avoid mid-prune contention.
-- **network.store / registry.backend (memory|etcd)** — etcd path
-  materialized in cmd to keep the transitive dep out of the SPI. etcd
-  registry uses TTL lease; `service_id` defaults
-  `<issuer>-<short-hostname>`.
-- **clients[]** — every field maps 1:1 to `sso.Client` SPI (the cmd
-  YAML surface used to drop ~15 of these silently; now full coverage).
-- **bootstrap.lock.backend (noop|file|etcd)** — lock loss cancels
-  in-flight Steps and surfaces `ErrLockLost`.
-- **snapshot.restore_from** — URI for first-boot auto-restore (CLI
-  `--bootstrap-restore-from` wins).
-- **snapshot.retention.{enabled,keep,interval}** — background loop
-  calling `snapshot.PruneOldest`; relies on the time-prefixed
-  `SnapshotID` format for lexical ordering. Keep must be > 0 when
-  enabled.
-- **security** — every storage-backed defense (`rate_limit`,
-  `jti_replay`, `account_lockout`) supports `backend(memory|sqlite)`
-  for cluster-shared state. `mtls.backend(tls|header)`: tls for
-  in-process termination; header for reverse-proxy edges (nginx
-  `X-SSL-Client-Cert`, AWS ALB `X-Amzn-Mtls-Clientcert`, Apache
-  `Ssl-Client-Cert`) — **edge MUST strip the header from untrusted
-  traffic**, same threat model as XFF.
-- **tenant.backend(memory|sqlite)** — sqlite shares Tenants +
-  Domains across replicas (FK ON DELETE CASCADE on tenant_domains
-  so DeleteTenant doesn't leave orphan domain rows).
-  `tenant.suspension_check.cache_ttl` controls Active-suspension
-  cache; admin SetStatus invalidates per-replica via
-  `Server.InvalidateTenantSuspensionCache`.
-- **oauth** — per-store `enabled` + `ttl`; `backend(memory|sqlite)`
-  shared substrate. `oauth.jar` = RFC 9101 §5.2.2 request_uri fetcher
-  (HTTPS, no-redirect).
-- **identity.backend(memory|sqlite)** — User + Client + Session
-  substrate.
-- **backchannel_logout.index.backend(memory|sqlite)** — sqlite shares
-  fan-out set across the cluster.
-- **webauthn.storage.{users,sessions}.backend(memory|sqlite)**.
-- **mfa** — step-up orchestration gated by Risk's
-  `DecisionRequireMFA`. `provider.kind`: `totp` / `webauthn` / `push`
-  (each shares its underlying authenticator/helper — one enrollment,
-  two roles) / `multi` with `provider.kinds: [...]` composing leaves
-  via `defaultimpl.MultiMFAProvider`. `challenge.backend(memory|sqlite)`
-  shares in-flight challenges; `push.backend(memory|sqlite)` shares
-  approvals. cmd fails loud on missing leaf deps (totp needs
-  `authenticators.totp.enabled`, webauthn needs `webauthn.enabled`,
-  push needs DSN when backend=sqlite + a known transport, multi needs
-  ≥2 / non-nested / non-dup `kinds`). Two-call providers (WebAuthn,
-  Push) implement `MFABeginner` → `mfa_method_data[<method>]` in
-  the `mfa_required` response. Disabled/unwired → RequireMFA decays
-  to Allow. Push transport: `log` (writes to structured log) or
-  `webhook` (POSTs JSON to operator URL — `mfa.provider.push.webhook.*`
-  for URL + auth + retry tuning). Custom transports (FCM/APNs
-  SDK) ship via cmd fork against the stable `PushTransport` SPI. The
-  user-device callback that resolves push approvals (PENDING →
-  APPROVED/DENIED) is operator-built against `PushApprovalStore.SetStatus`,
-  OR cmd ships a reference handler at `POST /push/approval/:id/:decision`
-  toggleable via `mfa.provider.push.callback.{enabled,bearer_token,allowed_cidrs}`
-  — bearer + IP allowlist (one or both); empty both = open (only safe
-  behind an auth-enforcing edge).
-- **permissions.backend(memory|sqlite)** — sqlite shares
-  roles + assignments + menus across replicas; admin AddRole /
-  AssignRoles / SetMenus on one replica surface on every
-  replica's next lookup. Seed steps (apps + user_roles) are
-  idempotent on re-runs (AddRole-then-UpdateRole fallback).
+| Metric | Type | Labels |
+|---|---|---|
+| `sso_http_requests_total` | Counter | method, status_class |
+| `sso_http_request_duration_seconds` | Histogram | method |
+| `sso_login_attempts_total` | Counter | provider, outcome |
+| `sso_login_duration_seconds` | Histogram | provider, outcome |
+| `sso_tokens_issued_total` | Counter | strategy |
+| `sso_risk_decisions_total` | Counter | decision |
+| `sso_mfa_challenges_total` | Counter | mfa_method |
+| `sso_mfa_completions_total` | Counter | mfa_method, outcome |
+| `sso_mfa_completion_duration_seconds` | Histogram | outcome |
+| `sso_webauthn_registrations_total` | Counter | outcome |
+| `sso_webauthn_assertions_total` | Counter | outcome |
+| `sso_retention_pruned_total` | Counter | subsystem |
+| `sso_retention_prune_errors_total` | Counter | subsystem |
+
+Per-endpoint breakdowns come from traces, not labels. MFA labels are
+restricted to the wired provider's `SupportedMethods()` set
+(`totp` / `webauthn` / `push`) — arbitrary user-controlled method
+values are dropped before the label hits the registry, so an attacker
+can't bloat metric cardinality.
+
+`/health` exposes runtime build info (version + VCS revision + commit
+time) via `runtime/debug.ReadBuildInfo` — operators can confirm which
+commit a replica is running without shelling into the container.
 
 ### Retention schedulers
-
-cmd ships three background prune loops, all wired uniformly:
-cancel + bounded-wait on Done during shutdown, log + emit
+Three cmd-side background prune loops, all wired uniformly: cancel +
+bounded-wait on Done during shutdown, log + emit
 `sso_retention_pruned_total{subsystem}` /
-`sso_retention_prune_errors_total{subsystem}`, transient errors
-don't tear down the loop, first prune fires AFTER the first
-interval (boot-safe). Each requires its SQLite backend to be
-wired (memory peers self-prune by capacity or expiry).
+`sso_retention_prune_errors_total{subsystem}`, transient errors don't
+tear down the loop, first prune fires AFTER the first interval
+(boot-safe). Each requires its SQLite backend (memory peers self-prune
+by capacity or expiry).
 
-| YAML knob | Function | Subsystem label |
+| YAML knob | SDK function | Subsystem label |
 |---|---|---|
 | `audit.retention.{enabled,max_age,interval}` | `audit/sqlite.Sink.Prune` | `audit` |
 | `snapshot.retention.{enabled,keep,interval}` | `snapshot.PruneOldest` | `snapshot` |
 | `mfa.provider.push.prune_interval` | `defaultimpl/sqlite.PushApprovalStore.PruneExpired` | `push_approvals` |
 
-`client_id: ""` is a valid bucket (the demo uses it). Production tokens
-should carry an explicit audience.
+---
+
+## 6. Configuration
+
+`cmd/sso-server/config.yaml` is the canonical reference. Top-level
+keys map 1:1 to YAML; field coverage matches the SDK SPI. The
+backend-coverage table in §4 enumerates every `backend(memory|sqlite)`
+knob; this section only calls out the operator-surface items that
+aren't obvious from the table.
+
+- **server.issuer** MUST differ from `sso.DefaultIssuer` sentinel (cmd
+  default `"sso-server"`; production SHOULD set the canonical public
+  URL — same value stamped into JWT `iss`, discovery `issuer`, every
+  RFC 9207 `iss` param).
+- **clients[]** — every field maps 1:1 to `sso.Client` SPI.
+  `client_id: ""` is a valid bucket (the demo uses it). Production
+  tokens should carry an explicit audience.
+- **bootstrap.lock.backend (noop|file|etcd)** — lock loss cancels
+  in-flight Steps and surfaces `ErrLockLost`.
+- **snapshot.restore_from** — URI for first-boot auto-restore (CLI
+  `--bootstrap-restore-from` wins).
+- **snapshot.encryption.backend (none|passphrase|aes-gcm)** —
+  passphrase derives the AEAD key via argon2id (for human-typed
+  secrets); aes-gcm takes a direct 32-byte key (for KMS-emitted
+  DEKs; `key_file` accepts raw / hex / base64).
+- **security.mtls.backend (tls|header)**: tls for in-process
+  termination; header for reverse-proxy edges (nginx
+  `X-SSL-Client-Cert`, AWS ALB `X-Amzn-Mtls-Clientcert`, Apache
+  `Ssl-Client-Cert`) — **edge MUST strip the header from untrusted
+  traffic**, same threat model as XFF.
+- **tenant.suspension_check.cache_ttl** controls Active-suspension
+  cache; admin SetStatus invalidates per-replica via
+  `Server.InvalidateTenantSuspensionCache`.
+- **oauth.jar** = RFC 9101 §5.2.2 request_uri fetcher (HTTPS,
+  no-redirect).
+- **mfa** — step-up orchestration gated by Risk's
+  `DecisionRequireMFA`. `provider.kind`: `totp` / `webauthn` / `push`
+  (each shares its underlying authenticator/helper — one enrollment,
+  two roles) / `multi` with `provider.kinds: [...]` composing leaves.
+  cmd fails loud on missing leaf deps. `push.transport`: `log`
+  (structured-log stub) or `webhook` (POSTs to operator URL —
+  `mfa.provider.push.webhook.*` for URL + auth + retry tuning).
+  Custom transports (FCM/APNs) ship via cmd fork against the stable
+  `PushTransport` SPI. Push-approval user-device callback resolves
+  approvals via `PushApprovalStore.SetStatus` — operators either
+  build their own handler OR opt into cmd's reference at
+  `POST /push/approval/:id/:decision` toggled by
+  `mfa.provider.push.callback.{enabled,bearer_token,allowed_cidrs}`
+  (bearer + IP allowlist; empty both = open, only safe behind an
+  auth-enforcing edge).
 
 ### Multi-source loader
 
-`config.Loader` composes prioritized `Source`s (lowest first; last wins):
+`config.Loader` composes prioritized `Source`s (lowest first; last
+wins):
 
 | Source | When |
 |---|---|
@@ -773,7 +747,9 @@ int. `config.Load(path)` is the legacy single-source entry point.
 
 ---
 
-## Operational tooling
+## 7. Operations
+
+### CLIs
 
 | Binary | Purpose |
 |---|---|
@@ -781,12 +757,11 @@ int. `config.Load(path)` is the legacy single-source entry point.
 | `cmd/sso-audit-verify` | Offline hash-chain integrity check (`--from-url` paginates, `--from-file` reads JSON) |
 | `cmd/sso-snapshotctl` | Offline snapshot `list|inspect|verify` against a storage dir (passphrase-capable) |
 
-Both CLIs operate directly against wire artifacts — no running server
-required. Backup-pipeline integrity + DR drills.
+Both offline CLIs operate directly against wire artifacts — no
+running server required. Useful for backup-pipeline integrity + DR
+drills.
 
----
-
-## Release pipeline
+### Release pipeline
 
 `goreleaser` driven from `.github/workflows/release.yml` on `vX.Y.Z`
 tags. Matrix: linux+darwin × amd64+arm64 + windows/amd64. Each archive
@@ -797,9 +772,7 @@ Today `release.disable: true` short-circuits publish — CI runs the
 full build+SBOM matrix without uploading. Flip when a target lands.
 Locally: `make release-snapshot` → `dist/`.
 
----
-
-## API specs
+### API specs
 
 | Surface | Source of truth | Consumers |
 |---|---|---|
@@ -817,8 +790,9 @@ requires updating the catalog in the same commit.** SPAs branch on
 
 ---
 
-## Conventions
+## 8. Working in this repo
 
+### Conventions
 - **No literal leaks** — paths, headers, error codes live in
   `consts.go` (root or per-package).
 - **No mocks for storage** — use real `MemoryProvider` / `MemorySink` /
@@ -833,12 +807,9 @@ requires updating the catalog in the same commit.** SPAs branch on
 - **Tests in same package** as behavior. Race / ordering fixes prove
   with `-count=10+`.
 
----
-
-## Things not to do
-
-- Don't run `git reset --hard`, `git push --force`, `branch -D` without
-  explicit authorization.
+### Don'ts
+- Don't run `git reset --hard`, `git push --force`, `branch -D`
+  without explicit authorization.
 - Don't init or modify git config.
 - Don't bypass pre-commit hooks (`--no-verify`, `--no-gpg-sign`).
 - Don't introduce mocks where a real in-memory impl exists.
@@ -848,58 +819,49 @@ requires updating the catalog in the same commit.** SPAs branch on
   contracts, not style.
 - Don't bypass `setMeta` for audit metadata.
 
----
+### Common tasks
 
-## Common tasks
+**New authenticator**: implement `sso.Authenticator` in
+`authenticators/<name>.go` → YAML knob under `authenticators:` in
+`config/config.go` → wire in `cmd/sso-server/main.go`
+`buildAuthenticators` → whitelist under a client's
+`allowed_authenticators:` to test.
 
-### New authenticator
-1. Implement `sso.Authenticator` in `authenticators/<name>.go`.
-2. Add YAML knob under `authenticators:` in `config/config.go`.
-3. Wire in `cmd/sso-server/main.go` `buildAuthenticators`.
-4. Whitelist under a client's `allowed_authenticators:` to test.
+**New audit Sink**: implement `audit.Sink` (`Record(ctx, *Event)
+error`); add `audit.Closer` if lifecycle. Wire via `audit.New(s1,
+s2, ...)` or `audit.MultiSink`.
 
-### New audit Sink
-1. Implement `audit.Sink` (`Record(ctx, *Event) error`).
-2. If lifecycle, also implement `audit.Closer`.
-3. Wire via `audit.New(s1, s2, ...)` or `audit.MultiSink`.
+**New permissions backend**: implement `permissions.Provider` in
+`permissions/<name>/`. Plumb via `sso.WithPermissionProvider(...)`.
+Keep wildcard matcher semantics (`*`, `pkg:*`). Run
+`permissionstest.ConformanceSuite` against the new peer.
 
-### New permissions backend
-1. Implement `permissions.Provider` in `permissions/<name>/`.
-2. Plumb via `sso.WithPermissionProvider(...)`.
-3. Keep wildcard matcher semantics (`*`, `pkg:*`).
+**New netpolicy at runtime**: `POST /api/v1/netpolicy/policies` (or
+gRPC `PolicyService.Apply`); watchers pick up via Watch. Boot-time
+seed: add to `network.policies:`.
 
-### New netpolicy at runtime
-1. `POST /api/v1/netpolicy/policies` (or gRPC `PolicyService.Apply`).
-2. Watchers pick up via Watch.
-3. To seed at boot: add to `network.policies:`.
+**New gRPC service**: write `proto/<name>/v1/<name>.proto` →
+regenerate → implement server in `grpcserver/<name>.go` over an
+interface the HTTP layer already uses → register in
+`cmd/sso-server/main.go` `newGRPCServer` → add a `bufconn`-based
+test in `grpcserver/`.
 
-### New gRPC service
-1. Write `proto/<name>/v1/<name>.proto`.
-2. Regenerate.
-3. Implement server in `grpcserver/<name>.go` over an interface the
-   HTTP layer already uses.
-4. Register in `cmd/sso-server/main.go` `newGRPCServer`.
-5. Add a `bufconn`-based test in `grpcserver/`.
+**New OAuth/OIDC grant**: handler in `handle_<grant>.go` using
+`bindOAuthParams`; honor HTTP Basic > body credentials; map errors to
+`400 invalid_<...>` following the oracle-leak pattern; single-use:
+atomic delete-and-return (SQLite `DELETE RETURNING`; Redis `GETDEL`);
+wire in `sso.go` (`s.router.POST(...)`); advertise in
+`oidc_discovery.go`; add `WithXxxStore(store, ttl)`; tests in same
+package enumerating oracle-leak failure cases.
 
-### New OAuth/OIDC grant
-1. Handler in `handle_<grant>.go` using `bindOAuthParams` for body.
-2. Honor HTTP Basic > body credentials.
-3. Map errors to `400 invalid_<...>` — follow oracle-leak pattern.
-4. Single-use: atomic delete-and-return (SQLite `DELETE RETURNING`;
-   Redis `GETDEL`).
-5. Wire in `sso.go` (`s.router.POST(...)`), advertise in
-   `oidc_discovery.go`, add `WithXxxStore(store, ttl)`.
-6. Tests in same package; enumerate oracle-leak failure cases.
+**New credential / bearer-protected endpoint**: call
+`tokenNoStoreHeaders(ctx)` at handler entry; for bearer-protected
+endpoints use `setBearerChallenge(ctx, ...)` on 401.
 
-### New credential / bearer-protected endpoint
-1. Call `tokenNoStoreHeaders(ctx)` at handler entry.
-2. Bearer-protected? Use `setBearerChallenge(ctx, ...)` on 401.
-
----
-
-## Commits
+### Commits
 
 - Conventional: `feat(area): summary`, `fix(area): summary`, `chore:`,
   `docs:`. Imperative subject; blank line; body explains why.
 - Co-author trailer when AI-assisted.
-- Don't commit binaries — `sso-server` is ignored.
+- Don't commit binaries — `sso-server` / `sso-audit-verify` /
+  `sso-snapshotctl` are ignored.
