@@ -219,6 +219,14 @@ type app struct {
 	// configured sink; Close drains the buffer during shutdown.
 	auditAsyncSink *audit.AsyncSink
 
+	// auditRetentionCancel + auditRetentionDone coordinate the
+	// background prune loop's shutdown when audit.retention.enabled
+	// wires it. Cancel signals; Done closes when the goroutine
+	// exits. Both nil when the loop isn't running (memory backend
+	// or retention.enabled=false).
+	auditRetentionCancel context.CancelFunc
+	auditRetentionDone   <-chan struct{}
+
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
@@ -336,6 +344,21 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 		select {
 		case <-a.netStop:
 		case <-ctx.Done():
+		}
+	}
+	// Stop the audit retention scheduler BEFORE draining the
+	// AsyncSink so an in-flight Prune doesn't race the close. The
+	// scheduler exits within the bounded shutdown ctx; if it's
+	// mid-Prune we wait for it (Prune is bounded by SQLite's
+	// transaction time which is typically <1s on retention runs).
+	if a.auditRetentionCancel != nil {
+		a.auditRetentionCancel()
+		if a.auditRetentionDone != nil {
+			select {
+			case <-a.auditRetentionDone:
+			case <-ctx.Done():
+				logger.Error("audit retention scheduler did not exit cleanly")
+			}
 		}
 	}
 	// Drain the audit AsyncSink queue under the same shutdown
@@ -1751,10 +1774,37 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 
 	var recorder *audit.Recorder
 	var asyncSink *audit.AsyncSink
+	var auditRetentionCancel context.CancelFunc
+	var auditRetentionDone <-chan struct{}
 	if cfg.Audit.Enabled {
 		primary, primaryName, err := buildPrimaryAuditSink(cfg.Audit, logger)
 		if err != nil {
 			return nil, fmt.Errorf("audit: build primary sink: %w", err)
+		}
+		// Retention scheduler runs against the SQLite primary sink
+		// (the in-memory ring buffer self-prunes by capacity). cmd
+		// type-asserts the concrete *auditsqlite.Sink; the in-memory
+		// path silently skips so operators flipping retention.enabled
+		// don't need to coordinate with the backend choice.
+		if rc := cfg.Audit.Retention; rc.Enabled && primaryName == "sqlite" {
+			sqliteSink, ok := primary.(*auditsqlite.Sink)
+			if !ok {
+				return nil, errors.New("audit.retention.enabled requires audit.backend=sqlite (assert failed — internal bug)")
+			}
+			if rc.MaxAge <= 0 {
+				return nil, errors.New("audit.retention.max_age required when retention.enabled")
+			}
+			interval := rc.Interval
+			if interval <= 0 {
+				interval = time.Hour
+			}
+			retentionCtx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			auditRetentionCancel = cancel
+			auditRetentionDone = done
+			go runAuditRetention(retentionCtx, done, sqliteSink, interval, rc.MaxAge, logger)
+			logger.Info("audit: retention scheduler enabled",
+				"max_age", rc.MaxAge, "interval", interval)
 		}
 		var sink audit.Sink = primary
 		// Webhook fan-out wraps the primary sink so in-process /audit
@@ -2253,32 +2303,68 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}
 	return &app{
-		server:            srv,
-		recorder:          recorder,
-		provider:          provider,
-		registry:          reg,
-		netStore:          netStore,
-		classifier:        classifier,
-		clientStore:       clientStore,
-		userProvider:      userProvider,
-		sessionMgr:        sessionMgr,
-		tempStore:         tempStore,
-		tokenIssuers:      tokenIssuers,
-		idTokenIssuer:     jwtIssuer,
-		refreshTokenStore: refreshTokenStore,
-		refreshTokenTTL:   refreshTokenTTL,
-		adminMW:           adminMW,
-		snapshotPipeline:  pipeline,
-		snapshotStorage:   snapStorage,
-		snapshotter:       snapshotter,
-		snapshotRestorer:  restorer,
-		releaseRegistry:   releaseRegistry,
-		releaseStore:      releaseStore,
-		tenantStore:       tenantStore,
-		webauthnHelper:    webauthnHelper,
-		auditAsyncSink:    asyncSink,
-		netStop:           netStop,
+		server:               srv,
+		recorder:             recorder,
+		provider:             provider,
+		registry:             reg,
+		netStore:             netStore,
+		classifier:           classifier,
+		clientStore:          clientStore,
+		userProvider:         userProvider,
+		sessionMgr:           sessionMgr,
+		tempStore:            tempStore,
+		tokenIssuers:         tokenIssuers,
+		idTokenIssuer:        jwtIssuer,
+		refreshTokenStore:    refreshTokenStore,
+		refreshTokenTTL:      refreshTokenTTL,
+		adminMW:              adminMW,
+		snapshotPipeline:     pipeline,
+		snapshotStorage:      snapStorage,
+		snapshotter:          snapshotter,
+		snapshotRestorer:     restorer,
+		releaseRegistry:      releaseRegistry,
+		releaseStore:         releaseStore,
+		tenantStore:          tenantStore,
+		webauthnHelper:       webauthnHelper,
+		auditAsyncSink:       asyncSink,
+		auditRetentionCancel: auditRetentionCancel,
+		auditRetentionDone:   auditRetentionDone,
+		netStop:              netStop,
 	}, nil
+}
+
+// runAuditRetention is the background loop cmd launches when
+// audit.retention.enabled wires it. Wakes every interval (after
+// the first interval — not at start so short-lived deploys don't
+// trigger expensive bulk deletes during boot), calls
+// auditsqlite.Sink.Prune(ctx, now-maxAge), logs the result.
+//
+// Exits on ctx cancellation (cmd shutdown). Closes done channel
+// on exit so cmd's Shutdown can bound the wait.
+//
+// Prune errors are logged but don't stop the loop — a transient
+// SQLite contention shouldn't tear down retention forever.
+func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger sso.Logger) {
+	defer close(done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-maxAge)
+			deleted, err := sink.Prune(ctx, cutoff)
+			if err != nil {
+				logger.Error("audit retention prune failed", "error", err, "cutoff", cutoff)
+				continue
+			}
+			if deleted > 0 {
+				logger.Info("audit retention pruned events",
+					"deleted", deleted, "cutoff", cutoff)
+			}
+		}
+	}
 }
 
 // buildPrimaryAuditSink constructs the [audit.Sink] cmd places at

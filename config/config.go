@@ -937,6 +937,31 @@ type AuditConfig struct {
 	HashChain      bool                    `yaml:"hash_chain"`
 	PIIRedaction   AuditPIIRedactionConfig `yaml:"pii_redaction"`
 	Webhook        AuditWebhookConfig      `yaml:"webhook"`
+	Retention      AuditRetentionConfig    `yaml:"retention"`
+}
+
+// AuditRetentionConfig opts into background pruning of old audit
+// events via [audit/sqlite.Sink.Prune]. Active only when audit
+// backend = sqlite — the in-memory ring buffer prunes itself by
+// capacity. Disabled by default (retention policy is a regulated
+// decision operators choose per compliance regime).
+//
+// When Enabled is true, cmd launches a goroutine that wakes every
+// Interval and prunes events with ts < now - MaxAge. The first
+// prune fires Interval after server start (not immediately) so
+// short-lived deployments don't trigger expensive bulk deletes
+// during boot.
+//
+// Hash-chain caveat (per audit/sqlite Prune doc): pruning leaves
+// the first surviving event with a dangling PrevHash that
+// VerifyChain reports as a break. Operators retaining N days
+// accept the boundary discontinuity; operators wanting a clean
+// post-prune chain must run their own re-chaining migration
+// (out of scope for the scheduler).
+type AuditRetentionConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	MaxAge   time.Duration `yaml:"max_age"`  // events older than (now - MaxAge) are eligible
+	Interval time.Duration `yaml:"interval"` // how often to wake + prune (default 1h)
 }
 
 // AuditSqliteConfig is the SQLite backend's DSN. Production DSN

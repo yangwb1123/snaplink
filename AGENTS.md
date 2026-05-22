@@ -680,6 +680,10 @@ the operator surface needs explanation:
 - **audit.backend(memory|sqlite)** — sqlite persists across restarts
   + shares state across replicas. `webhook` composes as
   `AsyncSink(MultiSink(Primary, RetryingSink(WebhookSink)))`.
+  `audit.retention.{enabled,max_age,interval}` opts into a
+  background prune loop against the SQLite primary (memory
+  self-prunes by capacity); cmd cancels the loop during shutdown
+  before draining the AsyncSink to avoid mid-prune contention.
 - **network.store / registry.backend (memory|etcd)** — etcd path
   materialized in cmd to keep the transitive dep out of the SPI. etcd
   registry uses TTL lease; `service_id` defaults

@@ -166,6 +166,21 @@ audit:
       max_attempts: 3
       initial_backoff: 100ms
       max_backoff: 5s
+  # Background pruning of old audit events. Active only when
+  # backend=sqlite (the memory ring buffer self-prunes by capacity).
+  # When enabled, cmd launches a goroutine that wakes every interval
+  # and removes events with ts < now - max_age.
+  #
+  # Hash-chain caveat: when hash_chain=true, pruning leaves the
+  # first surviving event with a dangling PrevHash that VerifyChain
+  # reports as a break at the retention boundary. Most "retain N
+  # days" compliance regimes accept this; ops wanting a clean
+  # post-prune chain run their own re-chaining migration (out of
+  # scope for the scheduler).
+  retention:
+    enabled: false
+    max_age: 720h           # 30 days (operator-decision per compliance regime)
+    interval: 1h            # how often to wake + prune
 
 permissions:
   enabled: true
