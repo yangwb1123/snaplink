@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	cpUserID    = "u-claims"
-	cpClientID  = "claims-client"
-	cpSecret    = "claims-secret"
-	cpPassword  = "pw"
-	cpRedirect  = "https://app.example/cb"
+	cpUserID   = "u-claims"
+	cpClientID = "claims-client"
+	cpSecret   = "claims-secret"
+	cpPassword = "pw"
+	cpRedirect = "https://app.example/cb"
 )
 
 // claimsCaptureAuthenticator records the AuthRequest.RequestedClaims
@@ -128,7 +128,10 @@ func TestClaimsParam_RejectsNonObject(t *testing.T) {
 		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
 		"claims":     json.RawMessage(`["not", "an", "object"]`),
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
@@ -150,7 +153,10 @@ func TestClaimsParam_RejectsInnerNonObject(t *testing.T) {
 		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
 		"claims":     json.RawMessage(`{"userinfo": "not-an-object"}`),
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", resp.StatusCode)
@@ -170,7 +176,10 @@ func TestClaimsParam_RejectsTypoedEssentialBool(t *testing.T) {
 		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
 		"claims":     json.RawMessage(`{"userinfo": {"email": {"essential": "true"}}}`),
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 on essential=\"true\" typo", resp.StatusCode)
@@ -187,7 +196,10 @@ func TestClaimsParam_RejectsValuesNotAnArray(t *testing.T) {
 		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
 		"claims":     json.RawMessage(`{"id_token": {"acr": {"values": "level-2"}}}`),
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 on values=string", resp.StatusCode)
@@ -204,7 +216,10 @@ func TestClaimsParam_AcceptsNullPerSpec(t *testing.T) {
 		"credential": map[string]string{"username": cpUserID, "password": cpPassword},
 		"claims":     json.RawMessage(`{"userinfo": {"email": null, "name": {"essential": true}}}`),
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200 on valid mixed shape", resp.StatusCode)
@@ -240,7 +255,10 @@ func TestClaimsParam_PARPushSurvives(t *testing.T) {
 
 func TestClaimsParam_DiscoveryAdvertises(t *testing.T) {
 	srv, _, _ := newClaimsParamHarness(t)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

@@ -33,7 +33,10 @@ func TestOperatorMetadata_AdvertisedWhenSet(t *testing.T) {
 		"https://acme.example/oidc-tos",
 		"https://acme.example/sso-docs",
 	))
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
@@ -50,7 +53,10 @@ func TestOperatorMetadata_AdvertisedWhenSet(t *testing.T) {
 
 func TestOperatorMetadata_OmittedWhenUnset(t *testing.T) {
 	srv := newOpMetadataHarness(t)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
@@ -66,7 +72,10 @@ func TestOperatorMetadata_PartialFieldsAcceptedIndividually(t *testing.T) {
 	srv := newOpMetadataHarness(t, sso.WithOperatorMetadata(
 		"https://acme.example/policy", "", "",
 	))
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

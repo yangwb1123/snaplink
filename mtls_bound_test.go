@@ -141,7 +141,10 @@ func TestMTLSBound_StampsCnfX5TS256(t *testing.T) {
 func TestMTLSBound_NoBindingWithoutExtractor(t *testing.T) {
 	srv, _ := newMTLSHarness(t, false)
 	form := "grant_type=client_credentials&client_id=" + mtlsClient + "&client_secret=" + mtlsSecret
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
@@ -155,7 +158,10 @@ func TestMTLSBound_NoBindingWithoutExtractor(t *testing.T) {
 
 func TestMTLSBound_DiscoveryFlagFlipsWithExtractor(t *testing.T) {
 	srv, _ := newMTLSHarness(t, true)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
@@ -215,7 +221,10 @@ func TestMTLSResource_RejectsWhenCertMissing(t *testing.T) {
 
 	// Mint token with cert.
 	form := "grant_type=client_credentials&client_id=" + mtlsClient + "&client_secret=" + mtlsSecret + "&scope=openid"
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var tokOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&tokOut)
@@ -228,7 +237,10 @@ func TestMTLSResource_RejectsWhenCertMissing(t *testing.T) {
 	extractor.cert = nil
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+access)
-	infoResp, _ := http.DefaultClient.Do(req)
+	infoResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer infoResp.Body.Close()
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(infoResp.Body)
@@ -240,7 +252,10 @@ func TestMTLSResource_RejectsWhenCertThumbprintDiffers(t *testing.T) {
 	srv, mintCert, extractor := newMTLSResourceHarness(t)
 
 	form := "grant_type=client_credentials&client_id=" + mtlsClient + "&client_secret=" + mtlsSecret + "&scope=openid"
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var tokOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&tokOut)
@@ -255,7 +270,10 @@ func TestMTLSResource_RejectsWhenCertThumbprintDiffers(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+access)
-	infoResp, _ := http.DefaultClient.Do(req)
+	infoResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer infoResp.Body.Close()
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401 (cert thumbprint mismatch)", infoResp.StatusCode)
@@ -270,7 +288,10 @@ func TestMTLSResource_LegacyBearerSkipsCheck(t *testing.T) {
 	extractor.cert = nil
 
 	form := "grant_type=client_credentials&client_id=" + mtlsClient + "&client_secret=" + mtlsSecret
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var tokOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&tokOut)
@@ -279,7 +300,10 @@ func TestMTLSResource_LegacyBearerSkipsCheck(t *testing.T) {
 	// /userinfo: still no cert. Bearer path applies.
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+access)
-	infoResp, _ := http.DefaultClient.Do(req)
+	infoResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer infoResp.Body.Close()
 	// The exact status varies based on user lookup; the key
 	// assertion is that we DID NOT get 401 from the mTLS gate.
@@ -295,7 +319,10 @@ func TestMTLSResource_LegacyBearerSkipsCheck(t *testing.T) {
 
 func TestMTLSBound_DiscoveryOmitsWithoutExtractor(t *testing.T) {
 	srv, _ := newMTLSHarness(t, false)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

@@ -78,7 +78,7 @@ func newJARFetchHarness(t *testing.T, allowedURIs []string) *jfHarness {
 		JWKS: []sso.JWK{{
 			Kty: "OKP", Crv: "Ed25519",
 			Kid: jfKid, Alg: "EdDSA", Use: "sig",
-			X:   base64.RawURLEncoding.EncodeToString(pub),
+			X: base64.RawURLEncoding.EncodeToString(pub),
 		}},
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
@@ -227,7 +227,10 @@ func TestJARFetch_NoFetcherWiredRejects(t *testing.T) {
 		"credential":  map[string]string{},
 		"request_uri": "https://rp.example.com/req.jwt",
 	})
-	resp, _ := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", resp.StatusCode)
@@ -236,7 +239,10 @@ func TestJARFetch_NoFetcherWiredRejects(t *testing.T) {
 
 func TestJARFetch_DiscoveryAdvertises(t *testing.T) {
 	h := newJARFetchHarness(t, nil)
-	resp, _ := http.Get(h.srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(h.srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

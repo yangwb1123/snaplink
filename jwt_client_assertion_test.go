@@ -21,12 +21,12 @@ import (
 )
 
 const (
-	jcaClientID  = "jca-client"
-	jcaUserID    = "u-jca"
-	jcaPassword  = "pw"
-	jcaKid       = "jca-kid-1"
-	jcaASIssuer  = "https://sso.test"
-	jcaRedirect  = "https://app.example/cb"
+	jcaClientID = "jca-client"
+	jcaUserID   = "u-jca"
+	jcaPassword = "pw"
+	jcaKid      = "jca-kid-1"
+	jcaASIssuer = "https://sso.test"
+	jcaRedirect = "https://app.example/cb"
 )
 
 type jcaHarness struct {
@@ -55,7 +55,7 @@ func newJCAHarness(t *testing.T, withReplay bool) *jcaHarness {
 		JWKS: []sso.JWK{{
 			Kty: "OKP", Crv: "Ed25519",
 			Kid: jcaKid, Alg: "EdDSA", Use: "sig",
-			X:   base64.RawURLEncoding.EncodeToString(pub),
+			X: base64.RawURLEncoding.EncodeToString(pub),
 		}},
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
@@ -206,7 +206,10 @@ func TestJWTClientAssertion_RejectsUnknownAssertionType(t *testing.T) {
 	form := "grant_type=client_credentials" +
 		"&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:saml2-bearer" +
 		"&client_assertion=" + jwt
-	resp, _ := http.Post(h.srv.URL+"/token", "application/x-www-form-urlencoded", bytes.NewReader([]byte(form)))
+	resp, err := http.Post(h.srv.URL+"/token", "application/x-www-form-urlencoded", bytes.NewReader([]byte(form)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 (unsupported assertion type)", resp.StatusCode)
@@ -233,7 +236,10 @@ func TestJWTClientAssertion_ReplayDetectedWhenStoreWired(t *testing.T) {
 
 func TestJWTClientAssertion_DiscoveryAdvertisesPrivateKeyJWT(t *testing.T) {
 	h := newJCAHarness(t, false)
-	resp, _ := http.Get(h.srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(h.srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

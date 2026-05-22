@@ -123,7 +123,10 @@ func TestFormPost_HTMLEscapesUntrustedState(t *testing.T) {
 		"state":         evil,
 		"response_mode": "form_post",
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if bytes.Contains(raw, []byte("<script>alert(1)</script>")) {
@@ -141,7 +144,10 @@ func TestFormPost_RejectsUnknownResponseMode(t *testing.T) {
 		"redirect_uri":  fpRedirect,
 		"response_mode": "nonsense_mode",
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
@@ -165,7 +171,10 @@ func TestFormPost_EmptyResponseModeFallsThroughToJSON(t *testing.T) {
 		"redirect_uri":  fpRedirect,
 		"state":         "legacy",
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("Content-Type = %q want json (legacy fallback)", ct)
@@ -180,7 +189,10 @@ func TestFormPost_EmptyResponseModeFallsThroughToJSON(t *testing.T) {
 
 func TestFormPost_DiscoveryAdvertisesResponseModes(t *testing.T) {
 	srv := newFormPostHarness(t)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

@@ -67,7 +67,10 @@ func TestTokenExchange_PreservesAuthorizationDetails(t *testing.T) {
 		"credential":            map[string]string{"username": terarUserID, "password": terarPassword},
 		"authorization_details": json.RawMessage(details),
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var loginOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&loginOut)
@@ -126,7 +129,10 @@ func TestTokenExchange_NoAuthorizationDetailsStaysClean(t *testing.T) {
 		"client_id":  terarClientID,
 		"credential": map[string]string{"username": terarUserID, "password": terarPassword},
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var loginOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&loginOut)
@@ -139,7 +145,10 @@ func TestTokenExchange_NoAuthorizationDetailsStaysClean(t *testing.T) {
 		"subject_token":      {subjectToken},
 		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
 	}
-	exResp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	exResp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer exResp.Body.Close()
 	rb, _ := io.ReadAll(exResp.Body)
 	var exOut map[string]any

@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	pcdtUserID    = "u-pcdt"
-	pcdtShortCli  = "pcdt-short"
+	pcdtUserID     = "u-pcdt"
+	pcdtShortCli   = "pcdt-short"
 	pcdtDefaultCli = "pcdt-default"
-	pcdtSecret    = "pcdt-secret"
-	pcdtPassword  = "pw"
+	pcdtSecret     = "pcdt-secret"
+	pcdtPassword   = "pw"
 )
 
 func newDeviceTTLHarness(t *testing.T) *httptest.Server {
@@ -86,7 +86,10 @@ func TestPerClientDeviceTTL_OverrideShortensWindow(t *testing.T) {
 func TestPerClientDeviceTTL_FallsBackToServerDefault(t *testing.T) {
 	srv := newDeviceTTLHarness(t)
 	form := "client_id=" + pcdtDefaultCli + "&client_secret=" + pcdtSecret
-	resp, _ := http.Post(srv.URL+"/device/code", "application/x-www-form-urlencoded", strings.NewReader(form))
+	resp, err := http.Post(srv.URL+"/device/code", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any

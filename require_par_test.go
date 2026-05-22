@@ -106,7 +106,10 @@ func TestRequirePAR_AcceptsPARPushForStrictClient(t *testing.T) {
 		"credential":  map[string]string{"username": rparUserID, "password": rparPassword},
 		"request_uri": uri,
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
@@ -121,7 +124,10 @@ func TestRequirePAR_DirectLoginAllowedForLaxClient(t *testing.T) {
 		"client_id":  rparClientLax,
 		"credential": map[string]string{"username": rparUserID, "password": rparPassword},
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		rb, _ := io.ReadAll(resp.Body)
@@ -131,7 +137,10 @@ func TestRequirePAR_DirectLoginAllowedForLaxClient(t *testing.T) {
 
 func TestRequirePAR_DiscoveryFlagFlipsWhenAnyClientRequires(t *testing.T) {
 	srv, _ := newRequirePARHarness(t)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

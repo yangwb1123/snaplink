@@ -67,7 +67,10 @@ func TestACRValuesSupported_AdvertisedInDiscovery(t *testing.T) {
 
 func TestACRValuesSupported_OmittedWhenUnset(t *testing.T) {
 	srv := newACRValuesSupportedHarness(t, nil)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
@@ -80,7 +83,10 @@ func TestACRValuesSupported_DedupesAndDropsEmpty(t *testing.T) {
 	// Empty strings and duplicates MUST be filtered — discovery
 	// is supposed to advertise a clean set.
 	srv := newACRValuesSupportedHarness(t, []string{"a", "", "b", "a", "c", ""})
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

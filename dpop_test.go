@@ -111,7 +111,10 @@ func loginForDPoP(t *testing.T, srv *httptest.Server) string {
 		"client_id":  dpopClient,
 		"credential": map[string]string{"username": dpopUser, "password": dpopPassword},
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
@@ -270,7 +273,10 @@ func TestDPoPResource_UserInfoRequiresMatchingProof(t *testing.T) {
 	// Without DPoP header → MUST be rejected (token is bound).
 	infoReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	infoReq.Header.Set("Authorization", "Bearer "+access)
-	infoResp, _ := http.DefaultClient.Do(infoReq)
+	infoResp, err := http.DefaultClient.Do(infoReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer infoResp.Body.Close()
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(infoResp.Body)
@@ -285,7 +291,10 @@ func TestDPoPResource_LegacyBearerStillWorks(t *testing.T) {
 	srv := newDPoPHarness(t)
 	// Mint a plain bearer token.
 	tokForm := "grant_type=client_credentials&client_id=" + dpopClient + "&client_secret=" + dpopSecret
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(tokForm))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(tokForm))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
@@ -298,7 +307,10 @@ func TestDPoPResource_LegacyBearerStillWorks(t *testing.T) {
 	access, _ := out["access_token"].(string)
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+access)
-	infoResp, _ := http.DefaultClient.Do(req)
+	infoResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer infoResp.Body.Close()
 	// The exact status varies based on user lookup; the key
 	// assertion is that we DID NOT get 401 "DPoP-required" —
@@ -313,7 +325,10 @@ func TestDPoPResource_LegacyBearerStillWorks(t *testing.T) {
 
 func TestDPoP_DiscoveryAdvertises(t *testing.T) {
 	srv := newDPoPHarness(t)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

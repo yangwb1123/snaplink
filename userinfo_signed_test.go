@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	usUserID    = "u-us"
+	usUserID     = "u-us"
 	usClientJSON = "us-client-json"
 	usClientJWT  = "us-client-jwt"
 	usSecret     = "us-secret"
@@ -77,7 +77,10 @@ func usLogin(t *testing.T, srv *httptest.Server, clientID string) string {
 		"credential": map[string]string{"username": usUserID, "password": usPassword},
 		"scope":      []string{"openid", "email", "profile"},
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
@@ -94,7 +97,10 @@ func TestUserinfoSigned_JSONByDefault(t *testing.T) {
 	tok := usLogin(t, srv, usClientJSON)
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	ct := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "application/json") {
@@ -107,7 +113,10 @@ func TestUserinfoSigned_JWTWhenClientOptsIn(t *testing.T) {
 	tok := usLogin(t, srv, usClientJWT)
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	ct := resp.Header.Get("Content-Type")
 	if ct != "application/jwt" {
@@ -121,7 +130,10 @@ func TestUserinfoSigned_JWTWhenClientOptsIn(t *testing.T) {
 
 func TestUserinfoSigned_DiscoveryAdvertises(t *testing.T) {
 	srv := newUserinfoSignedHarness(t)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)

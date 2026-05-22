@@ -65,7 +65,10 @@ func loginForExchange(t *testing.T, srv *httptest.Server) string {
 		"credential": map[string]string{"username": terUserID, "password": terPassword},
 		"scope":      []string{"read", "write"},
 	})
-	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
@@ -148,7 +151,10 @@ func TestTokenExchange_RejectsRefreshWithoutStore(t *testing.T) {
 		"subject_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
 		"requested_token_type": {"urn:ietf:params:oauth:token-type:refresh_token"},
 	}
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		rb, _ := io.ReadAll(resp.Body)
@@ -176,7 +182,10 @@ func TestTokenExchange_RotatedRefreshHonored(t *testing.T) {
 		"subject_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
 		"requested_token_type": {"urn:ietf:params:oauth:token-type:refresh_token"},
 	}
-	resp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	resp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
@@ -193,7 +202,10 @@ func TestTokenExchange_RotatedRefreshHonored(t *testing.T) {
 		"client_id":     {terClientID},
 		"client_secret": {terSecret},
 	}
-	rotResp, _ := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(rotForm.Encode()))
+	rotResp, err := http.Post(srv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(rotForm.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer rotResp.Body.Close()
 	rotRB, _ := io.ReadAll(rotResp.Body)
 	if rotResp.StatusCode != http.StatusOK {

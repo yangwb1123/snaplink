@@ -215,7 +215,10 @@ func TestDPoPNonce_TokenEndpointAcceptsValidNonceRetry(t *testing.T) {
 	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/token", strings.NewReader(form))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req2.Header.Set("DPoP", proof2)
-	resp2, _ := http.DefaultClient.Do(req2)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("step 2 status=%d want 200 with valid nonce", resp2.StatusCode)
@@ -234,7 +237,10 @@ func TestDPoPNonce_TokenEndpointRejectsTamperedNonce(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/token", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("DPoP", proof)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 (tampered nonce → fresh challenge)", resp.StatusCode)

@@ -100,9 +100,9 @@ func loginStrict(t *testing.T, srv *httptest.Server, overrides map[string]any) (
 func TestOAuth21Strict_RejectsResponseTypeToken(t *testing.T) {
 	srv := newStrictServer(t, true, strictRedirect)
 	status, body := loginStrict(t, srv, map[string]any{
-		"response_type": "token",
-		"redirect_uri":  strictRedirect,
-		"code_challenge": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789012",
+		"response_type":         "token",
+		"redirect_uri":          strictRedirect,
+		"code_challenge":        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789012",
 		"code_challenge_method": "plain",
 	})
 	if status != http.StatusBadRequest {
@@ -193,7 +193,10 @@ func TestOAuth21Strict_DiscoveryOmitsImplicitResponseType(t *testing.T) {
 	// "supported", sends it, and trips unsupported_response_type at
 	// the AS — a real integration footgun.
 	srv := newStrictServer(t, true, strictRedirect)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
@@ -219,7 +222,10 @@ func TestOAuth21Strict_DiscoveryAdvertisesImplicitWhenOff(t *testing.T) {
 	// Off mode keeps the legacy advertisement so OAuth 2.0 RPs
 	// scanning discovery don't lose visibility into supported types.
 	srv := newStrictServer(t, false, strictRedirect)
-	resp, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var doc map[string]any

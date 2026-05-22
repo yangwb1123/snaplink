@@ -50,7 +50,7 @@ func newJCAEPHarness(t *testing.T) *jcaEPHarness {
 		JWKS: []sso.JWK{{
 			Kty: "OKP", Crv: "Ed25519",
 			Kid: jcaEPKid, Alg: "EdDSA", Use: "sig",
-			X:   base64.RawURLEncoding.EncodeToString(pub),
+			X: base64.RawURLEncoding.EncodeToString(pub),
 		}},
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
@@ -124,7 +124,10 @@ func TestJWTClientAssertion_IntrospectAuthenticatesClient(t *testing.T) {
 	tokForm := "grant_type=client_credentials" +
 		"&client_assertion_type=" + sso.ClientAssertionTypeJWTBearer +
 		"&client_assertion=" + h.freshAssertion(t, "ep-introspect-mint")
-	tokResp, _ := http.Post(h.srv.URL+"/token", "application/x-www-form-urlencoded", bytes.NewReader([]byte(tokForm)))
+	tokResp, err := http.Post(h.srv.URL+"/token", "application/x-www-form-urlencoded", bytes.NewReader([]byte(tokForm)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer tokResp.Body.Close()
 	tokRB, _ := io.ReadAll(tokResp.Body)
 	var tokOut map[string]any
@@ -138,7 +141,10 @@ func TestJWTClientAssertion_IntrospectAuthenticatesClient(t *testing.T) {
 	introForm := "token=" + access +
 		"&client_assertion_type=" + sso.ClientAssertionTypeJWTBearer +
 		"&client_assertion=" + h.freshAssertion(t, "ep-introspect-call")
-	introResp, _ := http.Post(h.srv.URL+"/token/introspect", "application/x-www-form-urlencoded", bytes.NewReader([]byte(introForm)))
+	introResp, err := http.Post(h.srv.URL+"/token/introspect", "application/x-www-form-urlencoded", bytes.NewReader([]byte(introForm)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer introResp.Body.Close()
 	introRB, _ := io.ReadAll(introResp.Body)
 	if introResp.StatusCode != http.StatusOK {
@@ -157,7 +163,10 @@ func TestJWTClientAssertion_RevokeAuthenticatesClient(t *testing.T) {
 	tokForm := "grant_type=client_credentials" +
 		"&client_assertion_type=" + sso.ClientAssertionTypeJWTBearer +
 		"&client_assertion=" + h.freshAssertion(t, "ep-revoke-mint")
-	tokResp, _ := http.Post(h.srv.URL+"/token", "application/x-www-form-urlencoded", bytes.NewReader([]byte(tokForm)))
+	tokResp, err := http.Post(h.srv.URL+"/token", "application/x-www-form-urlencoded", bytes.NewReader([]byte(tokForm)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer tokResp.Body.Close()
 	var tokOut map[string]any
 	_ = json.NewDecoder(tokResp.Body).Decode(&tokOut)
@@ -167,7 +176,10 @@ func TestJWTClientAssertion_RevokeAuthenticatesClient(t *testing.T) {
 	revForm := "token=" + access +
 		"&client_assertion_type=" + sso.ClientAssertionTypeJWTBearer +
 		"&client_assertion=" + h.freshAssertion(t, "ep-revoke-call")
-	revResp, _ := http.Post(h.srv.URL+"/token/revoke", "application/x-www-form-urlencoded", bytes.NewReader([]byte(revForm)))
+	revResp, err := http.Post(h.srv.URL+"/token/revoke", "application/x-www-form-urlencoded", bytes.NewReader([]byte(revForm)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer revResp.Body.Close()
 	if revResp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke status=%d", revResp.StatusCode)
