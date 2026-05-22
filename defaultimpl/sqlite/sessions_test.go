@@ -12,14 +12,30 @@ import (
 
 func newSessionManagerForTest(t *testing.T) *SessionManager {
 	t.Helper()
+	return newSessionManagerForTestWithTTL(t, time.Hour)
+}
+
+func newSessionManagerForTestWithTTL(t *testing.T, ttl time.Duration) *SessionManager {
+	t.Helper()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL&_busy_timeout=5000"
-	mgr, err := NewSessionManager(dsn, time.Hour)
+	mgr, err := NewSessionManager(dsn, ttl)
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
 	return mgr
+}
+
+// markSessionRevoked flips revoked=1 directly via SQL — bypasses
+// SessionManager which doesn't expose a revoke method (admin RPCs
+// use a separate path). Used by the Refresh-refuses-revoked test
+// to set up state without going through the destroy-and-recreate
+// dance.
+func markSessionRevoked(t *testing.T, mgr *SessionManager, sessionID string) error {
+	t.Helper()
+	_, err := mgr.db.ExecContext(context.Background(), `UPDATE sessions SET revoked = 1 WHERE id = ?`, sessionID)
+	return err
 }
 
 func TestSessionManager_CreateAndGet(t *testing.T) {
@@ -110,6 +126,39 @@ func TestSessionManager_RefreshUnknownReturnsNotFound(t *testing.T) {
 	_, err := mgr.Refresh(context.Background(), "nonexistent")
 	if !errors.Is(err, sso.ErrSessionNotFound) {
 		t.Fatalf("got %v, want ErrSessionNotFound", err)
+	}
+}
+
+// TestSessionManager_RefreshRefusesExpired pins the security
+// invariant — a captured session id past its expiry MUST NOT be
+// resurrectable. The SQL UPDATE's WHERE filter (expires_at > now)
+// is what enforces it; RowsAffected = 0 surfaces as ErrNoRows →
+// ErrSessionNotFound. Without the WHERE clause, an attacker who
+// captured an old session id and could trigger Refresh (via admin
+// RPC, internal handler, etc) could extend it forever.
+func TestSessionManager_RefreshRefusesExpired(t *testing.T) {
+	mgr := newSessionManagerForTestWithTTL(t, 10*time.Millisecond)
+	s, _ := mgr.Create(context.Background(), "alice")
+	time.Sleep(20 * time.Millisecond)
+	if _, err := mgr.Refresh(context.Background(), s.ID); !errors.Is(err, sso.ErrSessionNotFound) {
+		t.Fatalf("expired Refresh: got %v, want ErrSessionNotFound", err)
+	}
+}
+
+// TestSessionManager_RefreshRefusesRevoked covers the admin-
+// revocation case — operator marks the session revoked, attacker
+// captures the id, calls Refresh. MUST fail (the same WHERE
+// filter also checks revoked = 0).
+func TestSessionManager_RefreshRefusesRevoked(t *testing.T) {
+	mgr := newSessionManagerForTest(t)
+	s, _ := mgr.Create(context.Background(), "alice")
+	// Mark revoked directly via DB so we exercise the Refresh
+	// WHERE filter, not Destroy (which removes the row entirely).
+	if err := markSessionRevoked(t, mgr, s.ID); err != nil {
+		t.Fatalf("markSessionRevoked: %v", err)
+	}
+	if _, err := mgr.Refresh(context.Background(), s.ID); !errors.Is(err, sso.ErrSessionNotFound) {
+		t.Fatalf("revoked Refresh: got %v, want ErrSessionNotFound", err)
 	}
 }
 

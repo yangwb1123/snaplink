@@ -67,6 +67,16 @@ func (m *MemorySessionManager) Refresh(_ context.Context, sessionID string) (*ss
 	if !ok {
 		return nil, sso.ErrSessionNotFound
 	}
+	// Refresh MUST NOT resurrect expired or revoked sessions —
+	// otherwise a captured session id is valid forever to anyone
+	// who can call Refresh (the SSO server doesn't expose Refresh
+	// directly, but admin RPCs / embedders calling SessionManager
+	// from their own handlers could trip this). Surface as
+	// SessionNotFound so the failure shape matches what Get would
+	// have returned.
+	if s.Revoked || s.IsExpired() {
+		return nil, sso.ErrSessionNotFound
+	}
 	s.ExpiresAt = time.Now().Add(m.ttl)
 	return s, nil
 }

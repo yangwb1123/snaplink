@@ -145,11 +145,18 @@ func (s *SessionManager) Destroy(ctx context.Context, sessionID string) error {
 // UPDATE ... RETURNING gives us the post-update row in one round-
 // trip + atomically tests existence.
 func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Session, error) {
+	// Refresh MUST NOT resurrect expired or revoked sessions —
+	// otherwise a captured session id is valid forever to anyone
+	// who can call Refresh. The WHERE clause filters out both
+	// failure modes BEFORE the UPDATE fires; combined with
+	// RETURNING, an attempted resurrect surfaces as sql.ErrNoRows
+	// (mapped to ErrSessionNotFound) instead of silent extension.
+	now := time.Now()
 	row := s.db.QueryRowContext(ctx, `
         UPDATE sessions SET expires_at = ?
-          WHERE id = ?
+          WHERE id = ? AND revoked = 0 AND expires_at > ?
         RETURNING id, user_id, created_at, expires_at, revoked`,
-		time.Now().Add(s.ttl).UnixNano(), sessionID,
+		now.Add(s.ttl).UnixNano(), sessionID, now.UnixNano(),
 	)
 	out, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {

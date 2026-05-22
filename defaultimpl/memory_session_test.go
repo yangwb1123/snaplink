@@ -89,6 +89,36 @@ func TestMemorySessionManager_RefreshMissing(t *testing.T) {
 	}
 }
 
+// TestMemorySessionManager_RefreshRefusesExpired pins the security
+// invariant — a captured session id past its expiry MUST NOT be
+// resurrectable by calling Refresh. Pre-fix this test failed: the
+// old Refresh just bumped ExpiresAt without checking IsExpired.
+func TestMemorySessionManager_RefreshRefusesExpired(t *testing.T) {
+	m := NewMemorySessionManager(10 * time.Millisecond)
+	s, _ := m.Create(context.Background(), "alice")
+	time.Sleep(20 * time.Millisecond) // session past ExpiresAt
+	if _, err := m.Refresh(context.Background(), s.ID); !errors.Is(err, sso.ErrSessionNotFound) {
+		t.Fatalf("expired Refresh: got %v, want ErrSessionNotFound", err)
+	}
+}
+
+// TestMemorySessionManager_RefreshRefusesRevoked covers the
+// admin-revocation case — operator revokes a session, attacker
+// captures the id, tries to extend. MUST fail.
+func TestMemorySessionManager_RefreshRefusesRevoked(t *testing.T) {
+	m := NewMemorySessionManager(time.Hour)
+	s, _ := m.Create(context.Background(), "alice")
+	// Mark revoked directly via the underlying map (admin
+	// revocation path; SDK exposes Destroy + revoke methods that
+	// vary by store, but the Revoked field on the struct is the
+	// canonical signal).
+	stored, _ := m.Get(context.Background(), s.ID)
+	stored.Revoked = true
+	if _, err := m.Refresh(context.Background(), s.ID); !errors.Is(err, sso.ErrSessionNotFound) {
+		t.Fatalf("revoked Refresh: got %v, want ErrSessionNotFound", err)
+	}
+}
+
 func TestMemorySessionManager_ListByUser(t *testing.T) {
 	m := NewMemorySessionManager(time.Hour)
 	_, _ = m.Create(context.Background(), "alice")
