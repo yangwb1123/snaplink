@@ -97,12 +97,20 @@ type MFAConfig struct {
 	Challenge MFAChallengeConfig `yaml:"challenge"`
 }
 
-// MFAProviderConfig selects the step-up factor implementation. Only
-// "totp" currently has a YAML toggle; richer providers (webauthn,
-// push, IdP step-up) ship in the SDK and embedders wire them via
-// [sso.WithMFAProvider] directly.
+// MFAProviderConfig selects the step-up factor implementation.
+// "totp" and "webauthn" ship as YAML-toggleable kinds; richer
+// providers (push, IdP step-up) ship in the SDK and embedders wire
+// them via [sso.WithMFAProvider] directly.
+//
+// kind=multi composes several leaf kinds via the SDK's
+// [defaultimpl.MultiMFAProvider] — operators wanting concurrent
+// TOTP + WebAuthn factors set Kind="multi" + Kinds=[totp, webauthn]
+// so users with a registered authenticator get the WebAuthn flow
+// while users without one fall back to TOTP. Kinds dedup at
+// construction; nested multi is rejected (no recursion).
 type MFAProviderConfig struct {
-	Kind string `yaml:"kind"`
+	Kind  string   `yaml:"kind"`
+	Kinds []string `yaml:"kinds"` // used when Kind=multi
 }
 
 // MFAChallengeConfig selects the MFAChallengeStore backend + per-

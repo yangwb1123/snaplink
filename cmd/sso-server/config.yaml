@@ -818,7 +818,15 @@ risk:
 mfa:
   enabled: false
   provider:
-    kind: "totp"           # totp | webauthn; custom factors via SDK
+    kind: "totp"           # totp | webauthn | multi; custom factors via SDK
+    # When kind=multi, list the inner leaf kinds users can pick from
+    # at /auth/mfa time. The composite implements MFABeginner so
+    # two-call factors (webauthn) coexist with single-call factors
+    # (totp). Nesting kind=multi inside the kinds list is rejected;
+    # duplicate entries are rejected. Empty / single-entry kinds list
+    # is rejected (use the leaf kind directly).
+    # kinds: ["totp", "webauthn"]
+    kinds: []
   challenge:
     backend: "memory"      # memory | sqlite
     ttl: 5m                # 0 = SDK default (5m)

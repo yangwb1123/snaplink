@@ -296,3 +296,136 @@ func TestBuildMFA_WebAuthnRequiresHelper(t *testing.T) {
 		t.Fatal("buildMFA: want error when webauthn provider requested without Helper")
 	}
 }
+
+func newTestWebAuthnHelper(t *testing.T) *webauthn.Helper {
+	t.Helper()
+	h, err := webauthn.NewHelper(webauthn.Config{
+		RPID:      "example.com",
+		RPOrigins: []string{"https://sso.example.com"},
+	}, webauthn.NewMemoryUserStore(), webauthn.NewMemorySessionStore())
+	if err != nil {
+		t.Fatalf("NewHelper: %v", err)
+	}
+	return h
+}
+
+// TestBuildMFA_MultiKindComposesBothFactors proves kind=multi with a
+// totp + webauthn Kinds list wires a MultiMFAProvider that lists
+// both methods. The composite implements MFABeginner so the two-call
+// dispatch path for WebAuthn still works alongside the single-call
+// TOTP factor.
+func TestBuildMFA_MultiKindComposesBothFactors(t *testing.T) {
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
+	helper := newTestWebAuthnHelper(t)
+	provider, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind:  "multi",
+			Kinds: []string{"totp", "webauthn"},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, totpAuth, helper, quietLogger())
+	if err != nil {
+		t.Fatalf("buildMFA: %v", err)
+	}
+	methods := provider.SupportedMethods()
+	wantSet := map[string]bool{authenticators.MethodTOTP: false, webauthn.MethodWebAuthn: false}
+	for _, m := range methods {
+		if _, ok := wantSet[m]; ok {
+			wantSet[m] = true
+		}
+	}
+	for m, seen := range wantSet {
+		if !seen {
+			t.Errorf("composite missing method %q (got %v)", m, methods)
+		}
+	}
+	if _, ok := provider.(sso.MFABeginner); !ok {
+		t.Error("composite should implement MFABeginner so WebAuthn dispatch fires")
+	}
+}
+
+// TestBuildMFA_MultiRequiresTwoKinds proves an empty or single-entry
+// Kinds list when kind=multi errors loudly — a one-element multi is
+// a misconfiguration (use the leaf kind directly).
+func TestBuildMFA_MultiRequiresTwoKinds(t *testing.T) {
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
+	for _, tc := range []struct {
+		name  string
+		kinds []string
+	}{
+		{"empty", nil},
+		{"single", []string{"totp"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, _, err := buildMFA(config.MFAConfig{
+				Enabled: true,
+				Provider: config.MFAProviderConfig{
+					Kind:  "multi",
+					Kinds: tc.kinds,
+				},
+				Challenge: config.MFAChallengeConfig{Backend: "memory"},
+			}, totpAuth, nil, quietLogger())
+			if err == nil {
+				t.Fatalf("want error for kinds=%v", tc.kinds)
+			}
+		})
+	}
+}
+
+// TestBuildMFA_MultiRejectsNestedMulti proves nesting kind=multi
+// inside another multi is forbidden — keeps the operator surface
+// flat (one level of composition; richer trees implement
+// MFAProvider directly in the SDK).
+func TestBuildMFA_MultiRejectsNestedMulti(t *testing.T) {
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind:  "multi",
+			Kinds: []string{"totp", "multi"},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, totpAuth, nil, quietLogger())
+	if err == nil {
+		t.Fatal("want error when kinds list contains 'multi'")
+	}
+}
+
+// TestBuildMFA_MultiRejectsDuplicateKinds proves duplicate entries
+// in the Kinds list error loudly — the underlying MultiMFAProvider
+// would also reject via method-conflict, but failing earlier (at
+// the YAML layer) gives operators a clearer error.
+func TestBuildMFA_MultiRejectsDuplicateKinds(t *testing.T) {
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind:  "multi",
+			Kinds: []string{"totp", "totp"},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, totpAuth, nil, quietLogger())
+	if err == nil {
+		t.Fatal("want error on duplicate kinds entry")
+	}
+}
+
+// TestBuildMFA_MultiPropagatesInnerKindError proves an inner kind
+// failing to build (e.g. webauthn without helper) surfaces as a
+// wrapped error naming which inner kind failed — operators see
+// the leaf kind in the error string for fast diagnosis.
+func TestBuildMFA_MultiPropagatesInnerKindError(t *testing.T) {
+	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
+	_, _, _, _, err := buildMFA(config.MFAConfig{
+		Enabled: true,
+		Provider: config.MFAProviderConfig{
+			Kind:  "multi",
+			Kinds: []string{"totp", "webauthn"},
+		},
+		Challenge: config.MFAChallengeConfig{Backend: "memory"},
+	}, totpAuth, nil, quietLogger()) // webauthnHelper=nil
+	if err == nil {
+		t.Fatal("want error when inner webauthn kind has no helper")
+	}
+}

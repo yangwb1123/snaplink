@@ -1196,7 +1196,8 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		return nil, nil, 0, "", nil
 	}
 
-	// Provider: "totp" and "webauthn" carry YAML toggles. Other factors
+	// Provider: "totp" and "webauthn" carry YAML toggles. "multi"
+	// composes several leaf kinds via MultiMFAProvider. Other factors
 	// (push, IdP redirect, hardware OTP) ship in the SDK and embedders
 	// wire them via WithMFAProvider directly, so this switch
 	// intentionally stays narrow.
@@ -1204,24 +1205,9 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 	if kind == "" {
 		kind = "totp"
 	}
-	var provider sso.MFAProvider
-	switch kind {
-	case "totp":
-		if totpAuth == nil {
-			return nil, nil, 0, "", errors.New("mfa.provider.kind=totp requires authenticators.totp.enabled=true")
-		}
-		provider = authenticators.NewTOTPMFAProvider(totpAuth)
-	case "webauthn":
-		if webauthnHelper == nil {
-			return nil, nil, 0, "", errors.New("mfa.provider.kind=webauthn requires webauthn.enabled=true")
-		}
-		p, err := webauthn.NewWebAuthnMFAProvider(webauthnHelper)
-		if err != nil {
-			return nil, nil, 0, "", fmt.Errorf("mfa.provider.kind=webauthn: %w", err)
-		}
-		provider = p
-	default:
-		return nil, nil, 0, "", fmt.Errorf("unknown mfa.provider.kind %q (supported: totp, webauthn)", kind)
+	provider, err := buildMFAProviderByKind(kind, cfg.Provider.Kinds, totpAuth, webauthnHelper)
+	if err != nil {
+		return nil, nil, 0, "", err
 	}
 
 	// Challenge store: memory for single-replica, sqlite for clusters.
@@ -1258,6 +1244,62 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		"ttl", cfg.Challenge.TTL)
 
 	return provider, store, cfg.Challenge.TTL, storeKind, nil
+}
+
+// buildMFAProviderByKind constructs the MFA provider tree for the
+// requested kind. Recursive for kind=multi (one level only — nested
+// multi is rejected to keep the operator surface flat). Leaf kinds
+// (totp, webauthn) fail loud when their underlying dependency
+// (totpAuth or webauthnHelper) is nil.
+//
+// outerKinds is the cfg.Provider.Kinds slice — used only when
+// kind=multi to list the inner leaf kinds. Empty or single-entry
+// Kinds when kind=multi → error (a multi with zero or one inner
+// provider is a misconfiguration; use the leaf kind directly).
+func buildMFAProviderByKind(kind string, outerKinds []string, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper) (sso.MFAProvider, error) {
+	switch kind {
+	case "totp":
+		if totpAuth == nil {
+			return nil, errors.New("mfa.provider.kind=totp requires authenticators.totp.enabled=true")
+		}
+		return authenticators.NewTOTPMFAProvider(totpAuth), nil
+	case "webauthn":
+		if webauthnHelper == nil {
+			return nil, errors.New("mfa.provider.kind=webauthn requires webauthn.enabled=true")
+		}
+		p, err := webauthn.NewWebAuthnMFAProvider(webauthnHelper)
+		if err != nil {
+			return nil, fmt.Errorf("mfa.provider.kind=webauthn: %w", err)
+		}
+		return p, nil
+	case "multi":
+		if len(outerKinds) < 2 {
+			return nil, errors.New("mfa.provider.kind=multi requires at least two entries in mfa.provider.kinds")
+		}
+		seen := make(map[string]struct{}, len(outerKinds))
+		innerProviders := make([]sso.MFAProvider, 0, len(outerKinds))
+		for _, inner := range outerKinds {
+			innerKind := strings.ToLower(strings.TrimSpace(inner))
+			if innerKind == "" {
+				return nil, errors.New("mfa.provider.kinds contains an empty entry")
+			}
+			if innerKind == "multi" {
+				return nil, errors.New("mfa.provider.kinds cannot contain 'multi' (no nesting)")
+			}
+			if _, dup := seen[innerKind]; dup {
+				return nil, fmt.Errorf("mfa.provider.kinds duplicate entry %q", innerKind)
+			}
+			seen[innerKind] = struct{}{}
+			p, err := buildMFAProviderByKind(innerKind, nil, totpAuth, webauthnHelper)
+			if err != nil {
+				return nil, fmt.Errorf("mfa.provider.kinds[%s]: %w", innerKind, err)
+			}
+			innerProviders = append(innerProviders, p)
+		}
+		return defaultimpl.NewMultiMFAProvider(innerProviders...)
+	default:
+		return nil, fmt.Errorf("unknown mfa.provider.kind %q (supported: totp, webauthn, multi)", kind)
+	}
 }
 
 // buildNetworkStore materializes the netpolicy.Store for cmd.

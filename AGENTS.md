@@ -706,15 +706,20 @@ the operator surface needs explanation:
   `authenticators.totp` secret store + skew (single enrollment, two
   consumer roles); `kind=webauthn` reuses the `webauthn.enabled`
   Helper (UserStore + SessionStore + RP config — same enrollment as
-  primary `/webauthn/login`). `challenge.backend(memory|sqlite)`
+  primary `/webauthn/login`); `kind=multi` composes several leaf
+  kinds via `defaultimpl.MultiMFAProvider`, listed under
+  `provider.kinds:` — operators offering concurrent TOTP fallback +
+  WebAuthn primary use this. `challenge.backend(memory|sqlite)`
   shares in-flight MFA challenges across replicas. Disabled or
   unwired → RequireMFA decays to Allow (back-compat). cmd refuses
-  `kind=totp` unless `authenticators.totp.enabled=true` and
+  `kind=totp` unless `authenticators.totp.enabled=true`,
   `kind=webauthn` unless `webauthn.enabled=true` (shared-store
-  contract). The WebAuthn provider implements [MFABeginner] so the
-  `mfa_required` response surfaces `mfa_method_data["webauthn"]
-  = {options, session}` for the client to feed to
-  `navigator.credentials.get`.
+  contract), and `kind=multi` with empty / single-entry / duplicate
+  / nested-multi `kinds` lists. The WebAuthn provider implements
+  [MFABeginner] so the `mfa_required` response surfaces
+  `mfa_method_data["webauthn"] = {options, session}` for the client
+  to feed to `navigator.credentials.get`; multi inherits this via
+  the composite's MFABeginner.
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.
