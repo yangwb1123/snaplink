@@ -682,6 +682,13 @@ the operator surface needs explanation:
 - **backchannel_logout.index.backend(memory|sqlite)** — sqlite shares
   fan-out set across the cluster.
 - **webauthn.storage.{users,sessions}.backend(memory|sqlite)**.
+- **mfa** — opts into step-up orchestration gated by Risk's
+  `DecisionRequireMFA`. `provider.kind=totp` reuses the
+  `authenticators.totp` secret store + skew (single enrollment, two
+  consumer roles). `challenge.backend(memory|sqlite)` shares in-flight
+  challenges across replicas. Disabled or unwired → RequireMFA decays
+  to Allow (back-compat). cmd refuses `kind=totp` unless
+  `authenticators.totp.enabled=true` (the shared-store contract).
 
 `client_id: ""` is a valid bucket (the demo uses it). Production tokens
 should carry an explicit audience.

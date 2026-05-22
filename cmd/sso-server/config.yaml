@@ -786,6 +786,40 @@ risk:
   # - "DE"
   deny_on_geo_missing: false
 
+# Step-up MFA orchestration. The Risk scorer above (or any custom
+# sso.RiskScorer the SDK is configured with) gates flagged logins
+# through a second factor by returning DecisionRequireMFA: the server
+# responds to /auth/login with mfa_required + a challenge id, the
+# client POSTs the second factor to /auth/mfa, and on success the
+# response replays the same token-mint shape the no-MFA path would
+# have minted (caller can't tell the two cases apart).
+#
+# Without both provider + challenge backend wired, RequireMFA decays
+# to Allow (back-compat preserved for callers that pre-date this
+# orchestration). Set enabled=false to bypass entirely.
+#
+# provider.kind=totp shares the same secret store + skew policy as
+# the primary authenticators.totp authenticator — one user enrollment
+# serves both primary auth and step-up. Other factor kinds (WebAuthn
+# step-up, push notification, hardware FIDO2, upstream IdP) implement
+# sso.MFAProvider directly in the SDK and bypass this YAML knob.
+#
+# challenge.backend=memory is single-replica only — a challenge issued
+# by one replica is unknown to other replicas, so /auth/mfa routed
+# through a load balancer without session affinity surfaces
+# mfa_invalid even on correct codes. Use sqlite for clusters.
+mfa:
+  enabled: false
+  provider:
+    kind: "totp"           # currently only totp; custom factors via SDK
+  challenge:
+    backend: "memory"      # memory | sqlite
+    ttl: 5m                # 0 = SDK default (5m)
+    sqlite:
+      # Same DSN cookbook as the rest of the SQLite substrate:
+      # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000"
+      dsn: ""
+
 # Frontend + backend app version pin / rollback. Pinner.PinForward +
 # PinRollback encode asymmetric ordering (backend-first forward,
 # frontend-first rollback). HealthProbe gates forward Pin; all-fail

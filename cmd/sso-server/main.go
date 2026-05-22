@@ -1177,6 +1177,79 @@ func buildRiskScorer(cfg *config.RiskConfig, logger sso.Logger) (sso.RiskScorer,
 	return scorer, nil
 }
 
+// buildMFA materializes the MFA orchestration triple: provider, store,
+// per-challenge TTL. Returns (nil, nil, 0, "", nil) when MFA is
+// disabled so cmd skips WithMFAProvider / WithMFAChallengeStore entirely
+// — RequireMFA then decays to Allow (back-compat).
+//
+// totpAuth is the *authenticators.TOTPAuthenticator instance built in
+// buildAuthenticators; passing the same instance here means the TOTP
+// secret store + skew policy is single-source between primary auth
+// (/auth/login?provider=totp) and MFA step-up (/auth/mfa) — one user
+// enrollment, two consumer roles.
+//
+// The returned mode string is a short backend identifier emitted in
+// the startup log + suitable for /readyz wiring suffixes.
+func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, logger sso.Logger) (sso.MFAProvider, sso.MFAChallengeStore, time.Duration, string, error) {
+	if !cfg.Enabled {
+		return nil, nil, 0, "", nil
+	}
+
+	// Provider: only "totp" carries a YAML toggle. Other factors
+	// (webauthn step-up, push, IdP redirect) ship in the SDK and
+	// embedders wire them via WithMFAProvider directly, so this
+	// switch intentionally stays narrow.
+	kind := strings.ToLower(strings.TrimSpace(cfg.Provider.Kind))
+	if kind == "" {
+		kind = "totp"
+	}
+	var provider sso.MFAProvider
+	switch kind {
+	case "totp":
+		if totpAuth == nil {
+			return nil, nil, 0, "", errors.New("mfa.provider.kind=totp requires authenticators.totp.enabled=true")
+		}
+		provider = authenticators.NewTOTPMFAProvider(totpAuth)
+	default:
+		return nil, nil, 0, "", fmt.Errorf("unknown mfa.provider.kind %q (supported: totp)", kind)
+	}
+
+	// Challenge store: memory for single-replica, sqlite for clusters.
+	// Same backend-selection pattern AccountLockout / SubjectClientIndex
+	// use; the schema gets migrated at construction so no separate
+	// boot step is required.
+	backend := strings.ToLower(strings.TrimSpace(cfg.Challenge.Backend))
+	var (
+		store     sso.MFAChallengeStore
+		storeKind string
+	)
+	switch backend {
+	case "", "memory":
+		store = defaultimpl.NewMemoryMFAChallengeStore()
+		storeKind = "memory (single-replica only)"
+	case "sqlite":
+		if cfg.Challenge.SQLite.DSN == "" {
+			return nil, nil, 0, "", errors.New("mfa.challenge.sqlite.dsn required when backend=sqlite")
+		}
+		s, err := sqlitestores.NewMFAChallengeStore(cfg.Challenge.SQLite.DSN)
+		if err != nil {
+			return nil, nil, 0, "", err
+		}
+		store = s
+		storeKind = "sqlite (cluster-shared)"
+	default:
+		return nil, nil, 0, "", fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite)", backend)
+	}
+
+	logger.Info("mfa orchestration enabled",
+		"provider", kind,
+		"methods", provider.SupportedMethods(),
+		"store", storeKind,
+		"ttl", cfg.Challenge.TTL)
+
+	return provider, store, cfg.Challenge.TTL, storeKind, nil
+}
+
 // buildNetworkStore materializes the netpolicy.Store for cmd.
 //
 // Memory backend defers to [config.Config.BuildNetworkStore] (which
@@ -1695,7 +1768,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		}
 	}
 
-	auths, tempStore := buildAuthenticators(cfg, logger)
+	auths, tempStore, totpAuth := buildAuthenticators(cfg, logger)
 	for _, ath := range auths {
 		opts = append(opts, sso.WithAuthenticator(ath))
 	}
@@ -1723,6 +1796,22 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}
 	if riskScorer != nil {
 		opts = append(opts, sso.WithRiskScorer(riskScorer))
+	}
+
+	// MFA orchestration wired AFTER the risk scorer so the wire-up
+	// order matches the runtime gating order (Risk emits
+	// DecisionRequireMFA → MFA orchestration consumes it). Without
+	// both Provider + Store opts, RequireMFA decays to Allow — same
+	// back-compat fall-through embedders see when they ship a Risk
+	// scorer ahead of MFA.
+	mfaProvider, mfaStore, mfaTTL, _, err := buildMFA(cfg.MFA, totpAuth, logger)
+	if err != nil {
+		return nil, fmt.Errorf("mfa: %w", err)
+	}
+	if mfaProvider != nil && mfaStore != nil {
+		opts = append(opts, sso.WithMFAProvider(mfaProvider))
+		opts = append(opts, sso.WithMFAChallengeStore(mfaStore, mfaTTL))
+		opts = appendReadyCheck(opts, "sqlite-mfa-challenges", mfaStore)
 	}
 
 	tenantStore, err := buildTenantStore(cfg, logger)
@@ -2290,12 +2379,18 @@ func loadBcryptHashFile(path string) ([]byte, error) {
 	return []byte(s), nil
 }
 
-// buildAuthenticators returns the configured authenticators and the temp
-// token store, when one is wired. The store is returned separately so the
-// admin TokenAdminService can issue tokens against the same backing store.
-func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authenticator, authenticators.TempTokenStore) {
+// buildAuthenticators returns the configured authenticators, the temp
+// token store (when wired), and the *TOTPAuthenticator handle (when
+// TOTP is enabled). Both ancillary returns are separated so admin /
+// MFA wiring downstream can reuse the same backing instances —
+// admin TokenAdminService issues against the temp store; MFA
+// orchestration wraps the TOTP authenticator with TOTPMFAProvider so
+// step-up and primary auth share one secret store + skew policy.
+// Both return nil when the corresponding authenticator is disabled.
+func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
+	var totpAuth *authenticators.TOTPAuthenticator
 	codeStore := authenticators.NewMemoryCodeStore()
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
@@ -2409,9 +2504,13 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 		if a.SkewSteps > 0 {
 			totpOpts = append(totpOpts, authenticators.WithTOTPSkew(a.SkewSteps))
 		}
-		auths = append(auths, authenticators.NewTOTPAuthenticator(
+		// Held as a typed handle so buildMFA can wrap this exact
+		// instance with TOTPMFAProvider — one secret store, two
+		// consumer roles (primary auth + step-up MFA).
+		totpAuth = authenticators.NewTOTPAuthenticator(
 			authenticators.NewMemoryTOTPStore(), totpOpts...,
-		))
+		)
+		auths = append(auths, totpAuth)
 		logger.Info("totp authenticator enabled (memory store; supply your own TOTPStore for production)")
 	}
 
@@ -2438,7 +2537,7 @@ func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authentic
 		auths = append(auths, auth)
 		logger.Info("oidc_federation enabled", "provider", fed.Name, "authorization_endpoint", fed.AuthorizationEndpoint)
 	}
-	return auths, tempStore
+	return auths, tempStore, totpAuth
 }
 
 func logEndpoints(cfg *config.Config, grpcListen string) {

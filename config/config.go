@@ -47,6 +47,7 @@ type Config struct {
 	WebAuthn           WebAuthnConfig           `yaml:"webauthn"`
 	Registry           RegistryConfig           `yaml:"registry"`
 	Risk               RiskConfig               `yaml:"risk"`
+	MFA                MFAConfig                `yaml:"mfa"`
 }
 
 // RiskConfig wires the reference rule-based [sso.RiskScorer] into
@@ -68,6 +69,58 @@ type RiskConfig struct {
 	CountryDenyList  []string `yaml:"country_deny_list"`
 	CountryAllowList []string `yaml:"country_allow_list"`
 	DenyOnGeoMissing bool     `yaml:"deny_on_geo_missing"`
+}
+
+// MFAConfig wires the step-up MFA orchestration that gates risk-
+// flagged logins through a second factor. When [RiskConfig] (or any
+// custom [sso.RiskScorer] supplied via the SDK) returns
+// DecisionRequireMFA, /auth/login responds with mfa_required +
+// challenge_id; the client posts the second factor to /auth/mfa
+// and on success the server replays the standard token-mint response
+// — the caller can't tell an MFA-gated login from a non-gated one.
+//
+// Without Provider + Challenge.Backend both wired, RequireMFA decays
+// to Allow (back-compat: scorers may ship the decision ahead of the
+// operator wiring the orchestration). Enabled=false short-circuits
+// to the same fallthrough so flipping the flag is the only switch
+// operators need to disable MFA cluster-wide.
+//
+// Provider.Kind selects the factor implementation. "totp" reuses
+// the same TOTPAuthenticator + secret store the primary
+// /auth/login?provider=totp flow uses — one enrollment, two roles
+// (requires authenticators.totp.enabled). Custom factors (WebAuthn
+// step-up, push notification, hardware FIDO2) implement
+// [sso.MFAProvider] directly and bypass this YAML knob.
+type MFAConfig struct {
+	Enabled   bool               `yaml:"enabled"`
+	Provider  MFAProviderConfig  `yaml:"provider"`
+	Challenge MFAChallengeConfig `yaml:"challenge"`
+}
+
+// MFAProviderConfig selects the step-up factor implementation. Only
+// "totp" currently has a YAML toggle; richer providers (webauthn,
+// push, IdP step-up) ship in the SDK and embedders wire them via
+// [sso.WithMFAProvider] directly.
+type MFAProviderConfig struct {
+	Kind string `yaml:"kind"`
+}
+
+// MFAChallengeConfig selects the MFAChallengeStore backend + per-
+// challenge TTL. memory keeps single-replica deploys simple; sqlite
+// shares challenges across replicas so a challenge minted on replica
+// A is consumable on replica B (which load balancers without session
+// affinity always demand).
+//
+// TTL defaults to [sso.DefaultMFAChallengeTTL] (5 minutes) when
+// unset / <= 0.
+type MFAChallengeConfig struct {
+	Backend string                   `yaml:"backend"`
+	TTL     time.Duration            `yaml:"ttl"`
+	SQLite  MFAChallengeSQLiteConfig `yaml:"sqlite"`
+}
+
+type MFAChallengeSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // RegistryConfig configures the service registry (etcd or in-process

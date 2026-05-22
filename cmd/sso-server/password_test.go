@@ -215,7 +215,7 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _ := buildAuthenticators(cfg, quietLogger())
 	for _, a := range auths {
 		if a.Name() == "password" {
 			return
