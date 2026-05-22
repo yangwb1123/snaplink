@@ -225,42 +225,5 @@ func (m *MemoryProvider) Menus(ctx context.Context, userID, clientID string) (Me
 }
 
 func filterMenus(in MenuTree, perms []Permission) MenuTree {
-	out := make(MenuTree, 0, len(in))
-	for _, item := range in {
-		var kept []MenuItem
-		if len(item.Children) > 0 {
-			kept = filterMenus(item.Children, perms)
-		}
-		ownAllowed := item.Permission == "" || Matches(perms, item.Permission)
-		if !ownAllowed && len(kept) == 0 {
-			continue
-		}
-		buttons := filterButtons(item.Buttons, perms)
-		out = append(out, MenuItem{
-			ID:         item.ID,
-			Name:       item.Name,
-			Path:       item.Path,
-			Icon:       item.Icon,
-			Permission: item.Permission,
-			Buttons:    buttons,
-			Children:   kept,
-		})
-	}
-	return out
-}
-
-func filterButtons(in []Button, perms []Permission) []Button {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]Button, 0, len(in))
-	for _, b := range in {
-		if b.Permission == "" || Matches(perms, b.Permission) {
-			out = append(out, b)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return FilterMenuTree(in, perms)
 }
