@@ -1,7 +1,11 @@
 # Built binaries (Go produces these at module root and cmd/*; the
 # Makefile builds into /bin; goreleaser snapshot output lands in /dist).
 /sso-server
+/sso-audit-verify
+/sso-snapshotctl
 /cmd/sso-server/sso-server
+/cmd/sso-audit-verify/sso-audit-verify
+/cmd/sso-snapshotctl/sso-snapshotctl
 /bin/
 /dist/
 
