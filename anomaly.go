@@ -1,0 +1,495 @@
+package sso
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/geo"
+)
+
+// AnomalyDetector runs OFF the request hot path on every login event
+// (success or failure) and surfaces behavioral anomalies the
+// synchronous [RiskScorer] can't detect: impossible travel, velocity
+// surges, new device / country, brute-force horizontal sprays.
+//
+// Why a separate SPI from RiskScorer:
+//
+//   - RiskScorer is synchronous — it MUST return in milliseconds so
+//     the login path doesn't stall. That budget rules out anything
+//     needing windowed aggregation or per-subject baseline lookups
+//     beyond a single fast key.
+//   - Anomaly detection is inherently AFTER-THE-FACT: by the time
+//     "impossible travel" is detectable, the suspicious login has
+//     already returned a token. Forcing this signal into the request
+//     path either causes false-positive denials (VPN users, mobile
+//     IP roaming) or starves real signals (operators set thresholds
+//     conservative to avoid blocking legitimate users → real attacks
+//     slip through).
+//   - Operators want anomalies → audit + webhook + user email, NOT
+//     direct login denials. The differentiator vs synchronous risk
+//     is "tell me what's unusual, let me decide policy" rather than
+//     "block on every guess."
+//
+// Implementations get one Inspect call per LoginEvent and return zero
+// or more [Anomaly]s. The runner emits each as an audit event +
+// metric + optional webhook. Errors are logged but never propagate
+// back to the login response.
+//
+// Detectors are stateful — they typically consult a
+// [RecentLoginStore] / [KnownDeviceStore] / similar history backend.
+// Implementations are responsible for their own state queries inside
+// Inspect; the runner provides only ctx + the event.
+type AnomalyDetector interface {
+	// Name is the detector identifier used in audit events + metric
+	// labels (e.g. "impossible_travel", "velocity"). Stable wire
+	// string.
+	Name() string
+
+	// Inspect examines the event and returns any anomalies it
+	// detected. nil + no error = nothing to report. Error is
+	// logged at warn level and metric'd — the runner does NOT
+	// re-queue; transient backend issues (DB timeout) are accepted
+	// rather than backpressured into the login path.
+	Inspect(ctx context.Context, event *LoginEvent) ([]Anomaly, error)
+}
+
+// LoginEvent is the dispatched signal — captures everything detectors
+// need without forcing them back through the audit/recorder path.
+// Built at /auth/login terminus + handed to the AsyncAnomalyRunner
+// via a bounded queue.
+type LoginEvent struct {
+	// SubjectID is the user resolved by the authenticator on success,
+	// or the attempted identifier (username / phone / email) on
+	// failure. Detectors comparing across success+failure use this
+	// as the join key; missing → detectors should skip the subject-
+	// scoped checks.
+	SubjectID string
+
+	// ClientID is the registered Client.ID.
+	ClientID string
+
+	// Provider is the authenticator name ("password" / "phone" /
+	// "webauthn" / "totp" / etc).
+	Provider string
+
+	// Outcome is "success" or "failure". Same vocabulary as
+	// sso_login_attempts_total{outcome}.
+	Outcome string
+
+	// FailureReason is non-empty only on failure; mirrors the audit
+	// Event.Reason field. Detectors classifying failure types
+	// (brute-force vs credential typo) branch on this.
+	FailureReason string
+
+	// RemoteIP is the apparent client IP, extracted with the same
+	// X-Forwarded-For-aware logic the audit pipeline uses.
+	RemoteIP string
+
+	// UserAgent is the raw User-Agent header. Empty when absent.
+	// Detectors hashing for device fingerprint should hash on demand
+	// (avoid persisting raw UA — PII-adjacent).
+	UserAgent string
+
+	// Geo is populated when [WithGeoProvider] is wired and geo
+	// enrichment ran. May be nil — detectors degrade gracefully.
+	Geo *geo.GeoInfo
+
+	// TraceID joins the anomaly back to the originating request in
+	// distributed traces (same TraceID the audit event carries).
+	TraceID string
+
+	// Timestamp is the request time, captured by the server (NOT
+	// client-controlled).
+	Timestamp time.Time
+}
+
+// Anomaly is one detector's signal that something looks unusual.
+// Multiple Anomalies per LoginEvent are allowed (a single login can
+// trip impossible-travel + new-country simultaneously).
+type Anomaly struct {
+	// Type is a stable wire string identifying the anomaly class
+	// (e.g. "impossible_travel", "velocity_burst", "new_country").
+	// Used as a metric label — keep cardinality bounded.
+	Type string
+
+	// Severity ∈ {"info", "warn", "critical"}. Drives downstream
+	// routing (info → audit only; warn → audit + webhook;
+	// critical → audit + webhook + user notification).
+	Severity AnomalySeverity
+
+	// Score 0..100, higher = more anomalous. Detectors with a
+	// natural confidence interval populate this; binary detectors
+	// (new device yes/no) leave it 0.
+	Score int
+
+	// Evidence is the detector's structured rationale. Logged on
+	// the audit event as metadata so operators can investigate
+	// without rerunning the detection. Keep keys to a stable schema
+	// per detector (e.g. impossible_travel always sets "distance_km"
+	// + "elapsed_seconds" + "implied_speed_kmh").
+	Evidence map[string]string
+
+	// SubjectID is the user the anomaly applies to. Populated even
+	// when LoginEvent.SubjectID was empty if the detector resolved
+	// it (e.g. brute-force shadow that recognizes the attacker as
+	// "scanning user X").
+	SubjectID string
+}
+
+// AnomalySeverity ∈ {info, warn, critical}. Wire string.
+type AnomalySeverity string
+
+const (
+	AnomalySeverityInfo     AnomalySeverity = "info"
+	AnomalySeverityWarn     AnomalySeverity = "warn"
+	AnomalySeverityCritical AnomalySeverity = "critical"
+)
+
+// AsyncAnomalyRunner is the worker pool that fans LoginEvents out
+// to every registered detector. Mirrors the [audit.AsyncSink]
+// shape — bounded queue, worker pool, drop-on-overflow with metric.
+// The login path's Dispatch call is non-blocking under normal load
+// + bounded under saturation.
+//
+// Lifecycle:
+//
+//	r := NewAsyncAnomalyRunner(detectors, sink)
+//	r.Start()                       // launches workers
+//	srv := sso.NewServer(sso.WithAnomalyRunner(r), ...)
+//	// ... server runs ...
+//	r.Close(ctx)                    // drains queue, waits for workers
+type AsyncAnomalyRunner struct {
+	detectors []AnomalyDetector
+	sink      AnomalySink
+
+	queueSize int
+	workers   int
+	queue     chan *LoginEvent
+	wg        sync.WaitGroup
+	started   atomicBool
+	closed    atomicBool
+
+	// Metrics + logger left as fields for testability; cmd wires
+	// real values, tests inject stubs.
+	metrics *anomalyMetrics
+	logger  Logger
+
+	// dropPolicy controls what happens when the queue is full.
+	// "drop_newest" returns immediately (default; load-shedding);
+	// "block" applies backpressure (use only when the login path
+	// can tolerate it — typically never).
+	dropPolicy AnomalyDropPolicy
+}
+
+// AnomalyDropPolicy controls behavior when the worker queue is full.
+type AnomalyDropPolicy string
+
+const (
+	// AnomalyDropNewest drops the incoming event + bumps the drop
+	// counter. Default. Right choice for "anomaly detection is
+	// best-effort, never block the login path."
+	AnomalyDropNewest AnomalyDropPolicy = "drop_newest"
+
+	// AnomalyDropBlock backpressures Dispatch until queue space
+	// frees. Use only when you've measured the login path can
+	// tolerate it.
+	AnomalyDropBlock AnomalyDropPolicy = "block"
+)
+
+// AnomalyRunnerOption tunes the runner at construction.
+type AnomalyRunnerOption func(*AsyncAnomalyRunner)
+
+// WithAnomalyQueueSize sets the bounded queue depth. Default 1024.
+// Lower = sheds load sooner; higher = absorbs bursts at the cost
+// of memory.
+func WithAnomalyQueueSize(n int) AnomalyRunnerOption {
+	return func(r *AsyncAnomalyRunner) {
+		if n > 0 {
+			r.queueSize = n
+		}
+	}
+}
+
+// WithAnomalyWorkers sets the worker goroutine count. Default 4.
+// More workers = lower per-event latency at the cost of detector
+// store concurrency; usually equal to the number of detectors.
+func WithAnomalyWorkers(n int) AnomalyRunnerOption {
+	return func(r *AsyncAnomalyRunner) {
+		if n > 0 {
+			r.workers = n
+		}
+	}
+}
+
+// WithAnomalyDropPolicy overrides drop-newest with block. Use with
+// care — block backpressures into the login Dispatch call.
+func WithAnomalyDropPolicy(p AnomalyDropPolicy) AnomalyRunnerOption {
+	return func(r *AsyncAnomalyRunner) {
+		if p != "" {
+			r.dropPolicy = p
+		}
+	}
+}
+
+// WithAnomalyLogger overrides the runner's logger. Used internally
+// by cmd to share the cmd-level slog; embedders typically don't
+// touch this.
+func WithAnomalyLogger(l Logger) AnomalyRunnerOption {
+	return func(r *AsyncAnomalyRunner) {
+		if l != nil {
+			r.logger = l
+		}
+	}
+}
+
+// NewAsyncAnomalyRunner builds a runner around the given detectors
+// + AnomalySink. sink may be nil (drops every anomaly; useful for
+// tests that observe detectors via direct Inspect calls instead).
+// Returns nil when detectors is empty — the SSO server falls back
+// to the no-op dispatch path.
+func NewAsyncAnomalyRunner(detectors []AnomalyDetector, sink AnomalySink, opts ...AnomalyRunnerOption) *AsyncAnomalyRunner {
+	if len(detectors) == 0 {
+		return nil
+	}
+	r := &AsyncAnomalyRunner{
+		detectors:  detectors,
+		sink:       sink,
+		queueSize:  1024,
+		workers:    4,
+		dropPolicy: AnomalyDropNewest,
+		logger:     NopLogger{},
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	r.queue = make(chan *LoginEvent, r.queueSize)
+	return r
+}
+
+// AnomalySink is what the runner does with each [Anomaly] surfaced
+// by a detector. Implementations typically write an audit event +
+// optionally fan out to a webhook / SIEM / SMTP notifier. The SSO
+// server ships [NewRecorderAnomalySink] which writes an
+// [audit.EventAnomalyDetected] event with the standard metadata
+// shape — most embedders use that.
+type AnomalySink interface {
+	Record(ctx context.Context, event *LoginEvent, anomaly Anomaly) error
+}
+
+// AnomalySinkFunc is a function adapter for AnomalySink.
+type AnomalySinkFunc func(ctx context.Context, event *LoginEvent, anomaly Anomaly) error
+
+// Record implements AnomalySink.
+func (f AnomalySinkFunc) Record(ctx context.Context, event *LoginEvent, anomaly Anomaly) error {
+	return f(ctx, event, anomaly)
+}
+
+// Start launches the worker pool. Safe to call exactly once;
+// subsequent calls are silent no-ops.
+func (r *AsyncAnomalyRunner) Start() {
+	if r == nil || !r.started.compareAndSwap(false, true) {
+		return
+	}
+	for i := 0; i < r.workers; i++ {
+		r.wg.Add(1)
+		go r.work()
+	}
+}
+
+// Dispatch hands the event to the worker pool. Non-blocking under
+// the default drop_newest policy; bounded by ctx under block.
+//
+// Returns immediately on closed runner — login path must never
+// block on a stopped detector subsystem.
+func (r *AsyncAnomalyRunner) Dispatch(ctx context.Context, event *LoginEvent) {
+	if r == nil || r.closed.load() || event == nil {
+		return
+	}
+	switch r.dropPolicy {
+	case AnomalyDropBlock:
+		select {
+		case r.queue <- event:
+		case <-ctx.Done():
+			r.recordDrop("ctx_canceled")
+		}
+	default:
+		select {
+		case r.queue <- event:
+		default:
+			r.recordDrop("queue_full")
+		}
+	}
+}
+
+// Close drains in-flight events + waits for workers to exit. Caller
+// ctx bounds the drain — when ctx expires before all events are
+// processed, the remainder are dropped and the metric is bumped.
+func (r *AsyncAnomalyRunner) Close(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	if !r.closed.compareAndSwap(false, true) {
+		return nil
+	}
+	close(r.queue)
+	done := make(chan struct{})
+	go func() { r.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		r.logger.Error("anomaly runner Close timed out")
+		return ctx.Err()
+	}
+}
+
+func (r *AsyncAnomalyRunner) work() {
+	defer r.wg.Done()
+	for event := range r.queue {
+		r.inspect(event)
+	}
+}
+
+// inspect runs every detector against one event. Per-detector
+// failures are logged + metric'd but don't tear down siblings —
+// one broken detector shouldn't blind the others.
+func (r *AsyncAnomalyRunner) inspect(event *LoginEvent) {
+	// Bounded per-detector context — detectors querying a slow
+	// backend shouldn't pile up. 5s is generous for a SQLite read;
+	// operator can tighten via per-detector wrapper if needed.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, d := range r.detectors {
+		anomalies, err := d.Inspect(ctx, event)
+		if err != nil {
+			r.logger.Error("anomaly detector failed",
+				"detector", d.Name(), "subject", event.SubjectID, "error", err)
+			r.recordInspectError(d.Name())
+			continue
+		}
+		for _, a := range anomalies {
+			if r.sink != nil {
+				if sinkErr := r.sink.Record(ctx, event, a); sinkErr != nil {
+					r.logger.Error("anomaly sink record failed",
+						"type", a.Type, "error", sinkErr)
+				}
+			}
+			r.recordDetected(a.Type, string(a.Severity))
+		}
+	}
+}
+
+// anomalyMetrics is the metric handle stub — populated when cmd
+// wires metrics.Metrics via WithAnomalyMetrics. Nil-safe; detectors
+// run regardless.
+type anomalyMetrics struct {
+	dispatched   func()
+	dropped      func(reason string)
+	detected     func(anomalyType, severity string)
+	inspectError func(detector string)
+}
+
+func (r *AsyncAnomalyRunner) recordDrop(reason string) {
+	r.logger.Error("anomaly event dropped", "reason", reason)
+	if r.metrics != nil && r.metrics.dropped != nil {
+		r.metrics.dropped(reason)
+	}
+}
+
+func (r *AsyncAnomalyRunner) recordDetected(anomalyType, severity string) {
+	if r.metrics != nil && r.metrics.detected != nil {
+		r.metrics.detected(anomalyType, severity)
+	}
+}
+
+func (r *AsyncAnomalyRunner) recordInspectError(detector string) {
+	if r.metrics != nil && r.metrics.inspectError != nil {
+		r.metrics.inspectError(detector)
+	}
+}
+
+// NewRecorderAnomalySink is the standard [AnomalySink] that writes
+// each anomaly as an [audit.EventAnomalyDetected] event into the
+// supplied recorder. The audit event carries:
+//
+//   - Type:      audit.EventAnomalyDetected
+//   - Outcome:   audit.OutcomeFailure (anomaly = something to look at)
+//   - ActorID:   anomaly.SubjectID (falls back to event.SubjectID)
+//   - ClientID:  event.ClientID
+//   - Provider:  event.Provider
+//   - Reason:    anomaly.Type ("impossible_travel", etc)
+//   - Metadata:  anomaly.Evidence keys PLUS "anomaly.severity",
+//     "anomaly.score" derived from the Anomaly struct.
+//
+// Use this when you want anomalies in the standard audit query
+// surface (recommended). For SIEM-only routing, implement
+// AnomalySink directly without touching the recorder.
+func NewRecorderAnomalySink(recorder *audit.Recorder) AnomalySink {
+	if recorder == nil {
+		return nil
+	}
+	return AnomalySinkFunc(func(ctx context.Context, event *LoginEvent, a Anomaly) error {
+		actor := a.SubjectID
+		if actor == "" {
+			actor = event.SubjectID
+		}
+		e := &audit.Event{
+			Type:     audit.EventAnomalyDetected,
+			Outcome:  audit.OutcomeFailure,
+			ActorID:  actor,
+			ActorIP:  event.RemoteIP,
+			ClientID: event.ClientID,
+			Provider: event.Provider,
+			Reason:   a.Type,
+			TraceID:  event.TraceID,
+		}
+		setAnomalyMeta(e, "anomaly.severity", string(a.Severity))
+		if a.Score > 0 {
+			setAnomalyMeta(e, "anomaly.score", itoa(a.Score))
+		}
+		for k, v := range a.Evidence {
+			setAnomalyMeta(e, k, v)
+		}
+		recorder.Record(ctx, e)
+		return nil
+	})
+}
+
+// setAnomalyMeta is the same setMeta pattern from audit_handler.go,
+// duplicated here to avoid widening the package's exported surface
+// just for the anomaly path. Skips empty values + lazily allocates.
+func setAnomalyMeta(e *audit.Event, k, v string) {
+	if v == "" {
+		return
+	}
+	if e.Metadata == nil {
+		e.Metadata = make(map[string]string, 4)
+	}
+	e.Metadata[k] = v
+}
+
+// atomicBool is a tiny inline wrapper over sync/atomic.Bool — kept
+// local to avoid bumping the Go version requirement if/when this
+// file's import set shifts.
+type atomicBool struct {
+	mu sync.Mutex
+	v  bool
+}
+
+func (a *atomicBool) load() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.v
+}
+
+func (a *atomicBool) compareAndSwap(old, new bool) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.v != old {
+		return false
+	}
+	a.v = new
+	return true
+}

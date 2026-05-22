@@ -52,6 +52,7 @@ type Server struct {
 	mfaProvider                    MFAProvider
 	mfaChallengeStore              MFAChallengeStore
 	mfaChallengeTTL                time.Duration
+	anomalyRunner                  *AsyncAnomalyRunner
 	metrics                        *metrics.Metrics
 	rateLimitPolicy                *ratelimit.Policy
 	bodyLimit                      int64
@@ -675,6 +676,20 @@ func WithRiskScorer(r RiskScorer) Option {
 // scorer asked for).
 func WithMFAProvider(p MFAProvider) Option {
 	return func(s *Server) { s.mfaProvider = p }
+}
+
+// WithAnomalyRunner wires an [AsyncAnomalyRunner] — the worker pool
+// that fans LoginEvents (success + failure) out to registered
+// [AnomalyDetector]s off the request hot path. The runner runs
+// AFTER the login response is built; detectors surface anomalies
+// via the configured [AnomalySink] (audit + optional webhook),
+// NEVER back into the login decision.
+//
+// nil runner → no-op dispatch (zero overhead). Pre-call
+// runner.Start() before passing here so workers are alive when the
+// first event arrives.
+func WithAnomalyRunner(r *AsyncAnomalyRunner) Option {
+	return func(s *Server) { s.anomalyRunner = r }
 }
 
 // WithMFAChallengeStore persists in-flight MFA challenges (the state

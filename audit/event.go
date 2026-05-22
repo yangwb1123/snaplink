@@ -66,6 +66,16 @@ const (
 	// always the same mfa_invalid shape.
 	EventMFAFailure EventType = "mfa_failure"
 
+	// EventAnomalyDetected — surfaced by an AnomalyDetector running
+	// off the request hot path (impossible travel, velocity burst,
+	// new device, brute-force shadow). The standard recorder sink
+	// writes one event per Anomaly with Reason = anomaly type +
+	// Metadata containing severity + score + detector-specific
+	// evidence. Outcome is always failure (something to investigate),
+	// but the login that triggered it may have succeeded — operators
+	// correlate via TraceID.
+	EventAnomalyDetected EventType = "anomaly_detected"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason

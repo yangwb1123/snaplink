@@ -243,6 +243,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "failure").Inc()
 	}
 	s.observeLoginDuration(ctx, provider, "failure")
+	s.dispatchLoginAnomaly(ctx, "", clientID, provider, "failure", reason)
 	if s.auditor == nil {
 		return
 	}
@@ -255,6 +256,37 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
+// dispatchLoginAnomaly hands a LoginEvent to the AnomalyRunner.
+// Nil-safe — no runner = no-op zero overhead. SubjectID is
+// optional on failure paths (the credential validator may not
+// have resolved a user); detectors needing it skip the subject-
+// scoped checks.
+func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, provider, outcome, failureReason string) {
+	if s.anomalyRunner == nil {
+		return
+	}
+	r := ctx.Request()
+	event := &LoginEvent{
+		SubjectID:     subjectID,
+		ClientID:      clientID,
+		Provider:      provider,
+		Outcome:       outcome,
+		FailureReason: failureReason,
+		RemoteIP:      clientIP(r),
+		UserAgent:     r.Header.Get("User-Agent"),
+		Timestamp:     time.Now(),
+	}
+	if info, ok := GeoFromHandlerContext(ctx); ok {
+		event.Geo = info
+	}
+	if tp := r.Header.Get(HeaderTraceparent); tp != "" {
+		if tc, err := tracer.ParseTraceparent(tp); err == nil {
+			event.TraceID = tc.TraceID
+		}
+	}
+	s.anomalyRunner.Dispatch(r.Context(), event)
+}
+
 // recordLoginSuccess emits a login event after a fully successful login flow
 // AND bumps the success counter + tokens_issued counter on the metrics
 // registry (nil-safe).
@@ -264,6 +296,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
 	}
 	s.observeLoginDuration(ctx, provider, "success")
+	s.dispatchLoginAnomaly(ctx, userID, clientID, provider, "success", "")
 	if s.auditor == nil {
 		return
 	}
