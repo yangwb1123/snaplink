@@ -87,10 +87,10 @@ Every concern is an interface in its parent package + a `memory` impl
 `WithXxx`. **No mocks** — use Memory* in tests. SQLite covers User,
 Client, AuthCode, RefreshToken (+ Inspector + FamilyTracker),
 DeviceCode, PAR, Session, JTIReplay, SubjectClientIndex,
-AccountLockout, PairwiseSubject, RateLimiter, WebAuthn (User + Session)
-— every OAuth/OIDC + WebAuthn flow runs horizontally on a shared
-SQLite file. Redis is the recommended next step for SaaS-scale
-auth-heavy workloads.
+AccountLockout, PairwiseSubject, RateLimiter, WebAuthn (User + Session),
+MFAChallenge — every OAuth/OIDC + WebAuthn + MFA flow runs horizontally
+on a shared SQLite file. Redis is the recommended next step for
+SaaS-scale auth-heavy workloads.
 
 ### Form + JSON via `bindOAuthParams`
 All OAuth/OIDC endpoints accept both `application/x-www-form-urlencoded`
@@ -291,7 +291,7 @@ Pluggable `UserStore` + `SessionStore`; SQLite peers at
 
 ### SQLite (`defaultimpl/sqlite/`)
 Pure-Go via `modernc.org/sqlite`. Race-free patterns by store:
-- single-use (AuthCode, DeviceCode, RefreshToken, PAR): `DELETE … RETURNING`
+- single-use (AuthCode, DeviceCode, RefreshToken, PAR, MFAChallenge): `DELETE … RETURNING`
 - Session refresh: `UPDATE … RETURNING`
 - JTI replay: `INSERT … ON CONFLICT DO NOTHING` + RowsAffected
 - index upserts (SubjectClientIndex, PairwiseSubject): `INSERT … ON CONFLICT DO UPDATE`
@@ -563,7 +563,8 @@ one per wired store via `appendReadyCheck`, naming each after the
 subsystem (`sqlite-identity-clients`, `sqlite-oauth-refresh-tokens`,
 `sqlite-jti-replay`, `sqlite-account-lockout`,
 `sqlite-pairwise-subjects`, `sqlite-bcl-subject-client-index`,
-`sqlite-webauthn-{users,sessions}`, etc.). SQLite rate limiter
+`sqlite-webauthn-{users,sessions}`, `sqlite-mfa-challenges`, etc.).
+SQLite rate limiter
 participates too: `sqlite-ratelimit-default` + `sqlite-ratelimit-<prefix>`
 per declared prefix (slashes collapse to hyphens). etcd backends
 register as `etcd-netpolicy` / `etcd-registry`. Memory backends
@@ -626,9 +627,11 @@ populates the wire `mfa_methods` array; `Verify()` returns nil on
 success, any error on failure (collapsed to `mfa_invalid`).
 
 `MFAChallengeStore`: in-process `defaultimpl.MemoryMFAChallengeStore`
-for single-replica deploys; SQLite peer for cluster-shared state
-(future). Default TTL 5min (`DefaultMFAChallengeTTL`); tune via the
-ttl arg on `WithMFAChallengeStore`.
+for single-replica deploys; `defaultimpl/sqlite.MFAChallengeStore`
+for cluster-shared state (atomic `DELETE … RETURNING` Consume; row
+deletion enforces single-use even on expired-entry consume). Default
+TTL 5min (`DefaultMFAChallengeTTL`); tune via the ttl arg on
+`WithMFAChallengeStore`.
 
 Audit events: `mfa_required` (challenge issued), `mfa_success`
 (factor verified), `mfa_failure` (factor rejected). The standard
