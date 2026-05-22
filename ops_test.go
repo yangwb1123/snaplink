@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/ratelimit"
@@ -115,6 +116,78 @@ func TestReadyz_OneCheckFails_Returns503(t *testing.T) {
 	}
 	if !strings.Contains(body.Checks["etcd"], "connection refused") {
 		t.Errorf("etcd error not surfaced: %v", body.Checks["etcd"])
+	}
+}
+
+func TestReadyz_PerCheckTimeoutFiresBeforeAggregate(t *testing.T) {
+	// 100ms per-check timeout; the check sleeps 500ms. Without the
+	// per-check timeout, /readyz waits up to 3s (aggregate); with
+	// it, the check fails fast at 100ms with a context.DeadlineExceeded.
+	srv := minServer(t,
+		sso.WithReadyCheckTimeout("slow", 100*time.Millisecond),
+		sso.WithReadyCheck("slow", func(ctx context.Context) error {
+			select {
+			case <-time.After(500 * time.Millisecond):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}),
+	)
+	start := time.Now()
+	resp, err := http.Get(srv.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer resp.Body.Close()
+	elapsed := time.Since(start)
+	if elapsed > 400*time.Millisecond {
+		t.Errorf("/readyz took %v — per-check timeout didn't fire", elapsed)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (slow check times out)", resp.StatusCode)
+	}
+}
+
+func TestReadyz_PerCheckTimeoutRegisterOrderIndependent(t *testing.T) {
+	// WithReadyCheckTimeout can come BEFORE or AFTER the corresponding
+	// WithReadyCheck — operator wires them in arbitrary order. Both
+	// orderings should produce the same fast-fail behavior.
+	for _, tc := range []struct {
+		name string
+		opts func() []sso.Option
+	}{
+		{"timeout_before_check", func() []sso.Option {
+			return []sso.Option{
+				sso.WithReadyCheckTimeout("slow", 50*time.Millisecond),
+				sso.WithReadyCheck("slow", func(ctx context.Context) error {
+					<-ctx.Done()
+					return ctx.Err()
+				}),
+			}
+		}},
+		{"check_before_timeout", func() []sso.Option {
+			return []sso.Option{
+				sso.WithReadyCheck("slow", func(ctx context.Context) error {
+					<-ctx.Done()
+					return ctx.Err()
+				}),
+				sso.WithReadyCheckTimeout("slow", 50*time.Millisecond),
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := minServer(t, tc.opts()...)
+			start := time.Now()
+			resp, err := http.Get(srv.URL + "/readyz")
+			if err != nil {
+				t.Fatalf("GET /readyz: %v", err)
+			}
+			defer resp.Body.Close()
+			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+				t.Errorf("/readyz took %v — per-check timeout didn't fire (order: %s)", elapsed, tc.name)
+			}
+		})
 	}
 }
 

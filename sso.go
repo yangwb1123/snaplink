@@ -708,8 +708,9 @@ func WithMetrics(m *metrics.Metrics) Option {
 type ReadyCheck func(ctx context.Context) error
 
 type namedReadyCheck struct {
-	Name  string
-	Check ReadyCheck
+	Name    string
+	Check   ReadyCheck
+	Timeout time.Duration // 0 → use the aggregate deadline
 }
 
 // WithReadyCheck adds a named check to /readyz. Any check returning
@@ -718,13 +719,53 @@ type namedReadyCheck struct {
 //
 // Example: ping the database, verify etcd reachable, confirm bootstrap
 // completed. Cheap checks only — the readiness probe fires every few
-// seconds in Kubernetes.
+// seconds in Kubernetes. The aggregate /readyz handler bounds every
+// check by 3 seconds; per-check overrides go through
+// [WithReadyCheckTimeout].
 func WithReadyCheck(name string, check ReadyCheck) Option {
 	return func(s *Server) {
 		if check == nil || name == "" {
 			return
 		}
+		// Merge into a pre-registered timeout placeholder when one
+		// exists for this name — let operators wire the timeout
+		// option BEFORE the check option in any order.
+		for i := range s.readyChecks {
+			if s.readyChecks[i].Name == name && s.readyChecks[i].Check == nil {
+				s.readyChecks[i].Check = check
+				return
+			}
+		}
 		s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Check: check})
+	}
+}
+
+// WithReadyCheckTimeout registers a per-check timeout that overrides
+// the aggregate 3-second /readyz deadline. Useful for slow backends
+// (etcd cross-region, large SQLite WAL recovery) where the global
+// bound is too tight, while keeping fast checks (memory pings)
+// snappy. Timeout MUST be > 0; non-positive values silently fall
+// back to the aggregate deadline.
+//
+// Calling this for a check already registered via WithReadyCheck
+// updates that check's timeout; otherwise it pre-registers the
+// timeout for a check added later in the option chain.
+func WithReadyCheckTimeout(name string, timeout time.Duration) Option {
+	return func(s *Server) {
+		if name == "" || timeout <= 0 {
+			return
+		}
+		// If the check is already registered, update in place.
+		for i := range s.readyChecks {
+			if s.readyChecks[i].Name == name {
+				s.readyChecks[i].Timeout = timeout
+				return
+			}
+		}
+		// Pre-register: store the timeout against a nil Check; the
+		// later WithReadyCheck call will populate Check + leave the
+		// Timeout the pre-registered value.
+		s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Timeout: timeout})
 	}
 }
 
@@ -995,12 +1036,32 @@ func (s *Server) handleLivez(w http.ResponseWriter, _ *http.Request) {
 // when all pass / 503 when any fail. Bounded by a 3-second context
 // deadline so a hung check can't wedge the probe.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
+	aggregateCtx, cancelAgg := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancelAgg()
 
 	results := make(map[string]string, len(s.readyChecks))
 	allOK := true
 	for _, c := range s.readyChecks {
+		// Skip orphan timeout entries (WithReadyCheckTimeout
+		// registered before any WithReadyCheck for that name) so
+		// they don't surface as "ok" results — they're metadata, not
+		// checks.
+		if c.Check == nil {
+			continue
+		}
+		ctx := aggregateCtx
+		// Per-check timeout overrides the aggregate when set + smaller
+		// (operators wiring 1s for a fast check). If the per-check
+		// timeout is LARGER than what the aggregate has left, the
+		// parent ctx still wins — no check can outlive /readyz's hard
+		// upper bound (operators wanting longer probes raise the
+		// kubelet-side timeoutSeconds).
+		if c.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(aggregateCtx, c.Timeout)
+			//nolint:gocritic // cancel called below in tight loop; declaring outside the loop wouldn't compose cleanly
+			defer cancel()
+		}
 		if err := c.Check(ctx); err != nil {
 			results[c.Name] = err.Error()
 			allOK = false
