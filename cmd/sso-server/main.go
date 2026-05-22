@@ -72,6 +72,7 @@ import (
 	storageinline "github.com/snaplink/sso/snapshot/storage/inline"
 	"github.com/snaplink/sso/tenant"
 	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	tenantsqlite "github.com/snaplink/sso/tenant/sqlite"
 	"github.com/snaplink/sso/tracing"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
@@ -1661,8 +1662,18 @@ func buildTenantStore(cfg *config.Config, logger sso.Logger) (tenant.Store, erro
 	case "", "memory":
 		store = tenantmemory.New()
 		logger.Info("tenant store: memory (in-process)")
+	case "sqlite":
+		if cfg.Tenant.SQLite.DSN == "" {
+			return nil, errors.New("tenant.sqlite.dsn required when tenant.backend=sqlite")
+		}
+		s, err := tenantsqlite.New(cfg.Tenant.SQLite.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("tenant sqlite: %w", err)
+		}
+		store = s
+		logger.Info("tenant store: sqlite (cluster-shared)", "dsn", cfg.Tenant.SQLite.DSN)
 	default:
-		return nil, fmt.Errorf("unknown tenant.backend %q", cfg.Tenant.Backend)
+		return nil, fmt.Errorf("unknown tenant.backend %q (supported: memory, sqlite)", cfg.Tenant.Backend)
 	}
 
 	ctx := context.Background()
@@ -2045,6 +2056,11 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	}
 	if tenantStore != nil {
 		opts = append(opts, sso.WithTenantStore(tenantStore))
+		// SQLite-backed tenant store implements Ping → /readyz.
+		// Memory-backed silently no-ops (Ping isn't on the
+		// interface; appendReadyCheck only registers when the
+		// concrete type satisfies it).
+		opts = appendReadyCheck(opts, "sqlite-tenant", tenantStore)
 		if cfg.Tenant.LookupTimeout > 0 || cfg.Tenant.IncludeSuspended {
 			opts = append(opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
 				Timeout:          cfg.Tenant.LookupTimeout,

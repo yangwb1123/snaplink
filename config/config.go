@@ -842,22 +842,29 @@ type GeoStaticEntry struct {
 // TenantConfig configures the multi-tenant + multi-domain
 // routing layer. When Enabled is false the SSO server skips
 // installing the tenant middleware entirely. Backend selects
-// which tenant.Store implementation to use; "memory" is the
-// only one wired today (production SaaS will want a SQL backend
-// — see tenant/ docs).
+// which tenant.Store implementation to use — "memory" for
+// single-replica dev / tests, "sqlite" for cluster-shared state
+// (admin SetTenantStatus on replica A surfaces on every replica
+// after the suspension-check cache TTL elapses).
 //
 // Tenants + Domains can be seeded via TenantConfig.Tenants and
 // TenantConfig.Domains for embedded deployments. Operators
 // running an admin-managed setup can leave both empty and
-// populate via the (forthcoming) admin TenantService RPCs.
+// populate via the admin TenantService RPCs.
 type TenantConfig struct {
 	Enabled          bool                        `yaml:"enabled"`
-	Backend          string                      `yaml:"backend"` // "memory" (default)
+	Backend          string                      `yaml:"backend"` // memory | sqlite
+	SQLite           TenantSQLiteConfig          `yaml:"sqlite"`
 	LookupTimeout    time.Duration               `yaml:"lookup_timeout"`
 	IncludeSuspended bool                        `yaml:"include_suspended"`
 	Tenants          []TenantSeedConfig          `yaml:"tenants"`
 	Domains          []TenantDomainConfig        `yaml:"domains"`
 	SuspensionCheck  TenantSuspensionCheckConfig `yaml:"suspension_check"`
+}
+
+// TenantSQLiteConfig is the SQLite backend's DSN.
+type TenantSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // TenantSuspensionCheckConfig opts the server into the active

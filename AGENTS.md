@@ -705,8 +705,12 @@ the operator surface needs explanation:
   `X-SSL-Client-Cert`, AWS ALB `X-Amzn-Mtls-Clientcert`, Apache
   `Ssl-Client-Cert`) — **edge MUST strip the header from untrusted
   traffic**, same threat model as XFF.
-- **tenant.suspension_check.cache_ttl** controls Active-suspension
-  cache; admin SetStatus invalidates.
+- **tenant.backend(memory|sqlite)** — sqlite shares Tenants +
+  Domains across replicas (FK ON DELETE CASCADE on tenant_domains
+  so DeleteTenant doesn't leave orphan domain rows).
+  `tenant.suspension_check.cache_ttl` controls Active-suspension
+  cache; admin SetStatus invalidates per-replica via
+  `Server.InvalidateTenantSuspensionCache`.
 - **oauth** — per-store `enabled` + `ttl`; `backend(memory|sqlite)`
   shared substrate. `oauth.jar` = RFC 9101 §5.2.2 request_uri fetcher
   (HTTPS, no-redirect).

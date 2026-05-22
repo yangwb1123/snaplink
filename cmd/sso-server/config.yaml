@@ -715,7 +715,15 @@ registry:
 # without it, existing bearers keep working until natural expiry.
 tenant:
   enabled: false
-  backend: "memory"          # memory only today
+  # memory: single-replica only; sqlite: cluster-shared so admin
+  # SetTenantStatus on one replica surfaces on every replica after
+  # the suspension-check cache TTL elapses + each replica's
+  # InvalidateTenantSuspensionCache fires (operators wire that as
+  # part of their admin-mutation handler).
+  backend: "memory"          # memory | sqlite
+  sqlite:
+    # dsn: "file:/var/lib/sso/tenant.db?_journal=WAL&_busy_timeout=5000"
+    dsn: ""
   lookup_timeout: 200ms
   include_suspended: false
   tenants: []
