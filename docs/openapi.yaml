@@ -2967,6 +2967,66 @@ components:
           type: string
           example: snaplink-sso
 
+    AuthorizationDetail:
+      type: object
+      required: [type]
+      description: |
+        One element of RFC 9396 Rich Authorization Requests
+        (`authorization_details` parameter on /auth/login, /par,
+        JAR). The `type` field is REQUIRED and gates which
+        client-side action the user is authorizing — the SSO server
+        validates membership in the client's
+        `allowed_authorization_details_types` allowlist; element
+        types not in the list reject the whole request with
+        `invalid_authorization_details`.
+
+        All other fields are TYPE-SPECIFIC and pass through unparsed
+        — the server never inspects them, so consenting RPs +
+        downstream resource servers are free to ship arbitrary
+        domain-specific schemas under any `type`. RFC 9396 §3
+        suggests common fields (`locations`, `actions`, `datatypes`,
+        `identifier`, `privileges`); these are RECOMMENDATIONS, not
+        requirements.
+
+        The full JSON object (including extension fields) propagates
+        verbatim into the issued access token's
+        `authorization_details` claim — resource servers parse it
+        with the same schema the RP used to submit.
+      properties:
+        type:
+          type: string
+          description: |
+            URI or string identifying the action class. Allowlisted
+            per-client via `allowed_authorization_details_types`.
+          example: payment_initiation
+        locations:
+          type: array
+          items: { type: string }
+          description: |
+            RFC 9396 §3.2 — URIs identifying resource servers the
+            granted permission applies to. Server-side validation
+            is type-specific (none enforced by default).
+          example: ["https://api.bank.example/payments"]
+        actions:
+          type: array
+          items: { type: string }
+          description: |
+            RFC 9396 §3.3 — action verbs (read, write, transfer).
+            Type-specific; not parsed.
+          example: ["initiate", "status"]
+        datatypes:
+          type: array
+          items: { type: string }
+          description: RFC 9396 §3.4 — data categories. Type-specific.
+        identifier:
+          type: string
+          description: RFC 9396 §3.5 — opaque identifier scoping the grant.
+        privileges:
+          type: array
+          items: { type: string }
+          description: RFC 9396 §3.6 — privilege strings within the resource.
+      additionalProperties: true
+
     LoginRequest:
       type: object
       required: [client_id]
@@ -2991,6 +3051,26 @@ components:
           type: array
           items:
             type: string
+        resource:
+          type: array
+          items: { type: string }
+          description: |
+            RFC 8707 resource indicators. Each value MUST be in the
+            client's `allowed_resources`; downstream issuance
+            populates the JWT `aud` claim from the merged set.
+        authorization_details:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthorizationDetail"
+          description: |
+            RFC 9396 Rich Authorization Requests. Each element MUST
+            carry a non-empty `type` matching one of the client's
+            `allowed_authorization_details_types`. The server validates
+            structure + allowlist at /auth/login time; on issuance,
+            the verbatim JSON propagates into the access token's
+            `authorization_details` claim (preserving extension fields
+            unparsed). Parse/allowlist failure surfaces as
+            `invalid_authorization_details`.
         state:
           type: string
           description: Opaque value echoed back to redirect-based flows.
@@ -3499,13 +3579,20 @@ components:
           type: array
           items: { type: string }
         authorization_details:
-          description: |
-            RFC 9396 RAR — list of {type, ...} objects. JSON form
-            accepts an array directly; form-encoded body delivers
-            it as a single JSON string the server parses.
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/AuthorizationDetail"
+          description: |
+            RFC 9396 Rich Authorization Requests. JSON body delivers
+            an array directly; form-encoded body delivers a single
+            JSON-string element the server parses. Server-side
+            validation: array shape, non-empty `type` per element,
+            type membership in the client's
+            `allowed_authorization_details_types`. Any failure
+            collapses to `invalid_authorization_details` (RFC 9396
+            §6). Verbatim JSON propagates to the issued access
+            token's `authorization_details` claim including all
+            extension fields not standardized by the RFC.
         login_hint:
           type: string
         response_mode:
