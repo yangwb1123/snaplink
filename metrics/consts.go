@@ -10,6 +10,8 @@ const (
 	NameLoginAttemptsTotal  = "sso_login_attempts_total"
 	NameTokensIssuedTotal   = "sso_tokens_issued_total"
 	NameRiskDecisionsTotal  = "sso_risk_decisions_total"
+	NameMFAChallengesTotal  = "sso_mfa_challenges_total"
+	NameMFACompletionsTotal = "sso_mfa_completions_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -21,6 +23,7 @@ const (
 	LabelOutcome     = "outcome"
 	LabelStrategy    = "strategy"
 	LabelDecision    = "decision"
+	LabelMFAMethod   = "mfa_method"
 )
 
 // Status class label values, bucketed into the four standard HTTP

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/snaplink/sso/audit"
@@ -70,6 +71,12 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 	}
 
 	methods := s.mfaProvider.SupportedMethods()
+	// Metric: count one challenge per issuance, labeled by the FIRST
+	// supported method (the user picks among them downstream). Zero
+	// traffic when metrics aren't wired.
+	if s.metrics != nil && len(methods) > 0 {
+		s.metrics.MFAChallengesTotal.WithLabelValues(methods[0]).Inc()
+	}
 	resp := map[string]any{
 		KeyError:          ErrMFARequired, // top-level error field so SPAs treating non-2xx-but-pending uniformly still surface it
 		KeyMFAChallengeID: id,
@@ -173,9 +180,11 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 
 	if err := s.mfaProvider.Verify(ctx.Request().Context(), challenge.SubjectID, req.Method, params); err != nil {
 		s.recordMFAFailure(ctx, challenge.SubjectID, req.ChallengeID, req.Method, err.Error())
+		s.recordMFACompletion(req.Method, "failure")
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
 		return
 	}
+	s.recordMFACompletion(req.Method, "success")
 
 	// Factor verified. Decode the frozen state, re-look-up the client
 	// (could have been deactivated / tenant-suspended in the window
@@ -225,6 +234,21 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 	// payload — caller can't tell the difference between an MFA-gated
 	// login and a non-gated one (other than the extra round trip).
 	s.finishLogin(ctx, state.Result, state.Request, client)
+}
+
+// recordMFACompletion increments the MFA completion metric for the
+// (method, outcome) pair, but only when the metric is wired AND the
+// method appears in the configured provider's SupportedMethods set.
+// Restricting to known methods bounds metric cardinality — a
+// user-controlled method field would otherwise let attackers spray
+// arbitrary labels into Prometheus storage.
+func (s *Server) recordMFACompletion(method, outcome string) {
+	if s.metrics == nil || s.mfaProvider == nil {
+		return
+	}
+	if slices.Contains(s.mfaProvider.SupportedMethods(), method) {
+		s.metrics.MFACompletionsTotal.WithLabelValues(method, outcome).Inc()
+	}
 }
 
 // recordMFAFailure emits the mfa_failure audit event with the

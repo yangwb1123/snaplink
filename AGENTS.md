@@ -544,8 +544,14 @@ Wire each with `sso.With{Tracing, RateLimit, BodyLimit, Metrics, CORS}`.
 | `sso_login_attempts_total` | Counter | provider, outcome |
 | `sso_tokens_issued_total` | Counter | strategy |
 | `sso_risk_decisions_total` | Counter | decision |
+| `sso_mfa_challenges_total` | Counter | mfa_method |
+| `sso_mfa_completions_total` | Counter | mfa_method, outcome |
 
-Per-endpoint breakdowns come from traces, not labels.
+Per-endpoint breakdowns come from traces, not labels. MFA labels
+are restricted to the wired provider's `SupportedMethods()` set
+(cmd-defined: `totp`, `webauthn`, `push`) — arbitrary user-controlled
+method values are dropped before the label hits the registry, so an
+attacker can't bloat metric cardinality.
 
 **Tracing**: `tracing.Init(ctx, ...)`; OTLP gRPC enabled by
 `OTEL_EXPORTER_OTLP_ENDPOINT`. No-op when unset.

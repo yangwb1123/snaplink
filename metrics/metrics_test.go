@@ -101,20 +101,30 @@ func TestMiddleware_RecordsLatencyHistogram(t *testing.T) {
 }
 
 func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
-	// The non-HTTP counters (login attempts, tokens, risk) are
-	// incremented manually from handler.go / audit_handler.go. Just
-	// prove they roundtrip through the registry.
+	// The non-HTTP counters (login attempts, tokens, risk, mfa) are
+	// incremented manually from handler.go / audit_handler.go /
+	// handle_mfa.go. Just prove they roundtrip through the registry.
 	m := metrics.New()
 	m.LoginAttemptsTotal.WithLabelValues("password", "success").Inc()
 	m.LoginAttemptsTotal.WithLabelValues("password", "failure").Add(3)
 	m.TokensIssuedTotal.WithLabelValues("jwt").Inc()
 	m.RiskDecisionsTotal.WithLabelValues("deny").Inc()
+	m.MFAChallengesTotal.WithLabelValues("totp").Inc()
+	m.MFAChallengesTotal.WithLabelValues("webauthn").Add(2)
+	m.MFACompletionsTotal.WithLabelValues("totp", "success").Inc()
+	m.MFACompletionsTotal.WithLabelValues("totp", "failure").Add(4)
+	m.MFACompletionsTotal.WithLabelValues("webauthn", "success").Inc()
 
 	scrape := scrapeMetrics(t, m)
 	mustContain(t, scrape, `sso_login_attempts_total{outcome="success",provider="password"} 1`)
 	mustContain(t, scrape, `sso_login_attempts_total{outcome="failure",provider="password"} 3`)
 	mustContain(t, scrape, `sso_tokens_issued_total{strategy="jwt"} 1`)
 	mustContain(t, scrape, `sso_risk_decisions_total{decision="deny"} 1`)
+	mustContain(t, scrape, `sso_mfa_challenges_total{mfa_method="totp"} 1`)
+	mustContain(t, scrape, `sso_mfa_challenges_total{mfa_method="webauthn"} 2`)
+	mustContain(t, scrape, `sso_mfa_completions_total{mfa_method="totp",outcome="success"} 1`)
+	mustContain(t, scrape, `sso_mfa_completions_total{mfa_method="totp",outcome="failure"} 4`)
+	mustContain(t, scrape, `sso_mfa_completions_total{mfa_method="webauthn",outcome="success"} 1`)
 }
 
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {

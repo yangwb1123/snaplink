@@ -45,6 +45,15 @@ type Metrics struct {
 
 	// Risk scoring (zero traffic when no RiskScorer wired).
 	RiskDecisionsTotal *prometheus.CounterVec // labels: decision
+
+	// MFA orchestration (zero traffic when no MFAProvider wired).
+	// MFAChallengesTotal counts every challenge issued at
+	// /auth/login when the risk scorer returns DecisionRequireMFA;
+	// MFACompletionsTotal counts /auth/mfa outcomes by mfa_method
+	// + outcome (success/failure). Bounded cardinality: methods are
+	// the wire-stable strings totp/webauthn/push/etc, not per-user.
+	MFAChallengesTotal  *prometheus.CounterVec // labels: mfa_method
+	MFACompletionsTotal *prometheus.CounterVec // labels: mfa_method, outcome
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -117,6 +126,22 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "RiskScorer decisions, by decision value (allow/deny/require_mfa). Zero traffic when no scorer is configured.",
 			},
 			[]string{LabelDecision},
+		),
+
+		MFAChallengesTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameMFAChallengesTotal,
+				Help: "MFA challenges issued at /auth/login when RiskScorer returns DecisionRequireMFA. Labeled by mfa_method (the FIRST method in the supported set, since the user picks one downstream). Zero traffic when MFA orchestration isn't wired.",
+			},
+			[]string{LabelMFAMethod},
+		),
+
+		MFACompletionsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameMFACompletionsTotal,
+				Help: "MFA verification outcomes at /auth/mfa, by mfa_method (totp/webauthn/push/...) and outcome (success/failure). Operators alert on a rising failure rate.",
+			},
+			[]string{LabelMFAMethod, LabelOutcome},
 		),
 	}
 }
