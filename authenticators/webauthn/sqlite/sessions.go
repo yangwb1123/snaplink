@@ -114,8 +114,8 @@ func (s *SessionStore) Take(ctx context.Context, sessionID string) (*gw.SessionD
         DELETE FROM webauthn_sessions WHERE id = ?
         RETURNING data, expires_at`, sessionID)
 	var (
-		payload      string
-		expiresAtNs  int64
+		payload     string
+		expiresAtNs int64
 	)
 	if err := row.Scan(&payload, &expiresAtNs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -173,7 +173,9 @@ func TestBcryptVerifier_UnknownUserTimingMatchesKnown(t *testing.T) {
 	}
 }
 
-func timeVerify(t *testing.T, v interface{ Verify(context.Context, string, string) (*sso.AuthResult, error) }, u, p string, n int) time.Duration {
+func timeVerify(t *testing.T, v interface {
+	Verify(context.Context, string, string) (*sso.AuthResult, error)
+}, u, p string, n int) time.Duration {
 	t.Helper()
 	start := time.Now()
 	for range n {

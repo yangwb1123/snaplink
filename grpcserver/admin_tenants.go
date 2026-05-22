@@ -22,9 +22,9 @@ import (
 // (*sso.Server).InvalidateTenantSuspensionCache.
 type TenantAdminService struct {
 	adminv1.UnimplementedTenantAdminServiceServer
-	store                      tenant.Store
-	recorder                   *audit.Recorder
-	invalidateSuspensionCache  func(tenantID string)
+	store                     tenant.Store
+	recorder                  *audit.Recorder
+	invalidateSuspensionCache func(tenantID string)
 }
 
 // NewTenantAdminService wires the store, audit recorder, and the

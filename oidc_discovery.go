@@ -16,17 +16,17 @@ const PathOIDCDiscovery = "/.well-known/openid-configuration"
 // RFC 8414 §2 fields. Optional fields are omitempty so the wire stays
 // minimal — relying parties branch on presence per the spec.
 type oidcConfiguration struct {
-	Issuer                            string   `json:"issuer"`
-	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
-	TokenEndpoint                     string   `json:"token_endpoint"`
-	UserInfoEndpoint                  string   `json:"userinfo_endpoint,omitempty"`
-	JWKSURI                           string   `json:"jwks_uri"`
-	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
-	RevocationEndpoint                string   `json:"revocation_endpoint,omitempty"`
-	IntrospectionEndpoint             string   `json:"introspection_endpoint,omitempty"`
-	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
-	PushedAuthReqEndpoint             string   `json:"pushed_authorization_request_endpoint,omitempty"`
-	RequirePushedAuthReq              bool     `json:"require_pushed_authorization_requests,omitempty"`
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	UserInfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
+	JWKSURI               string `json:"jwks_uri"`
+	EndSessionEndpoint    string `json:"end_session_endpoint,omitempty"`
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
+	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`
+	PushedAuthReqEndpoint string `json:"pushed_authorization_request_endpoint,omitempty"`
+	RequirePushedAuthReq  bool   `json:"require_pushed_authorization_requests,omitempty"`
 	// RFC 9101 §10.5 — true when every registered client enforces
 	// signed request objects (RequireSignedRequestObject=true on
 	// the Client). Advertised AS-wide because the spec field is
@@ -34,7 +34,7 @@ type oidcConfiguration struct {
 	// when any client still accepts unsigned authorization
 	// requests — matching the strictest-possible-promise semantics
 	// the field implies.
-	RequireSignedRequestObjectGlobal bool `json:"require_signed_request_object,omitempty"`
+	RequireSignedRequestObjectGlobal  bool     `json:"require_signed_request_object,omitempty"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
 	SubjectTypesSupported             []string `json:"subject_types_supported"`
@@ -54,8 +54,8 @@ type oidcConfiguration struct {
 	// RFC 9126 §5: client auth methods accepted on /par. Mirrors
 	// the /token list since /par shares the same auth pipeline.
 	PushedAuthorizationRequestEndpointAuthMethodsSupported []string `json:"pushed_authorization_request_endpoint_auth_methods_supported,omitempty"`
-	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
-	ClaimsSupported                   []string `json:"claims_supported,omitempty"`
+	CodeChallengeMethodsSupported                          []string `json:"code_challenge_methods_supported,omitempty"`
+	ClaimsSupported                                        []string `json:"claims_supported,omitempty"`
 
 	// RFC 9207 §3 — when true, this AS includes `iss` on every
 	// authorization response (success + error). Constant true here
@@ -195,8 +195,8 @@ type oidcConfiguration struct {
 	// Same JWS algorithm advertisement for the introspect /
 	// revoke / PAR endpoints — all share the JWT-assertion path
 	// so they accept the same alg set.
-	IntrospectionEndpointAuthSigningAlgValuesSupported            []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
-	RevocationEndpointAuthSigningAlgValuesSupported               []string `json:"revocation_endpoint_auth_signing_alg_values_supported,omitempty"`
+	IntrospectionEndpointAuthSigningAlgValuesSupported              []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
+	RevocationEndpointAuthSigningAlgValuesSupported                 []string `json:"revocation_endpoint_auth_signing_alg_values_supported,omitempty"`
 	PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported []string `json:"pushed_authorization_request_endpoint_auth_signing_alg_values_supported,omitempty"`
 
 	// RFC 9101 §10.5 — true when the `request` parameter is
@@ -337,17 +337,17 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	// discovery doc doesn't pay 5× ClientStore.List per call.
 	clientSnap := s.discoverySnapshot(ctx.Request().Context())
 	cfg := oidcConfiguration{
-		Issuer:                base,
-		AuthorizationEndpoint: base + PathLogin,
-		TokenEndpoint:         base + PathToken,
-		UserInfoEndpoint:      base + PathUserInfo,
-		JWKSURI:               base + PathJWKS,
-		EndSessionEndpoint:    base + PathEndSession,
-		RevocationEndpoint:    base + PathRevoke,
-		IntrospectionEndpoint: base + PathIntrospect,
+		Issuer:                 base,
+		AuthorizationEndpoint:  base + PathLogin,
+		TokenEndpoint:          base + PathToken,
+		UserInfoEndpoint:       base + PathUserInfo,
+		JWKSURI:                base + PathJWKS,
+		EndSessionEndpoint:     base + PathEndSession,
+		RevocationEndpoint:     base + PathRevoke,
+		IntrospectionEndpoint:  base + PathIntrospect,
 		ResponseTypesSupported: responseTypesFor(s),
-		GrantTypesSupported:               append([]string(nil), SupportedGrants...),
-		SubjectTypesSupported:             subjectTypesFor(s),
+		GrantTypesSupported:    append([]string(nil), SupportedGrants...),
+		SubjectTypesSupported:  subjectTypesFor(s),
 		TokenEndpointAuthMethodsSupported: []string{
 			"client_secret_basic",
 			"client_secret_post",
@@ -368,7 +368,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		RevocationEndpointAuthMethodsSupported: []string{
 			"client_secret_basic", "client_secret_post", "private_key_jwt",
 		},
-		CodeChallengeMethodsSupported:     codeChallengeMethodsFor(s),
+		CodeChallengeMethodsSupported: codeChallengeMethodsFor(s),
 		// RFC 9207 §3: this server always includes `iss` in
 		// authorization responses (see handleLogin + resolveIssuer).
 		AuthorizationResponseIssParameterSupported: true,

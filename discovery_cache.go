@@ -27,7 +27,7 @@ const defaultDiscoveryCacheTTL = 5 * time.Second
 // at compute-time so downstream readers can't mutate the snapshot
 // in place.
 type clientDiscoverySnapshot struct {
-	requirePAR                bool
+	requirePAR                 bool
 	requireSignedRequestObject bool
 	frontchannelLogout         bool
 	scopes                     []string

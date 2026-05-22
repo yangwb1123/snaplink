@@ -57,11 +57,11 @@ func TestDCR_HappyPath_IssuesIDAndSecret(t *testing.T) {
 		DefaultTokenStrategy: "jwt",
 	})
 	status, body := postDCR(t, srv, dcrInitialAT, map[string]any{
-		"client_name":   "my app",
-		"redirect_uris": []string{"https://app.example/cb"},
-		"grant_types":   []string{"authorization_code"},
+		"client_name":    "my app",
+		"redirect_uris":  []string{"https://app.example/cb"},
+		"grant_types":    []string{"authorization_code"},
 		"response_types": []string{"code"},
-		"scope":         "openid read",
+		"scope":          "openid read",
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("status=%d body=%v", status, body)

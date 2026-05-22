@@ -81,11 +81,11 @@ func TestTokenFormatHinter_EdgeCases(t *testing.T) {
 		token string
 		want  bool
 	}{
-		{"", false},                // empty
-		{"single-segment", false},  // 0 dots
-		{"two.segments", false},    // 1 dot
-		{"a.b.c", true},            // 2 dots = JWT shape
-		{"a.b.c.d", false},         // 3 dots = not JWT
+		{"", false},               // empty
+		{"single-segment", false}, // 0 dots
+		{"two.segments", false},   // 1 dot
+		{"a.b.c", true},           // 2 dots = JWT shape
+		{"a.b.c.d", false},        // 3 dots = not JWT
 	}
 	for _, tc := range cases {
 		got := jwt.AcceptsTokenFormat(tc.token)

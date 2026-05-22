@@ -155,9 +155,9 @@ func (a *AccountLockout) RegisterFailure(ctx context.Context, key string) (bool,
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		failures           int
-		firstFailureAtNs   int64
-		lockedUntilNs      int64
+		failures         int
+		firstFailureAtNs int64
+		lockedUntilNs    int64
 	)
 	row := tx.QueryRowContext(ctx, `
         SELECT failures, first_failure_at, locked_until

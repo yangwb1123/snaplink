@@ -15,16 +15,16 @@ import (
 // Query parameters (per the spec §2):
 //
 //   - id_token_hint            REQUIRED to identify the user — a
-//                              previously-issued id_token. The server
-//                              validates the signature and uses the
-//                              token's aud claim to look up the client.
+//     previously-issued id_token. The server
+//     validates the signature and uses the
+//     token's aud claim to look up the client.
 //   - post_logout_redirect_uri Optional; MUST be in the client's
-//                              PostLogoutRedirectURIs allowlist.
+//     PostLogoutRedirectURIs allowlist.
 //   - state                    Optional; echoed back on the redirect.
 //   - client_id                Optional fallback when id_token_hint
-//                              is absent — used only for
-//                              redirect-uri allowlist lookup, NOT
-//                              for session termination.
+//     is absent — used only for
+//     redirect-uri allowlist lookup, NOT
+//     for session termination.
 //
 // Behavior:
 //

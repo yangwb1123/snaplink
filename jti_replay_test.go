@@ -141,10 +141,10 @@ func TestJAR_ReplayDetectionSkipsWhenJTIAbsent(t *testing.T) {
 	h := newJARHarnessWithReplay(t)
 	now := time.Now().Unix()
 	jwt := h.signJAR(t, map[string]any{
-		"iss":                   jarClient,
-		"aud":                   jarASIssuer,
-		"iat":                   now,
-		"exp":                   now + 60,
+		"iss": jarClient,
+		"aud": jarASIssuer,
+		"iat": now,
+		"exp": now + 60,
 		// no jti
 		"client_id":             jarClient,
 		"response_type":         "code",
@@ -213,4 +213,3 @@ func TestMemoryJTIReplayStore_EmptyJTIAlwaysAccepts(t *testing.T) {
 		t.Errorf("empty jti must always accept; got %v / %v", a, b)
 	}
 }
-

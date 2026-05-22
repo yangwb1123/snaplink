@@ -95,8 +95,8 @@ func newPairwiseHarness(t *testing.T, subjectType, sectorURI string, redirects [
 
 type stubPasswordAuth struct{ userID string }
 
-func (stubPasswordAuth) Name() string             { return "password" }
-func (stubPasswordAuth) LoginURL(string) string   { return "" }
+func (stubPasswordAuth) Name() string           { return "password" }
+func (stubPasswordAuth) LoginURL(string) string { return "" }
 func (s stubPasswordAuth) Authenticate(_ context.Context, _ *sso.AuthRequest) (*sso.AuthResult, error) {
 	return &sso.AuthResult{UserID: s.userID, Provider: "password"}, nil
 }

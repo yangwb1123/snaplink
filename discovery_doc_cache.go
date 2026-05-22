@@ -89,4 +89,3 @@ func (s *Server) writeDiscoveryDoc(ctx HandlerContext, entry *discoveryDocEntry)
 func WithDiscoveryDocCacheTTL(ttl time.Duration) Option {
 	return func(s *Server) { s.discoveryDocCacheTTL = ttl }
 }
-

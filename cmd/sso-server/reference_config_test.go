@@ -22,13 +22,13 @@ func TestReferenceConfigYAMLParses(t *testing.T) {
 	// leave the corresponding struct zero, and operators reading the
 	// reference would assume the knob took effect.
 	checks := map[string]bool{
-		"admin enabled":             cfg.Admin.Enabled,
-		"audit enabled":             cfg.Audit.Enabled,
-		"permissions embedded":      cfg.Permissions.EmbedInLogin,
-		"network enabled":           cfg.Network.Enabled,
-		"metrics enabled":           cfg.Metrics.Enabled,
-		"identity backend defined":  cfg.Identity.Backend != "",
-		"registry tags populated":   len(cfg.Registry.ServiceTags) > 0,
+		"admin enabled":            cfg.Admin.Enabled,
+		"audit enabled":            cfg.Audit.Enabled,
+		"permissions embedded":     cfg.Permissions.EmbedInLogin,
+		"network enabled":          cfg.Network.Enabled,
+		"metrics enabled":          cfg.Metrics.Enabled,
+		"identity backend defined": cfg.Identity.Backend != "",
+		"registry tags populated":  len(cfg.Registry.ServiceTags) > 0,
 	}
 	for k, v := range checks {
 		if !v {

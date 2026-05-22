@@ -195,10 +195,10 @@ func (o *OIDCFederationAuthenticator) Callback(ctx context.Context, state *sso.C
 		}
 	}
 	return &sso.AuthResult{
-		UserID:      sub,
-		ExternalID:  sub,
-		Provider:    o.cfg.Name,
-		Attributes:  attrs,
+		UserID:     sub,
+		ExternalID: sub,
+		Provider:   o.cfg.Name,
+		Attributes: attrs,
 		// Upstream IdP doesn't tell us which AMR was used. RFC 8176
 		// reserves `fed` for "federated authentication," but it's
 		// not in common use; emit it alongside the generic `pwd`

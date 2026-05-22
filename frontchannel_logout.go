@@ -165,4 +165,3 @@ func appendFrontchannelLogoutSidIss(uri, sid, iss string) string {
 	}
 	return uri + sep + strings.Join(params, "&")
 }
-

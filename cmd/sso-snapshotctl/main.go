@@ -143,13 +143,13 @@ func runInspect(args []string) error {
 	// Render the envelope header as JSON so operators can grep /
 	// jq it programmatically. Body stays cleared by PeekEnvelope.
 	out, err := json.MarshalIndent(struct {
-		FileBytes              int    `json:"file_bytes"`
-		EnvelopeVersion        string `json:"envelope_version"`
-		SnapshotID             string `json:"snapshot_id"`
-		Codec                  string `json:"codec"`
-		EncryptionAlgorithm    string `json:"encryption_algorithm"`
-		HasEncryptionParams    bool   `json:"has_encryption_params"`
-		PlaintextSHA256        string `json:"plaintext_sha256_hex"`
+		FileBytes           int    `json:"file_bytes"`
+		EnvelopeVersion     string `json:"envelope_version"`
+		SnapshotID          string `json:"snapshot_id"`
+		Codec               string `json:"codec"`
+		EncryptionAlgorithm string `json:"encryption_algorithm"`
+		HasEncryptionParams bool   `json:"has_encryption_params"`
+		PlaintextSHA256     string `json:"plaintext_sha256_hex"`
 	}{
 		FileBytes:           len(raw),
 		EnvelopeVersion:     env.EnvelopeVersion,

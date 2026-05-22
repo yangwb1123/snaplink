@@ -19,11 +19,11 @@ import (
 )
 
 const (
-	acrUserID    = "u-acr"
-	acrClientID  = "acr-client"
-	acrSecret    = "acr-secret"
-	acrPassword  = "pw"
-	acrRedirect  = "https://app.example/cb"
+	acrUserID   = "u-acr"
+	acrClientID = "acr-client"
+	acrSecret   = "acr-secret"
+	acrPassword = "pw"
+	acrRedirect = "https://app.example/cb"
 )
 
 // acrCaptureAuthenticator records every AuthRequest's ACRValues so

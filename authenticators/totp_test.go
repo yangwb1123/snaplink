@@ -18,7 +18,7 @@ func TestTOTP_RFC6238Vectors(t *testing.T) {
 		want string
 	}{
 		// SHA-1 column from RFC 6238 Table 1, 6-digit truncated.
-		{59, "94287082"},          // 8-digit per spec
+		{59, "94287082"}, // 8-digit per spec
 		{1111111109, "07081804"},
 		{1111111111, "14050471"},
 		{1234567890, "89005924"},

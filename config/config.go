@@ -25,18 +25,18 @@ const DefaultFileName = "config.yaml"
 
 // Config is the root configuration document.
 type Config struct {
-	Server         ServerConfig         `yaml:"server"`
-	Authenticators AuthenticatorsConfig `yaml:"authenticators"`
-	Logging        LoggingConfig        `yaml:"logging"`
-	Audit          AuditConfig          `yaml:"audit"`
-	Permissions    PermissionsConfig    `yaml:"permissions"`
-	Network        NetworkConfig        `yaml:"network"`
-	Clients        []ClientConfig       `yaml:"clients"`
-	Admin          AdminConfig          `yaml:"admin"`
-	Bootstrap      BootstrapConfig      `yaml:"bootstrap"`
-	Snapshot       SnapshotConfig       `yaml:"snapshot"`
-	Releases       ReleasesConfig       `yaml:"releases"`
-	Geo            GeoConfig            `yaml:"geo"`
+	Server             ServerConfig             `yaml:"server"`
+	Authenticators     AuthenticatorsConfig     `yaml:"authenticators"`
+	Logging            LoggingConfig            `yaml:"logging"`
+	Audit              AuditConfig              `yaml:"audit"`
+	Permissions        PermissionsConfig        `yaml:"permissions"`
+	Network            NetworkConfig            `yaml:"network"`
+	Clients            []ClientConfig           `yaml:"clients"`
+	Admin              AdminConfig              `yaml:"admin"`
+	Bootstrap          BootstrapConfig          `yaml:"bootstrap"`
+	Snapshot           SnapshotConfig           `yaml:"snapshot"`
+	Releases           ReleasesConfig           `yaml:"releases"`
+	Geo                GeoConfig                `yaml:"geo"`
 	Tenant             TenantConfig             `yaml:"tenant"`
 	Security           SecurityConfig           `yaml:"security"`
 	Metrics            MetricsConfig            `yaml:"metrics"`
@@ -155,7 +155,7 @@ type WebAuthnBackendSQLiteConfig struct {
 // mixed (e.g. SQLite identity + memory OAuth state for low-traffic
 // CLI deployments) by setting backends separately.
 type IdentityConfig struct {
-	Backend string             `yaml:"backend"` // memory | sqlite
+	Backend string               `yaml:"backend"` // memory | sqlite
 	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
 }
 
@@ -197,9 +197,9 @@ type ClientRegistrationConfig struct {
 //
 // MaxConcurrent caps the fan-out parallelism per logout (default 8).
 type BackchannelLogoutConfig struct {
-	Enabled       bool                  `yaml:"enabled"`
-	MaxConcurrent int                   `yaml:"max_concurrent"`
-	Index         BCLIndexConfig        `yaml:"index"`
+	Enabled       bool           `yaml:"enabled"`
+	MaxConcurrent int            `yaml:"max_concurrent"`
+	Index         BCLIndexConfig `yaml:"index"`
 }
 
 // BCLIndexConfig configures the SubjectClientIndex backend that
@@ -208,7 +208,7 @@ type BackchannelLogoutConfig struct {
 // replica that never issued tokens for a sibling RP still fans out
 // correctly.
 type BCLIndexConfig struct {
-	Backend string             `yaml:"backend"`
+	Backend string               `yaml:"backend"`
 	SQLite  BCLIndexSQLiteConfig `yaml:"sqlite"`
 }
 
@@ -239,13 +239,13 @@ type OAuthConfig struct {
 	// memory-only (no SQLite backend yet). Each individually-enabled
 	// store inherits this choice unless the store's own Backend
 	// override is set.
-	Backend string                `yaml:"backend"`
-	SQLite  OAuthSQLiteConfig     `yaml:"sqlite"`
-	AuthCode     OAuthStoreConfig       `yaml:"auth_code"`
-	RefreshToken OAuthStoreConfig       `yaml:"refresh_token"`
-	DeviceCode   OAuthDeviceCodeConfig  `yaml:"device_code"`
-	PAR          OAuthStoreConfig       `yaml:"par"`
-	JAR          OAuthJARConfig         `yaml:"jar"`
+	Backend      string                `yaml:"backend"`
+	SQLite       OAuthSQLiteConfig     `yaml:"sqlite"`
+	AuthCode     OAuthStoreConfig      `yaml:"auth_code"`
+	RefreshToken OAuthStoreConfig      `yaml:"refresh_token"`
+	DeviceCode   OAuthDeviceCodeConfig `yaml:"device_code"`
+	PAR          OAuthStoreConfig      `yaml:"par"`
+	JAR          OAuthJARConfig        `yaml:"jar"`
 }
 
 // OAuthSQLiteConfig groups the SQLite-only knobs. DSN follows
@@ -403,8 +403,8 @@ type AccountLockoutSQLiteConfig struct {
 // For Redis or other shared backends, operators wire their own
 // implementation via sso.WithJTIReplayStore directly.
 type JTIReplayConfig struct {
-	Enabled bool              `yaml:"enabled"`
-	Backend string            `yaml:"backend"`
+	Enabled bool               `yaml:"enabled"`
+	Backend string             `yaml:"backend"`
 	SQLite  JTIReplaySQLiteCfg `yaml:"sqlite"`
 }
 
@@ -445,8 +445,8 @@ type DPoPNonceConfig struct {
 // bodies (PAR request objects, WebAuthn attestation blobs) while
 // keeping a global cap on everything else.
 type BodyLimitConfig struct {
-	MaxBytes  int64                      `yaml:"max_bytes"`
-	Overrides []BodyLimitOverrideConfig  `yaml:"overrides"`
+	MaxBytes  int64                     `yaml:"max_bytes"`
+	Overrides []BodyLimitOverrideConfig `yaml:"overrides"`
 }
 
 // BodyLimitOverrideConfig is one entry in BodyLimitConfig.Overrides.
@@ -517,12 +517,12 @@ type AdminConfig struct {
 // when empty). Set Disabled=true to skip the runner entirely (useful in
 // tests or when an external orchestrator owns init).
 type BootstrapConfig struct {
-	Disabled       bool                `yaml:"disabled"`
-	StatePath      string              `yaml:"state_path"`
-	AdminUserID    string              `yaml:"admin_user_id"`
-	AdminClientID  string              `yaml:"admin_client_id"`
-	AdminRoleCode  string              `yaml:"admin_role_code"`
-	AdminClientApp string              `yaml:"admin_client_app"`
+	Disabled       bool   `yaml:"disabled"`
+	StatePath      string `yaml:"state_path"`
+	AdminUserID    string `yaml:"admin_user_id"`
+	AdminClientID  string `yaml:"admin_client_id"`
+	AdminRoleCode  string `yaml:"admin_role_code"`
+	AdminClientApp string `yaml:"admin_client_app"`
 
 	// AdminPasswordFile is an optional path where the generated
 	// admin password is written (mode 0600) on first boot in
@@ -726,12 +726,12 @@ type GeoStaticEntry struct {
 // running an admin-managed setup can leave both empty and
 // populate via the (forthcoming) admin TenantService RPCs.
 type TenantConfig struct {
-	Enabled          bool                       `yaml:"enabled"`
-	Backend          string                     `yaml:"backend"` // "memory" (default)
-	LookupTimeout    time.Duration              `yaml:"lookup_timeout"`
-	IncludeSuspended bool                       `yaml:"include_suspended"`
-	Tenants          []TenantSeedConfig         `yaml:"tenants"`
-	Domains          []TenantDomainConfig       `yaml:"domains"`
+	Enabled          bool                        `yaml:"enabled"`
+	Backend          string                      `yaml:"backend"` // "memory" (default)
+	LookupTimeout    time.Duration               `yaml:"lookup_timeout"`
+	IncludeSuspended bool                        `yaml:"include_suspended"`
+	Tenants          []TenantSeedConfig          `yaml:"tenants"`
+	Domains          []TenantDomainConfig        `yaml:"domains"`
 	SuspensionCheck  TenantSuspensionCheckConfig `yaml:"suspension_check"`
 }
 
@@ -851,10 +851,10 @@ type AuditSqliteConfig struct {
 // audit-package defaults when zero. Compose order matches AGENTS.md:
 // AsyncSink(MultiSink(MemorySink, RetryingSink(WebhookSink))).
 type AuditWebhookConfig struct {
-	Enabled bool              `yaml:"enabled"`
-	URL     string            `yaml:"url"`
-	Timeout time.Duration     `yaml:"timeout"`
-	Headers map[string]string `yaml:"headers"`
+	Enabled bool                    `yaml:"enabled"`
+	URL     string                  `yaml:"url"`
+	Timeout time.Duration           `yaml:"timeout"`
+	Headers map[string]string       `yaml:"headers"`
 	Retry   AuditWebhookRetryConfig `yaml:"retry"`
 }
 
@@ -1076,11 +1076,11 @@ type ServerConfig struct {
 //   - "sqlite" — cluster-shared file; reverse lookup works on every
 //     replica.
 type PairwiseSubjectsConfig struct {
-	Enabled  bool                       `yaml:"enabled"`
-	Salt     string                     `yaml:"salt"`
-	SaltFile string                     `yaml:"salt_file"`
-	Backend  string                     `yaml:"backend"`
-	SQLite   PairwiseSubjectsSQLiteCfg  `yaml:"sqlite"`
+	Enabled  bool                      `yaml:"enabled"`
+	Salt     string                    `yaml:"salt"`
+	SaltFile string                    `yaml:"salt_file"`
+	Backend  string                    `yaml:"backend"`
+	SQLite   PairwiseSubjectsSQLiteCfg `yaml:"sqlite"`
 }
 
 type PairwiseSubjectsSQLiteCfg struct {
@@ -1262,9 +1262,9 @@ type KeyPairConfig struct {
 // from accidentally swapping public/private material at the YAML
 // layer.
 type KeyPairPublicKeyConfig struct {
-	KeyID          string `yaml:"key_id"`
-	PublicKeyFile  string `yaml:"public_key_file"`
-	SubjectID      string `yaml:"subject_id"`
+	KeyID         string `yaml:"key_id"`
+	PublicKeyFile string `yaml:"public_key_file"`
+	SubjectID     string `yaml:"subject_id"`
 }
 
 // APIKeyConfig configures the API-key authenticator + optional seed

@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	uiLocalesUserID    = "u-ui"
-	uiLocalesClientID  = "ui-client"
-	uiLocalesSecret    = "ui-secret"
-	uiLocalesPassword  = "pw"
-	uiLocalesRedirect  = "https://app.example/cb"
+	uiLocalesUserID   = "u-ui"
+	uiLocalesClientID = "ui-client"
+	uiLocalesSecret   = "ui-secret"
+	uiLocalesPassword = "pw"
+	uiLocalesRedirect = "https://app.example/cb"
 )
 
 type uiCaptureAuthenticator struct {

@@ -233,9 +233,9 @@ func normalizeDPoPHTU(raw string) string {
 //   - If the access token has no cnf.jkt (legacy bearer), DPoP
 //     is irrelevant — return success with the existing claims.
 //   - If the access token has cnf.jkt:
-//     • the request MUST carry a DPoP proof header
-//     • the proof MUST validate against the request method + URL
-//     • the proof's JWK thumbprint MUST equal the token's cnf.jkt
+//   - the request MUST carry a DPoP proof header
+//   - the proof MUST validate against the request method + URL
+//   - the proof's JWK thumbprint MUST equal the token's cnf.jkt
 //
 // Returns an error mapped to invalid_token on the wire (matches the
 // existing bearer-token error shape; RFC 9449 §7.1 also allows

@@ -22,10 +22,10 @@ import (
 // slowNotifier sleeps `delay` before recording the call. Used to
 // prove the multi-RP fan-out runs concurrently rather than serially.
 type slowNotifier struct {
-	mu             sync.Mutex
-	calls          []string
-	delay          time.Duration
-	maxConcurrent  atomic.Int32
+	mu              sync.Mutex
+	calls           []string
+	delay           time.Duration
+	maxConcurrent   atomic.Int32
 	currentInFlight atomic.Int32
 }
 

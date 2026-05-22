@@ -25,66 +25,66 @@ import (
 
 // Server is the core SSO orchestrator.
 type Server struct {
-	authenticators       map[string]Authenticator
-	tokenIssuers         map[string]TokenIssuer // strategy name -> issuer
-	defaultTokenStrategy string
-	userProvider         UserProvider
-	clientStore          ClientStore
-	sessionMgr           SessionManager
-	router               Router
-	middleware           []MiddlewareFunc
-	logger               Logger
-	auditor              *audit.Recorder
-	auditAPI             bool
-	requestIDMW          bool
-	permissions          permissions.Provider
-	embedPermissions     bool
-	netStore             netpolicy.Store
-	netClassifier        *netpolicy.Classifier
-	netAPI               bool
-	geoProvider          geo.Provider
-	geoMiddlewareOpts    GeoMiddlewareOptions
-	tenantStore             tenant.Store
-	tenantMiddlewareOpts    TenantMiddlewareOptions
-	tenantSuspensionEnabled bool
-	tenantSuspensionCache   *suspensionCache
-	riskScorer           RiskScorer
-	metrics              *metrics.Metrics
-	rateLimitPolicy      *ratelimit.Policy
-	bodyLimit            int64
-	bodyLimitByPath      map[string]int64 // exact-prefix overrides; longest prefix wins
-	readyChecks          []namedReadyCheck
-	tracingOperation     string
-	corsPolicy           *cors.Policy
-	issuer               string
-	authCodeStore        AuthCodeStore
-	authCodeTTL          time.Duration
-	refreshTokenStore    RefreshTokenStore
-	refreshTokenTTL      time.Duration
-	idTokenIssuer        IDTokenIssuer
-	deviceCodeStore      DeviceCodeStore
-	deviceCodeTTL        time.Duration
-	deviceCodeInterval   time.Duration
-	deviceVerifyBaseURL  string
-	parStore             PARStore
-	parTTL               time.Duration
-	dcrPolicy            *DCRPolicy
-	oauth21Strict        bool
+	authenticators                 map[string]Authenticator
+	tokenIssuers                   map[string]TokenIssuer // strategy name -> issuer
+	defaultTokenStrategy           string
+	userProvider                   UserProvider
+	clientStore                    ClientStore
+	sessionMgr                     SessionManager
+	router                         Router
+	middleware                     []MiddlewareFunc
+	logger                         Logger
+	auditor                        *audit.Recorder
+	auditAPI                       bool
+	requestIDMW                    bool
+	permissions                    permissions.Provider
+	embedPermissions               bool
+	netStore                       netpolicy.Store
+	netClassifier                  *netpolicy.Classifier
+	netAPI                         bool
+	geoProvider                    geo.Provider
+	geoMiddlewareOpts              GeoMiddlewareOptions
+	tenantStore                    tenant.Store
+	tenantMiddlewareOpts           TenantMiddlewareOptions
+	tenantSuspensionEnabled        bool
+	tenantSuspensionCache          *suspensionCache
+	riskScorer                     RiskScorer
+	metrics                        *metrics.Metrics
+	rateLimitPolicy                *ratelimit.Policy
+	bodyLimit                      int64
+	bodyLimitByPath                map[string]int64 // exact-prefix overrides; longest prefix wins
+	readyChecks                    []namedReadyCheck
+	tracingOperation               string
+	corsPolicy                     *cors.Policy
+	issuer                         string
+	authCodeStore                  AuthCodeStore
+	authCodeTTL                    time.Duration
+	refreshTokenStore              RefreshTokenStore
+	refreshTokenTTL                time.Duration
+	idTokenIssuer                  IDTokenIssuer
+	deviceCodeStore                DeviceCodeStore
+	deviceCodeTTL                  time.Duration
+	deviceCodeInterval             time.Duration
+	deviceVerifyBaseURL            string
+	parStore                       PARStore
+	parTTL                         time.Duration
+	dcrPolicy                      *DCRPolicy
+	oauth21Strict                  bool
 	logoutTokenIssuer              LogoutTokenIssuer
 	logoutNotifier                 LogoutNotifier
 	backchannelLogoutMaxConcurrent int
-	accountLockout       AccountLockout
-	jtiReplayStore       JTIReplayStore
-	subjectClientIndex   SubjectClientIndex
-	jarFetcher           JARFetcher
-	clientCertExtractor  ClientCertExtractor
-	dpopNonceProvider    DPoPNonceProvider
-	metadataSigner       MetadataSigner
-	jwksCacheTTL         time.Duration
-	supportedACRValues   []string
-	opPolicyURI          string
-	opTosURI             string
-	serviceDocumentation string
+	accountLockout                 AccountLockout
+	jtiReplayStore                 JTIReplayStore
+	subjectClientIndex             SubjectClientIndex
+	jarFetcher                     JARFetcher
+	clientCertExtractor            ClientCertExtractor
+	dpopNonceProvider              DPoPNonceProvider
+	metadataSigner                 MetadataSigner
+	jwksCacheTTL                   time.Duration
+	supportedACRValues             []string
+	opPolicyURI                    string
+	opTosURI                       string
+	serviceDocumentation           string
 
 	// Discovery doc derivations from the client store (scopes union,
 	// RequirePAR-any, RequireSignedRequestObject-all,

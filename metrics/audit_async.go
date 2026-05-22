@@ -9,11 +9,11 @@ import (
 // Audit-async metric names. Mirror the public counter / gauge methods
 // on audit.AsyncSink so the Prometheus surface == the Go API.
 const (
-	NameAuditAsyncDropsQueueFull   = "sso_audit_async_drops_queue_full_total"
-	NameAuditAsyncDropsClosed      = "sso_audit_async_drops_closed_total"
-	NameAuditAsyncDropsInnerError  = "sso_audit_async_drops_inner_error_total"
-	NameAuditAsyncQueueDepth       = "sso_audit_async_queue_depth"
-	NameAuditAsyncQueueCapacity    = "sso_audit_async_queue_capacity"
+	NameAuditAsyncDropsQueueFull  = "sso_audit_async_drops_queue_full_total"
+	NameAuditAsyncDropsClosed     = "sso_audit_async_drops_closed_total"
+	NameAuditAsyncDropsInnerError = "sso_audit_async_drops_inner_error_total"
+	NameAuditAsyncQueueDepth      = "sso_audit_async_queue_depth"
+	NameAuditAsyncQueueCapacity   = "sso_audit_async_queue_capacity"
 )
 
 // AsyncSinkCollector exposes an audit.AsyncSink's drop counters and
@@ -25,11 +25,11 @@ const (
 // the same Registerer panics (prometheus convention); construct
 // once at cmd-level boot.
 type AsyncSinkCollector struct {
-	sink         *audit.AsyncSink
-	dropsFull    *prometheus.Desc
-	dropsClosed  *prometheus.Desc
-	dropsInner   *prometheus.Desc
-	queueDepth   *prometheus.Desc
+	sink          *audit.AsyncSink
+	dropsFull     *prometheus.Desc
+	dropsClosed   *prometheus.Desc
+	dropsInner    *prometheus.Desc
+	queueDepth    *prometheus.Desc
 	queueCapacity *prometheus.Desc
 }
 

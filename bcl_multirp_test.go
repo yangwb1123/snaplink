@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	multiUser    = "u-multi"
-	multiCliA    = "multi-client-a"
-	multiCliB    = "multi-client-b"
-	multiCliC    = "multi-client-c"
-	multiSecret  = "secret"
-	multiPasswd  = "pw"
-	multiBCAURI  = "https://app-a.example/bc-logout"
-	multiBCBURI  = "https://app-b.example/bc-logout"
+	multiUser   = "u-multi"
+	multiCliA   = "multi-client-a"
+	multiCliB   = "multi-client-b"
+	multiCliC   = "multi-client-c"
+	multiSecret = "secret"
+	multiPasswd = "pw"
+	multiBCAURI = "https://app-a.example/bc-logout"
+	multiBCBURI = "https://app-b.example/bc-logout"
 )
 
 // newMultiRPHarness wires three clients with distinct BC URIs and an

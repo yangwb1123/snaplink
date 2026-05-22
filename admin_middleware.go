@@ -224,12 +224,12 @@ func bearerFromHTTP(r *http.Request) string {
 // bearer. Covers:
 //   - /api/v1/admin/*       — admin CRUD + audit-RPC gateway
 //   - /api/v1/audit/*       — event query API exposes subject IDs,
-//                             IPs, geo, outcomes for every login
-//                             attempt; PII-grade leak if open
+//     IPs, geo, outcomes for every login
+//     attempt; PII-grade leak if open
 //   - /api/v1/netpolicy/policies* — list / get / apply / delete
-//                                   network classification topology
+//     network classification topology
 //   - /api/v1/netpolicy/classify  — debug endpoint that resolves any
-//                                   IP against the current topology
+//     IP against the current topology
 //
 // /api/v1/netpolicy/resolve-me stays open: it's the client-facing
 // "what network am I from" lookup, no privileged data leaves the

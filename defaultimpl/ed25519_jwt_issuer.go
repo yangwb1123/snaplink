@@ -19,7 +19,7 @@ import (
 // Ed25519 JWT constants.
 const (
 	jwtAlgEdDSA   = "EdDSA"
-	jwtTyp        = "JWT" // OIDC ID tokens
+	jwtTyp        = "JWT"    // OIDC ID tokens
 	jwtTypAT      = "at+jwt" // RFC 9068 §2.1 — JWT Profile for OAuth 2.0 Access Tokens
 	jwkKtyOKP     = "OKP"
 	jwkCrvEd25519 = "Ed25519"
@@ -194,14 +194,14 @@ type ed25519Header struct {
 }
 
 type ed25519Payload struct {
-	Iss      string            `json:"iss,omitempty"`
-	Sub      string            `json:"sub,omitempty"`
-	Aud      audClaim          `json:"aud,omitempty"`
-	Exp      int64             `json:"exp,omitempty"`
-	Nbf      int64             `json:"nbf,omitempty"`
-	Iat      int64             `json:"iat,omitempty"`
-	Scope    string            `json:"scope,omitempty"`
-	Extra    map[string]string `json:"ext,omitempty"`
+	Iss   string            `json:"iss,omitempty"`
+	Sub   string            `json:"sub,omitempty"`
+	Aud   audClaim          `json:"aud,omitempty"`
+	Exp   int64             `json:"exp,omitempty"`
+	Nbf   int64             `json:"nbf,omitempty"`
+	Iat   int64             `json:"iat,omitempty"`
+	Scope string            `json:"scope,omitempty"`
+	Extra map[string]string `json:"ext,omitempty"`
 
 	// RFC 9068 §2.2 access-token claims.
 	ClientID string             `json:"client_id,omitempty"`
@@ -229,8 +229,8 @@ type ed25519Payload struct {
 // thumbprint. A single token uses one mechanism — both fields
 // populated simultaneously would be a caller bug.
 type confirmationClaim struct {
-	JKT      string `json:"jkt,omitempty"`
-	X5TS256  string `json:"x5t#S256,omitempty"`
+	JKT     string `json:"jkt,omitempty"`
+	X5TS256 string `json:"x5t#S256,omitempty"`
 }
 
 // actClaim is the wire shape of `act`. Per RFC 8693 §4.1 the

@@ -270,16 +270,16 @@ type rowScanner interface {
 
 func scanEvent(r rowScanner) (*audit.Event, error) {
 	var (
-		typ, outcome              string
-		tsNS                      int64
-		metaJSON                  sql.NullString
-		e                         = &audit.Event{}
-		reqID, traceID, spanID    sql.NullString
-		parentSpanID              sql.NullString
-		actorID, actorIP, ua      sql.NullString
-		clientID, prov, strat     sql.NullString
-		sessID, tokID, reason     sql.NullString
-		prev, hash                sql.NullString
+		typ, outcome           string
+		tsNS                   int64
+		metaJSON               sql.NullString
+		e                      = &audit.Event{}
+		reqID, traceID, spanID sql.NullString
+		parentSpanID           sql.NullString
+		actorID, actorIP, ua   sql.NullString
+		clientID, prov, strat  sql.NullString
+		sessID, tokID, reason  sql.NullString
+		prev, hash             sql.NullString
 	)
 	if err := r.Scan(
 		&e.ID, &typ, &outcome, &tsNS,

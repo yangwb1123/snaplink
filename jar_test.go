@@ -24,18 +24,18 @@ import (
 // Client.JWKS; failures map to invalid_request_object.
 
 const (
-	jarClient       = "jar-client"
-	jarUser         = "u-jar"
-	jarPassword     = "pw"
-	jarKid          = "jar-kid-1"
-	jarASIssuer     = "https://sso.test"
-	jarRedirectURI  = "https://app.example.com/cb"
-	jarRedirectAlt  = "https://app.example.com/cb-alt"
-	jarStateInJWT   = "state-inside-jwt"
-	jarScopeInJWT   = "read write"
-	jarNonceInJWT   = "nonce-xyz-42"
-	jarPKCEInJWT    = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789012"
-	jarBadRedirect  = "https://attacker.example/steal"
+	jarClient      = "jar-client"
+	jarUser        = "u-jar"
+	jarPassword    = "pw"
+	jarKid         = "jar-kid-1"
+	jarASIssuer    = "https://sso.test"
+	jarRedirectURI = "https://app.example.com/cb"
+	jarRedirectAlt = "https://app.example.com/cb-alt"
+	jarStateInJWT  = "state-inside-jwt"
+	jarScopeInJWT  = "read write"
+	jarNonceInJWT  = "nonce-xyz-42"
+	jarPKCEInJWT   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789012"
+	jarBadRedirect = "https://attacker.example/steal"
 )
 
 type jarHarness struct {

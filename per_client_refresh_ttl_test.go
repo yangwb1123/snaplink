@@ -17,12 +17,12 @@ import (
 )
 
 const (
-	pcrtUserID    = "u-pcrt"
-	pcrtClientA   = "pcrt-short"
-	pcrtClientB   = "pcrt-long"
-	pcrtPassword  = "pw"
-	pcrtSecretA   = "secret-a"
-	pcrtSecretB   = "secret-b"
+	pcrtUserID   = "u-pcrt"
+	pcrtClientA  = "pcrt-short"
+	pcrtClientB  = "pcrt-long"
+	pcrtPassword = "pw"
+	pcrtSecretA  = "secret-a"
+	pcrtSecretB  = "secret-b"
 )
 
 // newPerClientRefreshTTLHarness wires two clients with different

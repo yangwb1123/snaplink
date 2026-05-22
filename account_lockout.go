@@ -70,9 +70,9 @@ type AccountLockout interface {
 // Lockout-policy defaults. Conservative starting points; tune for
 // the deployment's threat model + user-experience tolerance.
 const (
-	DefaultLockoutMaxFailures    = 5
-	DefaultLockoutDuration       = 15 * time.Minute
-	DefaultLockoutFailureWindow  = 1 * time.Hour
+	DefaultLockoutMaxFailures   = 5
+	DefaultLockoutDuration      = 15 * time.Minute
+	DefaultLockoutFailureWindow = 1 * time.Hour
 )
 
 // MemoryAccountLockout is the in-process AccountLockout. Suitable
@@ -85,9 +85,9 @@ const (
 // sliding window; if a new failure arrives AFTER firstFailureAt +
 // FailureWindow, the window resets to a fresh count of 1.
 type MemoryAccountLockout struct {
-	MaxFailures    int
+	MaxFailures     int
 	LockoutDuration time.Duration
-	FailureWindow  time.Duration
+	FailureWindow   time.Duration
 
 	mu      sync.Mutex
 	entries map[string]*lockoutEntry
@@ -104,10 +104,10 @@ type lockoutEntry struct {
 // override directly after construction.
 func NewMemoryAccountLockout() *MemoryAccountLockout {
 	return &MemoryAccountLockout{
-		MaxFailures:    DefaultLockoutMaxFailures,
+		MaxFailures:     DefaultLockoutMaxFailures,
 		LockoutDuration: DefaultLockoutDuration,
-		FailureWindow:  DefaultLockoutFailureWindow,
-		entries:        make(map[string]*lockoutEntry),
+		FailureWindow:   DefaultLockoutFailureWindow,
+		entries:         make(map[string]*lockoutEntry),
 	}
 }
 
