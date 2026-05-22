@@ -227,6 +227,11 @@ type app struct {
 	auditRetentionCancel context.CancelFunc
 	auditRetentionDone   <-chan struct{}
 
+	// snapshotRetentionCancel + snapshotRetentionDone mirror the
+	// audit retention pair for snapshot retention.
+	snapshotRetentionCancel context.CancelFunc
+	snapshotRetentionDone   <-chan struct{}
+
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
@@ -358,6 +363,19 @@ func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen stri
 			case <-a.auditRetentionDone:
 			case <-ctx.Done():
 				logger.Error("audit retention scheduler did not exit cleanly")
+			}
+		}
+	}
+	// Snapshot retention scheduler: same pattern. Cancel + bounded
+	// wait. Loop body is List + (k-N)*Delete; bounded by storage
+	// backend Delete latency.
+	if a.snapshotRetentionCancel != nil {
+		a.snapshotRetentionCancel()
+		if a.snapshotRetentionDone != nil {
+			select {
+			case <-a.snapshotRetentionDone:
+			case <-ctx.Done():
+				logger.Error("snapshot retention scheduler did not exit cleanly")
 			}
 		}
 	}
@@ -2261,6 +2279,28 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("release subsystem: %w", err)
 	}
+	var snapshotRetentionCancel context.CancelFunc
+	var snapshotRetentionDone <-chan struct{}
+	if rc := cfg.Snapshot.Retention; rc.Enabled {
+		if pipeline == nil || snapStorage == nil {
+			return nil, errors.New("snapshot.retention.enabled requires snapshot.enabled=true")
+		}
+		if rc.Keep <= 0 {
+			return nil, errors.New("snapshot.retention.keep must be > 0 (set 0 disables; use enabled=false to skip the loop)")
+		}
+		interval := rc.Interval
+		if interval <= 0 {
+			interval = 6 * time.Hour
+		}
+		retentionCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		snapshotRetentionCancel = cancel
+		snapshotRetentionDone = done
+		go runSnapshotRetention(retentionCtx, done, snapStorage, interval, rc.Keep, logger)
+		logger.Info("snapshot: retention scheduler enabled",
+			"keep", rc.Keep, "interval", interval)
+	}
+
 	// Wire ConfigSnapshot-aware Rollback when both subsystems are
 	// enabled and the operator opted in. Done here (after both
 	// factories) so the Registry receives a fully-formed adapter
@@ -2303,34 +2343,66 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		return nil, fmt.Errorf("registry register: %w", err)
 	}
 	return &app{
-		server:               srv,
-		recorder:             recorder,
-		provider:             provider,
-		registry:             reg,
-		netStore:             netStore,
-		classifier:           classifier,
-		clientStore:          clientStore,
-		userProvider:         userProvider,
-		sessionMgr:           sessionMgr,
-		tempStore:            tempStore,
-		tokenIssuers:         tokenIssuers,
-		idTokenIssuer:        jwtIssuer,
-		refreshTokenStore:    refreshTokenStore,
-		refreshTokenTTL:      refreshTokenTTL,
-		adminMW:              adminMW,
-		snapshotPipeline:     pipeline,
-		snapshotStorage:      snapStorage,
-		snapshotter:          snapshotter,
-		snapshotRestorer:     restorer,
-		releaseRegistry:      releaseRegistry,
-		releaseStore:         releaseStore,
-		tenantStore:          tenantStore,
-		webauthnHelper:       webauthnHelper,
-		auditAsyncSink:       asyncSink,
-		auditRetentionCancel: auditRetentionCancel,
-		auditRetentionDone:   auditRetentionDone,
-		netStop:              netStop,
+		server:                  srv,
+		recorder:                recorder,
+		provider:                provider,
+		registry:                reg,
+		netStore:                netStore,
+		classifier:              classifier,
+		clientStore:             clientStore,
+		userProvider:            userProvider,
+		sessionMgr:              sessionMgr,
+		tempStore:               tempStore,
+		tokenIssuers:            tokenIssuers,
+		idTokenIssuer:           jwtIssuer,
+		refreshTokenStore:       refreshTokenStore,
+		refreshTokenTTL:         refreshTokenTTL,
+		adminMW:                 adminMW,
+		snapshotPipeline:        pipeline,
+		snapshotStorage:         snapStorage,
+		snapshotter:             snapshotter,
+		snapshotRestorer:        restorer,
+		releaseRegistry:         releaseRegistry,
+		releaseStore:            releaseStore,
+		tenantStore:             tenantStore,
+		webauthnHelper:          webauthnHelper,
+		auditAsyncSink:          asyncSink,
+		auditRetentionCancel:    auditRetentionCancel,
+		auditRetentionDone:      auditRetentionDone,
+		snapshotRetentionCancel: snapshotRetentionCancel,
+		snapshotRetentionDone:   snapshotRetentionDone,
+		netStop:                 netStop,
 	}, nil
+}
+
+// runSnapshotRetention is the background loop cmd launches when
+// snapshot.retention.enabled wires it. Same shutdown contract as
+// runAuditRetention (close done channel on exit). First prune
+// fires after the first interval, not immediately.
+//
+// PruneOldest errors don't tear down the loop — a transient
+// storage outage shouldn't suspend retention forever; the loop
+// logs + waits for the next tick.
+func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger sso.Logger) {
+	defer close(done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			deleted, err := snapshot.PruneOldest(ctx, storage, keep)
+			if err != nil {
+				logger.Error("snapshot retention prune failed", "error", err, "keep", keep)
+				continue
+			}
+			if len(deleted) > 0 {
+				logger.Info("snapshot retention pruned envelopes",
+					"deleted_count", len(deleted), "keep", keep)
+			}
+		}
+	}
 }
 
 // runAuditRetention is the background loop cmd launches when

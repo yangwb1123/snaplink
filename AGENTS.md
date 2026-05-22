@@ -694,6 +694,10 @@ the operator surface needs explanation:
   in-flight Steps and surfaces `ErrLockLost`.
 - **snapshot.restore_from** — URI for first-boot auto-restore (CLI
   `--bootstrap-restore-from` wins).
+- **snapshot.retention.{enabled,keep,interval}** — background loop
+  calling `snapshot.PruneOldest`; relies on the time-prefixed
+  `SnapshotID` format for lexical ordering. Keep must be > 0 when
+  enabled.
 - **security** — every storage-backed defense (`rate_limit`,
   `jti_replay`, `account_lockout`) supports `backend(memory|sqlite)`
   for cluster-shared state. `mtls.backend(tls|header)`: tls for

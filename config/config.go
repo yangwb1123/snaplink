@@ -687,6 +687,25 @@ type SnapshotConfig struct {
 	Storage     SnapshotStorageConfig    `yaml:"storage"`
 	Encryption  SnapshotEncryptionConfig `yaml:"encryption"`
 	RestoreFrom string                   `yaml:"restore_from"`
+	Retention   SnapshotRetentionConfig  `yaml:"retention"`
+}
+
+// SnapshotRetentionConfig opts into background pruning of old
+// snapshot envelopes via [snapshot.PruneOldest]. Operators take
+// snapshots on a schedule (admin SnapshotService or external
+// cron); without retention the storage dir grows monotonically.
+//
+// Keep <= 0 with Enabled=true is rejected at boot (would wipe
+// every snapshot at the first tick — operators wanting that
+// disable retention and run a wipe manually).
+//
+// Interval defaults to 6h when unset/<=0. Operators taking
+// hourly snapshots typically set Interval=1h so the prune runs
+// shortly after each new snapshot lands.
+type SnapshotRetentionConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Keep     int           `yaml:"keep"`
+	Interval time.Duration `yaml:"interval"`
 }
 
 // SnapshotStorageConfig picks where Pipeline persists envelopes. Backend

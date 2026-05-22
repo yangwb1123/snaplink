@@ -775,6 +775,17 @@ snapshot:
     passphrase: ""
     passphrase_file: ""
   restore_from: ""            # file:///abs/path or inline:<base64>
+  # Background pruning of old snapshot envelopes. Operators take
+  # snapshots on a schedule (admin SnapshotService or external
+  # cron); without retention the storage dir grows monotonically.
+  # The scheduler keeps the `keep` most-recent snapshots and
+  # deletes the rest at every interval. SnapshotID format
+  # (snap_<RFC3339>_<rand>) sorts lexicographically by time so
+  # "most recent" works without per-file mtime inspection.
+  retention:
+    enabled: false
+    keep: 30                   # how many most-recent snapshots to keep
+    interval: 6h               # how often to wake + prune
 
 # Reference rule-based RiskScorer (defaultimpl.RuleBasedRiskScorer).
 # Runs on /auth/login AFTER credential validation, BEFORE token
