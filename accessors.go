@@ -182,3 +182,36 @@ func (s *Server) ValidateAnyToken(ctx context.Context, token string) (*TokenClai
 func (s *Server) VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error) {
 	return verifyJWTClientAssertion(ctx, assertion, formClientID, s.clientStore, asIssuer, s.jtiReplayStore)
 }
+
+// AuthenticateClientCreds verifies client_id + secret via the wired
+// ClientStore + tenant gate. Returns nil on success.
+func (s *Server) AuthenticateClientCreds(ctx core.HandlerContext, id, secret string) error {
+	return s.authenticateClientCreds(ctx, id, secret)
+}
+
+// ResolveLocalSubject translates a (possibly pairwise) subject back
+// to the local user identifier. Required by /token/revoke-all so
+// the bulk delete actually hits the row keyed on the local sub.
+func (s *Server) ResolveLocalSubject(ctx context.Context, sub string) (string, error) {
+	return s.resolveLocalSubject(ctx, sub)
+}
+
+// RevokeAcrossIssuers asks every registered TokenIssuer to revoke
+// the supplied access token. Returns (revoked, failed) issuer-name
+// lists so callers can emit partial-revoke audit on failure.
+func (s *Server) RevokeAcrossIssuers(ctx context.Context, token string) (revoked, failed []string) {
+	return s.revokeAcrossIssuers(ctx, token)
+}
+
+// AuditPartialRevokeFailure emits an audit event when some — but
+// not all — issuers successfully revoked a token.
+func (s *Server) AuditPartialRevokeFailure(ctx core.HandlerContext, revoked, failed []string) {
+	s.auditPartialRevokeFailure(ctx, revoked, failed)
+}
+
+// SetBearerChallenge stamps an RFC 6750 §3 WWW-Authenticate header.
+// realm defaults to "sso" when empty; errorCode/errorDesc omitted
+// for the "no credentials presented" case.
+func (s *Server) SetBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDesc string) {
+	setBearerChallenge(ctx, realm, errorCode, errorDesc)
+}
