@@ -1469,9 +1469,7 @@ func projectClientToDCRResponse(c *Client, ctx HandlerContext) dcrResponse {
 	}
 }
 
-func joinScope(scopes []string) string {
-	return strings.Join(scopes, " ")
-}
+func joinScope(scopes []string) string { return oauth.JoinScope(scopes) }
 
 // subtleConstantTimeStringEq wraps subtle.ConstantTimeCompare for
 // strings — it short-circuits on length mismatch (the standard
@@ -2163,15 +2161,8 @@ func normalizeUserCode(s string) string {
 	return strings.ToUpper(strings.ReplaceAll(s, "-", ""))
 }
 
-// splitScope parses a space-delimited scope string into a slice,
-// returning nil for empty input so the oauth.AuthCode / oauth.DeviceCode entry's
-// Scopes field stays nil-not-empty.
-func splitScope(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, " ")
-}
+// splitScope delegates to oauth.SplitScope.
+func splitScope(s string) []string { return oauth.SplitScope(s) }
 
 // Query parameter accepted by the /permissions/me, /menus/me, /roles/me
 // endpoints to scope the lookup to a particular APP.
