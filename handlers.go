@@ -1603,9 +1603,9 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 			ActorID:  result.UserID,
 			ClientID: client.ID,
 			Provider: result.Provider,
-			ActorIP:  clientIP(ctx.Request()),
+			ActorIP:  audit.ClientIP(ctx.Request()),
 		}
-		setMeta(evt, KeyMFAChallengeID, id)
+		audit.SetMeta(evt, KeyMFAChallengeID, id)
 		s.auditor.Record(ctx.Request().Context(), evt)
 	}
 
@@ -1778,10 +1778,10 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 			ActorID:  challenge.SubjectID,
 			ClientID: client.ID,
 			Provider: state.Result.Provider,
-			ActorIP:  clientIP(ctx.Request()),
+			ActorIP:  audit.ClientIP(ctx.Request()),
 		}
-		setMeta(evt, KeyMFAMethod, req.Method)
-		setMeta(evt, KeyMFAChallengeID, req.ChallengeID)
+		audit.SetMeta(evt, KeyMFAMethod, req.Method)
+		audit.SetMeta(evt, KeyMFAChallengeID, req.ChallengeID)
 		s.auditor.Record(ctx.Request().Context(), evt)
 	}
 
@@ -1818,14 +1818,14 @@ func (s *Server) recordMFAFailure(ctx HandlerContext, subjectID, challengeID, me
 		Type:    audit.EventMFAFailure,
 		Outcome: audit.OutcomeFailure,
 		ActorID: subjectID,
-		ActorIP: clientIP(ctx.Request()),
+		ActorIP: audit.ClientIP(ctx.Request()),
 		Reason:  reason,
 	}
 	if method != "" {
-		setMeta(evt, KeyMFAMethod, method)
+		audit.SetMeta(evt, KeyMFAMethod, method)
 	}
 	if challengeID != "" {
-		setMeta(evt, KeyMFAChallengeID, challengeID)
+		audit.SetMeta(evt, KeyMFAChallengeID, challengeID)
 	}
 	s.auditor.Record(ctx.Request().Context(), evt)
 }
@@ -2340,7 +2340,7 @@ func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kin
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventPermissionQuery
 	e.ActorID = userID
 	e.ClientID = clientID
@@ -2349,7 +2349,7 @@ func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kin
 	} else {
 		e.Outcome = audit.OutcomeFailure
 	}
-	setMeta(e, "kind", kind)
+	audit.SetMeta(e, "kind", kind)
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
@@ -2505,79 +2505,31 @@ func parseAuditTime(v string) (time.Time, error) {
 	return time.Time{}, errors.New("expected RFC3339 timestamp or unix seconds")
 }
 
-// auditEventFromRequest pre-fills an Event with caller-side
+// audit.EventFromRequest pre-fills an Event with caller-side
 // metadata (IP, user-agent, request ID, trace context, plus geo
 // when the geo middleware is wired). Handlers fill the rest.
 // TracingMiddleware populates the headers this function reads;
 // without that middleware installed, RequestID/TraceID/SpanID
 // stay empty. GeoMiddleware similarly populates the geo metadata
 // keys; without it, no geo.* metadata appears.
-func auditEventFromRequest(ctx HandlerContext) *audit.Event {
-	r := ctx.Request()
-	e := &audit.Event{
-		RequestID:    r.Header.Get(HeaderRequestID),
-		ParentSpanID: r.Header.Get(HeaderParentSpanID),
-		ActorIP:      clientIP(r),
-		UserAgent:    r.Header.Get("User-Agent"),
-	}
-	if tp := r.Header.Get(HeaderTraceparent); tp != "" {
-		if tc, err := tracer.ParseTraceparent(tp); err == nil {
-			e.TraceID = tc.TraceID
-			e.SpanID = tc.SpanID
-		}
-	}
-	enrichEventTenant(ctx, e)
-	enrichEventGeo(ctx, e)
-	return e
-}
 
-// enrichEventTenant lifts tenant routing results onto
+// audit.EnrichTenant lifts tenant routing results onto
 // Event.Metadata under the tenant.* prefix. No-op when the
 // tenant middleware didn't run (no store wired, unknown host,
 // suspended tenant). Tenant goes onto every audit event so
 // SIEM filters like "show me failed logins for tenant X" become
 // a single Metadata key check.
-func enrichEventTenant(ctx HandlerContext, e *audit.Event) {
-	r, ok := TenantFromHandlerContext(ctx)
-	if !ok || r.Tenant == nil {
-		return
-	}
-	setMeta(e, "tenant.id", r.Tenant.ID)
-	setMeta(e, "tenant.slug", r.Tenant.Slug)
-	if r.Domain != nil {
-		setMeta(e, "tenant.domain", r.Domain.Hostname)
-	}
-}
 
-// enrichEventGeo lifts geo lookup results from HandlerContext onto
+// audit.EnrichGeo lifts geo lookup results from HandlerContext onto
 // Event.Metadata under the geo.* prefix. No-op when the geo
 // middleware didn't run (no Lookup, ErrNotFound, nil Provider).
 // Only non-empty fields are projected so audit consumers can do a
 // presence check rather than a value check.
-func enrichEventGeo(ctx HandlerContext, e *audit.Event) {
-	info, ok := GeoFromHandlerContext(ctx)
-	if !ok {
-		return
-	}
-	setMeta(e, "geo.country_code", info.CountryCode)
-	setMeta(e, "geo.region", info.Region)
-	setMeta(e, "geo.city", info.City)
-	setMeta(e, "geo.recommended_language", info.RecommendedLanguage)
-}
 
-// setMeta writes key=val into e.Metadata, lazily allocating the map
+// audit.SetMeta writes key=val into e.Metadata, lazily allocating the map
 // and skipping empty values. Use this instead of `e.Metadata = map[...]{...}`
-// — direct assignment would clobber whatever auditEventFromRequest
+// — direct assignment would clobber whatever audit.EventFromRequest
 // already populated (geo enrichment, future fields).
-func setMeta(e *audit.Event, key, val string) {
-	if val == "" {
-		return
-	}
-	if e.Metadata == nil {
-		e.Metadata = make(map[string]string, 4)
-	}
-	e.Metadata[key] = val
-}
 
 // ctxKeyLoginStart is the HandlerContext.Set/Get key holding the
 // time.Time stamped at /auth/login entry. Used by recordLogin* to
@@ -2611,7 +2563,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventLoginFailure
 	e.Outcome = audit.OutcomeFailure
 	e.ClientID = clientID
@@ -2636,7 +2588,7 @@ func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, p
 		Provider:      provider,
 		Outcome:       outcome,
 		FailureReason: failureReason,
-		RemoteIP:      clientIP(r),
+		RemoteIP:      audit.ClientIP(r),
 		UserAgent:     r.Header.Get("User-Agent"),
 		Timestamp:     time.Now(),
 	}
@@ -2664,7 +2616,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventLogin
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
@@ -2680,12 +2632,12 @@ func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []st
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventLogout
 	e.Outcome = audit.OutcomeSuccess
 	e.SessionID = sessionID
 	if len(revoked) > 0 {
-		setMeta(e, "revoked", strings.Join(revoked, ","))
+		audit.SetMeta(e, "revoked", strings.Join(revoked, ","))
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -2698,12 +2650,12 @@ func (s *Server) recordLogoutNotifySuccess(ctx HandlerContext, clientID, subject
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventLogoutNotified
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
 	e.ActorID = subject
-	setMeta(e, "uri", uri)
+	audit.SetMeta(e, "uri", uri)
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
@@ -2715,7 +2667,7 @@ func (s *Server) recordLogoutNotifyFailure(ctx HandlerContext, clientID, subject
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventLogoutNotified
 	e.Outcome = audit.OutcomeFailure
 	e.ClientID = clientID
@@ -2735,14 +2687,14 @@ func (s *Server) recordAccountLocked(ctx HandlerContext, clientID, provider, loc
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventAccountLocked
 	e.Outcome = audit.OutcomeFailure
 	e.ClientID = clientID
 	e.Provider = provider
 	e.ActorID = lockKey
 	if !until.IsZero() {
-		setMeta(e, "until", until.UTC().Format(time.RFC3339))
+		audit.SetMeta(e, "until", until.UTC().Format(time.RFC3339))
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -2754,7 +2706,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventCodeSent
 	e.Provider = provider
 	if ok {
@@ -2763,7 +2715,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 		e.Outcome = audit.OutcomeFailure
 	}
 	if target != "" {
-		setMeta(e, "target", maskTarget(target))
+		audit.SetMeta(e, "target", maskTarget(target))
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -2773,7 +2725,7 @@ func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subje
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventTokenIssued
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
@@ -2789,13 +2741,13 @@ func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectI
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventRefreshTokenIssued
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
 	e.ActorID = subjectID
 	if rotation {
-		setMeta(e, "rotation", "true")
+		audit.SetMeta(e, "rotation", "true")
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -2806,7 +2758,7 @@ func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID str
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventIDTokenIssued
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
@@ -2820,7 +2772,7 @@ func (s *Server) recordDeviceCodeIssued(ctx HandlerContext, clientID string) {
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventDeviceCodeIssued
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
@@ -2834,7 +2786,7 @@ func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClie
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	if approved {
 		e.Type = audit.EventDeviceCodeApproved
 		e.Outcome = audit.OutcomeSuccess
@@ -2843,7 +2795,7 @@ func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClie
 		e.Outcome = audit.OutcomeFailure
 	}
 	e.ActorID = userID
-	setMeta(e, "device_client_id", deviceClientID)
+	audit.SetMeta(e, "device_client_id", deviceClientID)
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 
@@ -2854,13 +2806,13 @@ func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID 
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventRefreshTokenReuse
 	e.Outcome = audit.OutcomeFailure
 	e.ClientID = clientID
 	e.Reason = "family=" + familyID
 	if killed > 0 {
-		setMeta(e, "killed", itoa(killed))
+		audit.SetMeta(e, "killed", itoa(killed))
 	}
 	s.auditor.Record(ctx.Request().Context(), e)
 }
@@ -2894,7 +2846,7 @@ func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason stri
 	if s.auditor == nil {
 		return
 	}
-	e := auditEventFromRequest(ctx)
+	e := audit.EventFromRequest(ctx)
 	e.Type = audit.EventCallbackFailure
 	e.Outcome = audit.OutcomeFailure
 	e.Provider = provider
@@ -2916,22 +2868,6 @@ func maskTarget(t string) string {
 		return t[:2] + strings.Repeat("*", len(t)-4) + t[len(t)-2:]
 	}
 	return "***"
-}
-
-func clientIP(r *http.Request) string {
-	if h := r.Header.Get("X-Forwarded-For"); h != "" {
-		if i := strings.IndexByte(h, ','); i > 0 {
-			return strings.TrimSpace(h[:i])
-		}
-		return strings.TrimSpace(h)
-	}
-	if h := r.Header.Get("X-Real-IP"); h != "" {
-		return h
-	}
-	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
-		return r.RemoteAddr[:i]
-	}
-	return r.RemoteAddr
 }
 
 // PathOIDCDiscovery is the OpenID Connect Discovery 1.0 metadata

@@ -1658,7 +1658,7 @@ func setBearerChallenge(ctx HandlerContext, realm, errorCode, errorDescription s
 // ratio over time and alert when failed/(revoked+failed) crosses a
 // threshold. When failed is empty (full success or "no issuer owned
 // this token"), this is a no-op — emitting an event in those cases
-// would be noise. Safe to call with a nil Recorder; uses setMeta so
+// would be noise. Safe to call with a nil Recorder; uses audit.SetMeta so
 // geo + tenant middleware enrichment isn't clobbered.
 func (s *Server) auditPartialRevokeFailure(ctx HandlerContext, revoked, failed []string) {
 	if s.auditor == nil || len(failed) == 0 {
@@ -1669,8 +1669,8 @@ func (s *Server) auditPartialRevokeFailure(ctx HandlerContext, revoked, failed [
 		Outcome:   audit.OutcomeFailure,
 		Timestamp: time.Now(),
 	}
-	setMeta(e, "revoked", strings.Join(revoked, ","))
-	setMeta(e, "failed", strings.Join(failed, ","))
+	audit.SetMeta(e, "revoked", strings.Join(revoked, ","))
+	audit.SetMeta(e, "failed", strings.Join(failed, ","))
 	s.auditor.Record(ctx.Request().Context(), e)
 }
 

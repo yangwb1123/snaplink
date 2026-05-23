@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/geo"
 )
 
@@ -534,7 +535,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			SubjectID: result.UserID,
 			ClientID:  req.ClientID,
 			Provider:  req.Provider,
-			RemoteIP:  clientIP(ctx.Request()),
+			RemoteIP:  audit.ClientIP(ctx.Request()),
 			UserAgent: ctx.Request().UserAgent(),
 			Geo:       geoInfo,
 			Timestamp: time.Now(),
