@@ -3196,71 +3196,6 @@ func requestBaseURL(r *http.Request) string {
 // JWK + JWKSProvider + PathJWKS + DefaultJWKSCacheMaxAge moved to core/jwks.go
 // (data type / interface / wire constants).
 
-func (s *Server) handleJWKS(ctx HandlerContext) {
-	keys := make([]JWK, 0)
-	for _, ti := range s.tokenIssuers {
-		jp, ok := ti.(JWKSProvider)
-		if !ok {
-			continue
-		}
-		ks, err := jp.JWKS(ctx.Request().Context())
-		if err != nil {
-			s.logger.Error("jwks provider failed", "error", err)
-			continue
-		}
-		keys = append(keys, ks...)
-	}
-	// JAR JWE decrypter typically also implements JWKSProvider so its
-	// public encryption key (use: "enc") publishes alongside the
-	// issuer signing keys (use: "sig"). A single JWKS doc covers both
-	// roles; RPs branch on `use` to know which key to encrypt to vs
-	// verify with.
-	if jp, ok := s.jarDecrypter.(JWKSProvider); ok {
-		ks, err := jp.JWKS(ctx.Request().Context())
-		if err != nil {
-			s.logger.Error("jwks decrypter failed", "error", err)
-		} else {
-			keys = append(keys, ks...)
-		}
-	}
-
-	body, err := json.Marshal(map[string]any{"keys": keys})
-	if err != nil {
-		s.logger.Error("jwks marshal failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
-		return
-	}
-
-	// ETag = strong validator. RP libraries can send If-None-Match on
-	// poll-style fetches to short-circuit when keys haven't rotated.
-	// Weak validator semantics ("W/") would be wrong here — the JSON
-	// is byte-exact (json.Marshal is deterministic for the same input
-	// modulo map iteration; the keys slice ordering is stable across
-	// one process lifetime, so any change means real key rotation).
-	sum := sha256.Sum256(body)
-	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:8]) + `"`
-
-	w := ctx.ResponseWriter()
-	r := ctx.Request()
-	w.Header().Set(HeaderContentType, ContentTypeJSON)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(s.jwksCacheMaxAge().Seconds())))
-	w.Header().Set("ETag", etag)
-
-	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
-}
-
-func (s *Server) jwksCacheMaxAge() time.Duration {
-	if s.jwksCacheTTL > 0 {
-		return s.jwksCacheTTL
-	}
-	return DefaultJWKSCacheMaxAge
-}
-
 // silentRenewalRequest captures the subset of /auth/login parameters
 // the OIDC prompt=none silent flow needs. Bound from the inline req
 // struct in handleLogin so the silent-renewal path can be tested and
@@ -3970,3 +3905,6 @@ func (s *Server) AuthenticatedSubject(ctx HandlerContext) (userID, clientID stri
 // Audit handlers (delegators — bodies in audit/handlers.go).
 func (s *Server) handleAuditEvents(ctx HandlerContext)    { audit.HandleEvents(s, ctx) }
 func (s *Server) handleAuditEventByID(ctx HandlerContext) { audit.HandleEventByID(s, ctx) }
+
+// JWKS handler (delegator — body in oidc/handlers.go).
+func (s *Server) handleJWKS(ctx HandlerContext) { oidc.HandleJWKS(s, ctx) }
