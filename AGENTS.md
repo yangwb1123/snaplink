@@ -43,9 +43,21 @@ protoc -I proto \
 
 ```
 sso.go / handler.go / router.go     Server, HandlerContext, routing
-consts.go                           Paths, headers, error codes
-handle_*.go                         Per-endpoint HTTP handlers
-oauth_bind.go                       form+JSON dispatcher
+consts.go / errors.go / types.go    Paths, headers, error codes, data types
+spi_root.go                         Root-coupled SPIs (Authenticator,
+                                    UserProvider, ClientStore, SessionManager,
+                                    TokenIssuer + family)
+token_handlers.go                   /token introspection + revoke + PAR + exchange
+auth_handlers.go                    /end_session + /register + /mfa + /device
+admin_handlers.go                   /admin/permissions* + /netpolicy* + /audit
+oidc_endpoints.go                   /.well-known/* + /jwks + prompt + discovery cache + iss/form-post/userinfo
+oidc_logout.go                      OIDC BCL 1.0 + FCL 1.0 fan-out
+middlewares.go                      admin / tenant / geo / auth / CORS / tracing / request-id
+oauth_helpers.go                    RFC 9101 JAR + form/JSON body dispatcher
+security_helpers.go                 RFC 8705 mTLS-bound + OIDC pairwise + private_key_jwt
+dpop.go                             RFC 9449 DPoP + nonce provider
+server_misc.go                      tokenNoStore/bearerChallenge/auditPartialRevoke
+                                    + buildinfo + tenant suspension cache
 anomaly/                            Async behavioral detection SPIs
 security/                           Per-account lockout, JTI replay,
                                     JAR/JWE, step-up, mTLS header
