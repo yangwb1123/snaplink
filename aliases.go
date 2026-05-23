@@ -1,7 +1,22 @@
 // Code generated. Backward-compat re-exports of core package symbols.
 package sso
 
-import "github.com/snaplink/sso/core"
+import (
+	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/tenant"
+)
+
+// --- Tenant middleware re-exports (functions moved to tenant/) ---
+type ResolvedTenant = tenant.Resolved
+type TenantMiddlewareOptions = tenant.MiddlewareOptions
+type HostExtractor = tenant.HostExtractor
+
+const TenantHandlerContextKey = tenant.HandlerContextKey
+const DefaultTenantLookupTimeout = tenant.DefaultLookupTimeout
+
+var TenantMiddleware = tenant.Middleware
+var TenantFromHandlerContext = tenant.FromHandlerContext
+var DefaultHostExtractor = tenant.DefaultHostExtractor
 
 // --- Types ---
 type ActorClaim = core.ActorClaim
