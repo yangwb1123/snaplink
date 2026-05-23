@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1470,16 +1469,8 @@ func projectClientToDCRResponse(c *Client, ctx HandlerContext) dcrResponse {
 
 func joinScope(scopes []string) string { return oauth.JoinScope(scopes) }
 
-// subtleConstantTimeStringEq wraps subtle.ConstantTimeCompare for
-// strings — it short-circuits on length mismatch (the standard
-// library function does too, but we keep the wrapper local so the
-// length check is explicit and reviewable).
-func subtleConstantTimeStringEq(a, b string) int {
-	if len(a) != len(b) {
-		return 0
-	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b))
-}
+// subtleConstantTimeStringEq delegates to security.ConstantTimeStringEq.
+func subtleConstantTimeStringEq(a, b string) int { return security.ConstantTimeStringEq(a, b) }
 
 // validateDCRMetadata enforces the subset of RFC 7591 §2 / §5
 // rules this server understands plus the policy's whitelist
