@@ -2,10 +2,23 @@
 package sso
 
 import (
+	"github.com/snaplink/sso/admin"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/tenant"
 )
+
+// --- Admin middleware re-exports (functions moved to admin/) ---
+type AdminMiddleware = admin.Middleware
+type AdminTokenValidator = admin.TokenValidator
+type AdminAuthorizer = admin.Authorizer
+
+const AdminScope = admin.Scope
+const AdminScopeRead = admin.ScopeRead
+const AdminScopeWrite = admin.ScopeWrite
+
+var NewAdminMiddleware = admin.NewMiddleware
+var AdminActorFromContext = admin.ActorFromContext
 
 // --- Tenant middleware re-exports (functions moved to tenant/) ---
 type ResolvedTenant = tenant.Resolved
