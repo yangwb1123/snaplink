@@ -173,3 +173,12 @@ func (s *Server) ResolveIssuer(ctx core.HandlerContext) string { return s.resolv
 func (s *Server) ValidateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
 	return s.validateAnyToken(ctx, token)
 }
+
+// VerifyJWTClientAssertion validates an RFC 7521/7523 client
+// assertion JWT presented at /token, /token/introspect,
+// /token/revoke, or /par. Exposed so Hexagonal handler subpackages
+// can authenticate clients without re-implementing the JWS parse +
+// JWKS lookup + jti replay-store interaction.
+func (s *Server) VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error) {
+	return verifyJWTClientAssertion(ctx, assertion, formClientID, s.clientStore, asIssuer, s.jtiReplayStore)
+}
