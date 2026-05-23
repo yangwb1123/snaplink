@@ -1,5 +1,7 @@
 package main
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/spi"
 
 import "github.com/snaplink/sso/oauth"
@@ -117,11 +119,11 @@ const (
 // real first-class login method instead of just credential
 // verification).
 //
-// oauth.RefreshTokenStore + IDTokenIssuer are independently optional. When
+// oauth.RefreshTokenStore + oidc.IDTokenIssuer are independently optional. When
 // the resolved client's AllowedScopes contains `offline_access`
 // AND a oauth.RefreshTokenStore is wired, the response carries a
 // refresh_token. When the scopes contain `openid` AND an
-// IDTokenIssuer is wired, the response carries an id_token. Either
+// oidc.IDTokenIssuer is wired, the response carries an id_token. Either
 // missing dep silently degrades to the next-lower disclosure (just
 // like /auth/login when those backends aren't configured).
 type webauthnDeps struct {
@@ -131,7 +133,7 @@ type webauthnDeps struct {
 	DefaultStrat      string
 	RefreshTokenStore oauth.RefreshTokenStore
 	RefreshTokenTTL   time.Duration
-	IDTokenIssuer     sso.IDTokenIssuer
+	IDTokenIssuer     oidc.IDTokenIssuer
 	Metrics           *metrics.Metrics // nil-safe; emit only when present
 }
 
@@ -197,7 +199,7 @@ type webauthnFinishLoginResponse struct {
 	// oauth.RefreshToken populates only when the client's AllowedScopes
 	// contains `offline_access` AND a oauth.RefreshTokenStore is wired.
 	// IDToken populates only when the AllowedScopes contains `openid`
-	// AND an IDTokenIssuer is wired. Either dep missing leaves the
+	// AND an oidc.IDTokenIssuer is wired. Either dep missing leaves the
 	// field empty (omitted from the JSON).
 	AccessToken  string `json:"access_token,omitempty"`
 	TokenType    string `json:"token_type,omitempty"`
@@ -371,9 +373,9 @@ var errWebAuthnClientInactive = errors.New("webauthn: client inactive")
 // doesn't have a registered issuer. Server misconfiguration; 500.
 var errWebAuthnNoIssuer = errors.New("webauthn: no token issuer for client strategy")
 
-// errWebAuthnIDToken is returned when IDTokenIssuer.IssueIDToken
+// errWebAuthnIDToken is returned when oidc.IDTokenIssuer.IssueIDToken
 // fails for a client that wanted openid scope. Surfaced as 500 since
-// the configured IDTokenIssuer should be healthy.
+// the configured oidc.IDTokenIssuer should be healthy.
 var errWebAuthnIDToken = errors.New("webauthn: id_token issuance failed")
 
 // errWebAuthnRefreshToken is returned when oauth.RefreshTokenStore.Issue
@@ -445,11 +447,11 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		ExpiresIn:   token.ExpiresIn,
 		Scope:       token.Scope,
 	}
-	// id_token: gated on openid scope AND a wired IDTokenIssuer.
+	// id_token: gated on openid scope AND a wired oidc.IDTokenIssuer.
 	// Mirrors the contract /auth/login implements — clients that
 	// request openid get an id_token; clients that don't, don't.
 	if slices.Contains(scopes, sso.ScopeOpenID) && deps.IDTokenIssuer != nil {
-		idToken, err := deps.IDTokenIssuer.IssueIDToken(ctx, &sso.IDTokenRequest{
+		idToken, err := deps.IDTokenIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
 			Subject:  userID,
 			Audience: client.ID,
 			AuthTime: authTime,

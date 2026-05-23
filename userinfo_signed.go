@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import (
 	"net/http"
 )
@@ -16,7 +18,7 @@ const userinfoSignedAlgEdDSA = "EdDSA"
 // The signed-JWT path fires only when:
 //   - clientID resolves to a registered client AND
 //   - that client's UserinfoSignedResponseAlg is set AND
-//   - the wired IDTokenIssuer implements UserinfoSigner
+//   - the wired oidc.IDTokenIssuer implements oidc.UserinfoSigner
 //
 // Unsupported alg values (anything besides EdDSA) fall through to
 // JSON — the spec says the AS MUST honor the request OR return JSON
@@ -25,7 +27,7 @@ func (s *Server) maybeSignUserInfo(ctx HandlerContext, clientID string, body map
 	if s.idTokenIssuer == nil || s.clientStore == nil || clientID == "" {
 		return false
 	}
-	signer, ok := s.idTokenIssuer.(UserinfoSigner)
+	signer, ok := s.idTokenIssuer.(oidc.UserinfoSigner)
 	if !ok {
 		return false
 	}

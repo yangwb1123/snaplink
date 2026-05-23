@@ -1,5 +1,7 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/oidc"
+
 import (
 	"context"
 	"crypto/ed25519"
@@ -541,7 +543,7 @@ func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
 // exp, iat). Nonce / AuthTime / AMR / ACR / AZP / extra Claims are
 // projected only when non-zero so the wire stays minimal — relying
 // parties branch on field presence per OIDC Core §2.
-func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *sso.IDTokenRequest) (string, error) {
+func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *oidc.IDTokenRequest) (string, error) {
 	if req == nil || req.Subject == "" || req.Audience == "" {
 		return "", errors.New("ed25519: id token requires subject + audience")
 	}
@@ -575,7 +577,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *sso.IDTokenReque
 	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// SignUserInfo implements [sso.UserinfoSigner]. Wraps the supplied
+// SignUserInfo implements [oidc.UserinfoSigner]. Wraps the supplied
 // claim set in a JWS using the same signing key as access + ID
 // tokens — RPs verify all three with one JWKS entry. Stamps `iss`
 // (AS issuer) and `aud` (client_id) per OIDC Core §5.3.2; the
@@ -607,7 +609,7 @@ func (j *Ed25519JWTIssuer) SignUserInfo(_ context.Context, audience string, clai
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// SignMetadata implements [sso.MetadataSigner]. Wraps the discovery
+// SignMetadata implements [oidc.MetadataSigner]. Wraps the discovery
 // document claims in a JWS using the same key as access + ID +
 // userinfo tokens. Header includes `kid` so an RP that's already
 // fetched JWKS can pick the right key for verification.
@@ -743,7 +745,7 @@ func fingerprintKid(pub ed25519.PublicKey) string {
 
 // Compile-time check: the same issuer can mint OIDC ID Tokens, so
 // operators don't need a second key + JWKS entry.
-var _ sso.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
+var _ oidc.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
 
 // Compile-time check: same key also mints OIDC Back-Channel
 // Logout tokens.

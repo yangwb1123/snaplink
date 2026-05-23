@@ -55,6 +55,8 @@ oauth/                              AuthCode/DeviceCode/RefreshToken/PAR
                                     validators
 spi/                                Standalone SPIs: Logger, CodeSender,
                                     RiskScorer, MFAProvider+Challenge
+oidc/                               OIDC ID Token SPIs: IDTokenIssuer,
+                                    UserinfoSigner, MetadataSigner
 authenticators/                     9 pluggable + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)

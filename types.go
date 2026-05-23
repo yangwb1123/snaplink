@@ -106,7 +106,7 @@ type Client struct {
 	// AccessTokenTTL overrides the TokenIssuer's default lifetime
 	// for access (and ID) tokens minted on behalf of THIS client.
 	// Plumbed via Subject.TTL into Ed25519JWTIssuer.Issue (and
-	// IDTokenRequest.TTL for id_tokens). Zero = use the issuer's
+	// oidc.IDTokenRequest.TTL for id_tokens). Zero = use the issuer's
 	// configured tokenTTL. Same SPA-vs-service shaping rationale
 	// as RefreshTokenTTL above.
 	AccessTokenTTL time.Duration `json:"access_token_ttl,omitempty" yaml:"access_token_ttl,omitempty"`

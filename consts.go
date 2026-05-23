@@ -122,7 +122,7 @@ const (
 	KeyMFAMethod      = "mfa_method"
 	KeyMFAMethodData  = "mfa_method_data"
 
-	// ScopeOpenID triggers OIDC ID Token issuance when an IDTokenIssuer
+	// ScopeOpenID triggers OIDC ID Token issuance when an oidc.IDTokenIssuer
 	// is wired (OIDC Core §3.1.2.1).
 	ScopeOpenID = "openid"
 )

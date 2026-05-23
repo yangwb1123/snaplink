@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -125,7 +127,7 @@ type oidcConfiguration struct {
 	// OIDC Core §5.3.2 — JWS algs supported for signing /userinfo
 	// responses when the client's `userinfo_signed_response_alg`
 	// metadata is set. Empty / omitted = signed userinfo not
-	// available (the IDTokenIssuer doesn't implement UserinfoSigner).
+	// available (the oidc.IDTokenIssuer doesn't implement oidc.UserinfoSigner).
 	UserinfoSigningAlgValuesSupported []string `json:"userinfo_signing_alg_values_supported,omitempty"`
 
 	// RFC 9449 §5.1 — JWS algs accepted on the DPoP proof
@@ -300,7 +302,7 @@ func subjectTypesFor(s *Server) []string {
 
 // signDiscoveryMetadata marshals cfg to JSON with SignedMetadata
 // cleared, re-parses as a claim map, and asks the wired
-// MetadataSigner to JWS it. The signed payload must equal the
+// oidc.MetadataSigner to JWS it. The signed payload must equal the
 // plaintext fields per RFC 8414 §2.1; we enforce that by sourcing
 // the claims from the same struct, with one round-trip through
 // json (Marshal + Unmarshal) to get the map shape the signer
@@ -433,11 +435,11 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// list should reflect every registered signature algorithm.
 		cfg.IDTokenSigningAlgValuesSupported = []string{"EdDSA"}
 		// Userinfo signing capability is gated on the issuer
-		// implementing the UserinfoSigner extension. The default
+		// implementing the oidc.UserinfoSigner extension. The default
 		// Ed25519JWTIssuer does — third-party implementations may
 		// not, and the omitempty serialization correctly hides the
 		// claim in that case.
-		if _, ok := s.idTokenIssuer.(UserinfoSigner); ok {
+		if _, ok := s.idTokenIssuer.(oidc.UserinfoSigner); ok {
 			cfg.UserinfoSigningAlgValuesSupported = []string{"EdDSA"}
 		}
 	}

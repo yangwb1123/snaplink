@@ -92,7 +92,7 @@ func TestBuildApp_IDTokenIssuerWiredByDefault(t *testing.T) {
 	doc := fetchDiscovery(t, srv.URL)
 	algs, ok := doc["id_token_signing_alg_values_supported"].([]any)
 	if !ok {
-		t.Fatalf("id_token_signing_alg_values_supported missing — IDTokenIssuer not wired")
+		t.Fatalf("id_token_signing_alg_values_supported missing — oidc.IDTokenIssuer not wired")
 	}
 	if len(algs) == 0 || algs[0] != "EdDSA" {
 		t.Errorf("id_token_signing_alg_values_supported = %v want [EdDSA]", algs)

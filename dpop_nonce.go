@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import (
 	"crypto/hmac"
 	"crypto/rand"
@@ -173,11 +175,11 @@ func WithJWKSCacheTTL(ttl time.Duration) Option {
 // against a tampering proxy substituting endpoints — a security
 // improvement that's a one-line opt-in.
 //
-// Both the default Ed25519JWTIssuer and IDTokenIssuer satisfy
-// MetadataSigner — pass either, typically the same instance already
-// wired as TokenIssuer / IDTokenIssuer so JWKS continues to cover
+// Both the default Ed25519JWTIssuer and oidc.IDTokenIssuer satisfy
+// oidc.MetadataSigner — pass either, typically the same instance already
+// wired as TokenIssuer / oidc.IDTokenIssuer so JWKS continues to cover
 // metadata signing with one key.
-func WithMetadataSigner(s MetadataSigner) Option {
+func WithMetadataSigner(s oidc.MetadataSigner) Option {
 	return func(srv *Server) { srv.metadataSigner = s }
 }
 

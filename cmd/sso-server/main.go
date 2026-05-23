@@ -5,6 +5,8 @@
 // TLS itself or sits behind an OpenResty / Envoy / NGINX reverse proxy.
 package main
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/spi"
 
 import "github.com/snaplink/sso/oauth"
@@ -209,7 +211,7 @@ type app struct {
 	// access_token (matching /auth/login's emission shape). Both nil
 	// when the underlying SPI isn't wired — emission degrades silently
 	// instead of breaking the ceremony.
-	idTokenIssuer     sso.IDTokenIssuer
+	idTokenIssuer     oidc.IDTokenIssuer
 	refreshTokenStore oauth.RefreshTokenStore
 	refreshTokenTTL   time.Duration
 
@@ -2054,7 +2056,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		sso.WithUserProvider(userProvider),
 		sso.WithClientStore(clientStore),
 		sso.WithSessionManager(sessionMgr),
-		// Ed25519JWTIssuer satisfies sso.IDTokenIssuer — sharing one
+		// Ed25519JWTIssuer satisfies oidc.IDTokenIssuer — sharing one
 		// signing key keeps JWKS single-entry. Without this option the
 		// id_token field is omitted from every /token + /auth/login
 		// response and OIDC is silently disabled, which is the wrong
@@ -2465,13 +2467,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithOperatorMetadata(om.PolicyURI, om.TosURI, om.ServiceDocumentation))
 	}
 	if cfg.Server.SignedMetadata {
-		// jwtIssuer satisfies sso.MetadataSigner — reuse the same
+		// jwtIssuer satisfies oidc.MetadataSigner — reuse the same
 		// signing key as access + id + userinfo so JWKS continues to
 		// cover everything with one entry.
-		if signer, ok := any(jwtIssuer).(sso.MetadataSigner); ok {
+		if signer, ok := any(jwtIssuer).(oidc.MetadataSigner); ok {
 			opts = append(opts, sso.WithMetadataSigner(signer))
 		} else {
-			logger.Info("signed_metadata enabled but the configured JWT issuer does not implement MetadataSigner — discovery doc will not be signed")
+			logger.Info("signed_metadata enabled but the configured JWT issuer does not implement oidc.MetadataSigner — discovery doc will not be signed")
 		}
 	}
 	if cfg.Metrics.Enabled {

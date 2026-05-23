@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oidc"
+
 import (
 	"bytes"
 	"context"
@@ -250,10 +252,10 @@ func TestOIDC_Ed25519IDTokenRejectsMissingFields(t *testing.T) {
 	if _, err := iss.IssueIDToken(context.Background(), nil); err == nil {
 		t.Error("nil request must error")
 	}
-	if _, err := iss.IssueIDToken(context.Background(), &sso.IDTokenRequest{Subject: "u"}); err == nil {
+	if _, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{Subject: "u"}); err == nil {
 		t.Error("missing audience must error")
 	}
-	if _, err := iss.IssueIDToken(context.Background(), &sso.IDTokenRequest{Audience: "c"}); err == nil {
+	if _, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{Audience: "c"}); err == nil {
 		t.Error("missing subject must error")
 	}
 }
@@ -261,7 +263,7 @@ func TestOIDC_Ed25519IDTokenRejectsMissingFields(t *testing.T) {
 func TestOIDC_Ed25519IDTokenAuthTimeRoundTrip(t *testing.T) {
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	auth := time.Now().Add(-5 * time.Minute).Truncate(time.Second)
-	tok, err := iss.IssueIDToken(context.Background(), &sso.IDTokenRequest{
+	tok, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
 		Subject: "u", Audience: "c", AuthTime: auth,
 		AMR: []string{"pwd", "mfa"}, ACR: "level-2",
 	})
@@ -292,7 +294,7 @@ func TestOIDC_Ed25519IDTokenAuthTimeRoundTrip(t *testing.T) {
 // Guard against any future Token interface drift: the same instance
 // must continue to satisfy both interfaces.
 func TestOIDC_Ed25519SatisfiesIDTokenIssuerInterface(t *testing.T) {
-	var _ sso.IDTokenIssuer = defaultimpl.NewEd25519JWTIssuer()
+	var _ oidc.IDTokenIssuer = defaultimpl.NewEd25519JWTIssuer()
 	// errors import kept honest by an unused assertion below.
 	_ = errors.New("anchor")
 }

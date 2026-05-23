@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -8,6 +10,7 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -329,8 +332,8 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 			s.recordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
 		}
 	}
-	if hasOpenIDScope(dc.Scopes) && s.idTokenIssuer != nil {
-		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+	if slices.Contains(dc.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
+		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
 			Subject:  issuedSub,
 			Audience: client.ID,
 			Nonce:    dc.Nonce,

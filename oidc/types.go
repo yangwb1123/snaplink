@@ -1,17 +1,9 @@
-package sso
+package oidc
 
 import (
 	"context"
-	"slices"
 	"time"
 )
-
-// hasOpenIDScope reports whether the slice contains the OIDC "openid"
-// trigger scope. Tiny wrapper kept to localize the literal so changes
-// to scope semantics stay in one place.
-func hasOpenIDScope(scopes []string) bool {
-	return slices.Contains(scopes, ScopeOpenID)
-}
 
 // IDTokenRequest carries the inputs an IDTokenIssuer needs to mint an
 // OpenID Connect Core 1.0 ID Token. The server populates this from the

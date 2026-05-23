@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/spi"
 
 import "github.com/snaplink/sso/oauth"
@@ -71,7 +73,7 @@ type Server struct {
 	authCodeTTL                    time.Duration
 	refreshTokenStore              oauth.RefreshTokenStore
 	refreshTokenTTL                time.Duration
-	idTokenIssuer                  IDTokenIssuer
+	idTokenIssuer                  oidc.IDTokenIssuer
 	deviceCodeStore                oauth.DeviceCodeStore
 	deviceCodeTTL                  time.Duration
 	deviceCodeInterval             time.Duration
@@ -90,7 +92,7 @@ type Server struct {
 	jarDecrypter                   security.JWEDecrypter
 	clientCertExtractor            ClientCertExtractor
 	dpopNonceProvider              DPoPNonceProvider
-	metadataSigner                 MetadataSigner
+	metadataSigner                 oidc.MetadataSigner
 	jwksCacheTTL                   time.Duration
 	supportedACRValues             []string
 	opPolicyURI                    string
@@ -496,7 +498,7 @@ func WithOperatorMetadata(policyURI, tosURI, docs string) Option {
 // Pass the same Ed25519JWTIssuer as both WithTokenIssuer and
 // WithIDTokenIssuer to share one signing key + one JWKS entry —
 // that's the canonical wiring for a single-key OIDC deployment.
-func WithIDTokenIssuer(issuer IDTokenIssuer) Option {
+func WithIDTokenIssuer(issuer oidc.IDTokenIssuer) Option {
 	return func(s *Server) { s.idTokenIssuer = issuer }
 }
 

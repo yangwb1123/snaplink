@@ -470,7 +470,7 @@ func TestIssueWebAuthnToken_IssuesIDTokenWhenOpenIDScopeAndIssuerWired(t *testin
 		t.Fatalf("issue: %v", err)
 	}
 	if result.IDToken == "" {
-		t.Fatal("IDToken empty — openid scope + wired IDTokenIssuer must mint id_token")
+		t.Fatal("IDToken empty — openid scope + wired oidc.IDTokenIssuer must mint id_token")
 	}
 	if result.AccessToken == "" {
 		t.Fatal("AccessToken empty — id_token path must not block access_token")
@@ -479,7 +479,7 @@ func TestIssueWebAuthnToken_IssuesIDTokenWhenOpenIDScopeAndIssuerWired(t *testin
 
 func TestIssueWebAuthnToken_NoIDTokenWithoutOpenIDScope(t *testing.T) {
 	// Client scopes don't include openid — id_token must NOT be emitted
-	// even when IDTokenIssuer is wired. Matches /auth/login's contract.
+	// even when oidc.IDTokenIssuer is wired. Matches /auth/login's contract.
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
 		ID:            "wa-app",
@@ -505,7 +505,7 @@ func TestIssueWebAuthnToken_NoIDTokenWithoutOpenIDScope(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_NoIDTokenWithoutIssuer(t *testing.T) {
-	// openid in scope but no IDTokenIssuer wired — id_token field
+	// openid in scope but no oidc.IDTokenIssuer wired — id_token field
 	// stays empty rather than 500. Mirrors how /auth/login silently
 	// omits id_token when WithIDTokenIssuer wasn't supplied.
 	store := defaultimpl.NewMemoryClientStore()

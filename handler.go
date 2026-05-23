@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/spi"
 
 import "github.com/snaplink/sso/oauth"
@@ -797,8 +799,8 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	// fail open — a misconfigured ID-token issuer shouldn't block the
 	// underlying authentication, the relying party just won't get
 	// id_token in the response.
-	if hasOpenIDScope(req.Scope) && s.idTokenIssuer != nil {
-		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+	if slices.Contains(req.Scope, ScopeOpenID) && s.idTokenIssuer != nil {
+		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
 			Subject:  issuedSub,
 			Audience: client.ID,
 			Nonce:    req.Nonce,
@@ -1382,8 +1384,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// OIDC ID Token on the authorization_code path: same gate as
 		// the direct-mint login flow, but the scope + nonce come from
 		// what we captured at issue time, not from the exchange body.
-		if hasOpenIDScope(info.Scopes) && s.idTokenIssuer != nil {
-			idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+		if slices.Contains(info.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
+			idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
 				Subject:  issuedSub,
 				Audience: client.ID,
 				Nonce:    info.Nonce,
@@ -1648,7 +1650,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// gated by scope per OIDC Core §5.4). The full User struct (with
 	// non-standard fields like provider, created_at) is returned only
 	// for non-OIDC tokens — pre-OIDC integrations keep working unchanged.
-	if hasOpenIDScope(claims.Scopes) {
+	if slices.Contains(claims.Scopes, ScopeOpenID) {
 		body := projectUserInfoForOIDC(user, claims.Scopes)
 		// OIDC §8 pairwise: the projected `sub` is u.ID (local), but
 		// the RP knows the user by the pairwise sub from its token.
@@ -1676,7 +1678,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		}
 		// OIDC Core §5.3.2 — when the requesting client has
 		// `userinfo_signed_response_alg` set AND the wired
-		// IDTokenIssuer implements UserinfoSigner, return a
+		// oidc.IDTokenIssuer implements oidc.UserinfoSigner, return a
 		// signed JWT (Content-Type: application/jwt) instead
 		// of plain JSON. Today only EdDSA is supported.
 		if s.maybeSignUserInfo(ctx, claims.ClientID, body) {

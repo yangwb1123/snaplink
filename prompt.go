@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oidc"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -219,7 +221,7 @@ func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req s
 	// the request nonce per §3.1.3.7 (the RP correlates this
 	// renewed token with its current auth round trip).
 	if s.idTokenIssuer != nil && scopeContainsOpenID(scopes) {
-		idTok, idErr := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+		idTok, idErr := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
 			Subject:  claims.Subject,
 			Audience: client.ID,
 			Nonce:    req.Nonce,
