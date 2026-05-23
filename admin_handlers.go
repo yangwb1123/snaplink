@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -9,7 +10,351 @@ import (
 
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/netpolicy"
+	"github.com/snaplink/sso/permissions"
 )
+
+// Query parameter accepted by the /permissions/me, /menus/me, /roles/me
+// endpoints to scope the lookup to a particular APP.
+const QueryClientID = "client_id"
+
+// Response keys for the permission endpoints.
+const (
+	KeyPermissions = "permissions"
+	KeyRoles       = "roles"
+	KeyMenus       = "menus"
+	KeyClient      = "client_id"
+)
+
+// Error codes for the permission endpoints.
+const (
+	ErrPermissionProviderNotConfigured = "permission_provider_not_configured"
+	ErrPermissionLookupFailed          = "permission_lookup_failed"
+)
+
+// authenticatedSubject resolves the bearer token to a user ID + client ID.
+// client_id resolution: explicit query param > token audience > "".
+func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID string, ok bool) {
+	tokenString := bearerToken(ctx.Request())
+	if tokenString == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return "", "", false
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return "", "", false
+	}
+	clientID = ctx.Query(QueryClientID)
+	if clientID == "" && len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+	return claims.Subject, clientID, true
+}
+
+func (s *Server) handleMyPermissions(ctx HandlerContext) {
+	userID, clientID, ok := s.authenticatedSubject(ctx)
+	if !ok {
+		return
+	}
+	if s.permissions == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
+		return
+	}
+	perms, err := s.permissions.Permissions(ctx.Request().Context(), userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("permissions lookup failed", "user", userID, "client", clientID, "error", err)
+		s.recordPermissionQuery(ctx, userID, clientID, KeyPermissions, false)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
+		return
+	}
+	if perms == nil {
+		perms = []permissions.Permission{}
+	}
+	s.recordPermissionQuery(ctx, userID, clientID, KeyPermissions, true)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyClient:      clientID,
+		KeyPermissions: perms,
+	})
+}
+
+func (s *Server) handleMyRoles(ctx HandlerContext) {
+	userID, clientID, ok := s.authenticatedSubject(ctx)
+	if !ok {
+		return
+	}
+	if s.permissions == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
+		return
+	}
+	roles, err := s.permissions.Roles(ctx.Request().Context(), userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("roles lookup failed", "user", userID, "client", clientID, "error", err)
+		s.recordPermissionQuery(ctx, userID, clientID, KeyRoles, false)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
+		return
+	}
+	if roles == nil {
+		roles = []permissions.Role{}
+	}
+	s.recordPermissionQuery(ctx, userID, clientID, KeyRoles, true)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyClient: clientID,
+		KeyRoles:  roles,
+	})
+}
+
+func (s *Server) handleMyMenus(ctx HandlerContext) {
+	userID, clientID, ok := s.authenticatedSubject(ctx)
+	if !ok {
+		return
+	}
+	if s.permissions == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
+		return
+	}
+	menus, err := s.permissions.Menus(ctx.Request().Context(), userID, clientID)
+	if err != nil {
+		s.logger.Error("menus lookup failed", "user", userID, "client", clientID, "error", err)
+		s.recordPermissionQuery(ctx, userID, clientID, KeyMenus, false)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
+		return
+	}
+	if menus == nil {
+		menus = permissions.MenuTree{}
+	}
+	s.recordPermissionQuery(ctx, userID, clientID, KeyMenus, true)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyClient: clientID,
+		KeyMenus:  menus,
+	})
+}
+
+// resolvePermissionsForLogin pulls the bundle that gets embedded in a login
+// response. Errors are swallowed and turned into empty slices so login never
+// fails due to a permission lookup hiccup.
+func (s *Server) resolvePermissionsForLogin(ctx context.Context, userID, clientID string) (
+	[]permissions.Role, []permissions.Permission, permissions.MenuTree,
+) {
+	if s.permissions == nil {
+		return nil, nil, nil
+	}
+	roles, err := s.permissions.Roles(ctx, userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("login embed: roles", "error", err)
+	}
+	perms, err := s.permissions.Permissions(ctx, userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("login embed: permissions", "error", err)
+	}
+	menus, err := s.permissions.Menus(ctx, userID, clientID)
+	if err != nil {
+		s.logger.Error("login embed: menus", "error", err)
+	}
+	return roles, perms, menus
+}
+
+func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kind string, ok bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventPermissionQuery
+	e.ActorID = userID
+	e.ClientID = clientID
+	if ok {
+		e.Outcome = audit.OutcomeSuccess
+	} else {
+		e.Outcome = audit.OutcomeFailure
+	}
+	setMeta(e, "kind", kind)
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// Response keys for netpolicy endpoints.
+const (
+	KeyNetPolicies = "policies"
+	KeyNetClass    = "class"
+	KeyNetPolicy   = "policy"
+)
+
+// JSON payload for POST /api/v1/netpolicy/policies. Mirrors the netpolicy.Policy
+// fields callers are allowed to set — Version and UpdatedAt are server-stamped.
+type netPolicyPayload struct {
+	Name                string            `json:"name"`
+	CIDRs               []string          `json:"cidrs,omitempty"`
+	Hostnames           []string          `json:"hostnames,omitempty"`
+	Priority            int32             `json:"priority,omitempty"`
+	AdvertisedBaseURL   string            `json:"advertised_base_url,omitempty"`
+	AdvertisedJWKSURL   string            `json:"advertised_jwks_url,omitempty"`
+	AdvertisedLogoutURL string            `json:"advertised_logout_url,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+}
+
+func (p *netPolicyPayload) toPolicy() *netpolicy.Policy {
+	return &netpolicy.Policy{
+		Name:                p.Name,
+		CIDRs:               p.CIDRs,
+		Hostnames:           p.Hostnames,
+		Priority:            p.Priority,
+		AdvertisedBaseURL:   p.AdvertisedBaseURL,
+		AdvertisedJWKSURL:   p.AdvertisedJWKSURL,
+		AdvertisedLogoutURL: p.AdvertisedLogoutURL,
+		Metadata:            p.Metadata,
+	}
+}
+
+func (s *Server) handleListNetPolicies(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	policies, err := s.netStore.List(ctx.Request().Context())
+	if err != nil {
+		s.logger.Error("netpolicy list", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetPolicies: policies})
+}
+
+func (s *Server) handleGetNetPolicy(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	name := ctx.Param("name")
+	if name == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	p, err := s.netStore.Get(ctx.Request().Context(), name)
+	if errors.Is(err, netpolicy.ErrNotFound) {
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNetPolicyNotFound))
+		return
+	}
+	if err != nil {
+		s.logger.Error("netpolicy get", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetPolicy: p})
+}
+
+func (s *Server) handleApplyNetPolicy(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	var payload netPolicyPayload
+	if err := ctx.Bind(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
+		return
+	}
+	if payload.Name == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	stored, err := s.netStore.Apply(ctx.Request().Context(), payload.toPolicy())
+	if err != nil {
+		s.logger.Error("netpolicy apply", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordNetPolicyMutation(ctx, audit.EventNetPolicyApply, stored.Name)
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetPolicy: stored})
+}
+
+func (s *Server) handleDeleteNetPolicy(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	name := ctx.Param("name")
+	if name == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if err := s.netStore.Delete(ctx.Request().Context(), name); err != nil {
+		s.logger.Error("netpolicy delete", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordNetPolicyMutation(ctx, audit.EventNetPolicyDelete, name)
+	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: StatusOK})
+}
+
+func (s *Server) handleClassifyNetPolicy(ctx HandlerContext) {
+	if s.netClassifier == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	remoteAddr := ctx.Query("remote_addr")
+	host := ctx.Query("host")
+	p := s.netClassifier.Classify(remoteAddr, host)
+	if p == nil {
+		ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: ""})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: p.Name, KeyNetPolicy: p})
+}
+
+// handleResolveMeNetPolicy classifies the CURRENT request and returns the
+// matched policy. Convenience endpoint for clients that want to discover
+// "which JWKS URL / callback URL should I use" without re-implementing the
+// classification.
+func (s *Server) handleResolveMeNetPolicy(ctx HandlerContext) {
+	if s.netClassifier == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	r := ctx.Request()
+	remoteAddr := r.RemoteAddr
+	host := r.Host
+	p := s.netClassifier.Classify(remoteAddr, host)
+	if p == nil {
+		ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: ""})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: p.Name, KeyNetPolicy: p})
+}
+
+// ClassifyRequest is exposed for embedders that want to classify a request
+// in their own middleware. Returns nil when no classifier is wired or no
+// policy matches.
+func (s *Server) ClassifyRequest(r *http.Request) *netpolicy.Policy {
+	if s.netClassifier == nil || r == nil {
+		return nil
+	}
+	return s.netClassifier.Classify(r.RemoteAddr, r.Host)
+}
+
+func (s *Server) recordNetPolicyMutation(ctx HandlerContext, t audit.EventType, name string) {
+	if s.auditor == nil {
+		return
+	}
+	r := ctx.Request()
+	s.auditor.Record(reqContext(r), &audit.Event{
+		Type:      t,
+		Outcome:   audit.OutcomeSuccess,
+		Timestamp: time.Now().UTC(),
+		ActorIP:   r.RemoteAddr,
+		UserAgent: r.UserAgent(),
+		Reason:    "name=" + name,
+	})
+}
+
+// reqContext returns r.Context() but never nil — defensive against rare
+// stdlib edge cases (custom transports etc.).
+func reqContext(r *http.Request) context.Context {
+	if r == nil {
+		return context.Background()
+	}
+	if ctx := r.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
 
 // Query parameter names for /audit/events.
 const (
