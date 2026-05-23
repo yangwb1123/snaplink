@@ -1,4 +1,4 @@
-package sso
+package core
 
 import "time"
 
@@ -280,10 +280,10 @@ const (
 
 // Dependency names referenced by Server.requireDeps.
 const (
-	depTokenIssuer  = "tokenIssuer"
-	depUserProvider = "userProvider"
-	depClientStore  = "clientStore"
-	depSessionMgr   = "sessionMgr"
+	DepTokenIssuer  = "tokenIssuer"
+	DepUserProvider = "userProvider"
+	DepClientStore  = "clientStore"
+	DepSessionMgr   = "sessionMgr"
 )
 
 // Defaults used by NewServer when the corresponding option is not supplied.

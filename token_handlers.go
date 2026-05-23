@@ -23,7 +23,7 @@ import (
 // checks a custom "introspect" scope or role on the client.
 func (s *Server) handleIntrospect(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
-	if err := s.requireDeps(depClientStore); err != nil {
+	if err := s.requireDeps(DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
@@ -277,7 +277,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPARNotConfigured))
 		return
 	}
-	if err := s.requireDeps(depClientStore); err != nil {
+	if err := s.requireDeps(DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
@@ -434,7 +434,7 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 // wrong hint doesn't leave the token alive.
 func (s *Server) handleRevoke(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
-	if err := s.requireDeps(depClientStore); err != nil {
+	if err := s.requireDeps(DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
@@ -541,7 +541,7 @@ func (s *Server) revokeRefresh(ctx HandlerContext, token string) {
 // own tokens.
 func (s *Server) handleRevokeAll(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
-	if err := s.requireDeps(depTokenIssuer); err != nil {
+	if err := s.requireDeps(DepTokenIssuer); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}

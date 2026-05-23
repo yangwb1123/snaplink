@@ -1299,19 +1299,19 @@ func isUnknownTokenErr(err error) bool {
 func (s *Server) requireDeps(deps ...string) error {
 	for _, d := range deps {
 		switch d {
-		case depTokenIssuer:
+		case DepTokenIssuer:
 			if len(s.tokenIssuers) == 0 {
 				return fmt.Errorf("at least one TokenIssuer is required")
 			}
-		case depUserProvider:
+		case DepUserProvider:
 			if s.userProvider == nil {
 				return fmt.Errorf("UserProvider is required")
 			}
-		case depClientStore:
+		case DepClientStore:
 			if s.clientStore == nil {
 				return fmt.Errorf("ClientStore is required")
 			}
-		case depSessionMgr:
+		case DepSessionMgr:
 			if s.sessionMgr == nil {
 				return fmt.Errorf("SessionManager is required")
 			}

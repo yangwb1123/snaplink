@@ -262,7 +262,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 		ctx.JSON(http.StatusNotImplemented, errorBody(oauth.ErrRegistrationDisabled))
 		return
 	}
-	if err := s.requireDeps(depClientStore); err != nil {
+	if err := s.requireDeps(DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
@@ -474,7 +474,7 @@ func (s *Server) authorizeRegistrationMgmt(ctx HandlerContext) (*Client, bool) {
 		ctx.JSON(http.StatusNotImplemented, errorBody(oauth.ErrRegistrationDisabled))
 		return nil, false
 	}
-	if err := s.requireDeps(depClientStore); err != nil {
+	if err := s.requireDeps(DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return nil, false
 	}
@@ -935,7 +935,7 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
 		return
 	}
-	if err := s.requireDeps(depClientStore); err != nil {
+	if err := s.requireDeps(DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
@@ -1056,7 +1056,7 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
 		return
 	}
-	if err := s.requireDeps(depTokenIssuer); err != nil {
+	if err := s.requireDeps(DepTokenIssuer); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}

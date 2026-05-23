@@ -218,7 +218,7 @@ func TestToken_UnsupportedGrant_400(t *testing.T) {
 
 func TestToken_ClientCredentials_NoStrategyConfigured(t *testing.T) {
 	// Build a server that has a client store but no token issuer with
-	// the strategy the client requests — Step 2's depTokenIssuer guard
+	// the strategy the client requests — Step 2's DepTokenIssuer guard
 	// passes (we DO register a fallback issuer), but issuerForClient
 	// can't find the named strategy.
 	clients := defaultimpl.NewMemoryClientStore()

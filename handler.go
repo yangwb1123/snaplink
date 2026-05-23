@@ -1130,7 +1130,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	// returns. Same requirement applies to /token/introspect and
 	// /token/revoke via tokenNoStoreHeaders below.
 	tokenNoStoreHeaders(ctx)
-	if err := s.requireDeps(depTokenIssuer, depClientStore); err != nil {
+	if err := s.requireDeps(DepTokenIssuer, DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
@@ -1567,7 +1567,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// intermediaries — a stale cached body would leak across
 	// users if served from a different bearer.
 	tokenNoStoreHeaders(ctx)
-	if err := s.requireDeps(depTokenIssuer, depUserProvider); err != nil {
+	if err := s.requireDeps(DepTokenIssuer, DepUserProvider); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
