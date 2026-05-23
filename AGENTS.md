@@ -42,22 +42,19 @@ protoc -I proto \
 ### Layout
 
 ```
-sso.go / handler.go / router.go     Server, HandlerContext, routing
-consts.go / errors.go / types.go    Paths, headers, error codes, data types
-spi_root.go                         Root-coupled SPIs (Authenticator,
-                                    UserProvider, ClientStore, SessionManager,
-                                    TokenIssuer + family)
-token_handlers.go                   /token introspection + revoke + PAR + exchange
-auth_handlers.go                    /end_session + /register + /mfa + /device
-admin_handlers.go                   /admin/permissions* + /netpolicy* + /audit
-oidc_endpoints.go                   /.well-known/* + /jwks + prompt + discovery cache + iss/form-post/userinfo
-oidc_logout.go                      OIDC BCL 1.0 + FCL 1.0 fan-out
-middlewares.go                      admin / tenant / geo / auth / CORS / tracing / request-id
-oauth_helpers.go                    RFC 9101 JAR + form/JSON body dispatcher
-security_helpers.go                 RFC 8705 mTLS-bound + OIDC pairwise + private_key_jwt
-dpop.go                             RFC 9449 DPoP + nonce provider
-server_misc.go                      tokenNoStore/bearerChallenge/auditPartialRevoke
-                                    + buildinfo + tenant suspension cache
+Root package (sso) — 6 files total:
+sso.go                              Server type + Option functions + route registration
+handler.go                          Login flow orchestrator (every endpoint paths through here)
+aliases.go                          core/ re-exports for backward compatibility
+handlers.go                         All endpoint HTTP handlers (token/auth/admin/oidc)
+middlewares.go                      All HTTP middleware (admin/tenant/geo/auth/CORS/tracing)
+server_extensions.go                Server-coupled features (DPoP/mTLS/JAR/JWE/BCL/FCL/pairwise/tenant-suspension/buildinfo)
+
+core/                               Foundational types + SPIs (User/Client/Session/Token/
+                                    Subject/AuthRequest/AuthResult/HandlerContext/Router/
+                                    MiddlewareFunc + Authenticator/UserProvider/ClientStore/
+                                    SessionManager/TokenIssuer/JWK/JWKSProvider + 176 wire
+                                    constants + sentinel errors)
 anomaly/                            Async behavioral detection SPIs
 security/                           Per-account lockout, JTI replay,
                                     JAR/JWE, step-up, mTLS header
