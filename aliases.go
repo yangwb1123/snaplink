@@ -3,6 +3,7 @@ package sso
 
 import (
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/tenant"
 )
 
@@ -17,6 +18,17 @@ const DefaultTenantLookupTimeout = tenant.DefaultLookupTimeout
 var TenantMiddleware = tenant.Middleware
 var TenantFromHandlerContext = tenant.FromHandlerContext
 var DefaultHostExtractor = tenant.DefaultHostExtractor
+
+// --- Geo middleware re-exports (functions moved to geo/) ---
+type GeoMiddlewareOptions = geo.MiddlewareOptions
+type GeoIPExtractor = geo.IPExtractor
+
+const GeoHandlerContextKey = geo.HandlerContextKey
+const DefaultGeoLookupTimeout = geo.DefaultLookupTimeout
+
+var GeoMiddleware = geo.Middleware
+var GeoFromHandlerContext = geo.FromHandlerContext
+var DefaultGeoIPExtractor = geo.DefaultIPExtractor
 
 // --- Types ---
 type ActorClaim = core.ActorClaim
