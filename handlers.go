@@ -247,17 +247,10 @@ func (s *Server) authenticateIntrospectionClient(ctx HandlerContext, id, secret 
 	return s.clientStore.ValidateSecret(ctx.Request().Context(), id, secret)
 }
 
-// basicClientCreds extracts (client_id, client_secret) from an HTTP
-// Basic Authorization header, or returns ok=false when absent / malformed.
+// basicClientCreds delegates to oauth.BasicClientCreds — see that
+// function for the RFC 6749 §2.3.1 precedence rationale.
 func basicClientCreds(r *http.Request) (id, secret string, ok bool) {
-	if r == nil {
-		return "", "", false
-	}
-	u, p, basicOK := r.BasicAuth()
-	if !basicOK {
-		return "", "", false
-	}
-	return u, p, true
+	return oauth.BasicClientCreds(r)
 }
 
 // handlePAR implements RFC 9126 Pushed Authorization Requests.
