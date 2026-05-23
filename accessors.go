@@ -6,6 +6,9 @@
 package sso
 
 import (
+	"context"
+	"time"
+
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
@@ -16,7 +19,6 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
-	"time"
 )
 
 // AuthCodeStore returns the wired AuthCodeStore (nil when not configured).
@@ -159,3 +161,15 @@ func (s *Server) DiscoveryCacheTTL() time.Duration { return s.discoveryCacheTTL 
 
 // DiscoveryDocCacheTTL returns the discovery body cache TTL.
 func (s *Server) DiscoveryDocCacheTTL() time.Duration { return s.discoveryDocCacheTTL }
+
+// ResolveIssuer returns the issuer URL to stamp on tokens + discovery
+// responses for the current request. Honors WithTrustForwardedProto
+// + X-Forwarded-Host edge-trust contract.
+func (s *Server) ResolveIssuer(ctx core.HandlerContext) string { return s.resolveIssuer(ctx) }
+
+// ValidateAnyToken iterates registered TokenIssuers until one accepts
+// the bearer. Returns issuer name on success for revocation /audit
+// correlation. Exposed for Hexagonal handler subpackages.
+func (s *Server) ValidateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
+	return s.validateAnyToken(ctx, token)
+}

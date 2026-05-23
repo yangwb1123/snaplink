@@ -25,6 +25,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/tenant"
 )
 
 // errorBody / errorBodyWithDescription delegate to core/error_body.go.
@@ -39,29 +40,9 @@ func errorBodyWithDescription(code, desc string) map[string]string {
 // the RFC 6750 §2.1 missing-vs-bad-credential distinction.
 func bearerToken(r *http.Request) string { return oauth.BearerToken(r) }
 
-// clientTenantOK reports whether the given client may be served
-// from the request's resolved tenant context. Returns true when:
-//   - the client has no TenantID (single-tenant deployment or
-//     platform-admin client that belongs to no operator tenant), OR
-//   - no tenant resolved on this request (tenant middleware not
-//     wired, or unknown host) — pre-multi-tenant deployments
-//     never resolved a tenant, and we don't want to suddenly
-//     reject every request when the operator first enables a
-//     tenant store, OR
-//   - the resolved tenant matches the client's TenantID.
-//
-// Returns false ONLY when both sides are set AND disagree —
-// the genuine "client X belongs to tenant Y but is being
-// requested under tenant Z" case.
+// clientTenantOK delegates to tenant.ClientOK.
 func clientTenantOK(ctx HandlerContext, client *Client) bool {
-	if client == nil || client.TenantID == "" {
-		return true
-	}
-	r, ok := TenantFromHandlerContext(ctx)
-	if !ok || r == nil || r.Tenant == nil {
-		return true
-	}
-	return r.Tenant.ID == client.TenantID
+	return tenant.ClientOK(ctx, client)
 }
 
 func (s *Server) handleHealth(ctx HandlerContext) {
