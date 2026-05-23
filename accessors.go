@@ -243,3 +243,28 @@ func (s *Server) RenderFrontchannelLogout(ctx core.HandlerContext, iframeURIs []
 func (s *Server) RecordLogout(ctx core.HandlerContext, sessionID string, revoked []string) {
 	s.recordLogout(ctx, sessionID, revoked)
 }
+
+// AuthzErrorBody builds the authorization-flow error envelope
+// (includes the RFC 9207 iss parameter). Used by any handler that
+// surfaces an /auth/login-style error.
+func (s *Server) AuthzErrorBody(ctx core.HandlerContext, code string) map[string]string {
+	return s.authzErrorBody(ctx, code)
+}
+
+// AuthzErrorBodyDesc adds error_description to AuthzErrorBody.
+func (s *Server) AuthzErrorBodyDesc(ctx core.HandlerContext, code, desc string) map[string]string {
+	return s.authzErrorBodyDesc(ctx, code, desc)
+}
+
+// IssuerForClient resolves the per-client TokenIssuer strategy. Used
+// by handlers that mint tokens outside the standard /token grant
+// path (silent renewal, MFA resume, etc).
+func (s *Server) IssuerForClient(c *Client) (string, TokenIssuer, error) {
+	return s.issuerForClient(c)
+}
+
+// RecordLoginSuccess emits a login audit event with the standard
+// shape (provider, strategy, subject, sid).
+func (s *Server) RecordLoginSuccess(ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+	s.recordLoginSuccess(ctx, clientID, provider, strategy, userID, sessionID)
+}
