@@ -2383,16 +2383,7 @@ func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []st
 // the RP that was notified; ActorID is the user whose logout
 // triggered the notification.
 func (s *Server) recordLogoutNotifySuccess(ctx HandlerContext, clientID, subject, uri string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventLogoutNotified
-	e.Outcome = audit.OutcomeSuccess
-	e.ClientID = clientID
-	e.ActorID = subject
-	audit.SetMeta(e, "uri", uri)
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordLogoutNotifySuccess(s.auditor, ctx, clientID, subject, uri)
 }
 
 // recordLogoutNotifyFailure emits a `logout_notified` audit
@@ -2400,16 +2391,7 @@ func (s *Server) recordLogoutNotifySuccess(ctx HandlerContext, clientID, subject
 // or the RP returned a non-2xx status. The error string lands
 // in Reason so SIEMs can alert on patterns ("rp-X always 503").
 func (s *Server) recordLogoutNotifyFailure(ctx HandlerContext, clientID, subject, reason string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventLogoutNotified
-	e.Outcome = audit.OutcomeFailure
-	e.ClientID = clientID
-	e.ActorID = subject
-	e.Reason = reason
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordLogoutNotifyFailure(s.auditor, ctx, clientID, subject, reason)
 }
 
 // recordAccountLocked emits an account_locked audit event. Fires
@@ -2420,19 +2402,7 @@ func (s *Server) recordLogoutNotifyFailure(ctx HandlerContext, clientID, subject
 // against a locked account". The lockoutKey lands in ActorID so
 // SIEMs can pivot on it.
 func (s *Server) recordAccountLocked(ctx HandlerContext, clientID, provider, lockKey string, until time.Time) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventAccountLocked
-	e.Outcome = audit.OutcomeFailure
-	e.ClientID = clientID
-	e.Provider = provider
-	e.ActorID = lockKey
-	if !until.IsZero() {
-		audit.SetMeta(e, "until", until.UTC().Format(time.RFC3339))
-	}
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordAccountLocked(s.auditor, ctx, clientID, provider, lockKey, until)
 }
 
 // recordCodeSent emits a code_sent event for two-step flows (phone/email).
@@ -2458,99 +2428,40 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 
 // recordTokenIssued emits a token_issued event (used for grant flows).
 func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventTokenIssued
-	e.Outcome = audit.OutcomeSuccess
-	e.ClientID = clientID
-	e.TokenStrategy = strategy
-	e.ActorID = subjectID
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID)
 }
 
 // recordRefreshTokenIssued emits a refresh_token_issued event. Set
 // rotation=true on the rotation path so SIEMs can separate first-
 // issue (login / authz_code) from rotation (refresh_token grant).
 func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectID string, rotation bool) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventRefreshTokenIssued
-	e.Outcome = audit.OutcomeSuccess
-	e.ClientID = clientID
-	e.ActorID = subjectID
-	if rotation {
-		audit.SetMeta(e, "rotation", "true")
-	}
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordRefreshTokenIssued(s.auditor, ctx, clientID, subjectID, rotation)
 }
 
 // recordIDTokenIssued emits an id_token_issued event whenever an
 // OIDC id_token is appended to the response.
 func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventIDTokenIssued
-	e.Outcome = audit.OutcomeSuccess
-	e.ClientID = clientID
-	e.ActorID = subjectID
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordIDTokenIssued(s.auditor, ctx, clientID, subjectID)
 }
 
 // recordDeviceCodeIssued emits a device_code_issued event at the
 // start of an RFC 8628 device authorization grant.
 func (s *Server) recordDeviceCodeIssued(ctx HandlerContext, clientID string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventDeviceCodeIssued
-	e.Outcome = audit.OutcomeSuccess
-	e.ClientID = clientID
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordDeviceCodeIssued(s.auditor, ctx, clientID)
 }
 
 // recordDeviceCodeApproved / Denied emit at the consent step.
 // userID is the user who hit /device/verify; deviceClientID is the
 // client_id that originally requested the device authorization.
 func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClientID string, approved bool) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	if approved {
-		e.Type = audit.EventDeviceCodeApproved
-		e.Outcome = audit.OutcomeSuccess
-	} else {
-		e.Type = audit.EventDeviceCodeDenied
-		e.Outcome = audit.OutcomeFailure
-	}
-	e.ActorID = userID
-	audit.SetMeta(e, "device_client_id", deviceClientID)
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordDeviceCodeDecision(s.auditor, ctx, userID, deviceClientID, approved)
 }
 
 // recordRefreshTokenReuse emits a refresh_token_reuse_detected event.
 // Fired from the rotation grant when the store signals
 // oauth.ErrRefreshTokenReused — a security signal worth routing to alerting.
 func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventRefreshTokenReuse
-	e.Outcome = audit.OutcomeFailure
-	e.ClientID = clientID
-	e.Reason = "family=" + familyID
-	if killed > 0 {
-		audit.SetMeta(e, "killed", itoa(killed))
-	}
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordRefreshTokenReuse(s.auditor, ctx, clientID, familyID, killed)
 }
 
 // itoa is a tiny strconv-free int formatter — keeps audit_handler.go
@@ -2579,15 +2490,7 @@ func itoa(n int) string {
 
 // recordCallbackFailure emits a callback_failure event.
 func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventCallbackFailure
-	e.Outcome = audit.OutcomeFailure
-	e.Provider = provider
-	e.Reason = reason
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordCallbackFailure(s.auditor, ctx, provider, reason)
 }
 
 // maskTarget redacts the bulk of a phone number or email so the event remains
