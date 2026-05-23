@@ -286,6 +286,13 @@ const (
 	DepSessionMgr   = "sessionMgr"
 )
 
+// Netpolicy response keys.
+const (
+	KeyNetPolicies = "policies"
+	KeyNetClass    = "class"
+	KeyNetPolicy   = "policy"
+)
+
 // Defaults used by NewServer when the corresponding option is not supplied.
 const (
 	DefaultSessionDuration = 24 * time.Hour
