@@ -2200,20 +2200,6 @@ func splitScope(s string) []string {
 // endpoints to scope the lookup to a particular APP.
 const QueryClientID = "client_id"
 
-// Response keys for the permission endpoints.
-const (
-	KeyPermissions = "permissions"
-	KeyRoles       = "roles"
-	KeyMenus       = "menus"
-	KeyClient      = "client_id"
-)
-
-// Error codes for the permission endpoints.
-const (
-	ErrPermissionProviderNotConfigured = "permission_provider_not_configured"
-	ErrPermissionLookupFailed          = "permission_lookup_failed"
-)
-
 // authenticatedSubject resolves the bearer token to a user ID + client ID.
 // client_id resolution: explicit query param > token audience > "".
 func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID string, ok bool) {
@@ -2232,125 +2218,6 @@ func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID stri
 		clientID = claims.Audience[0]
 	}
 	return claims.Subject, clientID, true
-}
-
-func (s *Server) handleMyPermissions(ctx HandlerContext) {
-	userID, clientID, ok := s.authenticatedSubject(ctx)
-	if !ok {
-		return
-	}
-	if s.permissions == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
-		return
-	}
-	perms, err := s.permissions.Permissions(ctx.Request().Context(), userID, clientID)
-	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
-		s.logger.Error("permissions lookup failed", "user", userID, "client", clientID, "error", err)
-		s.recordPermissionQuery(ctx, userID, clientID, KeyPermissions, false)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
-		return
-	}
-	if perms == nil {
-		perms = []permissions.Permission{}
-	}
-	s.recordPermissionQuery(ctx, userID, clientID, KeyPermissions, true)
-	ctx.JSON(http.StatusOK, map[string]any{
-		KeyClient:      clientID,
-		KeyPermissions: perms,
-	})
-}
-
-func (s *Server) handleMyRoles(ctx HandlerContext) {
-	userID, clientID, ok := s.authenticatedSubject(ctx)
-	if !ok {
-		return
-	}
-	if s.permissions == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
-		return
-	}
-	roles, err := s.permissions.Roles(ctx.Request().Context(), userID, clientID)
-	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
-		s.logger.Error("roles lookup failed", "user", userID, "client", clientID, "error", err)
-		s.recordPermissionQuery(ctx, userID, clientID, KeyRoles, false)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
-		return
-	}
-	if roles == nil {
-		roles = []permissions.Role{}
-	}
-	s.recordPermissionQuery(ctx, userID, clientID, KeyRoles, true)
-	ctx.JSON(http.StatusOK, map[string]any{
-		KeyClient: clientID,
-		KeyRoles:  roles,
-	})
-}
-
-func (s *Server) handleMyMenus(ctx HandlerContext) {
-	userID, clientID, ok := s.authenticatedSubject(ctx)
-	if !ok {
-		return
-	}
-	if s.permissions == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
-		return
-	}
-	menus, err := s.permissions.Menus(ctx.Request().Context(), userID, clientID)
-	if err != nil {
-		s.logger.Error("menus lookup failed", "user", userID, "client", clientID, "error", err)
-		s.recordPermissionQuery(ctx, userID, clientID, KeyMenus, false)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
-		return
-	}
-	if menus == nil {
-		menus = permissions.MenuTree{}
-	}
-	s.recordPermissionQuery(ctx, userID, clientID, KeyMenus, true)
-	ctx.JSON(http.StatusOK, map[string]any{
-		KeyClient: clientID,
-		KeyMenus:  menus,
-	})
-}
-
-// resolvePermissionsForLogin pulls the bundle that gets embedded in a login
-// response. Errors are swallowed and turned into empty slices so login never
-// fails due to a permission lookup hiccup.
-func (s *Server) resolvePermissionsForLogin(ctx context.Context, userID, clientID string) (
-	[]permissions.Role, []permissions.Permission, permissions.MenuTree,
-) {
-	if s.permissions == nil {
-		return nil, nil, nil
-	}
-	roles, err := s.permissions.Roles(ctx, userID, clientID)
-	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
-		s.logger.Error("login embed: roles", "error", err)
-	}
-	perms, err := s.permissions.Permissions(ctx, userID, clientID)
-	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
-		s.logger.Error("login embed: permissions", "error", err)
-	}
-	menus, err := s.permissions.Menus(ctx, userID, clientID)
-	if err != nil {
-		s.logger.Error("login embed: menus", "error", err)
-	}
-	return roles, perms, menus
-}
-
-func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kind string, ok bool) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventPermissionQuery
-	e.ActorID = userID
-	e.ClientID = clientID
-	if ok {
-		e.Outcome = audit.OutcomeSuccess
-	} else {
-		e.Outcome = audit.OutcomeFailure
-	}
-	audit.SetMeta(e, "kind", kind)
-	s.auditor.Record(ctx.Request().Context(), e)
 }
 
 // Netpolicy endpoint handlers moved to netpolicy/handlers.go. Methods
@@ -4210,4 +4077,23 @@ func (s *Server) maybeSignUserInfo(ctx HandlerContext, clientID string, body map
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(jwt))
 	return true
+}
+
+// Permission handlers (delegators — bodies in permissions/handlers.go).
+func (s *Server) handleMyPermissions(ctx HandlerContext) { permissions.HandleMyPermissions(s, ctx) }
+func (s *Server) handleMyRoles(ctx HandlerContext)       { permissions.HandleMyRoles(s, ctx) }
+func (s *Server) handleMyMenus(ctx HandlerContext)       { permissions.HandleMyMenus(s, ctx) }
+
+func (s *Server) resolvePermissionsForLogin(ctx context.Context, userID, clientID string) ([]permissions.Role, []permissions.Permission, permissions.MenuTree) {
+	return permissions.ResolveForLogin(s.permissions, s.logger, ctx, userID, clientID)
+}
+
+func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kind string, ok bool) {
+	permissions.RecordQuery(s.auditor, ctx, userID, clientID, kind, ok)
+}
+
+// AuthenticatedSubject exposes authenticatedSubject for handlers/ subpackages
+// (Deps interface needs it as an exported method).
+func (s *Server) AuthenticatedSubject(ctx HandlerContext) (userID, clientID string, ok bool) {
+	return s.authenticatedSubject(ctx)
 }

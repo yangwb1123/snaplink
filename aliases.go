@@ -21,6 +21,14 @@ type BuildInfo = core.BuildInfo
 
 var ReadBuildInfo = core.ReadBuildInfo
 
+// --- Permission/netpolicy constant re-exports (moved to core/) ---
+const KeyPermissions = core.KeyPermissions
+const KeyRoles = core.KeyRoles
+const KeyMenus = core.KeyMenus
+const KeyClient = core.KeyClient
+const ErrPermissionProviderNotConfigured = core.ErrPermissionProviderNotConfigured
+const ErrPermissionLookupFailed = core.ErrPermissionLookupFailed
+
 // --- Admin middleware re-exports (functions moved to admin/) ---
 type AdminMiddleware = admin.Middleware
 type AdminTokenValidator = admin.TokenValidator

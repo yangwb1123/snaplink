@@ -293,6 +293,17 @@ const (
 	KeyNetPolicy   = "policy"
 )
 
+// Permission endpoint response keys + errors.
+const (
+	KeyPermissions = "permissions"
+	KeyRoles       = "roles"
+	KeyMenus       = "menus"
+	KeyClient      = "client_id"
+
+	ErrPermissionProviderNotConfigured = "permission_provider_not_configured"
+	ErrPermissionLookupFailed          = "permission_lookup_failed"
+)
+
 // Defaults used by NewServer when the corresponding option is not supplied.
 const (
 	DefaultSessionDuration = 24 * time.Hour
