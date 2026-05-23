@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 func newPairwiseSubjectStoreForTest(t *testing.T) *PairwiseSubjectStore {
@@ -40,7 +40,7 @@ func TestPairwiseSubjectStore_MapAndLookup(t *testing.T) {
 func TestPairwiseSubjectStore_UnknownReturnsSentinel(t *testing.T) {
 	store := newPairwiseSubjectStoreForTest(t)
 	_, err := store.LocalSubject(context.Background(), "never-mapped")
-	if !errors.Is(err, sso.ErrPairwiseUnknown) {
+	if !errors.Is(err, security.ErrPairwiseUnknown) {
 		t.Fatalf("got %v, want ErrPairwiseUnknown", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestPairwiseSubjectStore_RejectsEmptySub(t *testing.T) {
 	}
 	// Empty pairwise lookup returns sentinel, not error from scan.
 	_, err := store.LocalSubject(ctx, "")
-	if !errors.Is(err, sso.ErrPairwiseUnknown) {
+	if !errors.Is(err, security.ErrPairwiseUnknown) {
 		t.Fatalf("empty lookup: got %v want ErrPairwiseUnknown", err)
 	}
 }

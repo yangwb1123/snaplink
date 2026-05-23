@@ -5,8 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 // pairwiseSubjectSchema covers the OIDC Core §8 per-sector subject
@@ -23,7 +22,7 @@ CREATE TABLE IF NOT EXISTS pairwise_subjects (
 `
 
 // PairwiseSubjectStore is the SQLite-backed implementation of
-// [sso.PairwiseSubjectStore]. Replaces memory pairwise for
+// [security.PairwiseSubjectStore]. Replaces memory pairwise for
 // multi-replica deployments — the mapping is durable + shared so
 // every replica resolves bearer tokens consistently.
 type PairwiseSubjectStore struct {
@@ -101,7 +100,7 @@ func (s *PairwiseSubjectStore) MapPairwise(ctx context.Context, pairwiseSub, loc
 // unknown tokens.
 func (s *PairwiseSubjectStore) LocalSubject(ctx context.Context, pairwiseSub string) (string, error) {
 	if pairwiseSub == "" {
-		return "", sso.ErrPairwiseUnknown
+		return "", security.ErrPairwiseUnknown
 	}
 	row := s.db.QueryRowContext(ctx, `
         SELECT local_sub FROM pairwise_subjects WHERE pairwise_sub = ?`,
@@ -110,11 +109,11 @@ func (s *PairwiseSubjectStore) LocalSubject(ctx context.Context, pairwiseSub str
 	var local string
 	if err := row.Scan(&local); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", sso.ErrPairwiseUnknown
+			return "", security.ErrPairwiseUnknown
 		}
 		return "", fmt.Errorf("sqlite: pairwise lookup: %w", err)
 	}
 	return local, nil
 }
 
-var _ sso.PairwiseSubjectStore = (*PairwiseSubjectStore)(nil)
+var _ security.PairwiseSubjectStore = (*PairwiseSubjectStore)(nil)

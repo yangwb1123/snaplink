@@ -118,8 +118,8 @@ type Server struct {
 	// OIDC Core §8 pairwise subject identifiers. Nil pairwiseStore
 	// disables the feature entirely — every client receives a public
 	// (local) sub regardless of subject_type. Salt mixes into the
-	// hash; empty falls back to DefaultPairwiseSalt.
-	pairwiseStore PairwiseSubjectStore
+	// hash; empty falls back to security.DefaultPairwiseSalt.
+	pairwiseStore security.PairwiseSubjectStore
 	pairwiseSalt  string
 }
 

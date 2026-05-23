@@ -1398,7 +1398,7 @@ type ServerConfig struct {
 // PairwiseSubjectsConfig wires WithPairwiseSubjectStore +
 // WithPairwiseSalt. Salt MUST be deployment-stable; prefer SaltFile
 // so it doesn't end up in YAML/git. Empty salt at enable time falls
-// back to sso.DefaultPairwiseSalt (publicly known — fine for tests
+// back to security.DefaultPairwiseSalt (publicly known — fine for tests
 // only).
 //
 // Backend choice:

@@ -746,10 +746,10 @@ var _ = lockNoop.New
 // backend. memory keeps the single-replica story; sqlite shares
 // (pairwise → local) so /userinfo + revoke + end_session on any
 // replica can resolve any in-flight bearer token.
-func buildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (sso.PairwiseSubjectStore, string, error) {
+func buildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (security.PairwiseSubjectStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
-		return sso.NewMemoryPairwiseSubjectStore(), "memory (single-replica only)", nil
+		return security.NewMemoryPairwiseSubjectStore(), "memory (single-replica only)", nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, "", errors.New("server.pairwise_subjects.sqlite.dsn required when backend=sqlite")
@@ -1107,7 +1107,7 @@ func buildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
 
 // resolvePairwiseSalt reads the pairwise hash salt with the same
 // file-wins-over-inline precedence the PII redactor uses. Empty
-// salt falls back to sso.DefaultPairwiseSalt — fine for tests, not
+// salt falls back to security.DefaultPairwiseSalt — fine for tests, not
 // fine for production (publicly known).
 func resolvePairwiseSalt(cfg config.PairwiseSubjectsConfig) (string, error) {
 	if cfg.SaltFile != "" {

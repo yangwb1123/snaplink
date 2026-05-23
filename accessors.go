@@ -68,7 +68,7 @@ func (s *Server) JARDecrypter() security.JWEDecrypter { return s.jarDecrypter }
 func (s *Server) AccountLockout() security.AccountLockout { return s.accountLockout }
 
 // PairwiseStore returns the wired pairwise subject store (nil when not configured).
-func (s *Server) PairwiseStore() PairwiseSubjectStore { return s.pairwiseStore }
+func (s *Server) PairwiseStore() security.PairwiseSubjectStore { return s.pairwiseStore }
 
 // ClientCertExtractor returns the wired ClientCertExtractor (nil when not configured).
 func (s *Server) ClientCertExtractor() ClientCertExtractor { return s.clientCertExtractor }

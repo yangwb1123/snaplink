@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/security"
+
 import (
 	"bytes"
 	"context"
@@ -17,7 +19,7 @@ import (
 )
 
 func TestMemoryPairwiseSubjectStore_RoundTrip(t *testing.T) {
-	s := sso.NewMemoryPairwiseSubjectStore()
+	s := security.NewMemoryPairwiseSubjectStore()
 	if err := s.MapPairwise(context.Background(), "p123", "alice"); err != nil {
 		t.Fatalf("MapPairwise: %v", err)
 	}
@@ -31,15 +33,15 @@ func TestMemoryPairwiseSubjectStore_RoundTrip(t *testing.T) {
 }
 
 func TestMemoryPairwiseSubjectStore_UnknownReturnsSentinel(t *testing.T) {
-	s := sso.NewMemoryPairwiseSubjectStore()
+	s := security.NewMemoryPairwiseSubjectStore()
 	_, err := s.LocalSubject(context.Background(), "never-mapped")
-	if !errors.Is(err, sso.ErrPairwiseUnknown) {
+	if !errors.Is(err, security.ErrPairwiseUnknown) {
 		t.Errorf("err = %v want ErrPairwiseUnknown", err)
 	}
 }
 
 func TestMemoryPairwiseSubjectStore_RemapIsIdempotent(t *testing.T) {
-	s := sso.NewMemoryPairwiseSubjectStore()
+	s := security.NewMemoryPairwiseSubjectStore()
 	for i := range 3 {
 		if err := s.MapPairwise(context.Background(), "p1", "alice"); err != nil {
 			t.Fatalf("MapPairwise #%d: %v", i, err)
@@ -52,7 +54,7 @@ func TestMemoryPairwiseSubjectStore_RemapIsIdempotent(t *testing.T) {
 }
 
 func TestMemoryPairwiseSubjectStore_RejectsEmptySub(t *testing.T) {
-	s := sso.NewMemoryPairwiseSubjectStore()
+	s := security.NewMemoryPairwiseSubjectStore()
 	if err := s.MapPairwise(context.Background(), "", "alice"); err == nil {
 		t.Error("expected error for empty pairwise sub")
 	}
@@ -84,7 +86,7 @@ func newPairwiseHarness(t *testing.T, subjectType, sectorURI string, redirects [
 		sso.WithTokenIssuer("jwt", jwt),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithIDTokenIssuer(jwt),
-		sso.WithPairwiseSubjectStore(sso.NewMemoryPairwiseSubjectStore()),
+		sso.WithPairwiseSubjectStore(security.NewMemoryPairwiseSubjectStore()),
 		sso.WithPairwiseSalt("test-salt"),
 		sso.WithAuthenticator(stubPasswordAuth{userID: "user-alice"}),
 	)
@@ -130,7 +132,7 @@ func login(t *testing.T, base string, scope string) map[string]any {
 }
 
 func TestPairwise_LoginEmitsOpaquePairwiseSub(t *testing.T) {
-	srv := newPairwiseHarness(t, sso.SubjectTypePairwise, "", []string{"https://web.example.com/cb"})
+	srv := newPairwiseHarness(t, security.SubjectTypePairwise, "", []string{"https://web.example.com/cb"})
 	body := login(t, srv.URL, "openid")
 	idToken, _ := body["id_token"].(string)
 	if idToken == "" {
@@ -146,7 +148,7 @@ func TestPairwise_LoginEmitsOpaquePairwiseSub(t *testing.T) {
 }
 
 func TestPairwise_PublicClientGetsLocalSub(t *testing.T) {
-	srv := newPairwiseHarness(t, sso.SubjectTypePublic, "", []string{"https://web.example.com/cb"})
+	srv := newPairwiseHarness(t, security.SubjectTypePublic, "", []string{"https://web.example.com/cb"})
 	body := login(t, srv.URL, "openid")
 	idToken, _ := body["id_token"].(string)
 	sub := decodeIDTokenSub(t, idToken)
@@ -156,8 +158,8 @@ func TestPairwise_PublicClientGetsLocalSub(t *testing.T) {
 }
 
 func TestPairwise_DifferentSectorsYieldDifferentSubs(t *testing.T) {
-	srv1 := newPairwiseHarness(t, sso.SubjectTypePairwise, "", []string{"https://web.example.com/cb"})
-	srv2 := newPairwiseHarness(t, sso.SubjectTypePairwise, "", []string{"https://other.example.com/cb"})
+	srv1 := newPairwiseHarness(t, security.SubjectTypePairwise, "", []string{"https://web.example.com/cb"})
+	srv2 := newPairwiseHarness(t, security.SubjectTypePairwise, "", []string{"https://other.example.com/cb"})
 	b1 := login(t, srv1.URL, "openid")
 	b2 := login(t, srv2.URL, "openid")
 	sub1 := decodeIDTokenSub(t, b1["id_token"].(string))
@@ -168,7 +170,7 @@ func TestPairwise_DifferentSectorsYieldDifferentSubs(t *testing.T) {
 }
 
 func TestPairwise_SameSectorYieldsSameSub(t *testing.T) {
-	srv := newPairwiseHarness(t, sso.SubjectTypePairwise, "", []string{"https://web.example.com/cb"})
+	srv := newPairwiseHarness(t, security.SubjectTypePairwise, "", []string{"https://web.example.com/cb"})
 	b1 := login(t, srv.URL, "openid")
 	b2 := login(t, srv.URL, "openid")
 	sub1 := decodeIDTokenSub(t, b1["id_token"].(string))
@@ -181,10 +183,10 @@ func TestPairwise_SameSectorYieldsSameSub(t *testing.T) {
 func TestPairwise_SectorIdentifierURITakesPrecedence(t *testing.T) {
 	// Two clients with different redirect_uri hosts but the same
 	// sector_identifier_uri MUST share the pairwise sub.
-	srv1 := newPairwiseHarness(t, sso.SubjectTypePairwise,
+	srv1 := newPairwiseHarness(t, security.SubjectTypePairwise,
 		"https://sector.example.com/sector.json",
 		[]string{"https://web-a.example.com/cb"})
-	srv2 := newPairwiseHarness(t, sso.SubjectTypePairwise,
+	srv2 := newPairwiseHarness(t, security.SubjectTypePairwise,
 		"https://sector.example.com/sector.json",
 		[]string{"https://web-b.example.com/cb"})
 	b1 := login(t, srv1.URL, "openid")
@@ -197,7 +199,7 @@ func TestPairwise_SectorIdentifierURITakesPrecedence(t *testing.T) {
 }
 
 func TestPairwise_DiscoveryAdvertisesPairwise(t *testing.T) {
-	srv := newPairwiseHarness(t, sso.SubjectTypePublic, "", []string{"https://web.example.com/cb"})
+	srv := newPairwiseHarness(t, security.SubjectTypePublic, "", []string{"https://web.example.com/cb"})
 	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
