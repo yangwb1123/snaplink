@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
@@ -1614,11 +1615,8 @@ func appendFrontchannelLogoutSidIss(uri, sid, iss string) string {
 // regardless of status so error bodies (which include error_code
 // shapes a snooping cache could fingerprint) get the same
 // treatment as success.
-func tokenNoStoreHeaders(ctx HandlerContext) {
-	h := ctx.ResponseWriter().Header()
-	h.Set("Cache-Control", "no-store")
-	h.Set("Pragma", "no-cache")
-}
+// tokenNoStoreHeaders delegates to middleware.TokenNoStoreHeaders.
+func tokenNoStoreHeaders(ctx HandlerContext) { middleware.TokenNoStoreHeaders(ctx) }
 
 // setBearerChallenge stamps an RFC 6750 §3 WWW-Authenticate header
 // on a 401 response. Protected resources that accept Bearer tokens

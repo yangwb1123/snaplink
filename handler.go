@@ -35,13 +35,9 @@ func errorBodyWithDescription(code, desc string) map[string]string {
 	return core.ErrorBodyDesc(code, desc)
 }
 
-func bearerToken(r *http.Request) string {
-	h := r.Header.Get(HeaderAuthorization)
-	if !strings.HasPrefix(h, BearerPrefix) {
-		return ""
-	}
-	return strings.TrimPrefix(h, BearerPrefix)
-}
+// bearerToken delegates to oauth.BearerToken — see that function for
+// the RFC 6750 §2.1 missing-vs-bad-credential distinction.
+func bearerToken(r *http.Request) string { return oauth.BearerToken(r) }
 
 // clientTenantOK reports whether the given client may be served
 // from the request's resolved tenant context. Returns true when:
