@@ -19,6 +19,7 @@ import (
 
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
@@ -2837,37 +2838,9 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	s.writeDiscoveryDoc(ctx, entry)
 }
 
-// requestBaseURL derives an absolute scheme://host base from the
-// request. Honors X-Forwarded-Proto / X-Forwarded-Host from a known
-// edge proxy; falls back to req.TLS for scheme and req.Host
-// otherwise. Internet-facing deployments without an edge proxy that
-// strips and re-sets those headers MUST install a stricter base
-// extractor — XFF spoofing on a public endpoint can serve the wrong
-// scheme to OIDC RPs.
-func requestBaseURL(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
-		// First hop only — some chains comma-separate.
-		if i := strings.IndexByte(v, ','); i >= 0 {
-			v = v[:i]
-		}
-		scheme = strings.TrimSpace(v)
-	}
-	host := r.Host
-	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
-		if i := strings.IndexByte(v, ','); i >= 0 {
-			v = v[:i]
-		}
-		host = strings.TrimSpace(v)
-	}
-	return scheme + "://" + host
-}
+// requestBaseURL delegates to middleware.BaseURL — see that function
+// for the X-Forwarded-Proto / X-Forwarded-Host edge trust contract.
+func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
 
 // JWK + JWKSProvider + PathJWKS + DefaultJWKSCacheMaxAge moved to core/jwks.go
 // (data type / interface / wire constants).
