@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"math/big"
 	"net/http"
 	"net/url"
 	"slices"
@@ -1817,34 +1816,11 @@ func newMFAChallengeID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
-// userCodeAlphabet matches defaultimpl's — base32 minus easily-confused
-// glyphs. Duplicated here so handle_device.go doesn't import defaultimpl
-// (which would create an import cycle).
-const handlerUserCodeAlphabet = "BCDFGHJKMNPQRSTVWXYZ23456789"
+// generateDeviceCodeBytes delegates to oauth.GenerateDeviceCode.
+func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode() }
 
-// generateDeviceCodeBytes mints a 32-byte base64url device_code.
-func generateDeviceCodeBytes() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-// generateUserCodeBytes mints an 8-char dashed user_code (XXXX-XXXX)
-// from the ambiguous-glyph-free alphabet.
-func generateUserCodeBytes() (string, error) {
-	const length = 8
-	out := make([]byte, length)
-	for i := range length {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(handlerUserCodeAlphabet))))
-		if err != nil {
-			return "", err
-		}
-		out[i] = handlerUserCodeAlphabet[n.Int64()]
-	}
-	return string(out[:4]) + "-" + string(out[4:]), nil
-}
+// generateUserCodeBytes delegates to oauth.GenerateUserCode.
+func generateUserCodeBytes() (string, error) { return oauth.GenerateUserCode() }
 
 // handleDeviceCode is the device-initiated endpoint of RFC 8628.
 // The device POSTs its client_id (+ optional scope), the server
@@ -2156,10 +2132,8 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	ctx.JSON(http.StatusOK, resp)
 }
 
-// normalizeUserCode strips dashes + uppercases for lookup tolerance.
-func normalizeUserCode(s string) string {
-	return strings.ToUpper(strings.ReplaceAll(s, "-", ""))
-}
+// normalizeUserCode delegates to oauth.NormalizeUserCode.
+func normalizeUserCode(s string) string { return oauth.NormalizeUserCode(s) }
 
 // splitScope delegates to oauth.SplitScope.
 func splitScope(s string) []string { return oauth.SplitScope(s) }
