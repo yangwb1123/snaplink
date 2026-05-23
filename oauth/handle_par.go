@@ -8,7 +8,6 @@ import (
 
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/middleware"
-	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
 	"github.com/snaplink/sso/tenant"
@@ -147,7 +146,7 @@ func HandlePAR(d PARDeps, ctx core.HandlerContext) {
 	// OIDC Form Post 1.0: reject malformed response_mode at PAR time
 	// so the caller fails fast (whole point of PAR — surface
 	// validation upstream of the user-agent redirect).
-	if req.ResponseMode != "" && !oidc.IsValidResponseMode(req.ResponseMode) {
+	if req.ResponseMode != "" && !isValidResponseMode(req.ResponseMode) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}

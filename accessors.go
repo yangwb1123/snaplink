@@ -215,3 +215,31 @@ func (s *Server) AuditPartialRevokeFailure(ctx core.HandlerContext, revoked, fai
 func (s *Server) SetBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDesc string) {
 	setBearerChallenge(ctx, realm, errorCode, errorDesc)
 }
+
+// FanOutBackchannelLogout dispatches OIDC BCL 1.0 logout_token POSTs
+// to every RP the user is signed into for the originating client.
+// No-op when BCL isn't wired or the client doesn't declare a
+// backchannel_logout_uri.
+func (s *Server) FanOutBackchannelLogout(ctx core.HandlerContext, originClient *Client, subject, sid string) {
+	s.fanOutBackchannelLogout(ctx, originClient, subject, sid)
+}
+
+// GatherFrontchannelLogoutIframes returns the FCL 1.0 iframe target
+// URIs for the subject + primary client. Empty when no client opted
+// in via FrontchannelLogoutURI.
+func (s *Server) GatherFrontchannelLogoutIframes(ctx core.HandlerContext, subject string, primary *Client, sid string) []string {
+	return s.gatherFrontchannelLogoutIframes(ctx, subject, primary, sid)
+}
+
+// RenderFrontchannelLogout writes the OIDC FCL 1.0 HTML page with
+// hidden iframes for each target URI, then a meta-refresh to the
+// optional post-logout redirect.
+func (s *Server) RenderFrontchannelLogout(ctx core.HandlerContext, iframeURIs []string, redirectURI string) {
+	s.renderFrontchannelLogout(ctx, iframeURIs, redirectURI)
+}
+
+// RecordLogout emits a logout audit event with optional revoked
+// hints. Used by /logout and /end_session.
+func (s *Server) RecordLogout(ctx core.HandlerContext, sessionID string, revoked []string) {
+	s.recordLogout(ctx, sessionID, revoked)
+}
