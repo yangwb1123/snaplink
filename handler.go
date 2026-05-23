@@ -258,8 +258,8 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// stays in the iframe contract (no UI, no credentials): the
 	// only valid response is either a renewed token (if a session
 	// is live) or login_required (§3.1.2.6).
-	prompts := parsePromptValues(req.Prompt)
-	if promptHasNone(prompts) {
+	prompts := oidc.ParsePromptValues(req.Prompt)
+	if oidc.PromptHasNone(prompts) {
 		// Silent renewal needs the client resolved to verify
 		// id_token_hint binding. Mirror the validation guards the
 		// post-probe path runs so a misconfigured caller still
@@ -285,7 +285,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
 			return
 		}
-		if s.handleSilentRenewal(ctx, prompts, silentRenewalRequest{
+		if s.handleSilentRenewal(ctx, prompts, oidc.SilentRenewalRequest{
 			ClientID:             req.ClientID,
 			Scope:                req.Scope,
 			State:                req.State,
