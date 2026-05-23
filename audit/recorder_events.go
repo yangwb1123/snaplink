@@ -119,9 +119,7 @@ func RecordLogout(rec *Recorder, ctx core.HandlerContext, sessionID string, revo
 	e := EventFromRequest(ctx)
 	e.Type = EventLogout
 	e.Outcome = OutcomeSuccess
-	if sessionID != "" {
-		SetMeta(e, "session_id", sessionID)
-	}
+	e.SessionID = sessionID
 	if len(revoked) > 0 {
 		SetMeta(e, "revoked", joinComma(revoked))
 	}

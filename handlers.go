@@ -2351,17 +2351,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 
 // recordLogout emits a logout event with what was actually revoked.
 func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []string) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventLogout
-	e.Outcome = audit.OutcomeSuccess
-	e.SessionID = sessionID
-	if len(revoked) > 0 {
-		audit.SetMeta(e, "revoked", strings.Join(revoked, ","))
-	}
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordLogout(s.auditor, ctx, sessionID, revoked)
 }
 
 // recordLogoutNotifySuccess emits a `logout_notified` audit
