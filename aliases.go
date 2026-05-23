@@ -5,8 +5,16 @@ import (
 	"github.com/snaplink/sso/admin"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/tenant"
 )
+
+// --- General middleware re-exports (functions moved to middleware/) ---
+var AuthMiddleware = middleware.Auth
+var CORS = middleware.CORS
+var LoggerMiddleware = middleware.Logger
+var TracingMiddleware = middleware.Tracing
+var RequestIDMiddleware = middleware.RequestID
 
 // --- Admin middleware re-exports (functions moved to admin/) ---
 type AdminMiddleware = admin.Middleware

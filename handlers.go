@@ -29,6 +29,11 @@ import (
 	"github.com/snaplink/sso/spi"
 )
 
+// tracer is shared by audit-event helpers for parsing inbound W3C
+// traceparent headers into TraceID/SpanID for stamping on Event
+// records. Stateless — safe at package scope.
+var tracer = audit.NewTracer()
+
 // active state + standard metadata claims for a presented access or
 // refresh token. Inactive tokens return {active: false} only, with no
 // extra metadata — §2.2 mandates this to limit oracle leakage.
