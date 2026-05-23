@@ -42,13 +42,19 @@ protoc -I proto \
 ### Layout
 
 ```
-Root package (sso) — 6 files total:
+Root package (sso) — 5 files total:
 sso.go                              Server type + Option functions + route registration
 handler.go                          Login flow orchestrator (every endpoint paths through here)
-aliases.go                          core/ re-exports for backward compatibility
+aliases.go                          core/ + subpackage re-exports for backward compatibility
 handlers.go                         All endpoint HTTP handlers (token/auth/admin/oidc)
-middlewares.go                      All HTTP middleware (admin/tenant/geo/auth/CORS/tracing)
 server_extensions.go                Server-coupled features (DPoP/mTLS/JAR/JWE/BCL/FCL/pairwise/tenant-suspension/buildinfo)
+
+middleware/                         General HTTP middleware: Auth, CORS, Logger, Tracing, RequestID
+admin/                              Admin auth: HTTP middleware + gRPC interceptor + scope rules
+tenant/                             Tenant resolution middleware (Middleware, Resolved, MiddlewareOptions)
+                                    PLUS Tenant + Domain types + Store interface (data layer)
+geo/                                Geo enrichment middleware (Middleware, IPExtractor)
+                                    PLUS GeoInfo + Provider interface (data layer)
 
 core/                               Foundational types + SPIs (User/Client/Session/Token/
                                     Subject/AuthRequest/AuthResult/HandlerContext/Router/
