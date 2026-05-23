@@ -16,6 +16,11 @@ var LoggerMiddleware = middleware.Logger
 var TracingMiddleware = middleware.Tracing
 var RequestIDMiddleware = middleware.RequestID
 
+// --- BuildInfo re-export (moved to core/) ---
+type BuildInfo = core.BuildInfo
+
+var ReadBuildInfo = core.ReadBuildInfo
+
 // --- Admin middleware re-exports (functions moved to admin/) ---
 type AdminMiddleware = admin.Middleware
 type AdminTokenValidator = admin.TokenValidator
