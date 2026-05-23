@@ -23,17 +23,16 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/geo"
 )
 
-// errorBody returns the standard error envelope { "error": code }.
-func errorBody(code string) map[string]string {
-	return map[string]string{KeyError: code}
-}
+// errorBody / errorBodyWithDescription delegate to core/error_body.go.
+// Keep the lowercase names so the 100+ call sites stay one-line.
+func errorBody(code string) map[string]string { return core.ErrorBody(code) }
 
-// errorBodyWithDescription returns { "error": code, "error_description": desc }.
 func errorBodyWithDescription(code, desc string) map[string]string {
-	return map[string]string{KeyError: code, KeyErrorDescription: desc}
+	return core.ErrorBodyDesc(code, desc)
 }
 
 func bearerToken(r *http.Request) string {
