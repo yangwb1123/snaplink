@@ -174,6 +174,38 @@ func RecordAccountLocked(rec *Recorder, ctx core.HandlerContext, clientID, provi
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordLoginSuccess emits a login event (Outcome=success) with the
+// authenticated subject + the issuance strategy.
+func RecordLoginSuccess(rec *Recorder, ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	e.Type = EventLogin
+	e.Outcome = OutcomeSuccess
+	e.ClientID = clientID
+	e.Provider = provider
+	e.TokenStrategy = strategy
+	e.ActorID = userID
+	e.SessionID = sessionID
+	rec.Record(ctx.Request().Context(), e)
+}
+
+// RecordLoginFailure emits a login_failure event with the caller-supplied
+// reason. SubjectID isn't included (unknown for failed logins by design).
+func RecordLoginFailure(rec *Recorder, ctx core.HandlerContext, clientID, provider, reason string) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	e.Type = EventLoginFailure
+	e.Outcome = OutcomeFailure
+	e.ClientID = clientID
+	e.Provider = provider
+	e.Reason = reason
+	rec.Record(ctx.Request().Context(), e)
+}
+
 // RecordCodeSent emits a code_sent event for two-step flows (phone/email).
 // target is intentionally not stored in full to limit PII spread; only its
 // type lives in Provider, the value goes into a short metadata key.

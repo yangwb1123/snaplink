@@ -2299,13 +2299,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	if s.auditor == nil {
 		return
 	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventLoginFailure
-	e.Outcome = audit.OutcomeFailure
-	e.ClientID = clientID
-	e.Provider = provider
-	e.Reason = reason
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordLoginFailure(s.auditor, ctx, clientID, provider, reason)
 }
 
 // dispatchLoginAnomaly hands a anomaly.LoginEvent to the AnomalyRunner.
@@ -2352,15 +2346,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 	if s.auditor == nil {
 		return
 	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventLogin
-	e.Outcome = audit.OutcomeSuccess
-	e.ClientID = clientID
-	e.Provider = provider
-	e.TokenStrategy = strategy
-	e.ActorID = userID
-	e.SessionID = sessionID
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordLoginSuccess(s.auditor, ctx, clientID, provider, strategy, userID, sessionID)
 }
 
 // recordLogout emits a logout event with what was actually revoked.
