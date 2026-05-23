@@ -1472,65 +1472,17 @@ func joinScope(scopes []string) string { return oauth.JoinScope(scopes) }
 // subtleConstantTimeStringEq delegates to security.ConstantTimeStringEq.
 func subtleConstantTimeStringEq(a, b string) int { return security.ConstantTimeStringEq(a, b) }
 
-// validateDCRMetadata enforces the subset of RFC 7591 §2 / §5
-// rules this server understands plus the policy's whitelist
-// constraints.
+// validateDCRMetadata adapts the root dcrRequest to oauth.DCRMetadata
+// and delegates to oauth.ValidateDCRMetadata.
 func validateDCRMetadata(req *dcrRequest, policy *oauth.DCRPolicy) error {
-	// redirect_uris is REQUIRED for grant_type=authorization_code
-	// (the default), OPTIONAL for client_credentials-only clients
-	// (per §2 — "redirect_uris is OPTIONAL ... If the grant types
-	// supported include authorization_code or implicit, then this
-	// metadata REQUIRED").
-	wantsCodeFlow := len(req.GrantTypes) == 0 ||
-		slices.Contains(req.GrantTypes, GrantAuthorizationCode)
-	if wantsCodeFlow && len(req.RedirectURIs) == 0 {
-		return errDCR("redirect_uris required for authorization_code flow")
-	}
-
-	if slices.Contains(req.RedirectURIs, "") {
-		return errDCR("empty redirect_uri")
-	}
-
-	switch req.TokenEndpointAuthMethod {
-	case "", "client_secret_basic", "client_secret_post", "none":
-		// supported
-	default:
-		return errDCR("unsupported token_endpoint_auth_method: " + req.TokenEndpointAuthMethod)
-	}
-
-	for _, g := range req.GrantTypes {
-		if !slices.Contains(SupportedGrants, g) {
-			return errDCR("unsupported grant_type: " + g)
-		}
-	}
-
-	for _, rt := range req.ResponseTypes {
-		switch rt {
-		case "code", "token", "":
-			// supported
-		default:
-			return errDCR("unsupported response_type: " + rt)
-		}
-	}
-
-	if len(policy.AllowedAuthenticators) > 0 {
-		for _, a := range req.AllowedAuthenticators {
-			if !slices.Contains(policy.AllowedAuthenticators, a) {
-				return errDCR("authenticator not permitted by registration policy: " + a)
-			}
-		}
-	}
-
-	return nil
+	return oauth.ValidateDCRMetadata(&oauth.DCRMetadata{
+		RedirectURIs:            req.RedirectURIs,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
+		GrantTypes:              req.GrantTypes,
+		ResponseTypes:           req.ResponseTypes,
+		AllowedAuthenticators:   req.AllowedAuthenticators,
+	}, policy, SupportedGrants, GrantAuthorizationCode)
 }
-
-func errDCR(msg string) error {
-	return &dcrError{msg: msg}
-}
-
-type dcrError struct{ msg string }
-
-func (e *dcrError) Error() string { return e.msg }
 
 // mfaResumeState is the JSON-encoded blob persisted alongside the
 // spi.MFAChallenge. Opaque to spi.MFAChallengeStore backends; the SSO server
