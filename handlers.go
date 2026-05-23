@@ -102,6 +102,7 @@ func basicClientCreds(r *http.Request) (id, secret string, ok bool) {
 //	  "request_uri": "urn:ietf:params:oauth:request_uri:<token>",
 //	  "expires_in":  90
 //	}
+//
 // handlePAR delegates to oauth.HandlePAR — see that file for the
 // RFC 9126 pre-redirect client authentication + validation flow.
 func (s *Server) handlePAR(ctx HandlerContext) { oauth.HandlePAR(s, ctx) }
@@ -493,6 +494,7 @@ func mergeTargets(primary, secondary []string) []string {
 //     as signed by the same key pair).
 //   - post_logout_redirect_uri MUST exact-match (no path tolerance,
 //     no scheme-only match) — phishing defense per §3.
+//
 // handleEndSession delegates to oidc.HandleEndSession — see that
 // file for the OIDC RP-Initiated Logout 1.0 flow, including FCL
 // iframe gather/render + BCL fan-out + phishing-safe redirect

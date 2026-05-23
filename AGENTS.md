@@ -42,11 +42,12 @@ protoc -I proto \
 ### Layout
 
 ```
-Root package (sso) — 5 files total:
+Root package (sso) — 6 files total:
 sso.go                              Server type + Option functions + route registration
 handler.go                          Login flow orchestrator (every endpoint paths through here)
 aliases.go                          core/ + subpackage re-exports for backward compatibility
-handlers.go                         All endpoint HTTP handlers (token/auth/admin/oidc)
+accessors.go                        Server field accessors for handler subpackage Deps interfaces
+handlers.go                         Discovery + remaining handler bodies + one-line delegators
 server_extensions.go                Server-coupled features (DPoP/mTLS/JAR/JWE/BCL/FCL/pairwise/tenant-suspension/buildinfo)
 
 middleware/                         General HTTP middleware: Auth, CORS, Logger, Tracing, RequestID
@@ -64,14 +65,24 @@ core/                               Foundational types + SPIs (User/Client/Sessi
 anomaly/                            Async behavioral detection SPIs
 security/                           Per-account lockout, JTI replay,
                                     JAR/JWE, step-up, mTLS header
-                                    extractor, subject-client index
+                                    extractor, subject-client index,
+                                    ConstantTimeStringEq
 oauth/                              AuthCode/DeviceCode/RefreshToken/PAR
                                     stores, DCR + RAR + claims-param
-                                    validators
+                                    validators. Hexagonal handlers:
+                                    HandleIntrospect, HandleRevoke,
+                                    HandleRevokeAll, HandlePAR
+                                    (Deps interface; *sso.Server impl)
 spi/                                Standalone SPIs: Logger, CodeSender,
                                     RiskScorer, MFAProvider+Challenge
 oidc/                               OIDC ID Token SPIs: IDTokenIssuer,
-                                    UserinfoSigner, MetadataSigner
+                                    UserinfoSigner, MetadataSigner.
+                                    Hexagonal handlers: HandleJWKS,
+                                    HandleEndSession, HandleSilentRenewal,
+                                    RenderFormPostResponse,
+                                    MaybeSignUserInfo + discovery_options
+                                    (PKCE/ResponseTypes/SubjectTypes)
+                                    + DocEntry/WriteDoc body cache
 authenticators/                     9 pluggable + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)
