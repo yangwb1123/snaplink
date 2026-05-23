@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	sso "github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/ratelimit"
+	"github.com/snaplink/sso/security"
 )
 
 func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
@@ -243,7 +243,7 @@ func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
 func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
 	l, mode, err := buildAccountLockout(config.AccountLockoutConfig{
 		MaxFailures:     7,
-		LockoutDuration: 30 * sso.NewMemoryAccountLockout().LockoutDuration,
+		LockoutDuration: 30 * security.NewMemoryAccountLockout().LockoutDuration,
 	})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
@@ -254,8 +254,8 @@ func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
 	if !strings.Contains(mode, "memory") {
 		t.Fatalf("mode label %q missing memory marker", mode)
 	}
-	if mem, ok := l.(*sso.MemoryAccountLockout); !ok {
-		t.Fatalf("expected *sso.MemoryAccountLockout, got %T", l)
+	if mem, ok := l.(*security.MemoryAccountLockout); !ok {
+		t.Fatalf("expected *security.MemoryAccountLockout, got %T", l)
 	} else if mem.MaxFailures != 7 {
 		t.Fatalf("MaxFailures override lost: got %d want 7", mem.MaxFailures)
 	}
@@ -347,14 +347,14 @@ func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("header build: %v", err)
 	}
-	h, ok := ex.(*sso.HeaderClientCertExtractor)
+	h, ok := ex.(*security.HeaderClientCertExtractor)
 	if !ok {
 		t.Fatalf("expected *HeaderClientCertExtractor, got %T", ex)
 	}
 	if h.HeaderName != "X-SSL-Client-Cert" {
 		t.Fatalf("header name mismatch: %q", h.HeaderName)
 	}
-	if h.Encoding != sso.HeaderCertEncodingURLPEM {
+	if h.Encoding != security.HeaderCertEncodingURLPEM {
 		t.Fatalf("encoding mismatch: %v", h.Encoding)
 	}
 	if !strings.Contains(mode, "TRUST EDGE MUST STRIP HEADER") {
@@ -365,12 +365,12 @@ func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
 func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
 	cases := []struct {
 		in   string
-		want sso.HeaderCertEncoding
+		want security.HeaderCertEncoding
 	}{
-		{"", sso.HeaderCertEncodingURLPEM},
-		{"url-pem", sso.HeaderCertEncodingURLPEM},
-		{"pem", sso.HeaderCertEncodingPEM},
-		{"base64-der", sso.HeaderCertEncodingBase64DER},
+		{"", security.HeaderCertEncodingURLPEM},
+		{"url-pem", security.HeaderCertEncodingURLPEM},
+		{"pem", security.HeaderCertEncodingPEM},
+		{"base64-der", security.HeaderCertEncodingBase64DER},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {

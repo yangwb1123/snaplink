@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 // jtiReplaySchema stores `jti` claims seen during their expiry
@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_jti_replays_expires_at
 `
 
 // JTIReplayStore is the SQLite-backed implementation of
-// [sso.JTIReplayStore]. Replaces memory_jti_replay.go for
+// [security.JTIReplayStore]. Replaces memory_jti_replay.go for
 // multi-replica deployments — a jti seen on replica A is recorded
 // in the shared file so replica B rejects it too.
 type JTIReplayStore struct {
@@ -80,7 +80,7 @@ func (s *JTIReplayStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
-// MarkSeen implements [sso.JTIReplayStore]. A first sighting inserts
+// MarkSeen implements [security.JTIReplayStore]. A first sighting inserts
 // the row + returns (true, nil); a replay finds the row already
 // present + returns (false, nil).
 //
@@ -125,7 +125,7 @@ func (s *JTIReplayStore) MarkSeen(ctx context.Context, jti string, expiresAt tim
 	n, err := res.RowsAffected()
 	if err != nil {
 		// Driver couldn't report; conservatively treat as first-sighting
-		// to stay fail-open per JTIReplayStore contract (callers log).
+		// to stay fail-open per security.JTIReplayStore contract (callers log).
 		return true, nil
 	}
 	return n == 1, nil
@@ -143,4 +143,4 @@ func isConstraintErr(err error) bool {
 		strings.Contains(msg, "constraint failed")
 }
 
-var _ sso.JTIReplayStore = (*JTIReplayStore)(nil)
+var _ security.JTIReplayStore = (*JTIReplayStore)(nil)

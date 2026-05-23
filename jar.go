@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/snaplink/sso/security"
 	"slices"
 	"strings"
 	"time"
@@ -146,7 +147,7 @@ func (a *audClaim) UnmarshalJSON(data []byte) error {
 //   - iss SHOULD equal client.ID (when the iss claim is set)
 //   - client_id claim MUST equal client.ID (when the
 //     client_id claim is set)
-func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer string, replay JTIReplayStore) (*jarPayload, error) {
+func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer string, replay security.JTIReplayStore) (*jarPayload, error) {
 	if client == nil {
 		return nil, errors.New("jar: client required")
 	}
@@ -230,7 +231,7 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 	}
 
 	// RFC 9101 §10.8 replay protection. When the operator has
-	// wired a JTIReplayStore and the JWT carries a jti, refuse to
+	// wired a security.JTIReplayStore and the JWT carries a jti, refuse to
 	// process a JWT whose jti has been seen within its expiry
 	// window. The defense is opt-in (store nil) so legacy
 	// deployments aren't broken; production should always wire
@@ -239,7 +240,7 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 	if replay != nil && p.JTI != "" {
 		expiresAt := time.Unix(p.Exp, 0)
 		if p.Exp == 0 || expiresAt.Before(time.Now()) {
-			expiresAt = time.Now().Add(DefaultJTIReplayWindow)
+			expiresAt = time.Now().Add(security.DefaultJTIReplayWindow)
 		}
 		first, err := replay.MarkSeen(ctx, p.JTI, expiresAt)
 		if err != nil {

@@ -1,4 +1,4 @@
-package sso
+package security
 
 import (
 	"context"
@@ -190,13 +190,13 @@ func (m *MemoryAccountLockout) RegisterSuccess(_ context.Context, key string) er
 	return nil
 }
 
-// lockoutKey extracts the identifier to use as the lockout key
+// LockoutKey extracts the identifier to use as the lockout key
 // from a login request's credential map. Returns "" when no
 // known identifier field is present (some authenticators carry
 // the identity in non-standard fields — the server treats those
 // as "lockout-unkeyable" and skips the gate entirely rather than
 // erroring, so custom authenticators still work).
-func lockoutKey(clientID string, credential map[string]string) string {
+func LockoutKey(clientID string, credential map[string]string) string {
 	if credential == nil {
 		return ""
 	}

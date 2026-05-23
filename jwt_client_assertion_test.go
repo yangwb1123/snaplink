@@ -18,6 +18,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/security"
 )
 
 const (
@@ -32,7 +33,7 @@ const (
 type jcaHarness struct {
 	srv     *httptest.Server
 	signKey ed25519.PrivateKey
-	store   sso.JTIReplayStore
+	store   security.JTIReplayStore
 }
 
 func newJCAHarness(t *testing.T, withReplay bool) *jcaHarness {
@@ -76,7 +77,7 @@ func newJCAHarness(t *testing.T, withReplay bool) *jcaHarness {
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), 5*time.Minute),
 	}
-	var replay sso.JTIReplayStore
+	var replay security.JTIReplayStore
 	if withReplay {
 		replay = defaultimpl.NewMemoryJTIReplayStore()
 		opts = append(opts, sso.WithJTIReplayStore(replay))

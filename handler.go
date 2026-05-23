@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/snaplink/sso/security"
 	"net/http"
 	neturl "net/url"
 	"slices"
@@ -137,7 +138,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// authentication. The merge gives PAR fields priority over
 	// caller-supplied so a tampered redirect parameter can't override
 	// what the client previously committed to.
-	if req.RequestURI != "" && isJARFetchableURI(req.RequestURI) {
+	if req.RequestURI != "" && security.IsJARFetchableURI(req.RequestURI) {
 		// RFC 9101 §5.2.2 — JAR `request_uri` URL-fetch variant.
 		// Fetch the signed JWT from the supplied URL, then fall
 		// through into the existing JAR merge below by setting
@@ -164,7 +165,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
 			return
 		}
-		if !isRequestURIAllowed(req.RequestURI, c.AllowedRequestURIs) {
+		if !security.IsRequestURIAllowed(req.RequestURI, c.AllowedRequestURIs) {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
 			return
 		}
@@ -367,7 +368,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// fail invalid_request_object (fail-closed; can't validate what
 	// we can't decrypt).
 	if req.Request != "" {
-		jarRaw, unwrapErr := jweUnwrap(ctx.Request().Context(), req.Request, s.jarDecrypter)
+		jarRaw, unwrapErr := security.JWEUnwrap(ctx.Request().Context(), req.Request, s.jarDecrypter)
 		if unwrapErr != nil {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, unwrapErr.Error()))
@@ -467,7 +468,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// currently locked. Skips the verifier entirely on a locked
 	// account so a botnet can't drain the verifier's
 	// constant-time hash budget while the lock is active.
-	lockKey := lockoutKey(req.ClientID, req.Credential)
+	lockKey := security.LockoutKey(req.ClientID, req.Credential)
 	if s.accountLockout != nil && lockKey != "" {
 		if locked, until, _ := s.accountLockout.IsLocked(ctx.Request().Context(), lockKey); locked {
 			s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
@@ -1177,7 +1178,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	// key in Client.JWKS; iss / sub MUST equal the client_id; aud
 	// MUST include the AS issuer or the token endpoint URL; exp
 	// MUST be in the future. Replay defense (jti tracking) reuses
-	// the JTIReplayStore wiring JAR already opts into.
+	// the security.JTIReplayStore wiring JAR already opts into.
 	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
 		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -1813,7 +1814,7 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	// backchannel_logout_uri declared.
 	if bcSubject != "" && bcClientID != "" && s.clientStore != nil {
 		if c, err := s.clientStore.Get(ctx.Request().Context(), bcClientID); err == nil && c != nil {
-			// Multi-RP fan-out when the SubjectClientIndex is wired;
+			// Multi-RP fan-out when the security.SubjectClientIndex is wired;
 			// degrades to single-RP notification of the bearer's
 			// client when it isn't.
 			s.fanOutBackchannelLogout(ctx, c, bcSubject, bcSID)

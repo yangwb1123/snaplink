@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/snaplink/sso/security"
 	"slices"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ const DefaultClientAssertionMaxLifetime = 5 * time.Minute
 //   - aud MUST include the AS issuer (acceptable values: the
 //     resolveIssuer string the server emits in discovery)
 //   - exp MUST be in the future AND within DefaultClientAssertionMaxLifetime
-//   - jti MUST be present when JTIReplayStore is wired; replay
+//   - jti MUST be present when security.JTIReplayStore is wired; replay
 //     rejects the duplicate
 //
 // Errors collapse to one wire shape on the caller side
@@ -69,7 +70,7 @@ func verifyJWTClientAssertion(
 	formClientID string,
 	clientStore ClientStore,
 	asIssuer string,
-	replay JTIReplayStore,
+	replay security.JTIReplayStore,
 ) (string, error) {
 	if clientStore == nil {
 		return "", errors.New("jwt_client_assertion: client store required")

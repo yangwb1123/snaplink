@@ -20,6 +20,7 @@ import (
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/ratelimit"
+	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/tenant"
 	"github.com/snaplink/sso/tracing"
 )
@@ -78,11 +79,11 @@ type Server struct {
 	logoutTokenIssuer              LogoutTokenIssuer
 	logoutNotifier                 LogoutNotifier
 	backchannelLogoutMaxConcurrent int
-	accountLockout                 AccountLockout
-	jtiReplayStore                 JTIReplayStore
-	subjectClientIndex             SubjectClientIndex
-	jarFetcher                     JARFetcher
-	jarDecrypter                   JWEDecrypter
+	accountLockout                 security.AccountLockout
+	jtiReplayStore                 security.JTIReplayStore
+	subjectClientIndex             security.SubjectClientIndex
+	jarFetcher                     security.JARFetcher
+	jarDecrypter                   security.JWEDecrypter
 	clientCertExtractor            ClientCertExtractor
 	dpopNonceProvider              DPoPNonceProvider
 	metadataSigner                 MetadataSigner
@@ -159,11 +160,11 @@ func WithTokenIssuer(name string, ti TokenIssuer) Option {
 // stuffing case). Without this option, the per-account defense
 // is absent and operators rely entirely on the IP rate limiter.
 //
-// `NewMemoryAccountLockout()` is the in-process default with
+// `security.NewMemoryAccountLockout()` is the in-process default with
 // conservative thresholds (5 failures / 1 hour window / 15 min
 // lockout). Multi-replica deployments MUST swap for a shared
 // backend so attackers can't slip through the per-replica fork.
-func WithAccountLockout(a AccountLockout) Option {
+func WithAccountLockout(a security.AccountLockout) Option {
 	return func(s *Server) { s.accountLockout = a }
 }
 
@@ -185,7 +186,7 @@ func WithBackchannelLogout(issuer LogoutTokenIssuer, notifier LogoutNotifier) Op
 }
 
 // WithBackchannelLogoutMaxConcurrent overrides the fan-out
-// parallelism cap when the SubjectClientIndex notifies multiple
+// parallelism cap when the security.SubjectClientIndex notifies multiple
 // RPs at once. Defaults to DefaultBackchannelLogoutMaxConcurrent
 // (8). Lower it to ease memory/connection pressure when each RP
 // is on a slow upstream; raise it when N RPs is large and per-RP
@@ -347,7 +348,7 @@ func WithPARStore(store PARStore, ttl time.Duration) Option {
 // backend (defaultimpl.NewMemoryJTIReplayStore) is single-replica
 // only and multi-replica deployments need a Redis-style shared
 // store before the defense holds.
-func WithJTIReplayStore(store JTIReplayStore) Option {
+func WithJTIReplayStore(store security.JTIReplayStore) Option {
 	return func(s *Server) { s.jtiReplayStore = store }
 }
 
@@ -367,7 +368,7 @@ func WithJTIReplayStore(store JTIReplayStore) Option {
 // single-replica only; multi-replica deployments need a shared
 // store (Redis, SQL) so a fan-out triggered on replica A reaches
 // a client whose last issuance happened on replica B.
-func WithSubjectClientIndex(idx SubjectClientIndex) Option {
+func WithSubjectClientIndex(idx security.SubjectClientIndex) Option {
 	return func(s *Server) { s.subjectClientIndex = idx }
 }
 
@@ -385,7 +386,7 @@ func WithSubjectClientIndex(idx SubjectClientIndex) Option {
 //
 // The default fetcher (defaultimpl-less here: see NewHTTPJARFetcher)
 // is HTTPS-only, no-redirects, 5s timeout, 16KB body cap.
-func WithJARFetcher(fetcher JARFetcher) Option {
+func WithJARFetcher(fetcher security.JARFetcher) Option {
 	return func(s *Server) { s.jarFetcher = fetcher }
 }
 
@@ -410,7 +411,7 @@ func WithJARFetcher(fetcher JARFetcher) Option {
 // Discovery advertises supported alg + enc lists when this option
 // is wired — see request_object_encryption_alg_values_supported +
 // request_object_encryption_enc_values_supported.
-func WithJARDecrypter(d JWEDecrypter) Option {
+func WithJARDecrypter(d security.JWEDecrypter) Option {
 	return func(s *Server) { s.jarDecrypter = d }
 }
 

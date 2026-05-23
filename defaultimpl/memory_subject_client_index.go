@@ -4,11 +4,11 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 // MemorySubjectClientIndex is the in-process default for
-// [sso.SubjectClientIndex]. map-of-maps — outer key is subject id,
+// [security.SubjectClientIndex]. map-of-maps — outer key is subject id,
 // inner is the set of client ids that subject has active tokens for.
 // No TTL: operators that need bounded lifetime should periodically
 // call Forget for stale entries OR swap for a TTL-aware store.
@@ -73,4 +73,4 @@ func (m *MemorySubjectClientIndex) Forget(_ context.Context, subject, clientID s
 	return nil
 }
 
-var _ sso.SubjectClientIndex = (*MemorySubjectClientIndex)(nil)
+var _ security.SubjectClientIndex = (*MemorySubjectClientIndex)(nil)

@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/security"
 )
 
 // Per-account lockout: distributed-credential-stuffing defense
@@ -28,12 +29,12 @@ const (
 	lkGoodPass = "right"
 )
 
-// pkgLevelLockout: exercise the MemoryAccountLockout impl
+// pkgLevelLockout: exercise the security.MemoryAccountLockout impl
 // directly to lock in the threshold + sliding-window semantics
 // independent of the server wire-up.
 
 func TestMemoryAccountLockout_LocksAtThreshold(t *testing.T) {
-	a := sso.NewMemoryAccountLockout()
+	a := security.NewMemoryAccountLockout()
 	a.MaxFailures = 3
 	a.LockoutDuration = 50 * time.Millisecond
 
@@ -64,7 +65,7 @@ func TestMemoryAccountLockout_LocksAtThreshold(t *testing.T) {
 }
 
 func TestMemoryAccountLockout_AutoUnlocksAfterDuration(t *testing.T) {
-	a := sso.NewMemoryAccountLockout()
+	a := security.NewMemoryAccountLockout()
 	a.MaxFailures = 2
 	a.LockoutDuration = 20 * time.Millisecond
 
@@ -81,7 +82,7 @@ func TestMemoryAccountLockout_AutoUnlocksAfterDuration(t *testing.T) {
 }
 
 func TestMemoryAccountLockout_SuccessResets(t *testing.T) {
-	a := sso.NewMemoryAccountLockout()
+	a := security.NewMemoryAccountLockout()
 	a.MaxFailures = 3
 
 	ctx := context.Background()
@@ -105,7 +106,7 @@ func TestMemoryAccountLockout_EmptyKeyNoop(t *testing.T) {
 	// Empty key = "unkeyable" — server should fall back to the
 	// other defenses (rate limit). The lockout impl returns
 	// not-locked + no-counter-increment.
-	a := sso.NewMemoryAccountLockout()
+	a := security.NewMemoryAccountLockout()
 	ctx := context.Background()
 	locked, _, _ := a.RegisterFailure(ctx, "")
 	if locked {
@@ -120,7 +121,7 @@ func TestMemoryAccountLockout_DistinctKeysIsolated(t *testing.T) {
 	// Two different keys MUST maintain independent counters —
 	// otherwise a single attacker target could lock out unrelated
 	// accounts.
-	a := sso.NewMemoryAccountLockout()
+	a := security.NewMemoryAccountLockout()
 	a.MaxFailures = 2
 	ctx := context.Background()
 	_, _, _ = a.RegisterFailure(ctx, "alice")
@@ -138,7 +139,7 @@ func TestMemoryAccountLockout_DistinctKeysIsolated(t *testing.T) {
 
 type lockoutHarness struct {
 	srv *httptest.Server
-	a   *sso.MemoryAccountLockout
+	a   *security.MemoryAccountLockout
 	rec *audit.MemorySink
 }
 
@@ -160,7 +161,7 @@ func newLockoutHarness(t *testing.T) *lockoutHarness {
 			return nil, errors.New("bad")
 		},
 	))
-	a := sso.NewMemoryAccountLockout()
+	a := security.NewMemoryAccountLockout()
 	a.MaxFailures = 3
 	a.LockoutDuration = time.Minute
 	sink := audit.NewMemorySink(50)

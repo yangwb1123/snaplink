@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
-// MemoryJTIReplayStore is an in-process [sso.JTIReplayStore]. Pure
+// MemoryJTIReplayStore is an in-process [security.JTIReplayStore]. Pure
 // map + mutex; lazily evicts expired entries on every MarkSeen so the
 // map stays bounded by the active-window key count (no background
 // goroutine, no eviction lag past the first MarkSeen call after the
@@ -58,4 +58,4 @@ func (m *MemoryJTIReplayStore) MarkSeen(_ context.Context, jti string, expiresAt
 	return true, nil
 }
 
-var _ sso.JTIReplayStore = (*MemoryJTIReplayStore)(nil)
+var _ security.JTIReplayStore = (*MemoryJTIReplayStore)(nil)

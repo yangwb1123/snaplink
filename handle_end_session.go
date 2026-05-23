@@ -113,7 +113,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	}
 
 	// Capture FCL fan-out targets BEFORE the BCL fan-out runs.
-	// BCL's Forget-on-non-BCL behavior trims the SubjectClientIndex
+	// BCL's Forget-on-non-BCL behavior trims the security.SubjectClientIndex
 	// of clients without a BackchannelLogoutURI; if FCL gathered
 	// AFTER, those FCL-only peers would be missing from the index
 	// by the time we walked it and silently dropped from the
@@ -156,7 +156,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 
 	// OIDC Front-Channel Logout 1.0 — when any client (the primary
 	// from id_token_hint, or any other the subject is signed into
-	// via the SubjectClientIndex) opts in via FrontchannelLogoutURI,
+	// via the security.SubjectClientIndex) opts in via FrontchannelLogoutURI,
 	// render an HTML page with one hidden iframe per such client.
 	// The browser fires each iframe request (clearing RP cookies);
 	// a meta-refresh then navigates to post_logout_redirect_uri if

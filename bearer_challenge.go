@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/security"
+
 import "strings"
 
 // setBearerChallenge stamps an RFC 6750 §3 WWW-Authenticate header
@@ -25,12 +27,12 @@ func setBearerChallenge(ctx HandlerContext, realm, errorCode, errorDescription s
 	if realm == "" {
 		realm = "sso"
 	}
-	parts := []string{`Bearer realm=` + quoteAuthParam(realm)}
+	parts := []string{`Bearer realm=` + security.QuoteAuthParam(realm)}
 	if errorCode != "" {
-		parts = append(parts, `error=`+quoteAuthParam(errorCode))
+		parts = append(parts, `error=`+security.QuoteAuthParam(errorCode))
 	}
 	if errorDescription != "" {
-		parts = append(parts, `error_description=`+quoteAuthParam(errorDescription))
+		parts = append(parts, `error_description=`+security.QuoteAuthParam(errorDescription))
 	}
 	ctx.ResponseWriter().Header().Set("WWW-Authenticate", strings.Join(parts, ", "))
 }

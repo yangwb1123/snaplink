@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 // accountLockoutSchema covers the per-key failure counter +
@@ -25,13 +25,13 @@ CREATE TABLE IF NOT EXISTS account_lockouts (
 `
 
 // AccountLockout is the SQLite-backed implementation of
-// [sso.AccountLockout]. Replaces the memory backend for multi-replica
+// [security.AccountLockout]. Replaces the memory backend for multi-replica
 // deployments — an attacker rotating targets across replicas can't
 // stay under each replica's local threshold because the counter is
 // shared.
 type AccountLockout struct {
 	// MaxFailures / LockoutDuration / FailureWindow mirror
-	// sso.MemoryAccountLockout. Fields are exported so cmd can apply
+	// security.MemoryAccountLockout. Fields are exported so cmd can apply
 	// the same overrides for both backends.
 	MaxFailures     int
 	LockoutDuration time.Duration
@@ -57,9 +57,9 @@ func NewAccountLockout(dsn string) (*AccountLockout, error) {
 		return nil, fmt.Errorf("sqlite: migrate account_lockouts: %w", err)
 	}
 	return &AccountLockout{
-		MaxFailures:     sso.DefaultLockoutMaxFailures,
-		LockoutDuration: sso.DefaultLockoutDuration,
-		FailureWindow:   sso.DefaultLockoutFailureWindow,
+		MaxFailures:     security.DefaultLockoutMaxFailures,
+		LockoutDuration: security.DefaultLockoutDuration,
+		FailureWindow:   security.DefaultLockoutFailureWindow,
 		db:              db,
 	}, nil
 }
@@ -71,9 +71,9 @@ func NewAccountLockoutWithDB(db *sql.DB) (*AccountLockout, error) {
 		return nil, fmt.Errorf("sqlite: migrate account_lockouts: %w", err)
 	}
 	return &AccountLockout{
-		MaxFailures:     sso.DefaultLockoutMaxFailures,
-		LockoutDuration: sso.DefaultLockoutDuration,
-		FailureWindow:   sso.DefaultLockoutFailureWindow,
+		MaxFailures:     security.DefaultLockoutMaxFailures,
+		LockoutDuration: security.DefaultLockoutDuration,
+		FailureWindow:   security.DefaultLockoutFailureWindow,
 		db:              db,
 	}, nil
 }
@@ -244,4 +244,4 @@ func lockedUntilUnix(t time.Time) int64 {
 	return t.UnixNano()
 }
 
-var _ sso.AccountLockout = (*AccountLockout)(nil)
+var _ security.AccountLockout = (*AccountLockout)(nil)

@@ -15,7 +15,7 @@ import (
 // for the brute-force shadow detector.
 const DetectorTypeBruteForceShadow = "brute_force_shadow"
 
-// BruteForceShadowDetector catches the failure mode AccountLockout
+// BruteForceShadowDetector catches the failure mode security.AccountLockout
 // CANNOT see by design: an attacker spraying credentials across N
 // accounts to stay below the per-account lockout threshold. From
 // each account's perspective the IP only failed 4 times (under

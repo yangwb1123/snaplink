@@ -87,7 +87,7 @@ func newParallelBCLHarness(t *testing.T, numRPs int, notifier sso.LogoutNotifier
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)
 
-	// Log into every RP so the SubjectClientIndex has the full set.
+	// Log into every RP so the security.SubjectClientIndex has the full set.
 	var firstTok string
 	for i := 0; i < numRPs; i++ {
 		clientID := fmt.Sprintf("par-client-%d", i)

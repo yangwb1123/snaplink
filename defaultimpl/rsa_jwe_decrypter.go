@@ -19,7 +19,7 @@ import (
 // FAPI 2.0 recommendation and is what every off-the-shelf JOSE
 // client emits by default.
 //
-// The decrypter implements [sso.JWEDecrypter] for the JAR pipeline
+// The decrypter implements [security.JWEDecrypter] for the JAR pipeline
 // AND [sso.JWKSProvider] so the matching public key surfaces at
 // /.well-known/jwks.json with `use: "enc"` — RPs introspect that
 // to know which kid to encrypt to. Symmetric companion: the existing
@@ -68,7 +68,7 @@ func NewRSAJWEDecrypter(priv *rsa.PrivateKey, kid string) (*RSAJWEDecrypter, err
 //
 // Other algorithms are rejected at parse time so the AS doesn't
 // silently accept weaker cipher suites a client might pick. Operators
-// wanting additional pairs implement their own [sso.JWEDecrypter]
+// wanting additional pairs implement their own [security.JWEDecrypter]
 // and wire it via [sso.WithJARDecrypter].
 func (d *RSAJWEDecrypter) Decrypt(_ context.Context, jweCompact string) ([]byte, error) {
 	obj, err := jose.ParseEncryptedCompact(

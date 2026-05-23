@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 // subjectClientIndexSchema covers the OIDC BCL fan-out lookup —
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_subject_client_index_subject
 `
 
 // SubjectClientIndex is the SQLite-backed implementation of
-// [sso.SubjectClientIndex]. Replaces memory_subject_client_index.go
+// [security.SubjectClientIndex]. Replaces memory_subject_client_index.go
 // for multi-replica deployments — BCL fan-out can now reach every
 // client a subject has touched across the cluster, not just those
 // whose last issuance landed on the replica handling the logout.
@@ -147,4 +147,4 @@ func (s *SubjectClientIndex) Forget(ctx context.Context, subject, clientID strin
 	return nil
 }
 
-var _ sso.SubjectClientIndex = (*SubjectClientIndex)(nil)
+var _ security.SubjectClientIndex = (*SubjectClientIndex)(nil)

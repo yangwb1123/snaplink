@@ -260,7 +260,7 @@ func TestFCL_DiscoveryOmitsWhenNoClientOptsIn(t *testing.T) {
 	}
 }
 
-// TestFCL_MultiRPFanOut proves the SubjectClientIndex-driven multi-
+// TestFCL_MultiRPFanOut proves the security.SubjectClientIndex-driven multi-
 // RP variant: when the subject is signed into multiple FCL-capable
 // clients, /end_session renders one hidden iframe per such client
 // so every RP gets a chance to clear its own session. Without the
@@ -316,7 +316,7 @@ func TestFCL_MultiRPFanOut(t *testing.T) {
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
-	// Log into both clients so the SubjectClientIndex records each.
+	// Log into both clients so the security.SubjectClientIndex records each.
 	login := func(cid string) string {
 		body, _ := json.Marshal(map[string]any{
 			"provider":   "password",
@@ -358,10 +358,10 @@ func TestFCL_MultiRPFanOut(t *testing.T) {
 		t.Errorf("primary iframe (client A) missing from FCL page: %s", s)
 	}
 	if !strings.Contains(s, fcLogoutB) {
-		t.Errorf("fan-out iframe (client B) missing from FCL page — SubjectClientIndex not consulted: %s", s)
+		t.Errorf("fan-out iframe (client B) missing from FCL page — security.SubjectClientIndex not consulted: %s", s)
 	}
 	// Primary carries sid+iss; fan-out target carries iss only (sid
-	// omitted because the SubjectClientIndex doesn't track per-
+	// omitted because the security.SubjectClientIndex doesn't track per-
 	// client session IDs).
 	if !strings.Contains(s, `src="`+fcLogoutA+`?sid=`) {
 		t.Errorf("primary iframe missing sid query: %s", s)

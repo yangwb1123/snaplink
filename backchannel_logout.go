@@ -177,7 +177,7 @@ func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subje
 }
 
 // recordSubjectClientAccess stamps the (subject, clientID) pair into
-// the SubjectClientIndex so multi-RP back-channel logout fan-out can
+// the security.SubjectClientIndex so multi-RP back-channel logout fan-out can
 // reach this client later. No-op when the index isn't wired or
 // either id is empty (client_credentials passes empty subject in
 // some paths; just skip the bookkeeping write). Failures are logged
@@ -194,7 +194,7 @@ func (s *Server) recordSubjectClientAccess(ctx context.Context, subject, clientI
 }
 
 // fanOutBackchannelLogout drives the multi-RP variant of
-// sendBackchannelLogout. When the SubjectClientIndex is wired, every
+// sendBackchannelLogout. When the security.SubjectClientIndex is wired, every
 // client the subject has been seen with — not just the one the
 // bearer / id_token_hint named — gets a logout_token POST. The
 // triggering client (passed via `originClient`) is included in the

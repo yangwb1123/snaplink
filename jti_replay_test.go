@@ -17,7 +17,7 @@ import (
 )
 
 // newJARHarnessWithReplay wires the same components as the standard
-// JAR harness but also installs a JTIReplayStore so we can drive
+// JAR harness but also installs a security.JTIReplayStore so we can drive
 // RFC 9101 §10.8 replay-defense scenarios.
 func newJARHarnessWithReplay(t *testing.T) *jarHarness {
 	t.Helper()

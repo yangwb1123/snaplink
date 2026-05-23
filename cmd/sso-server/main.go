@@ -68,6 +68,7 @@ import (
 	releasehttpprobe "github.com/snaplink/sso/releases/probe/http"
 	releasefile "github.com/snaplink/sso/releases/store/file"
 	releasememory "github.com/snaplink/sso/releases/store/memory"
+	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/snapshot"
 	encryptionaes "github.com/snaplink/sso/snapshot/encryption/aesgcm"
 	encryptionnone "github.com/snaplink/sso/snapshot/encryption/none"
@@ -762,10 +763,10 @@ func buildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (sso.PairwiseS
 // attacker rotating across replicas can't stay under each replica's
 // local threshold. Policy overrides (MaxFailures / LockoutDuration
 // / FailureWindow) are applied identically to both backends.
-func buildAccountLockout(cfg config.AccountLockoutConfig) (sso.AccountLockout, string, error) {
+func buildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLockout, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
-		l := sso.NewMemoryAccountLockout()
+		l := security.NewMemoryAccountLockout()
 		if cfg.MaxFailures > 0 {
 			l.MaxFailures = cfg.MaxFailures
 		}
@@ -799,11 +800,11 @@ func buildAccountLockout(cfg config.AccountLockoutConfig) (sso.AccountLockout, s
 	}
 }
 
-// buildSubjectClientIndex picks the SubjectClientIndex backend that
+// buildSubjectClientIndex picks the security.SubjectClientIndex backend that
 // drives OIDC BCL multi-RP fan-out. memory keeps the single-replica
 // story; sqlite shares the index so a logout reaching any replica
 // fans out to every client a subject has touched cluster-wide.
-func buildSubjectClientIndex(cfg config.BCLIndexConfig) (sso.SubjectClientIndex, string, error) {
+func buildSubjectClientIndex(cfg config.BCLIndexConfig) (security.SubjectClientIndex, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemorySubjectClientIndex(), "memory (single-replica only)", nil
@@ -825,7 +826,7 @@ func buildSubjectClientIndex(cfg config.BCLIndexConfig) (sso.SubjectClientIndex,
 // the single-replica defense story; sqlite shares the seen-set
 // across the cluster so a replay routed to a different replica still
 // gets rejected.
-func buildJTIReplayStore(cfg config.JTIReplayConfig) (sso.JTIReplayStore, string, error) {
+func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemoryJTIReplayStore(), "memory (single-replica only)", nil
@@ -946,20 +947,20 @@ func buildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, s
 		if err != nil {
 			return nil, "", err
 		}
-		return &sso.HeaderClientCertExtractor{HeaderName: cfg.Header.Name, Encoding: enc}, fmt.Sprintf("HeaderClientCertExtractor (header=%q encoding=%q — TRUST EDGE MUST STRIP HEADER)", cfg.Header.Name, cfg.Header.Encoding), nil
+		return &security.HeaderClientCertExtractor{HeaderName: cfg.Header.Name, Encoding: enc}, fmt.Sprintf("HeaderClientCertExtractor (header=%q encoding=%q — TRUST EDGE MUST STRIP HEADER)", cfg.Header.Name, cfg.Header.Encoding), nil
 	default:
 		return nil, "", fmt.Errorf("security.mtls.backend %q (want tls|header)", cfg.Backend)
 	}
 }
 
-func parseHeaderCertEncoding(s string) (sso.HeaderCertEncoding, error) {
+func parseHeaderCertEncoding(s string) (security.HeaderCertEncoding, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "url-pem", "urlpem", "url_pem":
-		return sso.HeaderCertEncodingURLPEM, nil
+		return security.HeaderCertEncodingURLPEM, nil
 	case "pem":
-		return sso.HeaderCertEncodingPEM, nil
+		return security.HeaderCertEncodingPEM, nil
 	case "base64-der", "base64der", "base64_der":
-		return sso.HeaderCertEncodingBase64DER, nil
+		return security.HeaderCertEncodingBase64DER, nil
 	default:
 		return 0, fmt.Errorf("security.mtls.header.encoding %q (want url-pem|pem|base64-der)", s)
 	}
@@ -1387,7 +1388,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 	}
 
 	// Challenge store: memory for single-replica, sqlite for clusters.
-	// Same backend-selection pattern AccountLockout / SubjectClientIndex
+	// Same backend-selection pattern security.AccountLockout / security.SubjectClientIndex
 	// use; the schema gets migrated at construction so no separate
 	// boot step is required.
 	backend := strings.ToLower(strings.TrimSpace(cfg.Challenge.Backend))
@@ -2397,7 +2398,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = appendReadyCheck(opts, "sqlite-oauth-par", store)
 	}
 	if jar := cfg.OAuth.JAR; jar.Enabled {
-		f := sso.NewHTTPJARFetcher()
+		f := security.NewHTTPJARFetcher()
 		if jar.Timeout > 0 {
 			f.Client.Timeout = jar.Timeout
 		}

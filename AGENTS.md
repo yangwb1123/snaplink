@@ -47,6 +47,9 @@ consts.go                           Paths, headers, error codes
 handle_*.go                         Per-endpoint HTTP handlers
 oauth_bind.go                       form+JSON dispatcher
 anomaly/                            Async behavioral detection SPIs
+security/                           Per-account lockout, JTI replay,
+                                    JAR/JWE, step-up, mTLS header
+                                    extractor, subject-client index
 authenticators/                     9 pluggable + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)

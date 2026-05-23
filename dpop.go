@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/snaplink/sso/security"
 	"net/http"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ import (
 //   - Compute the JWK thumbprint (RFC 7638) and stamp it into
 //     the issued access token's `cnf.jkt` claim (RFC 7800).
 //   - Change the response token_type from "Bearer" to "DPoP".
-//   - Reuse JTIReplayStore (when wired) for jti replay defense.
+//   - Reuse security.JTIReplayStore (when wired) for jti replay defense.
 //
 // Resource-side verification (a downstream service confirming a
 // DPoP proof matches the bearer's cnf.jkt) is INTENTIONALLY NOT
@@ -83,7 +84,7 @@ func verifyDPoPProof(
 	proof string,
 	requestMethod string,
 	requestURL string,
-	replay JTIReplayStore,
+	replay security.JTIReplayStore,
 	nonceProvider DPoPNonceProvider,
 ) (*DPoPBinding, error) {
 	parts := strings.Split(proof, ".")

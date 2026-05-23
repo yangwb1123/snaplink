@@ -1,4 +1,4 @@
-package sso
+package security
 
 import (
 	"context"
@@ -63,10 +63,10 @@ func isJWECompact(s string) bool {
 	return strings.Count(s, ".") == 4
 }
 
-// jweUnwrap is the integration point verifyJAR calls. If the payload
+// JWEUnwrap is the integration point verifyJAR calls. If the payload
 // looks like JWE AND a decrypter is wired, decrypt; otherwise pass
 // through unchanged.
-func jweUnwrap(ctx context.Context, raw string, dec JWEDecrypter) (string, error) {
+func JWEUnwrap(ctx context.Context, raw string, dec JWEDecrypter) (string, error) {
 	if !isJWECompact(raw) {
 		return raw, nil
 	}

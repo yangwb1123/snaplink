@@ -18,6 +18,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/security"
 )
 
 const (
@@ -29,7 +30,7 @@ const (
 	jfRedirect = "https://app.example.com/cb"
 )
 
-// captureJARFetcher implements sso.JARFetcher with an in-memory map
+// captureJARFetcher implements security.JARFetcher with an in-memory map
 // — lets tests control exactly what the AS sees on fetch without
 // standing up a real upstream HTTPS server.
 type captureJARFetcher struct {
@@ -252,7 +253,7 @@ func TestJARFetch_DiscoveryAdvertises(t *testing.T) {
 }
 
 func TestHTTPJARFetcher_RejectsNonHTTPSScheme(t *testing.T) {
-	f := sso.NewHTTPJARFetcher()
+	f := security.NewHTTPJARFetcher()
 	_, err := f.Fetch(context.Background(), "http://example.com/req.jwt")
 	if err == nil {
 		t.Fatal("expected error on non-HTTPS URI")
@@ -272,7 +273,7 @@ func TestHTTPJARFetcher_RejectsOversizedBody(t *testing.T) {
 		_, _ = w.Write(big)
 	}))
 	defer upstream.Close()
-	f := sso.NewHTTPJARFetcher()
+	f := security.NewHTTPJARFetcher()
 	// Override the client so it accepts the test server's self-
 	// signed cert.
 	f.Client = upstream.Client()

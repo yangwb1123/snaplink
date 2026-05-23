@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
 )
 
 func TestBuildStepUpChallenge_AllFields(t *testing.T) {
-	got, err := sso.BuildStepUpChallenge(sso.StepUpChallenge{
+	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{
 		ACRValues:   []string{"urn:mace:incommon:iap:silver", "urn:mace:incommon:iap:bronze"},
 		MaxAge:      60,
 		Realm:       "payments",
@@ -32,7 +32,7 @@ func TestBuildStepUpChallenge_AllFields(t *testing.T) {
 }
 
 func TestBuildStepUpChallenge_ACRValuesOnly(t *testing.T) {
-	got, err := sso.BuildStepUpChallenge(sso.StepUpChallenge{
+	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{
 		ACRValues: []string{"urn:level:high"},
 	})
 	if err != nil {
@@ -51,7 +51,7 @@ func TestBuildStepUpChallenge_ACRValuesOnly(t *testing.T) {
 }
 
 func TestBuildStepUpChallenge_MaxAgeOnly(t *testing.T) {
-	got, err := sso.BuildStepUpChallenge(sso.StepUpChallenge{MaxAge: 120})
+	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{MaxAge: 120})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestBuildStepUpChallenge_MaxAgeOnly(t *testing.T) {
 
 func TestBuildStepUpChallenge_RejectsEmptyDemand(t *testing.T) {
 	// No ACR + no max_age → RFC 9470 has no semantics; refuse.
-	_, err := sso.BuildStepUpChallenge(sso.StepUpChallenge{Realm: "x"})
+	_, err := security.BuildStepUpChallenge(security.StepUpChallenge{Realm: "x"})
 	if err == nil {
 		t.Fatal("expected error on empty demand")
 	}
@@ -74,7 +74,7 @@ func TestBuildStepUpChallenge_EscapesUntrustedDescription(t *testing.T) {
 	// attacker who controls part of the description could
 	// inject additional header parameters.
 	const evil = `breakout"; injected="foo`
-	got, err := sso.BuildStepUpChallenge(sso.StepUpChallenge{
+	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{
 		ACRValues:   []string{"urn:level:high"},
 		Description: evil,
 	})
@@ -99,5 +99,5 @@ func TestMustBuildStepUpChallenge_PanicsOnEmpty(t *testing.T) {
 			t.Errorf("expected panic")
 		}
 	}()
-	_ = sso.MustBuildStepUpChallenge(sso.StepUpChallenge{})
+	_ = security.MustBuildStepUpChallenge(security.StepUpChallenge{})
 }

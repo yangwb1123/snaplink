@@ -35,7 +35,7 @@ func urlQueryEscape(s string) string { return url.QueryEscape(s) }
 //
 //   - sid claim only on the primary iframe. Fan-out targets get an
 //     empty sid because the AS doesn't keep per-(subject, client)
-//     session IDs in the SubjectClientIndex; FCL §3 allows sid
+//     session IDs in the security.SubjectClientIndex; FCL §3 allows sid
 //     omission when the AS doesn't have one for that target.
 //   - Fire-and-forget: the AS has no signal whether the iframes
 //     actually cleared the RPs' sessions. Matches BCL's fail-open

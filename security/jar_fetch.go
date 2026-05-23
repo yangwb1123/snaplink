@@ -1,4 +1,4 @@
-package sso
+package security
 
 import (
 	"context"
@@ -124,20 +124,20 @@ func (f *HTTPJARFetcher) Fetch(ctx context.Context, uri string) ([]byte, error) 
 	return body, nil
 }
 
-// isJARFetchableURI reports whether a `request_uri` value should be
+// IsJARFetchableURI reports whether a `request_uri` value should be
 // routed to the JAR URL-fetch path vs. the PAR `urn:` path. JAR
 // URIs MUST be HTTPS; PAR URIs use the dedicated urn: prefix. Any
 // other scheme (http://, file://, ftp://, etc.) is rejected.
-func isJARFetchableURI(uri string) bool {
+func IsJARFetchableURI(uri string) bool {
 	return strings.HasPrefix(uri, "https://")
 }
 
-// isRequestURIAllowed checks the URI against the client's exact-
+// IsRequestURIAllowed checks the URI against the client's exact-
 // match allowlist. Empty allowlist = denied (no SSRF surface
 // exposed). Wildcards are intentionally NOT supported — the whole
 // point of the allowlist is making "where can I fetch from" the
 // AS-side configuration, not RP-controlled.
-func isRequestURIAllowed(uri string, allowed []string) bool {
+func IsRequestURIAllowed(uri string, allowed []string) bool {
 	if len(allowed) == 0 {
 		return false
 	}

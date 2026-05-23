@@ -14,6 +14,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/security"
 )
 
 const (
@@ -28,10 +29,10 @@ const (
 )
 
 // newMultiRPHarness wires three clients with distinct BC URIs and an
-// in-memory SubjectClientIndex so the fan-out path can be observed.
+// in-memory security.SubjectClientIndex so the fan-out path can be observed.
 // Client C deliberately has NO BackchannelLogoutURI to verify the
 // fan-out skips clients that don't speak BCL.
-func newMultiRPHarness(t *testing.T) (*httptest.Server, *captureNotifier, sso.SubjectClientIndex) {
+func newMultiRPHarness(t *testing.T) (*httptest.Server, *captureNotifier, security.SubjectClientIndex) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: multiUser})
@@ -112,7 +113,7 @@ func TestBCLFanOut_NotifiesEveryRPWithLogoutURI(t *testing.T) {
 	srv, notifier, _ := newMultiRPHarness(t)
 
 	// User signs into all three clients in turn. After each
-	// login, the SubjectClientIndex records (multiUser, clientID).
+	// login, the security.SubjectClientIndex records (multiUser, clientID).
 	tokA := loginAsMultiRP(t, srv, multiCliA)
 	_ = loginAsMultiRP(t, srv, multiCliB)
 	_ = loginAsMultiRP(t, srv, multiCliC)
@@ -147,7 +148,7 @@ func TestBCLFanOut_NotifiesEveryRPWithLogoutURI(t *testing.T) {
 }
 
 func TestBCLFanOut_FallsBackToSingleRPWithoutIndex(t *testing.T) {
-	// Identical wiring but NO SubjectClientIndex — confirms the
+	// Identical wiring but NO security.SubjectClientIndex — confirms the
 	// fan-out helper degrades to the single-RP behavior when the
 	// index isn't wired (zero behavior change for legacy ops).
 	users := defaultimpl.NewMemoryUserProvider()
@@ -183,7 +184,7 @@ func TestBCLFanOut_FallsBackToSingleRPWithoutIndex(t *testing.T) {
 		sso.WithTokenIssuer("jwt", issuer),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithBackchannelLogout(issuer, notifier),
-		// NO SubjectClientIndex wired.
+		// NO security.SubjectClientIndex wired.
 	)
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)

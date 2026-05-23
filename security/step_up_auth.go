@@ -1,4 +1,4 @@
-package sso
+package security
 
 import (
 	"errors"
@@ -82,25 +82,25 @@ func BuildStepUpChallenge(c StepUpChallenge) (string, error) {
 	if len(c.ACRValues) == 0 && c.MaxAge == 0 {
 		return "", errors.New("step_up: challenge MUST demand acr_values or max_age")
 	}
-	parts := []string{"error=" + quoteAuthParam(ErrInsufficientUserAuthentication)}
+	parts := []string{"error=" + QuoteAuthParam(ErrInsufficientUserAuthentication)}
 	if c.Description != "" {
-		parts = append(parts, "error_description="+quoteAuthParam(c.Description))
+		parts = append(parts, "error_description="+QuoteAuthParam(c.Description))
 	}
 	if c.Realm != "" {
-		parts = append(parts, "realm="+quoteAuthParam(c.Realm))
+		parts = append(parts, "realm="+QuoteAuthParam(c.Realm))
 	}
 	if len(c.ACRValues) > 0 {
-		parts = append(parts, "acr_values="+quoteAuthParam(strings.Join(c.ACRValues, " ")))
+		parts = append(parts, "acr_values="+QuoteAuthParam(strings.Join(c.ACRValues, " ")))
 	}
 	if c.MaxAge > 0 {
-		parts = append(parts, "max_age="+quoteAuthParam(strconv.Itoa(c.MaxAge)))
+		parts = append(parts, "max_age="+QuoteAuthParam(strconv.Itoa(c.MaxAge)))
 	}
 	return "Bearer " + strings.Join(parts, ", "), nil
 }
 
-// quoteAuthParam wraps a value in RFC 7235 quoted-string form,
+// QuoteAuthParam wraps a value in RFC 7235 quoted-string form,
 // escaping internal quote + backslash. Empty inputs become `""`.
-func quoteAuthParam(v string) string {
+func QuoteAuthParam(v string) string {
 	if v == "" {
 		return `""`
 	}

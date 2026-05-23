@@ -12,6 +12,7 @@ import (
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/security"
 )
 
 const (
@@ -98,8 +99,8 @@ func TestTokenExchange_ACRDemandUnsatisfiedReturnsInsufficient(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 for ACR mismatch", status)
 	}
-	if body["error"] != sso.ErrInsufficientUserAuthentication {
-		t.Errorf("error=%v want %q", body["error"], sso.ErrInsufficientUserAuthentication)
+	if body["error"] != security.ErrInsufficientUserAuthentication {
+		t.Errorf("error=%v want %q", body["error"], security.ErrInsufficientUserAuthentication)
 	}
 }
 
@@ -110,8 +111,8 @@ func TestTokenExchange_ACREmptyInboundFailsAnyDemand(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", status)
 	}
-	if body["error"] != sso.ErrInsufficientUserAuthentication {
-		t.Errorf("error=%v want %q", body["error"], sso.ErrInsufficientUserAuthentication)
+	if body["error"] != security.ErrInsufficientUserAuthentication {
+		t.Errorf("error=%v want %q", body["error"], security.ErrInsufficientUserAuthentication)
 	}
 }
 
