@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/json"
@@ -16,7 +18,7 @@ import (
 
 const dcrInitialAT = "iat-secret-bearer"
 
-func newDCRHarness(t *testing.T, policy sso.DCRPolicy) (*httptest.Server, sso.ClientStore) {
+func newDCRHarness(t *testing.T, policy oauth.DCRPolicy) (*httptest.Server, sso.ClientStore) {
 	t.Helper()
 	clients := defaultimpl.NewMemoryClientStore()
 	srv := sso.NewServer(
@@ -51,7 +53,7 @@ func postDCR(t *testing.T, srv *httptest.Server, bearer string, body any) (int, 
 }
 
 func TestDCR_HappyPath_IssuesIDAndSecret(t *testing.T) {
-	srv, store := newDCRHarness(t, sso.DCRPolicy{
+	srv, store := newDCRHarness(t, oauth.DCRPolicy{
 		InitialAccessToken:   dcrInitialAT,
 		DefaultActive:        true,
 		DefaultTokenStrategy: "jwt",
@@ -91,7 +93,7 @@ func TestDCR_HappyPath_IssuesIDAndSecret(t *testing.T) {
 }
 
 func TestDCR_RejectsBadBearer(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{
 		InitialAccessToken: dcrInitialAT,
 	})
 	status, body := postDCR(t, srv, "wrong-token", map[string]any{
@@ -106,7 +108,7 @@ func TestDCR_RejectsBadBearer(t *testing.T) {
 }
 
 func TestDCR_RejectsMissingBearer(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{
 		InitialAccessToken: dcrInitialAT,
 	})
 	status, _ := postDCR(t, srv, "", map[string]any{
@@ -118,7 +120,7 @@ func TestDCR_RejectsMissingBearer(t *testing.T) {
 }
 
 func TestDCR_OpenRegistration_NoBearer(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
 	})
@@ -135,7 +137,7 @@ func TestDCR_OpenRegistration_NoBearer(t *testing.T) {
 }
 
 func TestDCR_PublicClient_NoSecret_ForcesPKCE(t *testing.T) {
-	srv, store := newDCRHarness(t, sso.DCRPolicy{
+	srv, store := newDCRHarness(t, oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
 	})
@@ -157,7 +159,7 @@ func TestDCR_PublicClient_NoSecret_ForcesPKCE(t *testing.T) {
 }
 
 func TestDCR_MissingRedirectURIs_RejectedForCodeFlow(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	status, body := postDCR(t, srv, "", map[string]any{
 		"client_name": "no-redirect",
 		// grant_types defaults to authorization_code
@@ -165,13 +167,13 @@ func TestDCR_MissingRedirectURIs_RejectedForCodeFlow(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%v", status, body)
 	}
-	if body["error"] != sso.ErrInvalidClientMetadata {
-		t.Errorf("error=%v want %q", body["error"], sso.ErrInvalidClientMetadata)
+	if body["error"] != oauth.ErrInvalidClientMetadata {
+		t.Errorf("error=%v want %q", body["error"], oauth.ErrInvalidClientMetadata)
 	}
 }
 
 func TestDCR_ClientCredentialsOnly_NoRedirectURIs_OK(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
 	status, body := postDCR(t, srv, "", map[string]any{
 		"client_name": "service-app",
 		"grant_types": []string{"client_credentials"},
@@ -182,7 +184,7 @@ func TestDCR_ClientCredentialsOnly_NoRedirectURIs_OK(t *testing.T) {
 }
 
 func TestDCR_RejectsUnsupportedAuthMethod(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	status, body := postDCR(t, srv, "", map[string]any{
 		"redirect_uris":              []string{"https://app.example/cb"},
 		"token_endpoint_auth_method": "private_key_jwt", // not supported yet
@@ -190,13 +192,13 @@ func TestDCR_RejectsUnsupportedAuthMethod(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%v", status, body)
 	}
-	if body["error"] != sso.ErrInvalidClientMetadata {
+	if body["error"] != oauth.ErrInvalidClientMetadata {
 		t.Errorf("error=%v", body["error"])
 	}
 }
 
 func TestDCR_RejectsUnsupportedGrantType(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	status, body := postDCR(t, srv, "", map[string]any{
 		"redirect_uris": []string{"https://app.example/cb"},
 		"grant_types":   []string{"password"}, // not in SupportedGrants
@@ -204,13 +206,13 @@ func TestDCR_RejectsUnsupportedGrantType(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%v", status, body)
 	}
-	if body["error"] != sso.ErrInvalidClientMetadata {
+	if body["error"] != oauth.ErrInvalidClientMetadata {
 		t.Errorf("error=%v", body["error"])
 	}
 }
 
 func TestDCR_AuthenticatorWhitelist(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
 		AllowedAuthenticators: []string{"password"},
@@ -247,13 +249,13 @@ func TestDCR_NotConfigured_Returns501(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
-	if out["error"] != sso.ErrRegistrationDisabled {
-		t.Errorf("error=%v want %q", out["error"], sso.ErrRegistrationDisabled)
+	if out["error"] != oauth.ErrRegistrationDisabled {
+		t.Errorf("error=%v want %q", out["error"], oauth.ErrRegistrationDisabled)
 	}
 }
 
 func TestDCR_AdvertisedInDiscovery(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
@@ -280,7 +282,7 @@ func TestDCR_RegisteredClient_UsableForLogin(t *testing.T) {
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))),
 		sso.WithDefaultTokenStrategy("jwt"),
-		sso.WithDynamicClientRegistration(sso.DCRPolicy{
+		sso.WithDynamicClientRegistration(oauth.DCRPolicy{
 			AllowOpenRegistration: true,
 			DefaultActive:         true,
 			DefaultTokenStrategy:  "jwt",

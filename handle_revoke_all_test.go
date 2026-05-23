@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -114,7 +116,7 @@ func TestRevokeAll_KillsAllRefreshTokensForSubject(t *testing.T) {
 	}
 	// All three refresh tokens MUST be gone.
 	for _, r := range []string{r2, r3} {
-		if _, err := store.Consume(context.Background(), r); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		if _, err := store.Consume(context.Background(), r); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 			t.Errorf("refresh %q survived revoke-all: err=%v", r, err)
 		}
 	}
@@ -171,7 +173,7 @@ func TestRevokeAll_InvalidBearerRejected(t *testing.T) {
 }
 
 func TestRevokeAll_WithoutSubjectIndexReturns501(t *testing.T) {
-	// Wire a store that DOESN'T implement RefreshTokenSubjectIndex —
+	// Wire a store that DOESN'T implement oauth.RefreshTokenSubjectIndex —
 	// revoke-all must 501 with the dedicated error.
 	store := stubRefreshStore{}
 	clients := defaultimpl.NewMemoryClientStore()
@@ -223,16 +225,16 @@ func TestRevokeAll_WithoutSubjectIndexReturns501(t *testing.T) {
 	}
 }
 
-// stubRefreshStore implements RefreshTokenStore but NOT
-// RefreshTokenSubjectIndex — used to verify the 501 fallback.
+// stubRefreshStore implements oauth.RefreshTokenStore but NOT
+// oauth.RefreshTokenSubjectIndex — used to verify the 501 fallback.
 type stubRefreshStore struct{}
 
-func (stubRefreshStore) Issue(_ context.Context, _ string, _ *sso.RefreshToken) error {
+func (stubRefreshStore) Issue(_ context.Context, _ string, _ *oauth.RefreshToken) error {
 	return nil
 }
 
-func (stubRefreshStore) Consume(_ context.Context, _ string) (*sso.RefreshToken, error) {
-	return nil, sso.ErrRefreshTokenNotFound
+func (stubRefreshStore) Consume(_ context.Context, _ string) (*oauth.RefreshToken, error) {
+	return nil, oauth.ErrRefreshTokenNotFound
 }
 
 // ---------- SPI smoke ----------
@@ -240,13 +242,13 @@ func (stubRefreshStore) Consume(_ context.Context, _ string) (*sso.RefreshToken,
 func TestRefreshTokenSubjectIndex_MemoryStoreFiltersByClient(t *testing.T) {
 	store := defaultimpl.NewMemoryRefreshTokenStore()
 	// User u has tokens for both client-a and client-b.
-	_ = store.Issue(context.Background(), "ta-1", &sso.RefreshToken{
+	_ = store.Issue(context.Background(), "ta-1", &oauth.RefreshToken{
 		UserID: "u", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour),
 	})
-	_ = store.Issue(context.Background(), "ta-2", &sso.RefreshToken{
+	_ = store.Issue(context.Background(), "ta-2", &oauth.RefreshToken{
 		UserID: "u", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour),
 	})
-	_ = store.Issue(context.Background(), "tb-1", &sso.RefreshToken{
+	_ = store.Issue(context.Background(), "tb-1", &oauth.RefreshToken{
 		UserID: "u", ClientID: "b", ExpiresAt: time.Now().Add(time.Hour),
 	})
 
@@ -266,10 +268,10 @@ func TestRefreshTokenSubjectIndex_MemoryStoreFiltersByClient(t *testing.T) {
 
 func TestRefreshTokenSubjectIndex_EmptyClientWipesAcrossAllClients(t *testing.T) {
 	store := defaultimpl.NewMemoryRefreshTokenStore()
-	_ = store.Issue(context.Background(), "ta", &sso.RefreshToken{
+	_ = store.Issue(context.Background(), "ta", &oauth.RefreshToken{
 		UserID: "u", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour),
 	})
-	_ = store.Issue(context.Background(), "tb", &sso.RefreshToken{
+	_ = store.Issue(context.Background(), "tb", &oauth.RefreshToken{
 		UserID: "u", ClientID: "b", ExpiresAt: time.Now().Add(time.Hour),
 	})
 	// Empty client → all of u's tokens.

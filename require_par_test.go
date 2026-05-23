@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -25,7 +27,7 @@ const (
 	rparClientLax = "rpar-lax-client"
 )
 
-func newRequirePARHarness(t *testing.T) (*httptest.Server, sso.PARStore) {
+func newRequirePARHarness(t *testing.T) (*httptest.Server, oauth.PARStore) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: rparUserID})
@@ -92,7 +94,7 @@ func TestRequirePAR_RejectsDirectLoginForStrictClient(t *testing.T) {
 
 func TestRequirePAR_AcceptsPARPushForStrictClient(t *testing.T) {
 	srv, store := newRequirePARHarness(t)
-	uri, err := store.Issue(context.Background(), &sso.PARRequest{
+	uri, err := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:    rparClientID,
 		RedirectURI: rparRedirect,
 		ExpiresAt:   time.Now().Add(time.Minute),

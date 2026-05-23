@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/json"
@@ -206,7 +208,7 @@ type oidcConfiguration struct {
 	// `request_uri` as an HTTPS URL it will fetch (RFC 9101 §5.2.2)
 	// — flipped true when `WithJARFetcher` is wired. The PAR
 	// `urn:ietf:params:oauth:request_uri:` prefix is ALWAYS accepted
-	// when a PARStore is wired (advertised separately via
+	// when a oauth.PARStore is wired (advertised separately via
 	// pushed_authorization_request_endpoint).
 	RequestURIParameterSupported bool `json:"request_uri_parameter_supported"`
 	// RequestObjectSigningAlgValuesSupported lists the alg values
@@ -459,7 +461,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// dynamic clients can discover it. The initial access
 		// token (when required) is distributed out-of-band, not
 		// via discovery.
-		cfg.RegistrationEndpoint = base + PathRegister
+		cfg.RegistrationEndpoint = base + oauth.PathRegister
 	}
 	if len(clientSnap.scopes) > 0 {
 		cfg.ScopesSupported = clientSnap.scopes

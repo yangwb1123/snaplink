@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -337,7 +339,7 @@ func TestDevice_VerifyRequiresBearer(t *testing.T) {
 func TestDevice_MemoryStoreLookupsAndDelete(t *testing.T) {
 	st := defaultimpl.NewMemoryDeviceCodeStore()
 	now := time.Now()
-	in := &sso.DeviceCode{
+	in := &oauth.DeviceCode{
 		DeviceCode: "DC", UserCode: "UC", ClientID: "c",
 		Scopes: []string{"a"}, Interval: time.Second, ExpiresAt: now.Add(time.Minute),
 	}
@@ -359,8 +361,8 @@ func TestDevice_MemoryStoreLookupsAndDelete(t *testing.T) {
 	if err := st.Delete(context.Background(), "DC"); err != nil {
 		t.Errorf("Delete: %v", err)
 	}
-	if _, err := st.GetByDeviceCode(context.Background(), "DC"); !errors.Is(err, sso.ErrDeviceCodeNotFound) {
-		t.Errorf("after Delete err = %v want ErrDeviceCodeNotFound", err)
+	if _, err := st.GetByDeviceCode(context.Background(), "DC"); !errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+		t.Errorf("after Delete err = %v want oauth.ErrDeviceCodeNotFound", err)
 	}
 }
 

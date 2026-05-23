@@ -552,7 +552,7 @@ func TestIssueWebAuthnToken_IssuesRefreshTokenWhenStoreWired(t *testing.T) {
 		t.Fatalf("issue: %v", err)
 	}
 	if result.RefreshToken == "" {
-		t.Fatal("RefreshToken empty — wired RefreshTokenStore must mint a refresh token")
+		t.Fatal("oauth.RefreshToken empty — wired oauth.RefreshTokenStore must mint a refresh token")
 	}
 	// The minted token MUST be redeemable by the same store — proves
 	// it was actually persisted and the rotation path will work.
@@ -572,7 +572,7 @@ func TestIssueWebAuthnToken_IssuesRefreshTokenWhenStoreWired(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_NoRefreshTokenWithoutStore(t *testing.T) {
-	// Without RefreshTokenStore the field stays empty regardless of
+	// Without oauth.RefreshTokenStore the field stays empty regardless of
 	// scope — matches /auth/login's "wired → emit" contract.
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
@@ -592,7 +592,7 @@ func TestIssueWebAuthnToken_NoRefreshTokenWithoutStore(t *testing.T) {
 		t.Fatalf("issue: %v", err)
 	}
 	if result.RefreshToken != "" {
-		t.Fatalf("RefreshToken populated without store: %q", result.RefreshToken)
+		t.Fatalf("oauth.RefreshToken populated without store: %q", result.RefreshToken)
 	}
 }
 

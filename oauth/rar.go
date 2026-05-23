@@ -1,4 +1,4 @@
-package sso
+package oauth
 
 import (
 	"encoding/json"
@@ -40,10 +40,10 @@ type authorizationDetail struct {
 	Type string `json:"type"`
 }
 
-// cloneRawJSON returns a copy of the raw JSON bytes — guards
+// CloneRawJSON returns a copy of the raw JSON bytes — guards
 // against aliasing when storing authorization_details across
 // request-scoped and persistence-scoped lifetimes. Nil-safe.
-func cloneRawJSON(raw json.RawMessage) json.RawMessage {
+func CloneRawJSON(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -52,7 +52,7 @@ func cloneRawJSON(raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-// validateAuthorizationDetails parses the raw JSON, asserts it's
+// ValidateAuthorizationDetails parses the raw JSON, asserts it's
 // a JSON array, asserts every element has a non-empty `type`
 // field, and (when allowed is non-empty) verifies every element's
 // type appears in the allowlist. Returns the parsed element list
@@ -63,7 +63,7 @@ func cloneRawJSON(raw json.RawMessage) json.RawMessage {
 // validate, nothing to enforce. Callers use the parsed return
 // value only for type-checking against the allowlist; payload
 // stamping reuses the raw JSON directly.
-func validateAuthorizationDetails(raw json.RawMessage, allowed []string) ([]authorizationDetail, error) {
+func ValidateAuthorizationDetails(raw json.RawMessage, allowed []string) ([]authorizationDetail, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}

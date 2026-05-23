@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"net/http"
 	"net/url"
@@ -107,7 +109,7 @@ func (s *Server) handleEndSession(ctx HandlerContext) {
 	// Wipe every refresh token the user holds for the client in
 	// scope, so descendant rotations can't outlive the logout.
 	if userID != "" && client != nil {
-		if idx, ok := s.refreshTokenStore.(RefreshTokenSubjectIndex); ok {
+		if idx, ok := s.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
 			_, _ = idx.DeleteAllForSubject(ctx.Request().Context(), userID, client.ID)
 		}
 	}

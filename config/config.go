@@ -475,7 +475,7 @@ type BCLIndexSQLiteConfig struct {
 // OAuthConfig opts into the OAuth/OIDC grant stores that cmd's binary
 // wires. Each sub-block independently enables one grant:
 //
-//   - AuthCode  → grant_type=authorization_code (RFC 6749 §4.1)
+//   - oauth.AuthCode  → grant_type=authorization_code (RFC 6749 §4.1)
 //   - Refresh   → grant_type=refresh_token (RFC 6749 §6 — single-use rotation)
 //   - Device    → grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
 //   - PAR       → /par + request_uri (RFC 9126)
@@ -486,7 +486,7 @@ type BCLIndexSQLiteConfig struct {
 //
 // Each block's TTL is optional; <=0 falls back to the SDK default
 // constants (DefaultAuthCodeTTL, DefaultRefreshTokenTTL, DefaultDeviceCodeTTL,
-// DefaultPARTTL).
+// oauth.DefaultPARTTL).
 type OAuthConfig struct {
 	// Backend selects the storage substrate for auth_code,
 	// refresh_token, and device_code. "memory" (default) is in-

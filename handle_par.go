@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"encoding/json"
 	"net/http"
@@ -148,16 +150,16 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 	// malformed / disallowed payload fails at PAR time rather than
 	// surfacing later at /auth/login (PAR's whole point is to move
 	// validation upstream of the user-agent redirect).
-	if _, err := validateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidAuthorizationDetails, err.Error()))
+	if _, err := oauth.ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidAuthorizationDetails, err.Error()))
 		return
 	}
 
 	ttl := s.parTTL
 	if ttl <= 0 {
-		ttl = DefaultPARTTL
+		ttl = oauth.DefaultPARTTL
 	}
-	uri, err := s.parStore.Issue(ctx.Request().Context(), &PARRequest{
+	uri, err := s.parStore.Issue(ctx.Request().Context(), &oauth.PARRequest{
 		ClientID:             req.ClientID,
 		ResponseType:         req.ResponseType,
 		RedirectURI:          req.RedirectURI,
@@ -167,12 +169,12 @@ func (s *Server) handlePAR(ctx HandlerContext) {
 		CodeChallenge:        req.CodeChallenge,
 		CodeChallengeMethod:  req.CodeChallengeMethod,
 		Resource:             req.Resource,
-		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		LoginHint:            req.LoginHint,
 		ResponseMode:         req.ResponseMode,
 		ACRValues:            req.ACRValues,
 		UILocales:            req.UILocales,
-		Claims:               cloneRawJSON(req.Claims),
+		Claims:               oauth.CloneRawJSON(req.Claims),
 		ExpiresAt:            time.Now().Add(ttl),
 	})
 	if err != nil {

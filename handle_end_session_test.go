@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -175,7 +177,7 @@ func TestEndSession_KillsRefreshTokensForClient(t *testing.T) {
 
 	// Issue a fresh refresh token tagged with the test subject so we
 	// can verify the wipe took effect.
-	_ = store.Issue(context.Background(), "leftover-test", &sso.RefreshToken{
+	_ = store.Issue(context.Background(), "leftover-test", &oauth.RefreshToken{
 		UserID: "different-user", ClientID: esClientID,
 		ExpiresAt: time.Now().Add(time.Hour),
 	})

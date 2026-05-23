@@ -110,7 +110,7 @@ type MFAChallenge struct {
 
 // MFAChallengeStore persists in-flight MFA challenges with single-use
 // Consume semantics — same race-free atomic-delete-and-return pattern
-// AuthCodeStore / DeviceCodeStore / PARStore enforce. Memory and
+// oauth.AuthCodeStore / oauth.DeviceCodeStore / oauth.PARStore enforce. Memory and
 // SQLite peers ship in defaultimpl + defaultimpl/sqlite.
 type MFAChallengeStore interface {
 	// Put persists a freshly-issued challenge. c.ID + c.ExpiresAt

@@ -27,7 +27,7 @@ const (
 )
 
 // newCodeFlowServer wires the minimum surface for an authorization_code
-// round trip: an AuthCodeStore + ClientStore + UserProvider + TokenIssuer
+// round trip: an oauth.AuthCodeStore + ClientStore + UserProvider + TokenIssuer
 // + a password Authenticator.
 func newCodeFlowServer(t *testing.T) (*httptest.Server, *defaultimpl.MemoryAuthCodeStore, *audit.MemorySink) {
 	t.Helper()
@@ -338,7 +338,7 @@ func TestAuthCode_ExchangeRejectsRedirectURIMismatch(t *testing.T) {
 }
 
 func TestAuthCode_ExchangeWithoutStore_NotImplemented(t *testing.T) {
-	// Server with /token wired but no AuthCodeStore.
+	// Server with /token wired but no oauth.AuthCodeStore.
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: codeClient, Secret: codeSecret, Active: true,

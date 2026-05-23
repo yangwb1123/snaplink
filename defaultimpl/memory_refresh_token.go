@@ -1,12 +1,12 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"sync"
-
-	"github.com/snaplink/sso"
 )
 
 // refreshTokenBytes is the size in bytes of generated refresh tokens
@@ -15,13 +15,13 @@ import (
 // entropy keeps a fleet-wide guess infeasible even at scale.
 const refreshTokenBytes = 32
 
-// MemoryRefreshTokenStore is an in-process sso.RefreshTokenStore.
+// MemoryRefreshTokenStore is an in-process oauth.RefreshTokenStore.
 // Production deployments with multiple replicas should swap a Redis,
 // SQL, or other shared backend — tokens issued on one replica must be
 // consumable on any other, and persistence across restarts is usually
 // expected (a server restart shouldn't log every user out).
 //
-// Implements RefreshTokenFamilyTracker (OAuth Security BCP §4.13):
+// Implements oauth.RefreshTokenFamilyTracker (OAuth Security BCP §4.13):
 // every Issue stamps the token's FamilyID into `families` so a
 // replay-after-rotation Consume can detect the reuse and let the
 // handler kill every sibling token via DeleteFamily. The reuse
@@ -29,22 +29,22 @@ const refreshTokenBytes = 32
 // is dropped).
 type MemoryRefreshTokenStore struct {
 	mu       sync.Mutex
-	entries  map[string]*sso.RefreshToken
+	entries  map[string]*oauth.RefreshToken
 	families map[string]string // token → familyID, KEPT after Consume for reuse detection
 }
 
 // NewMemoryRefreshTokenStore returns a ready-to-use store with no TTL
-// of its own — TTLs are stamped per-RefreshToken at Issue time.
+// of its own — TTLs are stamped per-oauth.RefreshToken at Issue time.
 func NewMemoryRefreshTokenStore() *MemoryRefreshTokenStore {
 	return &MemoryRefreshTokenStore{
-		entries:  make(map[string]*sso.RefreshToken),
+		entries:  make(map[string]*oauth.RefreshToken),
 		families: make(map[string]string),
 	}
 }
 
-func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *sso.RefreshToken) error {
+func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *oauth.RefreshToken) error {
 	if token == "" || info == nil {
-		return sso.ErrRefreshTokenNotFound
+		return oauth.ErrRefreshTokenNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -54,7 +54,7 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *s
 	scopes := append([]string(nil), info.Scopes...)
 	resources := append([]string(nil), info.Resources...)
 	attrs := copyMap(info.Attributes)
-	m.entries[token] = &sso.RefreshToken{
+	m.entries[token] = &oauth.RefreshToken{
 		UserID:               info.UserID,
 		ClientID:             info.ClientID,
 		Provider:             info.Provider,
@@ -75,15 +75,15 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *s
 	return nil
 }
 
-func (m *MemoryRefreshTokenStore) Consume(_ context.Context, token string) (*sso.RefreshToken, error) {
+func (m *MemoryRefreshTokenStore) Consume(_ context.Context, token string) (*oauth.RefreshToken, error) {
 	m.mu.Lock()
 	entry, ok := m.entries[token]
 	delete(m.entries, token) // single-use rotation — delete on every Consume attempt
 	knownFamily, replayed := "", false
 	if !ok {
 		// Already-consumed lookup hits the families map even though the
-		// active entry is gone. The handler maps ErrRefreshTokenReused
-		// to the same wire error as ErrRefreshTokenNotFound but ALSO
+		// active entry is gone. The handler maps oauth.ErrRefreshTokenReused
+		// to the same wire error as oauth.ErrRefreshTokenNotFound but ALSO
 		// kills the family before returning.
 		knownFamily, replayed = m.families[token]
 	}
@@ -91,15 +91,15 @@ func (m *MemoryRefreshTokenStore) Consume(_ context.Context, token string) (*sso
 
 	if !ok {
 		if replayed && knownFamily != "" {
-			return &sso.RefreshToken{FamilyID: knownFamily}, sso.ErrRefreshTokenReused
+			return &oauth.RefreshToken{FamilyID: knownFamily}, oauth.ErrRefreshTokenReused
 		}
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	// Expired entries already removed above; just signal the same
 	// not-found outcome so callers can't distinguish stale-vs-unknown
 	// from the wire.
 	if entry.IsExpired() {
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return entry, nil
 }
@@ -136,14 +136,14 @@ func (m *MemoryRefreshTokenStore) DeleteFamily(_ context.Context, familyID strin
 
 // Inspect returns the token's payload without consuming it. Required
 // by /token/introspect to answer non-destructive queries. Returns
-// ErrRefreshTokenNotFound for unknown / expired tokens (same oracle-
+// oauth.ErrRefreshTokenNotFound for unknown / expired tokens (same oracle-
 // resistant indistinguishability as Consume).
-func (m *MemoryRefreshTokenStore) Inspect(_ context.Context, token string) (*sso.RefreshToken, error) {
+func (m *MemoryRefreshTokenStore) Inspect(_ context.Context, token string) (*oauth.RefreshToken, error) {
 	m.mu.Lock()
 	entry, ok := m.entries[token]
 	m.mu.Unlock()
 	if !ok {
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	if entry.IsExpired() {
 		// Lazy GC of expired entries — keeps the map from
@@ -151,7 +151,7 @@ func (m *MemoryRefreshTokenStore) Inspect(_ context.Context, token string) (*sso
 		m.mu.Lock()
 		delete(m.entries, token)
 		m.mu.Unlock()
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return entry, nil
 }
@@ -170,7 +170,7 @@ func (m *MemoryRefreshTokenStore) Delete(_ context.Context, token string) error 
 }
 
 // DeleteAllForSubject removes every refresh token whose UserID +
-// ClientID match. Implements [sso.RefreshTokenSubjectIndex] so the
+// ClientID match. Implements [oauth.RefreshTokenSubjectIndex] so the
 // "logout everywhere" endpoint can kill all refresh tokens for a
 // (user, client) pair in one call. Returns the count of deletions.
 //
@@ -203,7 +203,7 @@ func (m *MemoryRefreshTokenStore) DeleteAllForSubject(_ context.Context, userID,
 
 // GenerateRefreshToken mints a cryptographically random base64url-encoded
 // token suitable for the OAuth 2.0 refresh_token grant. Exposed so
-// custom RefreshTokenStore implementations can reuse it.
+// custom oauth.RefreshTokenStore implementations can reuse it.
 func GenerateRefreshToken() (string, error) {
 	buf := make([]byte, refreshTokenBytes)
 	if _, err := rand.Read(buf); err != nil {
@@ -214,8 +214,8 @@ func GenerateRefreshToken() (string, error) {
 
 // Compile-time interface checks.
 var (
-	_ sso.RefreshTokenStore         = (*MemoryRefreshTokenStore)(nil)
-	_ sso.RefreshTokenInspector     = (*MemoryRefreshTokenStore)(nil)
-	_ sso.RefreshTokenSubjectIndex  = (*MemoryRefreshTokenStore)(nil)
-	_ sso.RefreshTokenFamilyTracker = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenStore         = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenInspector     = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenSubjectIndex  = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenFamilyTracker = (*MemoryRefreshTokenStore)(nil)
 )

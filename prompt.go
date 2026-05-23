@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"encoding/json"
 	"net/http"
@@ -185,7 +187,7 @@ func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req s
 		AuthTime:             claims.AuthTime,
 		ACR:                  claims.ACR,
 		AMR:                  append([]string(nil), claims.AMR...),
-		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		Actor:                claims.Actor,
 		// SID stays locked to the hint's session — silent renewal
 		// targets the same session the original id_token was minted

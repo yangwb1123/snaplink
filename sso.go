@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/json"
@@ -63,18 +65,18 @@ type Server struct {
 	tracingOperation               string
 	corsPolicy                     *cors.Policy
 	issuer                         string
-	authCodeStore                  AuthCodeStore
+	authCodeStore                  oauth.AuthCodeStore
 	authCodeTTL                    time.Duration
-	refreshTokenStore              RefreshTokenStore
+	refreshTokenStore              oauth.RefreshTokenStore
 	refreshTokenTTL                time.Duration
 	idTokenIssuer                  IDTokenIssuer
-	deviceCodeStore                DeviceCodeStore
+	deviceCodeStore                oauth.DeviceCodeStore
 	deviceCodeTTL                  time.Duration
 	deviceCodeInterval             time.Duration
 	deviceVerifyBaseURL            string
-	parStore                       PARStore
+	parStore                       oauth.PARStore
 	parTTL                         time.Duration
-	dcrPolicy                      *DCRPolicy
+	dcrPolicy                      *oauth.DCRPolicy
 	oauth21Strict                  bool
 	logoutTokenIssuer              LogoutTokenIssuer
 	logoutNotifier                 LogoutNotifier
@@ -255,7 +257,7 @@ func WithIssuer(issuer string) Option {
 //
 // ttl is the lifetime of issued codes (per RFC 6749 §4.1.2 SHOULD be
 // short — 10 minutes is typical). Pass <=0 to use [DefaultAuthCodeTTL].
-func WithAuthCodeStore(store AuthCodeStore, ttl time.Duration) Option {
+func WithAuthCodeStore(store oauth.AuthCodeStore, ttl time.Duration) Option {
 	return func(s *Server) {
 		s.authCodeStore = store
 		if ttl > 0 {
@@ -279,7 +281,7 @@ func WithAuthCodeStore(store AuthCodeStore, ttl time.Duration) Option {
 // verificationBaseURL is what the server tells devices to display
 // (e.g. "https://sso.example.com/device"). Empty = derive from the
 // request, same fallback as the discovery endpoint.
-func WithDeviceCodeStore(store DeviceCodeStore, ttl, pollInterval time.Duration, verificationBaseURL string) Option {
+func WithDeviceCodeStore(store oauth.DeviceCodeStore, ttl, pollInterval time.Duration, verificationBaseURL string) Option {
 	return func(s *Server) {
 		s.deviceCodeStore = store
 		if ttl > 0 {
@@ -307,7 +309,7 @@ func WithDeviceCodeStore(store DeviceCodeStore, ttl, pollInterval time.Duration,
 //
 // Discovery doc advertises `registration_endpoint` whenever this
 // option is wired (regardless of the auth mode).
-func WithDynamicClientRegistration(policy DCRPolicy) Option {
+func WithDynamicClientRegistration(policy oauth.DCRPolicy) Option {
 	return func(s *Server) { s.dcrPolicy = &policy }
 }
 
@@ -325,9 +327,9 @@ func WithDynamicClientRegistration(policy DCRPolicy) Option {
 // §2.2 (atomic delete on consume).
 //
 // ttl is the spec-recommended request_uri lifetime. Pass <=0 for
-// [DefaultPARTTL] (90 seconds — generous floor that still rejects
+// [oauth.DefaultPARTTL] (90 seconds — generous floor that still rejects
 // session-length replay windows).
-func WithPARStore(store PARStore, ttl time.Duration) Option {
+func WithPARStore(store oauth.PARStore, ttl time.Duration) Option {
 	return func(s *Server) {
 		s.parStore = store
 		if ttl > 0 {
@@ -511,7 +513,7 @@ func WithIDTokenIssuer(issuer IDTokenIssuer) Option {
 // ttl is the lifetime of issued tokens (per RFC 6749 §6 typically days
 // to weeks; mobile clients often keep them for months). Pass <=0 to use
 // [DefaultRefreshTokenTTL] (30 days).
-func WithRefreshTokenStore(store RefreshTokenStore, ttl time.Duration) Option {
+func WithRefreshTokenStore(store oauth.RefreshTokenStore, ttl time.Duration) Option {
 	return func(s *Server) {
 		s.refreshTokenStore = store
 		if ttl > 0 {
@@ -949,10 +951,10 @@ func (s *Server) Mount() {
 	s.router.POST(PathDeviceCode, s.handleDeviceCode)
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.POST(PathPAR, s.handlePAR)
-	s.router.POST(PathRegister, s.handleRegister)
-	s.router.GET(PathRegisterByID, s.handleRegistrationGet)
-	s.router.PUT(PathRegisterByID, s.handleRegistrationPut)
-	s.router.DELETE(PathRegisterByID, s.handleRegistrationDelete)
+	s.router.POST(oauth.PathRegister, s.handleRegister)
+	s.router.GET(oauth.PathRegisterByID, s.handleRegistrationGet)
+	s.router.PUT(oauth.PathRegisterByID, s.handleRegistrationPut)
+	s.router.DELETE(oauth.PathRegisterByID, s.handleRegistrationDelete)
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
 	s.router.GET(PathEndSession, s.handleEndSession)

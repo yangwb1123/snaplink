@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"crypto/subtle"
 	"net/http"
@@ -71,7 +73,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 	// Same RFC 6749 §5.1 pattern as /token.
 	tokenNoStoreHeaders(ctx)
 	if s.dcrPolicy == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRegistrationDisabled))
+		ctx.JSON(http.StatusNotImplemented, errorBody(oauth.ErrRegistrationDisabled))
 		return
 	}
 	if err := s.requireDeps(depClientStore); err != nil {
@@ -96,16 +98,16 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 
 	var req dcrRequest
 	if err := ctx.Bind(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidClientMetadata, err.Error()))
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
 		return
 	}
 
 	if err := validateDCRMetadata(&req, s.dcrPolicy); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidClientMetadata, err.Error()))
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
 		return
 	}
 
-	id, err := generateClientID()
+	id, err := oauth.GenerateClientID()
 	if err != nil {
 		s.logger.Error("dcr id gen failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
@@ -119,7 +121,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 	public := req.TokenEndpointAuthMethod == "none"
 	secret := ""
 	if !public {
-		secret, err = generateClientSecret()
+		secret, err = oauth.GenerateClientSecret()
 		if err != nil {
 			s.logger.Error("dcr secret gen failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
@@ -132,7 +134,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 	// GET/PUT/DELETE its own registration without operator
 	// involvement. The token is bearer-shaped; deployments
 	// storing clients on disk SHOULD hash it at rest.
-	regToken, err := generateClientSecret()
+	regToken, err := oauth.GenerateClientSecret()
 	if err != nil {
 		s.logger.Error("dcr reg-token gen failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
@@ -173,7 +175,7 @@ func (s *Server) handleRegister(ctx HandlerContext) {
 		ClientIDIssuedAt:        now,
 		ClientSecretExpiresAt:   0, // 0 = never expires per RFC 7591 §3.2.1
 		RegistrationAccessToken: regToken,
-		RegistrationClientURI:   requestBaseURL(ctx.Request()) + PathRegister + "/" + id,
+		RegistrationClientURI:   requestBaseURL(ctx.Request()) + oauth.PathRegister + "/" + id,
 		RedirectURIs:            client.RedirectURIs,
 		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 		GrantTypes:              req.GrantTypes,
@@ -218,11 +220,11 @@ func (s *Server) handleRegistrationPut(ctx HandlerContext) {
 
 	var req dcrRequest
 	if err := ctx.Bind(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidClientMetadata, err.Error()))
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
 		return
 	}
 	if err := validateDCRMetadata(&req, s.dcrPolicy); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidClientMetadata, err.Error()))
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
 		return
 	}
 
@@ -283,7 +285,7 @@ func (s *Server) handleRegistrationDelete(ctx HandlerContext) {
 // written the response and returns (nil, false).
 func (s *Server) authorizeRegistrationMgmt(ctx HandlerContext) (*Client, bool) {
 	if s.dcrPolicy == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRegistrationDisabled))
+		ctx.JSON(http.StatusNotImplemented, errorBody(oauth.ErrRegistrationDisabled))
 		return nil, false
 	}
 	if err := s.requireDeps(depClientStore); err != nil {
@@ -330,7 +332,7 @@ func projectClientToDCRResponse(c *Client, ctx HandlerContext) dcrResponse {
 		ClientID:               c.ID,
 		ClientSecret:           c.Secret, // RFC 7592 §2.1 SHOULD include
 		ClientSecretExpiresAt:  0,
-		RegistrationClientURI:  requestBaseURL(ctx.Request()) + PathRegister + "/" + c.ID,
+		RegistrationClientURI:  requestBaseURL(ctx.Request()) + oauth.PathRegister + "/" + c.ID,
 		RedirectURIs:           c.RedirectURIs,
 		ClientName:             c.Name,
 		Scope:                  joinScope(c.AllowedScopes),
@@ -360,7 +362,7 @@ func subtleConstantTimeStringEq(a, b string) int {
 // validateDCRMetadata enforces the subset of RFC 7591 §2 / §5
 // rules this server understands plus the policy's whitelist
 // constraints.
-func validateDCRMetadata(req *dcrRequest, policy *DCRPolicy) error {
+func validateDCRMetadata(req *dcrRequest, policy *oauth.DCRPolicy) error {
 	// redirect_uris is REQUIRED for grant_type=authorization_code
 	// (the default), OPTIONAL for client_credentials-only clients
 	// (per §2 — "redirect_uris is OPTIONAL ... If the grant types

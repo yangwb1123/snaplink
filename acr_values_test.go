@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -55,7 +57,7 @@ func (c *acrCaptureAuthenticator) snapshot() []string {
 	return out
 }
 
-func newACRHarness(t *testing.T) (*httptest.Server, *acrCaptureAuthenticator, sso.PARStore) {
+func newACRHarness(t *testing.T) (*httptest.Server, *acrCaptureAuthenticator, oauth.PARStore) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: acrUserID})
@@ -108,7 +110,7 @@ func TestACRValues_ParsedAndThreaded(t *testing.T) {
 
 func TestACRValues_PARPushSurvives(t *testing.T) {
 	srv, auth, store := newACRHarness(t)
-	uri, err := store.Issue(context.Background(), &sso.PARRequest{
+	uri, err := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:    acrClientID,
 		RedirectURI: acrRedirect,
 		ACRValues:   "level-high level-medium",
@@ -134,7 +136,7 @@ func TestACRValues_PARPushSurvives(t *testing.T) {
 
 func TestACRValues_PARPushBeatsLoginParam(t *testing.T) {
 	srv, auth, store := newACRHarness(t)
-	uri, _ := store.Issue(context.Background(), &sso.PARRequest{
+	uri, _ := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:    acrClientID,
 		RedirectURI: acrRedirect,
 		ACRValues:   "level-strong",

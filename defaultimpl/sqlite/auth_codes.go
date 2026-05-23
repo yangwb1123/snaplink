@@ -1,5 +1,7 @@
 package sqlite
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"database/sql"
@@ -7,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 // authCodeSchema covers the OAuth 2.0 authorization_code grant data
@@ -35,8 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_codes_expires_at
     ON auth_codes(expires_at);
 `
 
-// AuthCodeStore is the SQLite-backed implementation of
-// [sso.AuthCodeStore]. Suitable for multi-replica deployments since
+// oauth.AuthCodeStore is the SQLite-backed implementation of
+// [oauth.AuthCodeStore]. Suitable for multi-replica deployments since
 // every replica can issue + consume against the same database.
 type AuthCodeStore struct {
 	db *sql.DB
@@ -90,9 +90,9 @@ func (s *AuthCodeStore) Ping(ctx context.Context) error {
 // Issue persists the auth code. Caller-supplied slices / maps are
 // JSON-marshaled at this point so subsequent caller mutations don't
 // leak into stored state.
-func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *sso.AuthCode) error {
+func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.AuthCode) error {
 	if code == "" || info == nil {
-		return sso.ErrAuthCodeNotFound
+		return oauth.ErrAuthCodeNotFound
 	}
 	scopes, err := json.Marshal(info.Scopes)
 	if err != nil {
@@ -123,7 +123,7 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *sso.AuthCo
 // SELECT-then-DELETE pattern has a race where two concurrent
 // Consume calls could each return the code before either delete
 // fires.
-func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*sso.AuthCode, error) {
+func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCode, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM auth_codes WHERE code = ?
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
@@ -131,7 +131,7 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*sso.AuthCode
                   expires_at`, code)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, sso.ErrAuthCodeNotFound
+		return nil, oauth.ErrAuthCodeNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: consume auth_code: %w", err)
@@ -140,14 +140,14 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*sso.AuthCode
 	// resistance the memory backend enforces. The row is already
 	// deleted at this point, so no separate cleanup needed.
 	if out.IsExpired() {
-		return nil, sso.ErrAuthCodeNotFound
+		return nil, oauth.ErrAuthCodeNotFound
 	}
 	return out, nil
 }
 
-func scanAuthCode(s scanner) (*sso.AuthCode, error) {
+func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	var (
-		out                                                                                     sso.AuthCode
+		out                                                                                     oauth.AuthCode
 		redirectURI, nonce, provider, codeChallenge, codeChallengeMethod, scopesJSON, attrsJSON string
 		expiresAtUnixNs                                                                         int64
 	)
@@ -177,4 +177,4 @@ func scanAuthCode(s scanner) (*sso.AuthCode, error) {
 	return &out, nil
 }
 
-var _ sso.AuthCodeStore = (*AuthCodeStore)(nil)
+var _ oauth.AuthCodeStore = (*AuthCodeStore)(nil)

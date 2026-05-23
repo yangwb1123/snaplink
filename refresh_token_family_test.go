@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/json"
@@ -167,7 +169,7 @@ func TestRefreshFamily_ReusedTokenKillsFamily(t *testing.T) {
 
 	// refresh2 MUST now be dead — Consume returns not-found, not
 	// the rotation grant.
-	if _, err := store.Consume(context.Background(), refresh2); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+	if _, err := store.Consume(context.Background(), refresh2); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Errorf("refresh2 survived family revocation: err=%v", err)
 	}
 
@@ -196,19 +198,19 @@ func TestRefreshFamily_DirectFamilyTrackerSPI(t *testing.T) {
 	ctx := context.Background()
 
 	// Issue three tokens in the same family + one in a different family.
-	_ = store.Issue(ctx, "t1", &sso.RefreshToken{
+	_ = store.Issue(ctx, "t1", &oauth.RefreshToken{
 		UserID: "u", ClientID: "c", FamilyID: "fam-1",
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
-	_ = store.Issue(ctx, "t2", &sso.RefreshToken{
+	_ = store.Issue(ctx, "t2", &oauth.RefreshToken{
 		UserID: "u", ClientID: "c", FamilyID: "fam-1",
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
-	_ = store.Issue(ctx, "t3", &sso.RefreshToken{
+	_ = store.Issue(ctx, "t3", &oauth.RefreshToken{
 		UserID: "u", ClientID: "c", FamilyID: "fam-1",
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
-	_ = store.Issue(ctx, "tx", &sso.RefreshToken{
+	_ = store.Issue(ctx, "tx", &oauth.RefreshToken{
 		UserID: "u", ClientID: "c", FamilyID: "fam-2",
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
@@ -226,7 +228,7 @@ func TestRefreshFamily_DirectFamilyTrackerSPI(t *testing.T) {
 	}
 	// fam-1 tokens are gone.
 	for _, tok := range []string{"t1", "t2", "t3"} {
-		if _, err := store.Consume(ctx, tok); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+		if _, err := store.Consume(ctx, tok); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 			t.Errorf("expected not-found for %q after family revoke, got %v", tok, err)
 		}
 	}
@@ -246,7 +248,7 @@ func TestRefreshFamily_EmptyFamilyIDIsNoOp(t *testing.T) {
 func TestRefreshFamily_ConsumeReusedReturnsSentinel(t *testing.T) {
 	store := defaultimpl.NewMemoryRefreshTokenStore()
 	ctx := context.Background()
-	_ = store.Issue(ctx, "tok-reuse", &sso.RefreshToken{
+	_ = store.Issue(ctx, "tok-reuse", &oauth.RefreshToken{
 		UserID: "u", ClientID: "c", FamilyID: "fam-reuse",
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
@@ -256,11 +258,11 @@ func TestRefreshFamily_ConsumeReusedReturnsSentinel(t *testing.T) {
 	}
 	// Second consume is a reuse.
 	tok, err := store.Consume(ctx, "tok-reuse")
-	if !errors.Is(err, sso.ErrRefreshTokenReused) {
-		t.Errorf("err=%v want ErrRefreshTokenReused", err)
+	if !errors.Is(err, oauth.ErrRefreshTokenReused) {
+		t.Errorf("err=%v want oauth.ErrRefreshTokenReused", err)
 	}
 	if tok == nil || tok.FamilyID != "fam-reuse" {
-		t.Errorf("expected family stamped on reuse-detection RefreshToken, got %+v", tok)
+		t.Errorf("expected family stamped on reuse-detection oauth.RefreshToken, got %+v", tok)
 	}
 }
 

@@ -486,7 +486,7 @@ func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClie
 
 // recordRefreshTokenReuse emits a refresh_token_reuse_detected event.
 // Fired from the rotation grant when the store signals
-// ErrRefreshTokenReused — a security signal worth routing to alerting.
+// oauth.ErrRefreshTokenReused — a security signal worth routing to alerting.
 func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
 	if s.auditor == nil {
 		return

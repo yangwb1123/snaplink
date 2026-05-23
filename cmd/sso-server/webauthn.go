@@ -1,5 +1,7 @@
 package main
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"crypto/rand"
@@ -113,9 +115,9 @@ const (
 // real first-class login method instead of just credential
 // verification).
 //
-// RefreshTokenStore + IDTokenIssuer are independently optional. When
+// oauth.RefreshTokenStore + IDTokenIssuer are independently optional. When
 // the resolved client's AllowedScopes contains `offline_access`
-// AND a RefreshTokenStore is wired, the response carries a
+// AND a oauth.RefreshTokenStore is wired, the response carries a
 // refresh_token. When the scopes contain `openid` AND an
 // IDTokenIssuer is wired, the response carries an id_token. Either
 // missing dep silently degrades to the next-lower disclosure (just
@@ -125,7 +127,7 @@ type webauthnDeps struct {
 	ClientStore       sso.ClientStore
 	TokenIssuers      map[string]sso.TokenIssuer
 	DefaultStrat      string
-	RefreshTokenStore sso.RefreshTokenStore
+	RefreshTokenStore oauth.RefreshTokenStore
 	RefreshTokenTTL   time.Duration
 	IDTokenIssuer     sso.IDTokenIssuer
 	Metrics           *metrics.Metrics // nil-safe; emit only when present
@@ -190,8 +192,8 @@ type webauthnFinishLoginResponse struct {
 	// verification mode so embedders that integrate their own token
 	// path aren't disturbed.
 	//
-	// RefreshToken populates only when the client's AllowedScopes
-	// contains `offline_access` AND a RefreshTokenStore is wired.
+	// oauth.RefreshToken populates only when the client's AllowedScopes
+	// contains `offline_access` AND a oauth.RefreshTokenStore is wired.
 	// IDToken populates only when the AllowedScopes contains `openid`
 	// AND an IDTokenIssuer is wired. Either dep missing leaves the
 	// field empty (omitted from the JSON).
@@ -372,7 +374,7 @@ var errWebAuthnNoIssuer = errors.New("webauthn: no token issuer for client strat
 // the configured IDTokenIssuer should be healthy.
 var errWebAuthnIDToken = errors.New("webauthn: id_token issuance failed")
 
-// errWebAuthnRefreshToken is returned when RefreshTokenStore.Issue
+// errWebAuthnRefreshToken is returned when oauth.RefreshTokenStore.Issue
 // fails for a client that wanted offline_access. Surfaced as 500.
 var errWebAuthnRefreshToken = errors.New("webauthn: refresh_token issuance failed")
 
@@ -397,7 +399,7 @@ type webauthnIssueResult struct {
 // scope-selection step.
 //
 // When the client's scopes include `offline_access` AND deps.
-// RefreshTokenStore is wired, a refresh_token rides along; when
+// oauth.RefreshTokenStore is wired, a refresh_token rides along; when
 // `openid` is in scope AND deps.IDTokenIssuer is wired, an
 // id_token does. Either dep missing degrades silently — same
 // shape /auth/login uses when the corresponding backend isn't
@@ -456,7 +458,7 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		}
 		result.IDToken = idToken
 	}
-	// refresh_token: gated on a wired RefreshTokenStore — matches
+	// refresh_token: gated on a wired oauth.RefreshTokenStore — matches
 	// /auth/login + /token authorization_code which both issue
 	// unconditionally when the store is present (RFC 6749 leaves it
 	// to AS discretion; the SDK's contract is "wired → emit"). Same
@@ -494,7 +496,7 @@ func mintWebAuthnRefreshToken(ctx context.Context, deps *webauthnDeps, client *s
 		return "", fmt.Errorf("random family id: %w", err)
 	}
 	now := time.Now()
-	entry := &sso.RefreshToken{
+	entry := &oauth.RefreshToken{
 		UserID:    userID,
 		ClientID:  client.ID,
 		Provider:  "webauthn",

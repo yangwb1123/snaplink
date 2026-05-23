@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/json"
@@ -7,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/snaplink/sso"
 )
 
 // registerForMgmt creates a new client and returns
@@ -40,7 +40,7 @@ func registerForMgmt(t *testing.T, srvURL string) (string, string, string) {
 }
 
 func TestRegistrationMgmt_Get_HappyPath(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
 	})
@@ -75,7 +75,7 @@ func TestRegistrationMgmt_Get_HappyPath(t *testing.T) {
 }
 
 func TestRegistrationMgmt_Get_RejectsBadToken(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	_, _, uri := registerForMgmt(t, srv.URL)
 
 	req, _ := http.NewRequest(http.MethodGet, uri, nil)
@@ -94,7 +94,7 @@ func TestRegistrationMgmt_Get_UnknownClientLooksLikeBadToken(t *testing.T) {
 	// Anti-enumeration: an unknown client_id MUST NOT be a 404 (would
 	// let an unauthed caller probe for client_id existence). Should
 	// look identical to a wrong-token failure.
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/register/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer something")
 	resp, err := http.DefaultClient.Do(req)
@@ -108,7 +108,7 @@ func TestRegistrationMgmt_Get_UnknownClientLooksLikeBadToken(t *testing.T) {
 }
 
 func TestRegistrationMgmt_Put_UpdatesMetadata(t *testing.T) {
-	srv, store := newDCRHarness(t, sso.DCRPolicy{
+	srv, store := newDCRHarness(t, oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
 	})
@@ -149,7 +149,7 @@ func TestRegistrationMgmt_Put_UpdatesMetadata(t *testing.T) {
 }
 
 func TestRegistrationMgmt_Put_RejectsBadToken(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	_, _, uri := registerForMgmt(t, srv.URL)
 
 	body, _ := json.Marshal(map[string]any{
@@ -168,7 +168,7 @@ func TestRegistrationMgmt_Put_RejectsBadToken(t *testing.T) {
 }
 
 func TestRegistrationMgmt_Put_RejectsInvalidMetadata(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	_, tok, uri := registerForMgmt(t, srv.URL)
 
 	body, _ := json.Marshal(map[string]any{
@@ -190,7 +190,7 @@ func TestRegistrationMgmt_Put_RejectsInvalidMetadata(t *testing.T) {
 }
 
 func TestRegistrationMgmt_Delete_RemovesClient(t *testing.T) {
-	srv, store := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+	srv, store := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
 	id, tok, uri := registerForMgmt(t, srv.URL)
 
 	req, _ := http.NewRequest(http.MethodDelete, uri, nil)
@@ -211,7 +211,7 @@ func TestRegistrationMgmt_Delete_RemovesClient(t *testing.T) {
 }
 
 func TestRegistrationMgmt_Delete_RejectsBadToken(t *testing.T) {
-	srv, _ := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true})
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true})
 	_, _, uri := registerForMgmt(t, srv.URL)
 
 	req, _ := http.NewRequest(http.MethodDelete, uri, nil)
@@ -227,7 +227,7 @@ func TestRegistrationMgmt_Delete_RejectsBadToken(t *testing.T) {
 }
 
 func TestRegistrationMgmt_PreservesSecretAcrossUpdates(t *testing.T) {
-	srv, store := newDCRHarness(t, sso.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+	srv, store := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
 	id, tok, uri := registerForMgmt(t, srv.URL)
 	originalSecret, _ := store.Get(context.Background(), id)
 

@@ -1,4 +1,4 @@
-package sso
+package oauth
 
 import (
 	"crypto/rand"
@@ -58,11 +58,11 @@ const (
 	ErrRegistrationDisabled  = "registration_not_configured"
 )
 
-// generateClientID mints a base32 client identifier — short enough
+// GenerateClientID mints a base32 client identifier — short enough
 // for log lines but high-entropy enough for an unguessable
 // registration. 18 bytes / 144 bits beats a 128-bit floor while
 // keeping the encoded length at 29 chars (no padding).
-func generateClientID() (string, error) {
+func GenerateClientID() (string, error) {
 	buf := make([]byte, 18)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -70,10 +70,10 @@ func generateClientID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// generateClientSecret mints a 32-byte (256-bit) base64url secret —
+// GenerateClientSecret mints a 32-byte (256-bit) base64url secret —
 // the same shape the admin RotateSecret RPC uses elsewhere in this
 // codebase.
-func generateClientSecret() (string, error) {
+func GenerateClientSecret() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err

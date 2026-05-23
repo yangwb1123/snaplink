@@ -1,5 +1,7 @@
 package defaultimpl_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/base64"
@@ -8,13 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
 func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {
 	s := defaultimpl.NewMemoryAuthCodeStore()
-	in := &sso.AuthCode{
+	in := &oauth.AuthCode{
 		UserID:      "u-1",
 		ClientID:    "web",
 		RedirectURI: "https://app/cb",
@@ -44,39 +45,39 @@ func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {
 
 func TestMemoryAuthCodeStore_SingleUse(t *testing.T) {
 	s := defaultimpl.NewMemoryAuthCodeStore()
-	_ = s.Issue(context.Background(), "c", &sso.AuthCode{ExpiresAt: time.Now().Add(time.Minute)})
+	_ = s.Issue(context.Background(), "c", &oauth.AuthCode{ExpiresAt: time.Now().Add(time.Minute)})
 	if _, err := s.Consume(context.Background(), "c"); err != nil {
 		t.Fatalf("first Consume: %v", err)
 	}
-	if _, err := s.Consume(context.Background(), "c"); !errors.Is(err, sso.ErrAuthCodeNotFound) {
-		t.Errorf("second Consume err = %v, want ErrAuthCodeNotFound", err)
+	if _, err := s.Consume(context.Background(), "c"); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
+		t.Errorf("second Consume err = %v, want oauth.ErrAuthCodeNotFound", err)
 	}
 }
 
 func TestMemoryAuthCodeStore_RejectsEmptyArgs(t *testing.T) {
 	s := defaultimpl.NewMemoryAuthCodeStore()
-	if err := s.Issue(context.Background(), "", &sso.AuthCode{}); !errors.Is(err, sso.ErrAuthCodeNotFound) {
+	if err := s.Issue(context.Background(), "", &oauth.AuthCode{}); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
 		t.Errorf("empty code Issue err = %v", err)
 	}
-	if err := s.Issue(context.Background(), "c", nil); !errors.Is(err, sso.ErrAuthCodeNotFound) {
+	if err := s.Issue(context.Background(), "c", nil); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
 		t.Errorf("nil info Issue err = %v", err)
 	}
 }
 
 func TestMemoryAuthCodeStore_UnknownCodeReturnsSentinel(t *testing.T) {
 	s := defaultimpl.NewMemoryAuthCodeStore()
-	if _, err := s.Consume(context.Background(), "ghost"); !errors.Is(err, sso.ErrAuthCodeNotFound) {
-		t.Errorf("err = %v, want ErrAuthCodeNotFound", err)
+	if _, err := s.Consume(context.Background(), "ghost"); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
+		t.Errorf("err = %v, want oauth.ErrAuthCodeNotFound", err)
 	}
 }
 
 func TestMemoryAuthCodeStore_ExpiredCodeIndistinguishableFromMissing(t *testing.T) {
 	s := defaultimpl.NewMemoryAuthCodeStore()
-	_ = s.Issue(context.Background(), "stale", &sso.AuthCode{
+	_ = s.Issue(context.Background(), "stale", &oauth.AuthCode{
 		ExpiresAt: time.Now().Add(-time.Minute),
 	})
-	if _, err := s.Consume(context.Background(), "stale"); !errors.Is(err, sso.ErrAuthCodeNotFound) {
-		t.Errorf("err = %v, want ErrAuthCodeNotFound", err)
+	if _, err := s.Consume(context.Background(), "stale"); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
+		t.Errorf("err = %v, want oauth.ErrAuthCodeNotFound", err)
 	}
 }
 
@@ -86,7 +87,7 @@ func TestMemoryAuthCodeStore_DoesNotAliasCallerSlices(t *testing.T) {
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	scopes := []string{"a"}
 	attrs := map[string]string{"k": "v"}
-	_ = s.Issue(context.Background(), "c", &sso.AuthCode{
+	_ = s.Issue(context.Background(), "c", &oauth.AuthCode{
 		Scopes:     scopes,
 		Attributes: attrs,
 		ExpiresAt:  time.Now().Add(time.Minute),
@@ -113,7 +114,7 @@ func TestMemoryAuthCodeStore_Concurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			code := "c-" + base64.RawURLEncoding.EncodeToString([]byte{byte(i)})
-			_ = s.Issue(context.Background(), code, &sso.AuthCode{
+			_ = s.Issue(context.Background(), code, &oauth.AuthCode{
 				UserID: "u", ExpiresAt: time.Now().Add(time.Minute),
 			})
 			out, err := s.Consume(context.Background(), code)
@@ -140,8 +141,8 @@ func TestGenerateAuthCode_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestAuthCode_IsExpired(t *testing.T) {
-	past := &sso.AuthCode{ExpiresAt: time.Now().Add(-time.Hour)}
-	future := &sso.AuthCode{ExpiresAt: time.Now().Add(time.Hour)}
+	past := &oauth.AuthCode{ExpiresAt: time.Now().Add(-time.Hour)}
+	future := &oauth.AuthCode{ExpiresAt: time.Now().Add(time.Hour)}
 	if !past.IsExpired() {
 		t.Error("past timestamp should be expired")
 	}

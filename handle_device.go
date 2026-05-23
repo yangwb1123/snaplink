@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"crypto/rand"
 	"encoding/base64"
@@ -121,7 +123,7 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 	// key so /device/verify accepts the user_code with OR without the
 	// cosmetic dash. The dashed form goes back to the device for
 	// display only.
-	dc := &DeviceCode{
+	dc := &oauth.DeviceCode{
 		DeviceCode: deviceCode,
 		UserCode:   normalizeUserCode(userCode),
 		ClientID:   client.ID,
@@ -255,7 +257,7 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	}
 	dc, err := s.deviceCodeStore.GetByDeviceCode(ctx.Request().Context(), deviceCode)
 	if err != nil {
-		if errors.Is(err, ErrDeviceCodeNotFound) {
+		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
 			ctx.JSON(http.StatusBadRequest, errorBody(ErrExpiredToken))
 			return
 		}
@@ -355,7 +357,7 @@ func normalizeUserCode(s string) string {
 }
 
 // splitScope parses a space-delimited scope string into a slice,
-// returning nil for empty input so the AuthCode / DeviceCode entry's
+// returning nil for empty input so the oauth.AuthCode / oauth.DeviceCode entry's
 // Scopes field stays nil-not-empty.
 func splitScope(s string) []string {
 	if s == "" {

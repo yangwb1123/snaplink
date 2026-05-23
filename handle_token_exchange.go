@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"net/http"
 	"slices"
@@ -235,7 +237,7 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		// consented to. The downstream service relying on RAR
 		// shouldn't lose its binding just because a token was
 		// exchanged into a narrower audience.
-		AuthorizationDetails: cloneRawJSON(claims.AuthorizationDetails),
+		AuthorizationDetails: oauth.CloneRawJSON(claims.AuthorizationDetails),
 	}, scopes)
 	if err != nil {
 		s.logger.Error("token exchange issuance failed", "strategy", strategy, "error", err)
@@ -269,7 +271,7 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 			ctx.Request().Context(),
 			claims.Subject, client.ID, provider,
 			scopes, claims.Extra, "", resources,
-			cloneRawJSON(claims.AuthorizationDetails), // RFC 9396 — propagate the inbound binding
+			oauth.CloneRawJSON(claims.AuthorizationDetails), // RFC 9396 — propagate the inbound binding
 			claims.SID,
 			client.RefreshTokenTTL,
 		)

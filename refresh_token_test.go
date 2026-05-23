@@ -26,7 +26,7 @@ const (
 )
 
 // newRefreshFlowServer wires the minimum surface for end-to-end refresh
-// testing: a RefreshTokenStore + ClientStore + UserProvider + TokenIssuer
+// testing: a oauth.RefreshTokenStore + ClientStore + UserProvider + TokenIssuer
 // + a password Authenticator + SessionManager (login direct mint needs it).
 func newRefreshFlowServer(t *testing.T, ttl time.Duration) (*httptest.Server, *defaultimpl.MemoryRefreshTokenStore, *audit.MemorySink) {
 	t.Helper()
@@ -143,7 +143,7 @@ func TestRefreshToken_LoginIssuesRefreshTokenWhenStoreWired(t *testing.T) {
 }
 
 func TestRefreshToken_LoginOmitsRefreshTokenWhenStoreUnwired(t *testing.T) {
-	// Without RefreshTokenStore the field passes through whatever the
+	// Without oauth.RefreshTokenStore the field passes through whatever the
 	// underlying TokenIssuer returned — for the stateless Ed25519 JWT
 	// issuer that's empty.
 	users := defaultimpl.NewMemoryUserProvider()
@@ -355,7 +355,7 @@ func TestRefreshToken_ExchangeBindingClientIDMismatch(t *testing.T) {
 }
 
 func TestRefreshToken_ExchangeWithoutStore_NotImplemented(t *testing.T) {
-	// Server has /token wired but no RefreshTokenStore — refresh_token
+	// Server has /token wired but no oauth.RefreshTokenStore — refresh_token
 	// grant must return 501 + refresh_token_not_configured.
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{ID: rtClient, Secret: rtSecret, Active: true})
@@ -437,7 +437,7 @@ func TestRefreshToken_ExpiredTokenRejected(t *testing.T) {
 
 func TestRefreshToken_AuthCodeExchangeIncludesRefreshTokenWhenStoreWired(t *testing.T) {
 	// The authorization_code branch in handleToken should ALSO return
-	// a refresh_token when RefreshTokenStore is wired, so SPAs using
+	// a refresh_token when oauth.RefreshTokenStore is wired, so SPAs using
 	// the code grant get refresh capability without a separate dance.
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: rtUser})

@@ -1,5 +1,7 @@
 package defaultimpl_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/base64"
@@ -8,14 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
 func TestMemoryRefreshTokenStore_RoundTrip(t *testing.T) {
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	now := time.Now()
-	in := &sso.RefreshToken{
+	in := &oauth.RefreshToken{
 		UserID:     "u-1",
 		ClientID:   "web",
 		Provider:   "password",
@@ -46,39 +47,39 @@ func TestMemoryRefreshTokenStore_SingleUseRotation(t *testing.T) {
 	// Consumption deletes — replay is the canonical rotation-reuse
 	// detection signal even before family-revocation is implemented.
 	s := defaultimpl.NewMemoryRefreshTokenStore()
-	_ = s.Issue(context.Background(), "t", &sso.RefreshToken{ExpiresAt: time.Now().Add(time.Hour)})
+	_ = s.Issue(context.Background(), "t", &oauth.RefreshToken{ExpiresAt: time.Now().Add(time.Hour)})
 	if _, err := s.Consume(context.Background(), "t"); err != nil {
 		t.Fatalf("first Consume: %v", err)
 	}
-	if _, err := s.Consume(context.Background(), "t"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
-		t.Errorf("second Consume err = %v, want ErrRefreshTokenNotFound", err)
+	if _, err := s.Consume(context.Background(), "t"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Errorf("second Consume err = %v, want oauth.ErrRefreshTokenNotFound", err)
 	}
 }
 
 func TestMemoryRefreshTokenStore_RejectsEmptyArgs(t *testing.T) {
 	s := defaultimpl.NewMemoryRefreshTokenStore()
-	if err := s.Issue(context.Background(), "", &sso.RefreshToken{}); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+	if err := s.Issue(context.Background(), "", &oauth.RefreshToken{}); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Errorf("empty token Issue err = %v", err)
 	}
-	if err := s.Issue(context.Background(), "t", nil); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
+	if err := s.Issue(context.Background(), "t", nil); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Errorf("nil info Issue err = %v", err)
 	}
 }
 
 func TestMemoryRefreshTokenStore_UnknownTokenReturnsSentinel(t *testing.T) {
 	s := defaultimpl.NewMemoryRefreshTokenStore()
-	if _, err := s.Consume(context.Background(), "ghost"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
-		t.Errorf("err = %v, want ErrRefreshTokenNotFound", err)
+	if _, err := s.Consume(context.Background(), "ghost"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Errorf("err = %v, want oauth.ErrRefreshTokenNotFound", err)
 	}
 }
 
 func TestMemoryRefreshTokenStore_ExpiredTokenIndistinguishableFromMissing(t *testing.T) {
 	s := defaultimpl.NewMemoryRefreshTokenStore()
-	_ = s.Issue(context.Background(), "stale", &sso.RefreshToken{
+	_ = s.Issue(context.Background(), "stale", &oauth.RefreshToken{
 		ExpiresAt: time.Now().Add(-time.Minute),
 	})
-	if _, err := s.Consume(context.Background(), "stale"); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
-		t.Errorf("err = %v, want ErrRefreshTokenNotFound", err)
+	if _, err := s.Consume(context.Background(), "stale"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Errorf("err = %v, want oauth.ErrRefreshTokenNotFound", err)
 	}
 }
 
@@ -88,7 +89,7 @@ func TestMemoryRefreshTokenStore_DoesNotAliasCallerSlices(t *testing.T) {
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	scopes := []string{"a"}
 	attrs := map[string]string{"k": "v"}
-	_ = s.Issue(context.Background(), "t", &sso.RefreshToken{
+	_ = s.Issue(context.Background(), "t", &oauth.RefreshToken{
 		Scopes:     scopes,
 		Attributes: attrs,
 		ExpiresAt:  time.Now().Add(time.Hour),
@@ -115,7 +116,7 @@ func TestMemoryRefreshTokenStore_Concurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			tok := "t-" + base64.RawURLEncoding.EncodeToString([]byte{byte(i)})
-			_ = s.Issue(context.Background(), tok, &sso.RefreshToken{
+			_ = s.Issue(context.Background(), tok, &oauth.RefreshToken{
 				UserID: "u", ExpiresAt: time.Now().Add(time.Hour),
 			})
 			out, err := s.Consume(context.Background(), tok)
@@ -142,8 +143,8 @@ func TestGenerateRefreshToken_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestRefreshToken_IsExpired(t *testing.T) {
-	past := &sso.RefreshToken{ExpiresAt: time.Now().Add(-time.Hour)}
-	future := &sso.RefreshToken{ExpiresAt: time.Now().Add(time.Hour)}
+	past := &oauth.RefreshToken{ExpiresAt: time.Now().Add(-time.Hour)}
+	future := &oauth.RefreshToken{ExpiresAt: time.Now().Add(time.Hour)}
 	if !past.IsExpired() {
 		t.Error("past timestamp should be expired")
 	}

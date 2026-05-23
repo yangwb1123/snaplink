@@ -47,7 +47,7 @@ func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
 	doc := fetchDiscovery(t, srv.URL)
 	endpoint, _ := doc["pushed_authorization_request_endpoint"].(string)
 	if endpoint == "" {
-		t.Errorf("pushed_authorization_request_endpoint missing — PARStore wiring broken")
+		t.Errorf("pushed_authorization_request_endpoint missing — oauth.PARStore wiring broken")
 	}
 }
 

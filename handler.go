@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"crypto/rand"
@@ -93,7 +95,7 @@ type loginRequest struct {
 	State                string            `json:"state"`
 	ResponseType         string            `json:"response_type"`         // "code" → return auth code instead of token
 	RedirectURI          string            `json:"redirect_uri"`          // required when response_type=code
-	Nonce                string            `json:"nonce"`                 // OIDC nonce (passed through to AuthCode)
+	Nonce                string            `json:"nonce"`                 // OIDC nonce (passed through to oauth.AuthCode)
 	CodeChallenge        string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
 	CodeChallengeMethod  string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
 	Resource             []string          `json:"resource"`              // RFC 8707 resource indicators
@@ -226,7 +228,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			// supplied value at /auth/login (mirrors how PAR's
 			// scope/resource/redirect_uri override the redirect-time
 			// parameters).
-			req.AuthorizationDetails = cloneRawJSON(stored.AuthorizationDetails)
+			req.AuthorizationDetails = oauth.CloneRawJSON(stored.AuthorizationDetails)
 		}
 		if stored.LoginHint != "" {
 			req.LoginHint = stored.LoginHint
@@ -241,7 +243,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			req.UILocales = stored.UILocales
 		}
 		if len(stored.Claims) > 0 {
-			req.Claims = cloneRawJSON(stored.Claims)
+			req.Claims = oauth.CloneRawJSON(stored.Claims)
 		}
 	}
 
@@ -403,7 +405,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			req.Resource = jar.Resource
 		}
 		if len(jar.AuthorizationDetails) > 0 {
-			req.AuthorizationDetails = cloneRawJSON(jar.AuthorizationDetails)
+			req.AuthorizationDetails = oauth.CloneRawJSON(jar.AuthorizationDetails)
 		}
 		if jar.LoginHint != "" {
 			req.LoginHint = jar.LoginHint
@@ -418,7 +420,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			req.UILocales = jar.UILocales
 		}
 		if len(jar.Claims) > 0 {
-			req.Claims = cloneRawJSON(jar.Claims)
+			req.Claims = oauth.CloneRawJSON(jar.Claims)
 		}
 	}
 
@@ -439,15 +441,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// (the spec allows extension members); just enforce shape so a
 	// caller passing an array / string / number fails fast.
 	if len(req.Claims) > 0 {
-		if err := validateClaimsParameter(req.Claims); err != nil {
+		if err := oauth.ValidateClaimsParameter(req.Claims); err != nil {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
 			return
 		}
 	}
-	if _, err := validateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
-		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidAuthorizationDetails)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidAuthorizationDetails, err.Error()))
+	if _, err := oauth.ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, oauth.ErrInvalidAuthorizationDetails)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, oauth.ErrInvalidAuthorizationDetails, err.Error()))
 		return
 	}
 
@@ -486,7 +488,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		LoginHint:       req.LoginHint,
 		ACRValues:       splitScope(req.ACRValues),
 		UILocales:       splitScope(req.UILocales),
-		RequestedClaims: cloneRawJSON(req.Claims),
+		RequestedClaims: oauth.CloneRawJSON(req.Claims),
 	})
 	if err != nil {
 		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
@@ -728,7 +730,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		ClientID:             client.ID,
 		AuthTime:             time.Now(),
 		AMR:                  []string{result.Provider},
-		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
 		TTL:                  client.AccessTokenTTL,
 	}, req.Scope)
@@ -758,7 +760,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		}
 	}
 
-	// When a RefreshTokenStore is wired, server-managed refresh tokens
+	// When a oauth.RefreshTokenStore is wired, server-managed refresh tokens
 	// override whatever the underlying TokenIssuer returned — that way
 	// the OAuth refresh_token grant works uniformly regardless of which
 	// issuer minted the access token. Fail-open: a refresh-token store
@@ -842,7 +844,7 @@ func (s *Server) issueAuthCode(
 	if ttl <= 0 {
 		ttl = DefaultAuthCodeTTL
 	}
-	entry := &AuthCode{
+	entry := &oauth.AuthCode{
 		UserID:               result.UserID,
 		ClientID:             client.ID,
 		RedirectURI:          req.RedirectURI,
@@ -853,7 +855,7 @@ func (s *Server) issueAuthCode(
 		CodeChallenge:        req.CodeChallenge,
 		CodeChallengeMethod:  req.CodeChallengeMethod,
 		Resources:            append([]string(nil), req.Resource...),
-		AuthorizationDetails: cloneRawJSON(req.AuthorizationDetails),
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		ExpiresAt:            time.Now().Add(ttl),
 	}
 	if err := s.authCodeStore.Issue(ctx, code, entry); err != nil {
@@ -947,7 +949,7 @@ func generateAuthCodeBytes() (string, error) {
 // chain: pass "" on the FIRST issue (login, authz_code, device) to
 // mint a new family, or the existing FamilyID on rotation to keep
 // every descendant of a single authorization event in one family.
-// Stores that don't implement RefreshTokenFamilyTracker simply
+// Stores that don't implement oauth.RefreshTokenFamilyTracker simply
 // ignore the value — opt-in hardening.
 //
 // Callers MUST pre-check s.refreshTokenStore != nil — this helper
@@ -990,7 +992,7 @@ func (s *Server) issueRefreshToken(
 		familyID = fid
 	}
 	now := time.Now()
-	entry := &RefreshToken{
+	entry := &oauth.RefreshToken{
 		UserID:               userID,
 		ClientID:             clientID,
 		Provider:             provider,
@@ -1000,7 +1002,7 @@ func (s *Server) issueRefreshToken(
 		ExpiresAt:            now.Add(ttl),
 		FamilyID:             familyID,
 		Resources:            append([]string(nil), resources...),
-		AuthorizationDetails: cloneRawJSON(authDetails),
+		AuthorizationDetails: oauth.CloneRawJSON(authDetails),
 		SID:                  sid,
 	}
 	if err := s.refreshTokenStore.Issue(ctx, token, entry); err != nil {
@@ -1344,7 +1346,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ClientID:             client.ID,
 			AuthTime:             time.Now(),
 			AMR:                  []string{info.Provider},
-			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
+			AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
 			SID:                  info.SID,
 			TTL:                  client.AccessTokenTTL,
 			ConfirmationJKT:      dpopJKT,
@@ -1411,9 +1413,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			// (every sibling and descendant) before returning the wire
 			// error — an attacker who already rotated after stealing
 			// the leaf loses access to the active descendant too.
-			if errors.Is(err, ErrRefreshTokenReused) && info != nil && info.FamilyID != "" {
+			if errors.Is(err, oauth.ErrRefreshTokenReused) && info != nil && info.FamilyID != "" {
 				killed := 0
-				if tracker, ok := s.refreshTokenStore.(RefreshTokenFamilyTracker); ok {
+				if tracker, ok := s.refreshTokenStore.(oauth.RefreshTokenFamilyTracker); ok {
 					n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
 					if derr != nil {
 						s.logger.Error("family revocation on reuse failed",
@@ -1468,7 +1470,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			// at the original authorization survives the rotation
 			// — refreshed tokens MUST carry the same fine-grained
 			// authorization the user already consented to.
-			AuthorizationDetails: cloneRawJSON(info.AuthorizationDetails),
+			AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
 			// SID is locked to the original authorization's
 			// session — rotation never opens a new session.
 			SID:                 info.SID,

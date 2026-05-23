@@ -294,7 +294,7 @@ func (s *Server) recordMFAFailure(ctx HandlerContext, subjectID, challengeID, me
 // newMFAChallengeID mints a 32-byte crypto/rand identifier encoded as
 // URL-safe base64 without padding (so it survives query params /
 // path segments / form bodies unchanged). 256 bits of entropy — same
-// strength as AuthCodeStore / DeviceCodeStore identifiers.
+// strength as oauth.AuthCodeStore / oauth.DeviceCodeStore identifiers.
 func newMFAChallengeID() (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {

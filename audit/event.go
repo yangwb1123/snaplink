@@ -164,7 +164,7 @@ const (
 
 	// EventRefreshTokenReuse fires when the rotation grant detects a
 	// presented-after-rotation refresh token (OAuth Security BCP §4.13)
-	// AND the store implements RefreshTokenFamilyTracker. Reason
+	// AND the store implements oauth.RefreshTokenFamilyTracker. Reason
 	// carries the family id; Metadata carries "killed=<n>" with the
 	// count of active descendants invalidated by the family revocation.
 	// Outcome is OutcomeFailure — a reuse event is always a security

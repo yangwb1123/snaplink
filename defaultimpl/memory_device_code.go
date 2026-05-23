@@ -1,5 +1,7 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"crypto/rand"
@@ -7,8 +9,6 @@ import (
 	"math/big"
 	"sync"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 // userCodeAlphabet is base32 minus easily-confused glyphs (0/O, 1/I/L).
@@ -17,32 +17,32 @@ import (
 // interval throttling.
 const userCodeAlphabet = "BCDFGHJKMNPQRSTVWXYZ23456789"
 
-// MemoryDeviceCodeStore is an in-process sso.DeviceCodeStore for
+// MemoryDeviceCodeStore is an in-process oauth.DeviceCodeStore for
 // single-replica deployments. Multi-replica fleets need a shared
 // backend (Redis / SQL) so a code issued on replica A is approvable
 // on replica B and pollable on replica C.
 type MemoryDeviceCodeStore struct {
 	mu           sync.Mutex
-	byDeviceCode map[string]*sso.DeviceCode
-	byUserCode   map[string]*sso.DeviceCode
+	byDeviceCode map[string]*oauth.DeviceCode
+	byUserCode   map[string]*oauth.DeviceCode
 }
 
 func NewMemoryDeviceCodeStore() *MemoryDeviceCodeStore {
 	return &MemoryDeviceCodeStore{
-		byDeviceCode: make(map[string]*sso.DeviceCode),
-		byUserCode:   make(map[string]*sso.DeviceCode),
+		byDeviceCode: make(map[string]*oauth.DeviceCode),
+		byUserCode:   make(map[string]*oauth.DeviceCode),
 	}
 }
 
-func (m *MemoryDeviceCodeStore) Issue(_ context.Context, dc *sso.DeviceCode) error {
+func (m *MemoryDeviceCodeStore) Issue(_ context.Context, dc *oauth.DeviceCode) error {
 	if dc == nil || dc.DeviceCode == "" || dc.UserCode == "" {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	scopes := append([]string(nil), dc.Scopes...)
 	attrs := copyMap(dc.Attributes)
-	entry := &sso.DeviceCode{
+	entry := &oauth.DeviceCode{
 		DeviceCode: dc.DeviceCode,
 		UserCode:   dc.UserCode,
 		ClientID:   dc.ClientID,
@@ -62,22 +62,22 @@ func (m *MemoryDeviceCodeStore) Issue(_ context.Context, dc *sso.DeviceCode) err
 	return nil
 }
 
-func (m *MemoryDeviceCodeStore) GetByDeviceCode(_ context.Context, deviceCode string) (*sso.DeviceCode, error) {
+func (m *MemoryDeviceCodeStore) GetByDeviceCode(_ context.Context, deviceCode string) (*oauth.DeviceCode, error) {
 	m.mu.Lock()
 	entry, ok := m.byDeviceCode[deviceCode]
 	m.mu.Unlock()
 	if !ok || entry.IsExpired() {
-		return nil, sso.ErrDeviceCodeNotFound
+		return nil, oauth.ErrDeviceCodeNotFound
 	}
 	return entry, nil
 }
 
-func (m *MemoryDeviceCodeStore) GetByUserCode(_ context.Context, userCode string) (*sso.DeviceCode, error) {
+func (m *MemoryDeviceCodeStore) GetByUserCode(_ context.Context, userCode string) (*oauth.DeviceCode, error) {
 	m.mu.Lock()
 	entry, ok := m.byUserCode[userCode]
 	m.mu.Unlock()
 	if !ok || entry.IsExpired() {
-		return nil, sso.ErrDeviceCodeNotFound
+		return nil, oauth.ErrDeviceCodeNotFound
 	}
 	return entry, nil
 }
@@ -87,7 +87,7 @@ func (m *MemoryDeviceCodeStore) Approve(_ context.Context, userCode, userID, pro
 	defer m.mu.Unlock()
 	entry, ok := m.byUserCode[userCode]
 	if !ok || entry.IsExpired() {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	entry.Approved = true
 	entry.UserID = userID
@@ -101,7 +101,7 @@ func (m *MemoryDeviceCodeStore) Deny(_ context.Context, userCode string) error {
 	defer m.mu.Unlock()
 	entry, ok := m.byUserCode[userCode]
 	if !ok || entry.IsExpired() {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	entry.Denied = true
 	return nil
@@ -112,7 +112,7 @@ func (m *MemoryDeviceCodeStore) UpdateLastPoll(_ context.Context, deviceCode str
 	defer m.mu.Unlock()
 	entry, ok := m.byDeviceCode[deviceCode]
 	if !ok {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	entry.LastPoll = t
 	return nil
@@ -160,4 +160,4 @@ func GenerateUserCode() (string, error) {
 }
 
 // Compile-time check.
-var _ sso.DeviceCodeStore = (*MemoryDeviceCodeStore)(nil)
+var _ oauth.DeviceCodeStore = (*MemoryDeviceCodeStore)(nil)

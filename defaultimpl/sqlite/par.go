@@ -1,5 +1,7 @@
 package sqlite
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"database/sql"
@@ -8,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
@@ -45,7 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_par_requests_expires_at
     ON par_requests(expires_at);
 `
 
-// PARStore is the SQLite-backed implementation of [sso.PARStore].
+// oauth.PARStore is the SQLite-backed implementation of [oauth.PARStore].
 // Suitable for multi-replica deployments: a request_uri minted on
 // one replica is consumable on the replica that handles the
 // subsequent /auth/login redirect.
@@ -73,7 +74,7 @@ func NewPARStore(dsn string) (*PARStore, error) {
 }
 
 // NewPARStoreWithDB wraps an existing *sql.DB. Caller owns the
-// connection lifecycle (matches the AuthCodeStore pattern for
+// connection lifecycle (matches the oauth.AuthCodeStore pattern for
 // shared-pool deployments).
 func NewPARStoreWithDB(db *sql.DB) (*PARStore, error) {
 	if _, err := db.ExecContext(context.Background(), parSchema); err != nil {
@@ -105,15 +106,15 @@ func (s *PARStore) Ping(ctx context.Context) error {
 // client passes to /auth/login. Caller-supplied slices + raw JSON
 // are marshaled here so subsequent caller mutations don't leak into
 // stored state.
-func (s *PARStore) Issue(ctx context.Context, req *sso.PARRequest) (string, error) {
+func (s *PARStore) Issue(ctx context.Context, req *oauth.PARRequest) (string, error) {
 	if req == nil {
-		return "", sso.ErrPARNotFound
+		return "", oauth.ErrPARNotFound
 	}
 	tok, err := defaultimpl.GeneratePARToken()
 	if err != nil {
 		return "", err
 	}
-	uri := sso.PARURIPrefix + tok
+	uri := oauth.PARURIPrefix + tok
 
 	scopeJSON, err := json.Marshal(req.Scope)
 	if err != nil {
@@ -146,8 +147,8 @@ func (s *PARStore) Issue(ctx context.Context, req *sso.PARRequest) (string, erro
 
 // Consume atomically returns + deletes the row. DELETE ... RETURNING
 // makes single-use enforcement race-free — same pattern as
-// AuthCodeStore.Consume.
-func (s *PARStore) Consume(ctx context.Context, requestURI string) (*sso.PARRequest, error) {
+// oauth.AuthCodeStore.Consume.
+func (s *PARStore) Consume(ctx context.Context, requestURI string) (*oauth.PARRequest, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM par_requests WHERE request_uri = ?
         RETURNING client_id, response_type, redirect_uri, scope,
@@ -157,7 +158,7 @@ func (s *PARStore) Consume(ctx context.Context, requestURI string) (*sso.PARRequ
                   expires_at`, requestURI)
 	out, err := scanPARRequest(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, sso.ErrPARNotFound
+		return nil, oauth.ErrPARNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: consume par_request: %w", err)
@@ -166,14 +167,14 @@ func (s *PARStore) Consume(ctx context.Context, requestURI string) (*sso.PARRequ
 	// oracle-resistance). Row is already deleted; no separate
 	// cleanup needed.
 	if out.IsExpired() {
-		return nil, sso.ErrPARNotFound
+		return nil, oauth.ErrPARNotFound
 	}
 	return out, nil
 }
 
-func scanPARRequest(s scanner) (*sso.PARRequest, error) {
+func scanPARRequest(s scanner) (*oauth.PARRequest, error) {
 	var (
-		out                                                         sso.PARRequest
+		out                                                         oauth.PARRequest
 		responseType, redirectURI, state, nonce                     string
 		codeChallenge, codeChallengeMethod, scopeJSON, resourceJSON string
 		loginHint, responseMode, acrValues, uiLocales               string
@@ -218,4 +219,4 @@ func scanPARRequest(s scanner) (*sso.PARRequest, error) {
 	return &out, nil
 }
 
-var _ sso.PARStore = (*PARStore)(nil)
+var _ oauth.PARStore = (*PARStore)(nil)

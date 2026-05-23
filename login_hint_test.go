@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -55,7 +57,7 @@ func (c *captureAuthenticator) snapshot() string {
 // newLoginHintHarness wires the capture authenticator + PAR store so
 // both the direct /auth/login path and the PAR-pushed path can be
 // exercised by tests.
-func newLoginHintHarness(t *testing.T) (*httptest.Server, *captureAuthenticator, sso.PARStore) {
+func newLoginHintHarness(t *testing.T) (*httptest.Server, *captureAuthenticator, oauth.PARStore) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: loginHintUserID})
@@ -106,7 +108,7 @@ func TestLoginHint_DirectLoginThreadsToAuthenticator(t *testing.T) {
 
 func TestLoginHint_PARPushSurvivesIntoAuthenticator(t *testing.T) {
 	srv, auth, store := newLoginHintHarness(t)
-	uri, err := store.Issue(context.Background(), &sso.PARRequest{
+	uri, err := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:     loginHintClientID,
 		ResponseType: "",
 		RedirectURI:  "https://app.example/cb",
@@ -141,7 +143,7 @@ func TestLoginHint_PARPushBeatsLoginParam(t *testing.T) {
 	// redirect_uri / authorization_details. The caller can't sneak
 	// a different hint into the redirect-time parameter.
 	srv, auth, store := newLoginHintHarness(t)
-	uri, _ := store.Issue(context.Background(), &sso.PARRequest{
+	uri, _ := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:    loginHintClientID,
 		RedirectURI: "https://app.example/cb",
 		LoginHint:   "pushed@example.com",

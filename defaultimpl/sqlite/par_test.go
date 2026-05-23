@@ -1,5 +1,7 @@
 package sqlite
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/json"
@@ -7,8 +9,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 func newPARStoreForTest(t *testing.T) *PARStore {
@@ -23,8 +23,8 @@ func newPARStoreForTest(t *testing.T) *PARStore {
 	return store
 }
 
-func samplePARRequest() *sso.PARRequest {
-	return &sso.PARRequest{
+func samplePARRequest() *oauth.PARRequest {
+	return &oauth.PARRequest{
 		ClientID:             "demo-client",
 		ResponseType:         "code",
 		RedirectURI:          "https://rp.example/cb",
@@ -53,7 +53,7 @@ func TestPARStore_IssueAndConsumeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if uri == "" || uri[:len(sso.PARURIPrefix)] != sso.PARURIPrefix {
+	if uri == "" || uri[:len(oauth.PARURIPrefix)] != oauth.PARURIPrefix {
 		t.Fatalf("Issue returned bad uri: %q", uri)
 	}
 
@@ -62,7 +62,7 @@ func TestPARStore_IssueAndConsumeRoundTrip(t *testing.T) {
 		t.Fatalf("Consume: %v", err)
 	}
 
-	// Spot-check every field threaded through PARRequest — a regression in
+	// Spot-check every field threaded through oauth.PARRequest — a regression in
 	// any column mapping is silent until /auth/login merges the pushed
 	// value and finds it missing.
 	if got.ClientID != want.ClientID || got.ResponseType != want.ResponseType ||
@@ -113,16 +113,16 @@ func TestPARStore_ConsumeIsSingleUse(t *testing.T) {
 		t.Fatalf("first Consume: %v", err)
 	}
 	_, err = store.Consume(ctx, uri)
-	if !errors.Is(err, sso.ErrPARNotFound) {
-		t.Fatalf("second Consume: got %v, want ErrPARNotFound", err)
+	if !errors.Is(err, oauth.ErrPARNotFound) {
+		t.Fatalf("second Consume: got %v, want oauth.ErrPARNotFound", err)
 	}
 }
 
 func TestPARStore_ConsumeUnknownReturnsNotFound(t *testing.T) {
 	store := newPARStoreForTest(t)
-	_, err := store.Consume(context.Background(), sso.PARURIPrefix+"nonexistent")
-	if !errors.Is(err, sso.ErrPARNotFound) {
-		t.Fatalf("unknown uri: got %v, want ErrPARNotFound", err)
+	_, err := store.Consume(context.Background(), oauth.PARURIPrefix+"nonexistent")
+	if !errors.Is(err, oauth.ErrPARNotFound) {
+		t.Fatalf("unknown uri: got %v, want oauth.ErrPARNotFound", err)
 	}
 }
 
@@ -137,16 +137,16 @@ func TestPARStore_ExpiredEntryReturnsNotFound(t *testing.T) {
 		t.Fatalf("Issue: %v", err)
 	}
 	_, err = store.Consume(ctx, uri)
-	if !errors.Is(err, sso.ErrPARNotFound) {
-		t.Fatalf("expired uri: got %v, want ErrPARNotFound", err)
+	if !errors.Is(err, oauth.ErrPARNotFound) {
+		t.Fatalf("expired uri: got %v, want oauth.ErrPARNotFound", err)
 	}
 }
 
 func TestPARStore_IssueNilRejected(t *testing.T) {
 	store := newPARStoreForTest(t)
 	_, err := store.Issue(context.Background(), nil)
-	if !errors.Is(err, sso.ErrPARNotFound) {
-		t.Fatalf("nil req: got %v, want ErrPARNotFound", err)
+	if !errors.Is(err, oauth.ErrPARNotFound) {
+		t.Fatalf("nil req: got %v, want oauth.ErrPARNotFound", err)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestPARStore_OptionalFieldsNilSurviveRoundTrip(t *testing.T) {
 	store := newPARStoreForTest(t)
 	ctx := context.Background()
 
-	req := &sso.PARRequest{
+	req := &oauth.PARRequest{
 		ClientID:     "minimal-client",
 		ResponseType: "code",
 		ExpiresAt:    time.Now().Add(60 * time.Second).UTC(),

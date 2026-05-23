@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import "net/http"
 
 // handleRevoke implements RFC 7009 token revocation. Per-token
@@ -95,11 +97,11 @@ func (s *Server) revokeAccess(ctx HandlerContext, token string) {
 	s.auditPartialRevokeFailure(ctx, revoked, failed)
 }
 
-// revokeRefresh deletes via the optional RefreshTokenInspector.Delete
+// revokeRefresh deletes via the optional oauth.RefreshTokenInspector.Delete
 // extension. No-op when the store doesn't implement the extension —
 // callers in that situation must rely on TTL expiry.
 func (s *Server) revokeRefresh(ctx HandlerContext, token string) {
-	insp, ok := s.refreshTokenStore.(RefreshTokenInspector)
+	insp, ok := s.refreshTokenStore.(oauth.RefreshTokenInspector)
 	if !ok {
 		return
 	}
@@ -109,15 +111,15 @@ func (s *Server) revokeRefresh(ctx HandlerContext, token string) {
 // handleRevokeAll implements the "logout everywhere" endpoint. The
 // user presents a bearer token; the server reads sub + aud from its
 // claims, then kills every refresh token bound to that
-// (subject, client) pair via the optional RefreshTokenSubjectIndex
+// (subject, client) pair via the optional oauth.RefreshTokenSubjectIndex
 // extension. The presented access token is also revoked via the
 // normal per-issuer path so it stops working immediately.
 //
 // Useful for a "sign out of all devices" button — one round trip
 // instead of per-device per-token revocation.
 //
-// Requires the RefreshTokenStore to implement
-// RefreshTokenSubjectIndex; without it, the response is 501.
+// Requires the oauth.RefreshTokenStore to implement
+// oauth.RefreshTokenSubjectIndex; without it, the response is 501.
 //
 // Authentication: bearer token only (not client credentials). The
 // user is the actor — they're authorizing the revocation of their
@@ -128,7 +130,7 @@ func (s *Server) handleRevokeAll(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
 	}
-	idx, ok := s.refreshTokenStore.(RefreshTokenSubjectIndex)
+	idx, ok := s.refreshTokenStore.(oauth.RefreshTokenSubjectIndex)
 	if !ok {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRefreshTokenNotConfigured))
 		return

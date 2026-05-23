@@ -50,6 +50,9 @@ anomaly/                            Async behavioral detection SPIs
 security/                           Per-account lockout, JTI replay,
                                     JAR/JWE, step-up, mTLS header
                                     extractor, subject-client index
+oauth/                              AuthCode/DeviceCode/RefreshToken/PAR
+                                    stores, DCR + RAR + claims-param
+                                    validators
 authenticators/                     9 pluggable + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)

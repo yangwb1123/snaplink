@@ -12,8 +12,8 @@ import (
 
 // mfaChallengesSchema persists in-flight MFA step-up state between
 // /auth/login's mfa_required response and the /auth/mfa completion
-// call. Same single-use atomic-consume contract AuthCodeStore and
-// PARStore enforce — DELETE ... RETURNING makes replay impossible
+// call. Same single-use atomic-consume contract oauth.AuthCodeStore and
+// oauth.PARStore enforce — DELETE ... RETURNING makes replay impossible
 // even under concurrent /auth/mfa requests targeting one challenge.
 //
 // RequestState is the SSO server's opaque JSON resume blob (logged
@@ -63,7 +63,7 @@ func NewMFAChallengeStore(dsn string) (*MFAChallengeStore, error) {
 }
 
 // NewMFAChallengeStoreWithDB wraps an existing *sql.DB. Caller owns
-// the connection lifecycle (matches the AuthCodeStore pattern for
+// the connection lifecycle (matches the oauth.AuthCodeStore pattern for
 // shared-pool deployments).
 func NewMFAChallengeStoreWithDB(db *sql.DB) (*MFAChallengeStore, error) {
 	if _, err := db.ExecContext(context.Background(), mfaChallengesSchema); err != nil {

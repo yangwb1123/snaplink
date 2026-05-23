@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -57,7 +59,7 @@ func (c *claimsCaptureAuthenticator) snapshot() json.RawMessage {
 	return out
 }
 
-func newClaimsParamHarness(t *testing.T) (*httptest.Server, *claimsCaptureAuthenticator, sso.PARStore) {
+func newClaimsParamHarness(t *testing.T) (*httptest.Server, *claimsCaptureAuthenticator, oauth.PARStore) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: cpUserID})
@@ -228,7 +230,7 @@ func TestClaimsParam_AcceptsNullPerSpec(t *testing.T) {
 
 func TestClaimsParam_PARPushSurvives(t *testing.T) {
 	srv, auth, store := newClaimsParamHarness(t)
-	uri, _ := store.Issue(context.Background(), &sso.PARRequest{
+	uri, _ := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:    cpClientID,
 		RedirectURI: cpRedirect,
 		Claims:      json.RawMessage(`{"userinfo":{"email":null}}`),

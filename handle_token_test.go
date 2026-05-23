@@ -159,7 +159,7 @@ func TestToken_ClientCredentials_HappyPath(t *testing.T) {
 }
 
 func TestToken_AuthorizationCode_NotImplementedWithoutStore(t *testing.T) {
-	// The token harness wires a client but no AuthCodeStore; the
+	// The token harness wires a client but no oauth.AuthCodeStore; the
 	// authorization_code branch should return 501 with the dedicated
 	// error code.
 	srv, _ := newTokenHarness(t, true)
@@ -178,7 +178,7 @@ func TestToken_AuthorizationCode_NotImplementedWithoutStore(t *testing.T) {
 }
 
 func TestToken_RefreshToken_NotImplementedWithoutStore(t *testing.T) {
-	// The token harness wires a client but no RefreshTokenStore; the
+	// The token harness wires a client but no oauth.RefreshTokenStore; the
 	// refresh_token branch should return 501 with the dedicated error
 	// code.
 	srv, _ := newTokenHarness(t, true)

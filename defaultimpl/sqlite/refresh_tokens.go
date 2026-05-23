@@ -1,5 +1,7 @@
 package sqlite
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"database/sql"
@@ -8,8 +10,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 // refreshTokenSchema mirrors the in-memory contract — same fields,
@@ -54,8 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_refresh_token_families_family
     ON refresh_token_families(family_id);
 `
 
-// RefreshTokenStore is the SQLite-backed implementation. Implements
-// both [sso.RefreshTokenStore] AND [sso.RefreshTokenInspector] so
+// oauth.RefreshTokenStore is the SQLite-backed implementation. Implements
+// both [oauth.RefreshTokenStore] AND [oauth.RefreshTokenInspector] so
 // introspection / revocation work against this backend out of the
 // box — same contract the memory backend exposes.
 type RefreshTokenStore struct {
@@ -161,9 +161,9 @@ func (s *RefreshTokenStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
-func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *sso.RefreshToken) error {
+func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth.RefreshToken) error {
 	if token == "" || info == nil {
-		return sso.ErrRefreshTokenNotFound
+		return oauth.ErrRefreshTokenNotFound
 	}
 	scopes, err := json.Marshal(info.Scopes)
 	if err != nil {
@@ -211,9 +211,9 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *sso.R
 //
 // On a miss, falls back to the families ledger: if the token is
 // known there but not in refresh_tokens it's a reuse-after-rotation
-// — return ErrRefreshTokenReused with the family_id stamped on the
-// returned RefreshToken so the handler can kill the entire family.
-func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*sso.RefreshToken, error) {
+// — return oauth.ErrRefreshTokenReused with the family_id stamped on the
+// returned oauth.RefreshToken so the handler can kill the entire family.
+func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM refresh_tokens WHERE token = ?
         RETURNING user_id, client_id, provider, scopes, attributes,
@@ -227,26 +227,26 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*sso.Ref
 			`SELECT family_id FROM refresh_token_families WHERE token = ?`, token,
 		).Scan(&familyID)
 		if errors.Is(ferr, sql.ErrNoRows) {
-			return nil, sso.ErrRefreshTokenNotFound
+			return nil, oauth.ErrRefreshTokenNotFound
 		}
 		if ferr != nil {
 			return nil, fmt.Errorf("sqlite: family lookup: %w", ferr)
 		}
-		return &sso.RefreshToken{FamilyID: familyID}, sso.ErrRefreshTokenReused
+		return &oauth.RefreshToken{FamilyID: familyID}, oauth.ErrRefreshTokenReused
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: consume refresh_token: %w", err)
 	}
 	if out.IsExpired() {
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return out, nil
 }
 
-// Inspect implements [sso.RefreshTokenInspector] — non-destructive
+// Inspect implements [oauth.RefreshTokenInspector] — non-destructive
 // SELECT. Expired entries are deleted opportunistically (single-row
 // GC) so the table self-trims as it's read.
-func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*sso.RefreshToken, error) {
+func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.RefreshToken, error) {
 	row := s.db.QueryRowContext(ctx, `
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, resources,
@@ -254,7 +254,7 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*sso.Ref
         FROM refresh_tokens WHERE token = ?`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: inspect refresh_token: %w", err)
@@ -262,7 +262,7 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*sso.Ref
 	if out.IsExpired() {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE token = ?`, token)
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM refresh_token_families WHERE token = ?`, token)
-		return nil, sso.ErrRefreshTokenNotFound
+		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return out, nil
 }
@@ -280,7 +280,7 @@ func (s *RefreshTokenStore) Delete(ctx context.Context, token string) error {
 	return nil
 }
 
-// DeleteAllForSubject implements [sso.RefreshTokenSubjectIndex]. Empty
+// DeleteAllForSubject implements [oauth.RefreshTokenSubjectIndex]. Empty
 // clientID = revoke across every client the user has tokens for —
 // useful for admin "kill all sessions" actions. Returns the count of
 // deleted rows.
@@ -319,7 +319,7 @@ func (s *RefreshTokenStore) DeleteAllForSubject(ctx context.Context, userID, cli
 	return int(n), nil
 }
 
-// DeleteFamily implements [sso.RefreshTokenFamilyTracker] — kills
+// DeleteFamily implements [oauth.RefreshTokenFamilyTracker] — kills
 // every active refresh token sharing the FamilyID and wipes the
 // matching reuse-detection ledger rows. Returns the count of active
 // tokens removed; the ledger wipe is bookkeeping and doesn't add to
@@ -341,9 +341,9 @@ func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (
 	return int(n), nil
 }
 
-func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
+func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	var (
-		out                                        sso.RefreshToken
+		out                                        oauth.RefreshToken
 		provider, scopesJSON, attrsJSON, resources string
 		familyID, authDetails, sid                 string
 		issuedAtUnixNs, expiresAtUnixNs            int64
@@ -384,8 +384,8 @@ func scanRefreshToken(s scanner) (*sso.RefreshToken, error) {
 }
 
 var (
-	_ sso.RefreshTokenStore         = (*RefreshTokenStore)(nil)
-	_ sso.RefreshTokenInspector     = (*RefreshTokenStore)(nil)
-	_ sso.RefreshTokenSubjectIndex  = (*RefreshTokenStore)(nil)
-	_ sso.RefreshTokenFamilyTracker = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenStore         = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenInspector     = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenSubjectIndex  = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenFamilyTracker = (*RefreshTokenStore)(nil)
 )

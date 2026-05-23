@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"encoding/base64"
@@ -25,7 +27,7 @@ const (
 	parRedirect = "https://app.example/callback"
 )
 
-func newPARHarness(t *testing.T, allowedResources []string) (*httptest.Server, sso.PARStore) {
+func newPARHarness(t *testing.T, allowedResources []string) (*httptest.Server, oauth.PARStore) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: parUserID})
@@ -89,8 +91,8 @@ func TestPAR_HappyPath_FormEncoded(t *testing.T) {
 		t.Fatalf("status=%d body=%v", status, body)
 	}
 	uri, _ := body["request_uri"].(string)
-	if !strings.HasPrefix(uri, sso.PARURIPrefix) {
-		t.Errorf("request_uri = %q want prefix %q", uri, sso.PARURIPrefix)
+	if !strings.HasPrefix(uri, oauth.PARURIPrefix) {
+		t.Errorf("request_uri = %q want prefix %q", uri, oauth.PARURIPrefix)
 	}
 	if exp, _ := body["expires_in"].(float64); exp <= 0 {
 		t.Errorf("expires_in = %v", exp)
@@ -191,7 +193,7 @@ func TestPAR_RejectsUnregisteredResource(t *testing.T) {
 
 func TestPAR_LoginConsumesRequestURI(t *testing.T) {
 	srv, store := newPARHarness(t, nil)
-	uri, err := store.Issue(context.Background(), &sso.PARRequest{
+	uri, err := store.Issue(context.Background(), &oauth.PARRequest{
 		ClientID:     parClientID,
 		ResponseType: "code",
 		RedirectURI:  parRedirect,
@@ -229,8 +231,8 @@ func TestPAR_LoginConsumesRequestURI(t *testing.T) {
 		t.Errorf("state = %v want abc", out["state"])
 	}
 	// Single-use: second consume must fail.
-	if _, err := store.Consume(context.Background(), uri); err != sso.ErrPARNotFound {
-		t.Errorf("second Consume err = %v want ErrPARNotFound", err)
+	if _, err := store.Consume(context.Background(), uri); err != oauth.ErrPARNotFound {
+		t.Errorf("second Consume err = %v want oauth.ErrPARNotFound", err)
 	}
 }
 
@@ -240,7 +242,7 @@ func TestPAR_LoginRejectsUnknownRequestURI(t *testing.T) {
 		"provider":    "password",
 		"client_id":   parClientID,
 		"credential":  map[string]string{"username": "x", "password": "y"},
-		"request_uri": sso.PARURIPrefix + "bogus",
+		"request_uri": oauth.PARURIPrefix + "bogus",
 	})
 	resp, err := http.Post(srv.URL+"/auth/login",
 		"application/json", strings.NewReader(string(body)))
@@ -295,7 +297,7 @@ func TestPAR_StoreNotConfigured_Returns501(t *testing.T) {
 // as newPARHarness but also seeds the client with an
 // authorization_details type allowlist so RFC 9396 PAR tests can
 // drive both the accept + reject branches.
-func newPARHarnessWithAuthzDetailsAllowlist(t *testing.T, allowedTypes []string) (*httptest.Server, sso.PARStore) {
+func newPARHarnessWithAuthzDetailsAllowlist(t *testing.T, allowedTypes []string) (*httptest.Server, oauth.PARStore) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: parUserID})
@@ -419,8 +421,8 @@ func TestPAR_RejectsDisallowedAuthorizationDetailsTypeAtPushTime(t *testing.T) {
 	if parStatus != http.StatusBadRequest {
 		t.Fatalf("par status=%d body=%v want 400", parStatus, body)
 	}
-	if body["error"] != sso.ErrInvalidAuthorizationDetails {
-		t.Errorf("error=%v want %q", body["error"], sso.ErrInvalidAuthorizationDetails)
+	if body["error"] != oauth.ErrInvalidAuthorizationDetails {
+		t.Errorf("error=%v want %q", body["error"], oauth.ErrInvalidAuthorizationDetails)
 	}
 }
 
@@ -434,8 +436,8 @@ func TestPAR_RejectsMalformedAuthorizationDetailsAtPushTime(t *testing.T) {
 	if parStatus != http.StatusBadRequest {
 		t.Fatalf("par status=%d body=%v want 400", parStatus, body)
 	}
-	if body["error"] != sso.ErrInvalidAuthorizationDetails {
-		t.Errorf("error=%v want %q", body["error"], sso.ErrInvalidAuthorizationDetails)
+	if body["error"] != oauth.ErrInvalidAuthorizationDetails {
+		t.Errorf("error=%v want %q", body["error"], oauth.ErrInvalidAuthorizationDetails)
 	}
 }
 

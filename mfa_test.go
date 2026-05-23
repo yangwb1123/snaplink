@@ -273,7 +273,7 @@ func TestMFA_UnknownChallengeID(t *testing.T) {
 // TestMFA_Replay_AlreadyConsumed — a successful /auth/mfa burns the
 // challenge; a second call with the same id MUST return mfa_invalid
 // (single-use enforcement — same DELETE-and-return atomic pattern
-// AuthCodeStore / DeviceCodeStore use).
+// oauth.AuthCodeStore / oauth.DeviceCodeStore use).
 func TestMFA_Replay_AlreadyConsumed(t *testing.T) {
 	srv, _, secret := buildMFAHarness(t)
 	_, body := loginMFA(t, srv)

@@ -1,4 +1,4 @@
-package sso
+package oauth
 
 import (
 	"encoding/json"
@@ -32,7 +32,7 @@ import (
 // that don't simply pass the field through — empty `claims` is a
 // safe no-op.
 
-// validateClaimsParameter asserts the raw JSON is a JSON object
+// ValidateClaimsParameter asserts the raw JSON is a JSON object
 // (the only shape OIDC Core §5.5 defines) AND that each requested-
 // claim entry is either null OR a JSON object whose well-known
 // members (essential / value / values) carry the spec-mandated
@@ -44,7 +44,7 @@ import (
 // Extension members of the per-claim object are explicitly allowed
 // by §5.5 and skipped here — strict-typing them would reject
 // forward-compatible payloads.
-func validateClaimsParameter(raw json.RawMessage) error {
+func ValidateClaimsParameter(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
 	}

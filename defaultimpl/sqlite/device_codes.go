@@ -1,5 +1,7 @@
 package sqlite
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"context"
 	"database/sql"
@@ -7,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 // deviceCodeSchema captures the RFC 8628 device flow state machine.
@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at
     ON device_codes(expires_at);
 `
 
-// DeviceCodeStore is the SQLite-backed [sso.DeviceCodeStore].
+// oauth.DeviceCodeStore is the SQLite-backed [oauth.DeviceCodeStore].
 type DeviceCodeStore struct {
 	db *sql.DB
 }
@@ -81,9 +81,9 @@ func (s *DeviceCodeStore) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
-func (s *DeviceCodeStore) Issue(ctx context.Context, dc *sso.DeviceCode) error {
+func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error {
 	if dc == nil || dc.DeviceCode == "" || dc.UserCode == "" {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	scopes, err := json.Marshal(dc.Scopes)
 	if err != nil {
@@ -110,20 +110,20 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *sso.DeviceCode) error {
 	return nil
 }
 
-func (s *DeviceCodeStore) GetByDeviceCode(ctx context.Context, deviceCode string) (*sso.DeviceCode, error) {
+func (s *DeviceCodeStore) GetByDeviceCode(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
 	row := s.db.QueryRowContext(ctx, deviceCodeSelectByCol("device_code"), deviceCode)
 	return s.fetch(ctx, row)
 }
 
-func (s *DeviceCodeStore) GetByUserCode(ctx context.Context, userCode string) (*sso.DeviceCode, error) {
+func (s *DeviceCodeStore) GetByUserCode(ctx context.Context, userCode string) (*oauth.DeviceCode, error) {
 	row := s.db.QueryRowContext(ctx, deviceCodeSelectByCol("user_code"), userCode)
 	return s.fetch(ctx, row)
 }
 
-func (s *DeviceCodeStore) fetch(ctx context.Context, row *sql.Row) (*sso.DeviceCode, error) {
+func (s *DeviceCodeStore) fetch(ctx context.Context, row *sql.Row) (*oauth.DeviceCode, error) {
 	out, err := scanDeviceCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, sso.ErrDeviceCodeNotFound
+		return nil, oauth.ErrDeviceCodeNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: fetch device_code: %w", err)
@@ -133,7 +133,7 @@ func (s *DeviceCodeStore) fetch(ctx context.Context, row *sql.Row) (*sso.DeviceC
 		// stale state. Errors here are non-fatal — the caller already
 		// got "not found" semantics.
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM device_codes WHERE device_code = ?`, out.DeviceCode)
-		return nil, sso.ErrDeviceCodeNotFound
+		return nil, oauth.ErrDeviceCodeNotFound
 	}
 	return out, nil
 }
@@ -152,7 +152,7 @@ func (s *DeviceCodeStore) Approve(ctx context.Context, userCode, userID, provide
 		return fmt.Errorf("sqlite: approve device_code: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	return nil
 }
@@ -166,7 +166,7 @@ func (s *DeviceCodeStore) Deny(ctx context.Context, userCode string) error {
 		return fmt.Errorf("sqlite: deny device_code: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	return nil
 }
@@ -179,7 +179,7 @@ func (s *DeviceCodeStore) UpdateLastPoll(ctx context.Context, deviceCode string,
 		return fmt.Errorf("sqlite: update last_poll: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return sso.ErrDeviceCodeNotFound
+		return oauth.ErrDeviceCodeNotFound
 	}
 	return nil
 }
@@ -202,9 +202,9 @@ func deviceCodeSelectByCol(col string) string {
         FROM device_codes WHERE ` + col + ` = ?`
 }
 
-func scanDeviceCode(s scanner) (*sso.DeviceCode, error) {
+func scanDeviceCode(s scanner) (*oauth.DeviceCode, error) {
 	var (
-		out                                         sso.DeviceCode
+		out                                         oauth.DeviceCode
 		nonce, provider, scopesJSON, attrsJSON      string
 		approvedInt, deniedInt                      int64
 		lastPollUnixNs, intervalNs, expiresAtUnixNs int64
@@ -244,4 +244,4 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-var _ sso.DeviceCodeStore = (*DeviceCodeStore)(nil)
+var _ oauth.DeviceCodeStore = (*DeviceCodeStore)(nil)

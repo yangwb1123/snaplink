@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -257,8 +259,8 @@ func TestRevoke_RefreshTokenSucceedsAndKillsToken(t *testing.T) {
 	}
 
 	// Consume must now fail — the token is gone.
-	if _, err := store.Consume(context.Background(), refresh); !errors.Is(err, sso.ErrRefreshTokenNotFound) {
-		t.Errorf("Consume after revoke err = %v want ErrRefreshTokenNotFound", err)
+	if _, err := store.Consume(context.Background(), refresh); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Errorf("Consume after revoke err = %v want oauth.ErrRefreshTokenNotFound", err)
 	}
 }
 

@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -325,13 +327,13 @@ func TestPKCE_RequirePKCEAcceptsValidChallenge(t *testing.T) {
 	}
 }
 
-// ---------- AuthCode storage round-trip for PKCE fields ----------
+// ---------- oauth.AuthCode storage round-trip for PKCE fields ----------
 
 func TestPKCE_AuthCodeStoreRoundTripsChallengeFields(t *testing.T) {
-	// Direct SPI check: the in-memory AuthCodeStore must preserve the
+	// Direct SPI check: the in-memory oauth.AuthCodeStore must preserve the
 	// CodeChallenge + CodeChallengeMethod fields end-to-end.
 	store := defaultimpl.NewMemoryAuthCodeStore()
-	in := &sso.AuthCode{
+	in := &oauth.AuthCode{
 		UserID:              "u",
 		ClientID:            "c",
 		CodeChallenge:       "abc-challenge",

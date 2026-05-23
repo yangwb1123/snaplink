@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"errors"
 	"net/http"
@@ -170,11 +172,11 @@ func (s *Server) introspectAccess(ctx HandlerContext, token string) (map[string]
 	return body, true
 }
 
-// introspectRefresh queries the optional RefreshTokenInspector. Returns
+// introspectRefresh queries the optional oauth.RefreshTokenInspector. Returns
 // (nil, false) when the store doesn't implement the inspector
 // extension OR the token is unknown / expired.
 func (s *Server) introspectRefresh(ctx HandlerContext, token string) (map[string]any, bool) {
-	insp, ok := s.refreshTokenStore.(RefreshTokenInspector)
+	insp, ok := s.refreshTokenStore.(oauth.RefreshTokenInspector)
 	if !ok {
 		return nil, false
 	}

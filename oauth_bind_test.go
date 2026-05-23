@@ -236,7 +236,7 @@ func TestFormEncoded_DeviceCode(t *testing.T) {
 }
 
 // newFormDeviceHarness mirrors newFormHarness but also wires a
-// DeviceCodeStore so /device/code is enabled.
+// oauth.DeviceCodeStore so /device/code is enabled.
 func newFormDeviceHarness(t *testing.T) *httptest.Server {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()

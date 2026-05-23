@@ -5,6 +5,8 @@
 // TLS itself or sits behind an OpenResty / Envoy / NGINX reverse proxy.
 package main
 
+import "github.com/snaplink/sso/oauth"
+
 import (
 	"bytes"
 	"context"
@@ -206,7 +208,7 @@ type app struct {
 	// when the underlying SPI isn't wired — emission degrades silently
 	// instead of breaking the ceremony.
 	idTokenIssuer     sso.IDTokenIssuer
-	refreshTokenStore sso.RefreshTokenStore
+	refreshTokenStore oauth.RefreshTokenStore
 	refreshTokenTTL   time.Duration
 
 	adminMW *sso.AdminMiddleware // nil when admin disabled
@@ -1043,7 +1045,7 @@ func buildSessionManager(cfg config.IdentityConfig, ttl time.Duration) (sso.Sess
 // pool — for SQLite that's fine (OS-level file lock coordinates),
 // for a future shared *sql.DB across stores a different abstraction
 // is needed.
-func buildAuthCodeStore(cfg config.OAuthConfig) (sso.AuthCodeStore, error) {
+func buildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryAuthCodeStore(), nil
@@ -1057,7 +1059,7 @@ func buildAuthCodeStore(cfg config.OAuthConfig) (sso.AuthCodeStore, error) {
 	}
 }
 
-func buildRefreshTokenStore(cfg config.OAuthConfig) (sso.RefreshTokenStore, error) {
+func buildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryRefreshTokenStore(), nil
@@ -1071,7 +1073,7 @@ func buildRefreshTokenStore(cfg config.OAuthConfig) (sso.RefreshTokenStore, erro
 	}
 }
 
-func buildDeviceCodeStore(cfg config.OAuthConfig) (sso.DeviceCodeStore, error) {
+func buildDeviceCodeStore(cfg config.OAuthConfig) (oauth.DeviceCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryDeviceCodeStore(), nil
@@ -1085,7 +1087,7 @@ func buildDeviceCodeStore(cfg config.OAuthConfig) (sso.DeviceCodeStore, error) {
 	}
 }
 
-func buildPARStore(cfg config.OAuthConfig) (sso.PARStore, error) {
+func buildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryPARStore(), nil
@@ -2364,7 +2366,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-auth-codes", store)
 	}
-	var refreshTokenStore sso.RefreshTokenStore
+	var refreshTokenStore oauth.RefreshTokenStore
 	var refreshTokenTTL time.Duration
 	if cfg.OAuth.RefreshToken.Enabled {
 		store, err := buildRefreshTokenStore(cfg.OAuth)
@@ -2408,7 +2410,7 @@ func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
 		opts = append(opts, sso.WithJARFetcher(f))
 	}
 	if cr := cfg.ClientRegistration; cr.Enabled {
-		opts = append(opts, sso.WithDynamicClientRegistration(sso.DCRPolicy{
+		opts = append(opts, sso.WithDynamicClientRegistration(oauth.DCRPolicy{
 			InitialAccessToken:    cr.InitialAccessToken,
 			AllowOpenRegistration: cr.AllowOpenRegistration,
 			DefaultActive:         cr.DefaultActive,
