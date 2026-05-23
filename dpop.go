@@ -308,6 +308,7 @@ func requestURLForDPoP(r *http.Request) string {
 	path := r.URL.Path
 	return scheme + "://" + host + path
 }
+
 // DefaultDPoPNonceTTL is the validity window of an HMAC-signed nonce.
 // Long enough that a client's natural retry cadence reuses the same
 // nonce; short enough that a stolen nonce expires before it could be
