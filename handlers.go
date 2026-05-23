@@ -2409,21 +2409,7 @@ func (s *Server) recordAccountLocked(ctx HandlerContext, clientID, provider, loc
 // target is intentionally not stored in full to limit PII spread; only its
 // type lives in Provider, the value goes into a short metadata key.
 func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok bool) {
-	if s.auditor == nil {
-		return
-	}
-	e := audit.EventFromRequest(ctx)
-	e.Type = audit.EventCodeSent
-	e.Provider = provider
-	if ok {
-		e.Outcome = audit.OutcomeSuccess
-	} else {
-		e.Outcome = audit.OutcomeFailure
-	}
-	if target != "" {
-		audit.SetMeta(e, "target", maskTarget(target))
-	}
-	s.auditor.Record(ctx.Request().Context(), e)
+	audit.RecordCodeSent(s.auditor, ctx, provider, target, ok)
 }
 
 // recordTokenIssued emits a token_issued event (used for grant flows).
@@ -2491,22 +2477,6 @@ func itoa(n int) string {
 // recordCallbackFailure emits a callback_failure event.
 func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
 	audit.RecordCallbackFailure(s.auditor, ctx, provider, reason)
-}
-
-// maskTarget redacts the bulk of a phone number or email so the event remains
-// auditable without storing the raw identifier.
-func maskTarget(t string) string {
-	if at := strings.IndexByte(t, '@'); at > 0 {
-		// email: keep first char + domain
-		if at == 1 {
-			return t[:1] + "***" + t[at:]
-		}
-		return t[:1] + "***" + t[at-1:]
-	}
-	if len(t) > 4 {
-		return t[:2] + strings.Repeat("*", len(t)-4) + t[len(t)-2:]
-	}
-	return "***"
 }
 
 // PathOIDCDiscovery is the OpenID Connect Discovery 1.0 metadata

@@ -174,6 +174,63 @@ func RecordAccountLocked(rec *Recorder, ctx core.HandlerContext, clientID, provi
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordCodeSent emits a code_sent event for two-step flows (phone/email).
+// target is intentionally not stored in full to limit PII spread; only its
+// type lives in Provider, the value goes into a short metadata key.
+func RecordCodeSent(rec *Recorder, ctx core.HandlerContext, provider, target string, ok bool) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	e.Type = EventCodeSent
+	e.Provider = provider
+	if ok {
+		e.Outcome = OutcomeSuccess
+	} else {
+		e.Outcome = OutcomeFailure
+	}
+	if target != "" {
+		SetMeta(e, "target", maskTarget(target))
+	}
+	rec.Record(ctx.Request().Context(), e)
+}
+
+// maskTarget redacts the bulk of a phone number or email so the event
+// remains auditable without storing the raw identifier.
+func maskTarget(t string) string {
+	if at := indexByte(t, '@'); at > 0 {
+		// email: keep first char + domain
+		if at == 1 {
+			return t[:1] + "***" + t[at:]
+		}
+		return t[:1] + "***" + t[at-1:]
+	}
+	if len(t) > 4 {
+		return t[:2] + repeat("*", len(t)-4) + t[len(t)-2:]
+	}
+	return "***"
+}
+
+func indexByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
+}
+
+func repeat(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	out := make([]byte, 0, len(s)*n)
+	for i := 0; i < n; i++ {
+		out = append(out, s...)
+	}
+	return string(out)
+}
+
 // RecordCallbackFailure emits a callback_failure event when an
 // external provider callback fails (oidc_federation).
 func RecordCallbackFailure(rec *Recorder, ctx core.HandlerContext, provider, reason string) {
