@@ -1,0 +1,4436 @@
+package sso
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"math/big"
+	"net/http"
+	"net/url"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/snaplink/sso/anomaly"
+	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/netpolicy"
+	"github.com/snaplink/sso/oauth"
+	"github.com/snaplink/sso/oidc"
+	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/spi"
+)
+
+// active state + standard metadata claims for a presented access or
+// refresh token. Inactive tokens return {active: false} only, with no
+// extra metadata — §2.2 mandates this to limit oracle leakage.
+//
+// Auth: the introspecting client authenticates with client_id +
+// client_secret (Basic auth or form body). Per §2.1 any registered
+// active client may introspect — production deployments that want
+// stronger isolation should layer an authorization middleware that
+// checks a custom "introspect" scope or role on the client.
+func (s *Server) handleIntrospect(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	var req struct {
+		Token               string `json:"token"`
+		TokenTypeHint       string `json:"token_type_hint"` // "access_token" | "refresh_token"
+		ClientID            string `json:"client_id"`
+		ClientSecret        string `json:"client_secret"`
+		ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
+		ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if id, secret, ok := basicClientCreds(ctx.Request()); ok {
+		// HTTP Basic auth takes precedence over body fields when present
+		// — matches the RFC 6749 §2.3.1 recommendation.
+		req.ClientID = id
+		req.ClientSecret = secret
+	}
+
+	// RFC 7521/7523 JWT bearer client auth on /token/introspect.
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+		req.ClientID = assertedID
+		// Bypass the secret-based authenticate path entirely: JWT
+		// assertion stands in for the secret per RFC 7521 §4.2.
+		// Still validate the tenant + active gates below via a
+		// minimal client lookup so a deactivated client can't
+		// introspect.
+		c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+		if err != nil || c == nil || !c.Active || !clientTenantOK(ctx, c) {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+	} else if err := s.authenticateIntrospectionClient(ctx, req.ClientID, req.ClientSecret); err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return
+	}
+
+	if req.Token == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+
+	// Resolution order is hint-driven: when the hint is "refresh_token"
+	// try the refresh store first to avoid an unnecessary access-token
+	// signature check, but always fall back to the other tier so a wrong
+	// hint doesn't mark a valid token inactive.
+	if req.TokenTypeHint == "refresh_token" {
+		if body, ok := s.introspectRefresh(ctx, req.Token); ok {
+			ctx.JSON(http.StatusOK, body)
+			return
+		}
+		if body, ok := s.introspectAccess(ctx, req.Token); ok {
+			ctx.JSON(http.StatusOK, body)
+			return
+		}
+	} else {
+		if body, ok := s.introspectAccess(ctx, req.Token); ok {
+			ctx.JSON(http.StatusOK, body)
+			return
+		}
+		if body, ok := s.introspectRefresh(ctx, req.Token); ok {
+			ctx.JSON(http.StatusOK, body)
+			return
+		}
+	}
+
+	// Unknown / expired / revoked → §2.2 mandates {active: false} only.
+	ctx.JSON(http.StatusOK, map[string]any{KeyActive: false})
+}
+
+// introspectAccess validates the token as an access token via every
+// registered issuer. Returns a populated metadata body on success.
+func (s *Server) introspectAccess(ctx HandlerContext, token string) (map[string]any, bool) {
+	if len(s.tokenIssuers) == 0 {
+		return nil, false
+	}
+	claims, issuerName, err := s.validateAnyToken(ctx.Request().Context(), token)
+	if err != nil || claims == nil {
+		return nil, false
+	}
+	body := map[string]any{
+		KeyActive:    true,
+		KeyTokenType: TokenTypeBearer,
+		KeySub:       claims.Subject,
+		KeyIss:       claims.Issuer,
+		KeyTokenHint: "access_token",
+		KeyStrategy:  issuerName,
+	}
+	if !claims.ExpiresAt.IsZero() {
+		body[KeyExp] = claims.ExpiresAt.Unix()
+	}
+	if !claims.IssuedAt.IsZero() {
+		body[KeyIat] = claims.IssuedAt.Unix()
+	}
+	if !claims.NotBefore.IsZero() {
+		body[KeyNbf] = claims.NotBefore.Unix()
+	}
+	if len(claims.Audience) > 0 {
+		body[KeyAud] = claims.Audience
+	}
+	// RFC 9068 §2.2 supplies a first-class `client_id` claim. Prefer
+	// it; fall back to the first audience entry for older tokens or
+	// non-RFC-9068 issuers (per RFC 7662 §2.2 the field is optional).
+	switch {
+	case claims.ClientID != "":
+		body[KeyClientID] = claims.ClientID
+	case len(claims.Audience) > 0:
+		body[KeyClientID] = claims.Audience[0]
+	}
+	if len(claims.Scopes) > 0 {
+		body[KeyScope] = strings.Join(claims.Scopes, " ")
+	}
+	// RFC 9068 §2.2 jti — useful for replay tracking on the
+	// introspecting resource server. Same goes for auth_time / acr
+	// / amr which let downstream policy reason about how the user
+	// authenticated.
+	if claims.JTI != "" {
+		body[KeyJTI] = claims.JTI
+	}
+	if !claims.AuthTime.IsZero() {
+		body[KeyAuthTime] = claims.AuthTime.Unix()
+	}
+	if claims.ACR != "" {
+		body[KeyACR] = claims.ACR
+	}
+	if len(claims.AMR) > 0 {
+		body[KeyAMR] = claims.AMR
+	}
+	return body, true
+}
+
+// introspectRefresh queries the optional oauth.RefreshTokenInspector. Returns
+// (nil, false) when the store doesn't implement the inspector
+// extension OR the token is unknown / expired.
+func (s *Server) introspectRefresh(ctx HandlerContext, token string) (map[string]any, bool) {
+	insp, ok := s.refreshTokenStore.(oauth.RefreshTokenInspector)
+	if !ok {
+		return nil, false
+	}
+	info, err := insp.Inspect(ctx.Request().Context(), token)
+	if err != nil || info == nil {
+		return nil, false
+	}
+	body := map[string]any{
+		KeyActive:    true,
+		KeyTokenType: TokenTypeBearer,
+		KeySub:       info.UserID,
+		KeyClientID:  info.ClientID,
+		KeyTokenHint: "refresh_token",
+	}
+	if !info.ExpiresAt.IsZero() {
+		body[KeyExp] = info.ExpiresAt.Unix()
+	}
+	if !info.IssuedAt.IsZero() {
+		body[KeyIat] = info.IssuedAt.Unix()
+	}
+	if len(info.Scopes) > 0 {
+		body[KeyScope] = strings.Join(info.Scopes, " ")
+	}
+	return body, true
+}
+
+// authenticateIntrospectionClient verifies the introspecting client's
+// credentials via the existing client store. Returns nil on success.
+func (s *Server) authenticateIntrospectionClient(ctx HandlerContext, id, secret string) error {
+	if id == "" || secret == "" {
+		return errors.New("missing client credentials")
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), id)
+	if err != nil {
+		return err
+	}
+	if !client.Active {
+		return errors.New("inactive client")
+	}
+	if !clientTenantOK(ctx, client) {
+		return errors.New("tenant mismatch")
+	}
+	return s.clientStore.ValidateSecret(ctx.Request().Context(), id, secret)
+}
+
+// basicClientCreds extracts (client_id, client_secret) from an HTTP
+// Basic Authorization header, or returns ok=false when absent / malformed.
+func basicClientCreds(r *http.Request) (id, secret string, ok bool) {
+	if r == nil {
+		return "", "", false
+	}
+	u, p, basicOK := r.BasicAuth()
+	if !basicOK {
+		return "", "", false
+	}
+	return u, p, true
+}
+
+// handlePAR implements RFC 9126 Pushed Authorization Requests.
+// Confidential clients POST their authorization request parameters
+// here BEFORE redirecting the user agent, getting back an opaque
+// request_uri they then pass to /auth/login. This pre-registration
+// pattern:
+//
+//   - Authenticates the client BEFORE the user-agent redirect (the
+//     traditional authorization flow has the AS see the client
+//     only AFTER the redirect, when there's nothing to do about a
+//     bad request beyond rendering an error).
+//   - Removes long auth-request URLs (PKCE + scopes + state +
+//     resource + nonce add up fast) that browsers, log files, and
+//     proxies all handle poorly.
+//   - Prevents request-tampering: nothing in the redirect URL
+//     beyond client_id + request_uri can be modified without
+//     invalidating the lookup.
+//
+// Auth: HTTP Basic OR client_id+client_secret form body per
+// RFC 6749 §2.3.1 (Basic wins when both present — same precedence
+// rule as /token).
+//
+// Spec sentinel mapping:
+//   - missing client credentials              → 401 invalid_client
+//   - PAR store not wired                     → 501 par_not_configured
+//   - invalid redirect_uri allowlist          → 400 invalid_redirect_uri
+//   - resource not in allowlist (RFC 8707)    → 400 invalid_target
+//
+// Response per RFC 9126 §2.2:
+//
+//	{
+//	  "request_uri": "urn:ietf:params:oauth:request_uri:<token>",
+//	  "expires_in":  90
+//	}
+func (s *Server) handlePAR(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if s.parStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPARNotConfigured))
+		return
+	}
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	var req struct {
+		ClientID             string          `json:"client_id"`
+		ClientSecret         string          `json:"client_secret"`
+		ResponseType         string          `json:"response_type"`
+		RedirectURI          string          `json:"redirect_uri"`
+		Scope                string          `json:"scope"`
+		State                string          `json:"state"`
+		Nonce                string          `json:"nonce"`
+		CodeChallenge        string          `json:"code_challenge"`
+		CodeChallengeMethod  string          `json:"code_challenge_method"`
+		Resource             []string        `json:"resource"`
+		AuthorizationDetails json.RawMessage `json:"authorization_details"` // RFC 9396
+		LoginHint            string          `json:"login_hint"`            // OIDC Core §3.1.2.1
+		ResponseMode         string          `json:"response_mode"`         // OIDC Form Post 1.0
+		ACRValues            string          `json:"acr_values"`            // OIDC Core §3.1.2.1
+		UILocales            string          `json:"ui_locales"`            // OIDC Core §3.1.2.1
+		Claims               json.RawMessage `json:"claims"`                // OIDC Core §5.5
+		ClientAssertion      string          `json:"client_assertion"`      // RFC 7521 + 7523
+		ClientAssertionType  string          `json:"client_assertion_type"` // RFC 7521 + 7523
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if id, secret, ok := basicClientCreds(ctx.Request()); ok {
+		req.ClientID = id
+		req.ClientSecret = secret
+	}
+
+	// RFC 7521/7523 — JWT bearer client authentication is accepted
+	// on /par just like /token. When the assertion is supplied, the
+	// JWT's `sub` claim is the authoritative client identity (form
+	// `client_id` MUST agree if supplied at all).
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+		req.ClientID = assertedID
+	}
+
+	if req.ClientID == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingClientID))
+		return
+	}
+
+	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return
+	}
+	if !client.Active {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
+		return
+	}
+	if !clientTenantOK(ctx, client) {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		return
+	}
+	// Skip client_secret validation when the JWT assertion already
+	// proved client identity (RFC 7521 §4.2 forbids requiring both).
+	if req.ClientAssertion == "" {
+		if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
+			return
+		}
+	}
+	if req.RedirectURI != "" && !client.IsRedirectURIValid(req.RedirectURI) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
+		return
+	}
+	if !client.AreResourcesAllowed(req.Resource) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		return
+	}
+	// OIDC Form Post 1.0: reject malformed response_mode at PAR
+	// time so the caller fails fast (whole point of PAR — surface
+	// validation upstream of the user-agent redirect).
+	if req.ResponseMode != "" && !isValidResponseMode(req.ResponseMode) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	// RFC 9396: validate authorization_details up front so a
+	// malformed / disallowed payload fails at PAR time rather than
+	// surfacing later at /auth/login (PAR's whole point is to move
+	// validation upstream of the user-agent redirect).
+	if _, err := oauth.ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidAuthorizationDetails, err.Error()))
+		return
+	}
+
+	ttl := s.parTTL
+	if ttl <= 0 {
+		ttl = oauth.DefaultPARTTL
+	}
+	uri, err := s.parStore.Issue(ctx.Request().Context(), &oauth.PARRequest{
+		ClientID:             req.ClientID,
+		ResponseType:         req.ResponseType,
+		RedirectURI:          req.RedirectURI,
+		Scope:                splitScope(req.Scope),
+		State:                req.State,
+		Nonce:                req.Nonce,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Resource:             req.Resource,
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
+		LoginHint:            req.LoginHint,
+		ResponseMode:         req.ResponseMode,
+		ACRValues:            req.ACRValues,
+		UILocales:            req.UILocales,
+		Claims:               oauth.CloneRawJSON(req.Claims),
+		ExpiresAt:            time.Now().Add(ttl),
+	})
+	if err != nil {
+		s.logger.Error("par issue failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, map[string]any{
+		"request_uri": uri,
+		"expires_in":  int(ttl.Seconds()),
+	})
+}
+
+// handleRevoke implements RFC 7009 token revocation. Per-token
+// revocation that's complementary to /logout (which is session-scoped).
+//
+// Auth: same client credentials as /token/introspect. Per §2 any
+// registered active client may revoke — but the server MUST NOT
+// distinguish revocation of an unknown token from a successful
+// revocation (§2.2), so the wire response is always 200 OK with an
+// empty body when the credentials are valid, regardless of whether
+// the token existed.
+//
+// token_type_hint is honored as an optimization (try the named tier
+// first) but the server still attempts the other tier on miss, so a
+// wrong hint doesn't leave the token alive.
+func (s *Server) handleRevoke(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	var req struct {
+		Token               string `json:"token"`
+		TokenTypeHint       string `json:"token_type_hint"`
+		ClientID            string `json:"client_id"`
+		ClientSecret        string `json:"client_secret"`
+		ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
+		ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if id, secret, ok := basicClientCreds(ctx.Request()); ok {
+		req.ClientID = id
+		req.ClientSecret = secret
+	}
+
+	// RFC 7521/7523 JWT bearer client auth on /token/revoke.
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+		req.ClientID = assertedID
+		c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+		if err != nil || c == nil || !c.Active || !clientTenantOK(ctx, c) {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
+	} else if err := s.authenticateIntrospectionClient(ctx, req.ClientID, req.ClientSecret); err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return
+	}
+
+	if req.Token == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+
+	// Best-effort across both tiers. Errors are intentionally ignored
+	// per §2.2 — the response is always 200 OK on valid credentials.
+	if req.TokenTypeHint == "refresh_token" {
+		s.revokeRefresh(ctx, req.Token)
+		s.revokeAccess(ctx, req.Token)
+	} else {
+		s.revokeAccess(ctx, req.Token)
+		s.revokeRefresh(ctx, req.Token)
+	}
+
+	ctx.JSON(http.StatusOK, map[string]any{})
+}
+
+// revokeAccess delegates to the existing per-issuer revocation chain.
+func (s *Server) revokeAccess(ctx HandlerContext, token string) {
+	if len(s.tokenIssuers) == 0 {
+		return
+	}
+	revoked, failed := s.revokeAcrossIssuers(ctx.Request().Context(), token)
+	s.auditPartialRevokeFailure(ctx, revoked, failed)
+}
+
+// revokeRefresh deletes via the optional oauth.RefreshTokenInspector.Delete
+// extension. No-op when the store doesn't implement the extension —
+// callers in that situation must rely on TTL expiry.
+func (s *Server) revokeRefresh(ctx HandlerContext, token string) {
+	insp, ok := s.refreshTokenStore.(oauth.RefreshTokenInspector)
+	if !ok {
+		return
+	}
+	_ = insp.Delete(ctx.Request().Context(), token)
+}
+
+// handleRevokeAll implements the "logout everywhere" endpoint. The
+// user presents a bearer token; the server reads sub + aud from its
+// claims, then kills every refresh token bound to that
+// (subject, client) pair via the optional oauth.RefreshTokenSubjectIndex
+// extension. The presented access token is also revoked via the
+// normal per-issuer path so it stops working immediately.
+//
+// Useful for a "sign out of all devices" button — one round trip
+// instead of per-device per-token revocation.
+//
+// Requires the oauth.RefreshTokenStore to implement
+// oauth.RefreshTokenSubjectIndex; without it, the response is 501.
+//
+// Authentication: bearer token only (not client credentials). The
+// user is the actor — they're authorizing the revocation of their
+// own tokens.
+func (s *Server) handleRevokeAll(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if err := s.requireDeps(DepTokenIssuer); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+	idx, ok := s.refreshTokenStore.(oauth.RefreshTokenSubjectIndex)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrRefreshTokenNotConfigured))
+		return
+	}
+
+	bearer := bearerToken(ctx.Request())
+	if bearer == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
+	if err != nil || claims == nil || claims.Subject == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+
+	clientID := ""
+	if len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+
+	// OIDC §8 pairwise: refresh tokens are stored by local sub.
+	// Translate pairwise → local before the bulk delete so the
+	// caller's revoke-all actually finds anything.
+	lookupSub, perr := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		s.logger.Error("pairwise resolve failed at revoke-all", "error", perr, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Subject mapping unavailable")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+	deleted, err := idx.DeleteAllForSubject(ctx.Request().Context(), lookupSub, clientID)
+	if err != nil {
+		s.logger.Error("revoke-all failed", "error", err, "subject", lookupSub)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	// Also revoke the presented access token across all issuers so it
+	// stops working immediately — without this, the bearer the caller
+	// just used would keep working until expiry, which is surprising
+	// for a "logout everywhere" semantic.
+	revoked, failed := s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
+	s.auditPartialRevokeFailure(ctx, revoked, failed)
+
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus:                StatusOK,
+		"refresh_tokens_revoked": deleted,
+	})
+}
+
+// handleTokenExchangeGrant implements RFC 8693 OAuth 2.0 Token
+// Exchange. The grant lets one party swap an existing token for
+// another — typically a downstream service exchanging the user's
+// access token for a token scoped specifically to its callee, so
+// the original token isn't replayed across services (the "confused
+// deputy" defense that resource indicators (RFC 8707) is also
+// designed for).
+//
+// Request (form-encoded per RFC 6749 §3.2):
+//
+//   - grant_type            urn:ietf:params:oauth:grant-type:token-exchange
+//   - subject_token         REQUIRED — the token being exchanged
+//   - subject_token_type    REQUIRED — token type URI
+//   - resource              RFC 8707 audience (zero or more)
+//   - audience              RFC 8693 audience (zero or more)
+//   - scope                 OPTIONAL — narrow the issued token's scope
+//   - requested_token_type  OPTIONAL — defaults to access_token
+//   - actor_token /
+//     actor_token_type      OPTIONAL — for delegation chains
+//
+// Response per §2.2.1:
+//
+//	{
+//	  "access_token":      "<new token>",
+//	  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+//	  "token_type":        "Bearer",
+//	  "expires_in":        N,
+//	  "scope":             "...",
+//	  "token_strategy":    "<wired strategy name>"
+//	}
+//
+// v1 supports:
+//   - Subject token type access_token (the common case — exchange a
+//     bearer for a more narrowly-audienced bearer).
+//   - Requested token type access_token (default) and refresh_token
+//     (when WithRefreshTokenStore is wired — opts in the family
+//     rotation + RFC 8693 §2.2 issued_token_type=refresh_token
+//     response shape).
+//   - resource + audience (merged into the new token's aud claim).
+//   - Scope narrowing (subset of the subject token's scopes).
+//   - actor_token replay protection via WithJTIReplayStore.
+//
+// Future-scope (deliberately deferred for v1):
+//   - JWT / SAML subject tokens (requires bespoke validators).
+//   - Actor token delegation chain in the issued token's claims.
+//
+// Sentinel mapping:
+//
+//   - missing subject_token / subject_token_type → 400 invalid_request
+//   - unsupported subject_token_type → 400 invalid_request
+//   - subject_token failed validation → 400 invalid_grant
+//   - unregistered resource / audience → 400 invalid_target (RFC 8707)
+//   - scope expansion attempt → 400 invalid_scope (RFC 6749 §6 analogue)
+//   - unsupported requested_token_type → 400 invalid_request
+func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, req tokenExchangeRequest) {
+	if req.SubjectToken == "" || req.SubjectTokenType == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if req.SubjectTokenType != TokenTypeAccessToken &&
+		req.SubjectTokenType != TokenTypeJWT {
+		// RFC 8693 §2.1 lists more token types; v1 only handles
+		// signed access tokens issued by this server.
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if req.RequestedTokenType != "" &&
+		req.RequestedTokenType != TokenTypeAccessToken &&
+		req.RequestedTokenType != TokenTypeRefreshToken {
+		// Access + Refresh supported; ID token / SAML2 are future
+		// work (no compelling caller need yet). Anything else =>
+		// caller wanted something we can't deliver.
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	// Refresh-token output requires a wired refresh store — without
+	// it there's no way to honor the resulting rotation grant. Fail
+	// fast rather than silently downgrade to access-only.
+	if req.RequestedTokenType == TokenTypeRefreshToken && s.refreshTokenStore == nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrRefreshTokenNotConfigured))
+		return
+	}
+
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), req.SubjectToken)
+	if err != nil || claims == nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+
+	// RFC 9470 step-up: when the caller demands a minimum ACR via
+	// `acr_values`, the inbound subject_token's ACR claim MUST match
+	// at least one value in the demand set. Otherwise the AS would
+	// have to re-authenticate the user, which token-exchange
+	// (server-to-server) can't do — caller must instead route the
+	// user through /auth/login with the same acr_values. Same wire
+	// shape as the resource-server challenge (insufficient_user_authentication)
+	// so SPAs branch on it uniformly across grants.
+	if req.ACRValues != "" {
+		demanded := strings.Fields(req.ACRValues)
+		if !acrMatchesAny(claims.ACR, demanded) {
+			ctx.JSON(http.StatusBadRequest, errorBody(security.ErrInsufficientUserAuthentication))
+			return
+		}
+	}
+
+	// RFC 8693 §2.1: actor_token and actor_token_type MUST both
+	// be present, or both absent. Mismatch = invalid_request.
+	if (req.ActorToken == "") != (req.ActorTokenType == "") {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	var actor *ActorClaim
+	if req.ActorToken != "" {
+		if req.ActorTokenType != TokenTypeAccessToken && req.ActorTokenType != TokenTypeJWT {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		actorClaims, _, aerr := s.validateAnyToken(ctx.Request().Context(), req.ActorToken)
+		if aerr != nil || actorClaims == nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+		// Defense-in-depth: when a security.JTIReplayStore is wired AND the
+		// actor_token carries a `jti`, refuse to honor the same
+		// delegation assertion twice within its expiry window. The
+		// actor_token is a short-lived delegation proof — replay
+		// would let a captured proof be re-used to mint new
+		// downstream tokens after the legitimate exchange already
+		// happened. Mirrors the same defense JAR + DPoP +
+		// client_assertion already opt into; namespace prevents
+		// collision with those jti spaces. Empty jti / no store /
+		// store error all fall through (RFC 8693 doesn't mandate
+		// the check; collapse to invalid_grant on confirmed reuse).
+		if s.jtiReplayStore != nil && actorClaims.JTI != "" {
+			expiry := actorClaims.ExpiresAt
+			if expiry.IsZero() {
+				expiry = time.Now().Add(security.DefaultJTIReplayWindow)
+			}
+			first, rerr := s.jtiReplayStore.MarkSeen(ctx.Request().Context(), "tokex-act:"+actorClaims.JTI, expiry)
+			if rerr == nil && !first {
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+				return
+			}
+		}
+		// RFC 8693 §4.1.1: when the subject_token already carries
+		// an `act` claim (it was itself a delegated token), the
+		// new act prepends the current actor and nests the
+		// previous chain beneath, preserving full provenance.
+		// Reading outside-in walks the delegation chain in
+		// time-order: outermost is most recent.
+		actor = &ActorClaim{Subject: actorClaims.Subject, Actor: claims.Actor}
+	}
+
+	// Merge `resource` + `audience` into the new token's aud claim.
+	// Both parameter forms are accepted (RFC 8693 + RFC 8707
+	// overlap on intent); deduplicated in-order so the first
+	// occurrence wins for deterministic output.
+	resources := mergeTargets(req.Resource, req.Audience)
+	if !client.AreResourcesAllowed(resources) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		return
+	}
+
+	// Scope narrowing per RFC 8693 §2.1: when `scope` is supplied
+	// it MUST be a subset of the subject_token's scopes; expansion
+	// is forbidden. Empty scope = keep the subject's scopes.
+	scopes := claims.Scopes
+	if req.Scope != "" {
+		requested := strings.Split(req.Scope, " ")
+		if !isScopeSubset(requested, claims.Scopes) {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+			return
+		}
+		scopes = requested
+	}
+
+	strategy, ti, err := s.issuerForClient(client)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+		return
+	}
+
+	// Carry the subject identity through. The new token's `sub` is
+	// the same as the subject_token's — token exchange does NOT
+	// change the principal, only the audience / scope. ClientID is
+	// the requesting (downstream) client, NOT the original; that's
+	// the canonical RFC 8693 semantic ("on behalf of the same
+	// subject, scoped to me").
+	// OIDC §8 pairwise: the inbound subject_token's `sub` may be
+	// pairwise (issued for the originating client's sector); resolve to
+	// the local sub, then re-apply pairwise for the new (downstream)
+	// client's sector. The exchange does not change the principal but
+	// the wire sub differs whenever the downstream client lives in a
+	// different sector. Non-pairwise deployments are a no-op pair.
+	localSub, perr := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		s.logger.Error("pairwise resolve failed at token-exchange", "error", perr, "subject", claims.Subject)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, localSub)
+	token, err := ti.Issue(ctx.Request().Context(), &Subject{
+		ID:        issuedSub,
+		Claims:    claims.Extra,
+		Resources: resources,
+		ClientID:  client.ID,
+		// auth_time + amr propagate from the original subject_token
+		// — the exchange doesn't represent a fresh end-user auth
+		// event; carrying the originals lets downstream services
+		// see the actual factor strength.
+		AuthTime: claims.AuthTime,
+		ACR:      claims.ACR,
+		AMR:      append([]string(nil), claims.AMR...),
+		// RFC 8693 §4.1 — when an actor_token is presented, the
+		// new token carries `act: {sub: <actor.sub>}` so
+		// downstream services can audit who acted on behalf of
+		// whom. Nil when no actor_token was supplied (the direct
+		// non-delegated path).
+		Actor: actor,
+		TTL:   client.AccessTokenTTL,
+		// RFC 9396: preserve the subject_token's authorization_details
+		// across the exchange so the resulting token carries the
+		// same fine-grained authorization the user originally
+		// consented to. The downstream service relying on RAR
+		// shouldn't lose its binding just because a token was
+		// exchanged into a narrower audience.
+		AuthorizationDetails: oauth.CloneRawJSON(claims.AuthorizationDetails),
+	}, scopes)
+	if err != nil {
+		s.logger.Error("token exchange issuance failed", "strategy", strategy, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordTokenIssued(ctx, client.ID, strategy, claims.Subject)
+	s.recordSubjectClientAccess(ctx.Request().Context(), claims.Subject, client.ID)
+
+	resp := map[string]any{
+		KeyAccessToken:     token.AccessToken,
+		KeyIssuedTokenType: TokenTypeAccessToken,
+		KeyTokenType:       token.TokenType,
+		KeyExpiresIn:       token.ExpiresIn,
+		KeyScope:           token.Scope,
+		KeyTokenStrategy:   strategy,
+	}
+	// RFC 8693 §2.1: when requested_token_type is refresh_token,
+	// mint a refresh token alongside (the access token is always
+	// returned — the spec uses requested_token_type to name what
+	// the `issued_token_type` field reports back, not what's
+	// emitted exclusively). Provider/AMR/Resources/AuthDetails/SID
+	// propagate from the subject_token's claims so a rotated
+	// chain inherits the same authorization context.
+	if req.RequestedTokenType == TokenTypeRefreshToken && s.refreshTokenStore != nil {
+		provider := ""
+		if len(claims.AMR) > 0 {
+			provider = claims.AMR[0]
+		}
+		rt, rerr := s.issueRefreshToken(
+			ctx.Request().Context(),
+			claims.Subject, client.ID, provider,
+			scopes, claims.Extra, "", resources,
+			oauth.CloneRawJSON(claims.AuthorizationDetails), // RFC 9396 — propagate the inbound binding
+			claims.SID,
+			client.RefreshTokenTTL,
+		)
+		if rerr != nil {
+			s.logger.Error("token exchange refresh issue failed", "strategy", strategy, "error", rerr)
+			// Fail-open: caller still gets the access token. Spec
+			// allows this since the access token alone is a complete
+			// response; the refresh is a bonus capability the caller
+			// can re-request.
+		} else {
+			resp[KeyRefreshToken] = rt
+			resp[KeyIssuedTokenType] = TokenTypeRefreshToken
+			s.recordRefreshTokenIssued(ctx, client.ID, claims.Subject, false)
+		}
+	}
+
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// tokenExchangeRequest is the subset of /token parameters the
+// token-exchange grant cares about. Pulled out of the main /token
+// request struct so the switch branch reads cleanly.
+type tokenExchangeRequest struct {
+	SubjectToken       string
+	SubjectTokenType   string
+	ActorToken         string
+	ActorTokenType     string
+	Resource           []string
+	Audience           []string
+	Scope              string
+	RequestedTokenType string
+	// RFC 9470 step-up: caller-asserted ACR floor for the exchanged
+	// token. Space-separated values; the inbound subject_token's
+	// ACR claim MUST be a member of this set or the exchange fails
+	// with insufficient_user_authentication. Empty = no demand
+	// (inbound ACR transparently propagates as today).
+	ACRValues string
+}
+
+// acrMatchesAny reports whether the inbound ACR claim matches any of
+// the demanded values. Empty inbound ACR never matches any non-empty
+// demand — a subject token with no factor information can't satisfy
+// a step-up gate.
+func acrMatchesAny(inbound string, demanded []string) bool {
+	if inbound == "" || len(demanded) == 0 {
+		return false
+	}
+	return slices.Contains(demanded, inbound)
+}
+
+// mergeTargets deduplicates a slice of resource / audience URIs
+// while preserving the first-occurrence order. Both RFC 8707
+// `resource` and RFC 8693 `audience` express the same intent;
+// merging lets callers use whichever vocabulary their tooling
+// favors without changing the token contents.
+func mergeTargets(primary, secondary []string) []string {
+	if len(primary) == 0 && len(secondary) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(primary)+len(secondary))
+	out := make([]string, 0, len(primary)+len(secondary))
+	for _, s := range primary {
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range secondary {
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// handleEndSession implements OpenID Connect RP-Initiated Logout 1.0.
+// Unlike POST /logout (a session-scoped bearer-authenticated kill
+// switch), this is a GET endpoint a relying party can redirect the
+// user agent to so the SSO server logs the user out and then sends
+// them back to the RP's post-logout page.
+//
+// Query parameters (per the spec §2):
+//
+//   - id_token_hint            REQUIRED to identify the user — a
+//     previously-issued id_token. The server
+//     validates the signature and uses the
+//     token's aud claim to look up the client.
+//   - post_logout_redirect_uri Optional; MUST be in the client's
+//     PostLogoutRedirectURIs allowlist.
+//   - state                    Optional; echoed back on the redirect.
+//   - client_id                Optional fallback when id_token_hint
+//     is absent — used only for
+//     redirect-uri allowlist lookup, NOT
+//     for session termination.
+//
+// Behavior:
+//
+//   - Always best-effort revokes the access token derived from the
+//     id_token_hint (so a stolen id_token_hint can't be used to
+//     just bounce the user without invalidating their session).
+//   - When post_logout_redirect_uri is in the allowlist, returns
+//     302 with Location pointing at the redirect_uri (+ state when
+//     supplied).
+//   - When the redirect_uri is missing or rejected, returns 204 —
+//     the session is dead, but we don't open a redirect-vector for
+//     callers without a registered URL.
+//
+// Security:
+//
+//   - id_token_hint signature MUST verify against the server's
+//     wired token issuers (we treat ID tokens and access tokens
+//     as signed by the same key pair).
+//   - post_logout_redirect_uri MUST exact-match (no path tolerance,
+//     no scheme-only match) — phishing defense per §3.
+func (s *Server) handleEndSession(ctx HandlerContext) {
+	q := ctx.Request().URL.Query()
+	idTokenHint := strings.TrimSpace(q.Get("id_token_hint"))
+	postLogoutURI := strings.TrimSpace(q.Get("post_logout_redirect_uri"))
+	state := q.Get("state")
+	clientIDHint := strings.TrimSpace(q.Get("client_id"))
+
+	var (
+		client *Client
+		userID string
+		sid    string
+	)
+
+	if idTokenHint != "" {
+		// Best-effort verification: an id_token_hint with a bad
+		// signature is a phishing attempt; we MUST not honor any
+		// post_logout_redirect_uri tied to its claimed audience.
+		claims, _, err := s.validateAnyToken(ctx.Request().Context(), idTokenHint)
+		if err != nil || claims == nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidToken))
+			return
+		}
+		userID = claims.Subject
+		// OIDC §8 pairwise: translate the per-sector sub back to the
+		// local one so downstream session bookkeeping finds the
+		// right user. Non-pairwise deployments no-op.
+		if local, perr := s.resolveLocalSubject(ctx.Request().Context(), userID); perr == nil {
+			userID = local
+		}
+		sid = claims.SID
+		// Resolve the client by RFC 9068 client_id claim (preferred,
+		// first-class) or fall back to the first audience entry (the
+		// pre-9068 heuristic) — matches handleLogout's lookup so
+		// behavior is consistent across the two logout endpoints.
+		clientLookupID := claims.ClientID
+		if clientLookupID == "" && len(claims.Audience) > 0 {
+			clientLookupID = claims.Audience[0]
+		}
+		if clientLookupID != "" && s.clientStore != nil {
+			if c, err := s.clientStore.Get(ctx.Request().Context(), clientLookupID); err == nil {
+				client = c
+			}
+		}
+	} else if clientIDHint != "" && s.clientStore != nil {
+		// Spec allows client_id without id_token_hint, but without
+		// a signed user identity we won't revoke any session — we
+		// only use the client to validate the redirect uri.
+		if c, err := s.clientStore.Get(ctx.Request().Context(), clientIDHint); err == nil {
+			client = c
+		}
+	}
+
+	// Kill the presented id_token's access-side counterpart so a
+	// stolen id_token_hint can't be used as a soft-logout that
+	// leaves the access token alive until expiry.
+	if idTokenHint != "" {
+		revoked, failed := s.revokeAcrossIssuers(ctx.Request().Context(), idTokenHint)
+		s.auditPartialRevokeFailure(ctx, revoked, failed)
+	}
+	// Wipe every refresh token the user holds for the client in
+	// scope, so descendant rotations can't outlive the logout.
+	if userID != "" && client != nil {
+		if idx, ok := s.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
+			_, _ = idx.DeleteAllForSubject(ctx.Request().Context(), userID, client.ID)
+		}
+	}
+
+	// Capture FCL fan-out targets BEFORE the BCL fan-out runs.
+	// BCL's Forget-on-non-BCL behavior trims the security.SubjectClientIndex
+	// of clients without a BackchannelLogoutURI; if FCL gathered
+	// AFTER, those FCL-only peers would be missing from the index
+	// by the time we walked it and silently dropped from the
+	// iframe list. Render happens later — this just snapshots the
+	// targets while the index is still complete.
+	var fclIframes []string
+	if userID != "" {
+		fclIframes = s.gatherFrontchannelLogoutIframes(ctx, userID, client, sid)
+	}
+
+	// OIDC Back-Channel Logout 1.0 — mirror of the /logout
+	// behavior. When the user logs out via the redirect-style
+	// /end_session, the RP whose id_token_hint was presented
+	// should also be notified via back-channel so its local
+	// session can be torn down. No-op when BCL isn't wired or
+	// the client doesn't declare a backchannel_logout_uri.
+	if userID != "" && client != nil {
+		s.fanOutBackchannelLogout(ctx, client, userID, sid)
+	}
+
+	if userID != "" {
+		s.recordLogout(ctx, "", []string{"id_token_hint"})
+	}
+
+	// Resolve a safe redirect destination once — both the FCL HTML
+	// page and the legacy 302 path want the same allowlist + state
+	// composition; computing it in one place keeps phishing defense
+	// uniform across the two response shapes.
+	var target string
+	if postLogoutURI != "" && client != nil && client.IsPostLogoutRedirectURIValid(postLogoutURI) {
+		target = postLogoutURI
+		if state != "" {
+			sep := "?"
+			if strings.Contains(target, "?") {
+				sep = "&"
+			}
+			target = target + sep + "state=" + url.QueryEscape(state)
+		}
+	}
+
+	// OIDC Front-Channel Logout 1.0 — when any client (the primary
+	// from id_token_hint, or any other the subject is signed into
+	// via the security.SubjectClientIndex) opts in via FrontchannelLogoutURI,
+	// render an HTML page with one hidden iframe per such client.
+	// The browser fires each iframe request (clearing RP cookies);
+	// a meta-refresh then navigates to post_logout_redirect_uri if
+	// one was allowlisted. FCL is purely additive to the
+	// revoke/BCL pipeline above — those still ran. Iframe targets
+	// were snapshotted above before BCL pruned the index.
+	if len(fclIframes) > 0 {
+		s.renderFrontchannelLogout(ctx, fclIframes, target)
+		return
+	}
+
+	// Redirect ONLY if the client allowlists the URI. Phishing
+	// defense: an attacker who crafts an end_session URL with
+	// post_logout_redirect_uri=https://evil.example MUST not get
+	// the user bounced there.
+	if target != "" {
+		ctx.Redirect(http.StatusFound, target)
+		return
+	}
+
+	// Session killed, but no safe redirect destination. 204 is the
+	// OIDC convention for "we did the work, nothing to render".
+	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
+}
+
+// dcrRequest mirrors the RFC 7591 §2 client metadata subset this
+// server understands. Unknown fields are ignored per §3.1 ("the
+// authorization server MUST ignore values it does not understand").
+type dcrRequest struct {
+	RedirectURIs            []string `json:"redirect_uris"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	GrantTypes              []string `json:"grant_types"`
+	ResponseTypes           []string `json:"response_types"`
+	ClientName              string   `json:"client_name"`
+	Scope                   string   `json:"scope"`
+	Contacts                []string `json:"contacts"`
+	TokenStrategy           string   `json:"token_strategy"`
+	AllowedAuthenticators   []string `json:"allowed_authenticators"`
+	AllowedResources        []string `json:"allowed_resources"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris"`
+	TenantID                string   `json:"tenant_id"`
+	RequirePKCE             bool     `json:"require_pkce"`
+}
+
+// dcrResponse is the RFC 7591 §3.2.1 successful-registration body.
+// Echoes every accepted metadata field plus the issued credentials,
+// timestamps, and the RFC 7592 management URI / access token when
+// the management endpoint is enabled.
+type dcrResponse struct {
+	ClientID                string   `json:"client_id"`
+	ClientSecret            string   `json:"client_secret,omitempty"`
+	ClientIDIssuedAt        int64    `json:"client_id_issued_at"`
+	ClientSecretExpiresAt   int64    `json:"client_secret_expires_at"`
+	RegistrationAccessToken string   `json:"registration_access_token,omitempty"`
+	RegistrationClientURI   string   `json:"registration_client_uri,omitempty"`
+	RedirectURIs            []string `json:"redirect_uris,omitempty"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+	GrantTypes              []string `json:"grant_types,omitempty"`
+	ResponseTypes           []string `json:"response_types,omitempty"`
+	ClientName              string   `json:"client_name,omitempty"`
+	Scope                   string   `json:"scope,omitempty"`
+	Contacts                []string `json:"contacts,omitempty"`
+	TokenStrategy           string   `json:"token_strategy,omitempty"`
+	AllowedAuthenticators   []string `json:"allowed_authenticators,omitempty"`
+	AllowedResources        []string `json:"allowed_resources,omitempty"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
+	RequirePKCE             bool     `json:"require_pkce,omitempty"`
+}
+
+// handleRegister implements RFC 7591 Dynamic Client Registration.
+// Opt-in via WithDynamicClientRegistration; without it /register
+// returns 501.
+//
+// Auth gate: requires the configured initial access token (a
+// pre-shared bearer the operator distributes) unless the policy's
+// AllowOpenRegistration=true is set. Open registration is
+// supported but discouraged — every public registration endpoint
+// in the wild eventually gets used for resource exhaustion.
+//
+// Response per §3.2.1: 201 Created + the issued credentials +
+// the echoed metadata. Public clients (token_endpoint_auth_method
+// = "none") skip secret generation per §2.
+func (s *Server) handleRegister(ctx HandlerContext) {
+	// DCR responses ship client_secret + registration_access_token —
+	// credential-shaped bodies that intermediaries must not cache.
+	// Same RFC 6749 §5.1 pattern as /token.
+	tokenNoStoreHeaders(ctx)
+	if s.dcrPolicy == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(oauth.ErrRegistrationDisabled))
+		return
+	}
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	// Authentication gate. Initial-access-token takes precedence
+	// when configured; AllowOpenRegistration is the explicit
+	// escape hatch.
+	if !s.dcrPolicy.AllowOpenRegistration {
+		if s.dcrPolicy.InitialAccessToken == "" {
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+			return
+		}
+		if bearer := bearerToken(ctx.Request()); bearer != s.dcrPolicy.InitialAccessToken {
+			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Initial access token missing or invalid")
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+			return
+		}
+	}
+
+	var req dcrRequest
+	if err := ctx.Bind(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
+		return
+	}
+
+	if err := validateDCRMetadata(&req, s.dcrPolicy); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
+		return
+	}
+
+	id, err := oauth.GenerateClientID()
+	if err != nil {
+		s.logger.Error("dcr id gen failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	// Public clients (no secret) per RFC 7591 §2 +
+	// RFC 6749 §2.3 — the "none" auth method opts out of secret
+	// issuance entirely. SPAs and mobile apps that hold no
+	// confidential secret should request this.
+	public := req.TokenEndpointAuthMethod == "none"
+	secret := ""
+	if !public {
+		secret, err = oauth.GenerateClientSecret()
+		if err != nil {
+			s.logger.Error("dcr secret gen failed", "error", err)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+	}
+
+	// RFC 7592 §3: every newly-registered client gets a
+	// registration_access_token so the client itself can later
+	// GET/PUT/DELETE its own registration without operator
+	// involvement. The token is bearer-shaped; deployments
+	// storing clients on disk SHOULD hash it at rest.
+	regToken, err := oauth.GenerateClientSecret()
+	if err != nil {
+		s.logger.Error("dcr reg-token gen failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	tokenStrategy := req.TokenStrategy
+	if tokenStrategy == "" {
+		tokenStrategy = s.dcrPolicy.DefaultTokenStrategy
+	}
+
+	client := &Client{
+		ID:                      id,
+		Secret:                  secret,
+		Name:                    req.ClientName,
+		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
+		AllowedScopes:           splitScope(req.Scope),
+		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
+		TokenStrategy:           tokenStrategy,
+		Active:                  s.dcrPolicy.DefaultActive,
+		TenantID:                req.TenantID,
+		RequirePKCE:             req.RequirePKCE || public, // public clients always PKCE
+		AllowedResources:        append([]string(nil), req.AllowedResources...),
+		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
+		RegistrationAccessToken: regToken,
+	}
+
+	if err := s.clientStore.Add(ctx.Request().Context(), client); err != nil {
+		s.logger.Error("dcr persist failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	now := time.Now().Unix()
+	resp := dcrResponse{
+		ClientID:                id,
+		ClientSecret:            secret,
+		ClientIDIssuedAt:        now,
+		ClientSecretExpiresAt:   0, // 0 = never expires per RFC 7591 §3.2.1
+		RegistrationAccessToken: regToken,
+		RegistrationClientURI:   requestBaseURL(ctx.Request()) + oauth.PathRegister + "/" + id,
+		RedirectURIs:            client.RedirectURIs,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
+		GrantTypes:              req.GrantTypes,
+		ResponseTypes:           req.ResponseTypes,
+		ClientName:              client.Name,
+		Scope:                   req.Scope,
+		Contacts:                req.Contacts,
+		TokenStrategy:           client.TokenStrategy,
+		AllowedAuthenticators:   client.AllowedAuthenticators,
+		AllowedResources:        client.AllowedResources,
+		PostLogoutRedirectURIs:  client.PostLogoutRedirectURIs,
+		RequirePKCE:             client.RequirePKCE,
+	}
+
+	ctx.JSON(http.StatusCreated, resp)
+}
+
+// handleRegistrationGet implements RFC 7592 §2.1 — the client
+// itself reads its current registration metadata. Auth: bearer
+// matching the registration_access_token issued at /register.
+func (s *Server) handleRegistrationGet(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	client, ok := s.authorizeRegistrationMgmt(ctx)
+	if !ok {
+		return
+	}
+	ctx.JSON(http.StatusOK, projectClientToDCRResponse(client, ctx))
+}
+
+// handleRegistrationPut implements RFC 7592 §2.2 — the client
+// itself updates its metadata. Auth: bearer matching the
+// registration_access_token. Validation: same rules as POST
+// /register; the client_secret stays unchanged across updates
+// (rotation is a separate admin RPC). The registration_access_token
+// is also preserved so the caller can keep managing the registration.
+func (s *Server) handleRegistrationPut(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	client, ok := s.authorizeRegistrationMgmt(ctx)
+	if !ok {
+		return
+	}
+
+	var req dcrRequest
+	if err := ctx.Bind(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
+		return
+	}
+	if err := validateDCRMetadata(&req, s.dcrPolicy); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(oauth.ErrInvalidClientMetadata, err.Error()))
+		return
+	}
+
+	tokenStrategy := req.TokenStrategy
+	if tokenStrategy == "" {
+		tokenStrategy = client.TokenStrategy
+	}
+
+	updated := &Client{
+		ID:                      client.ID,
+		Secret:                  client.Secret,                  // unchanged
+		RegistrationAccessToken: client.RegistrationAccessToken, // unchanged
+		Active:                  client.Active,
+		Name:                    req.ClientName,
+		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
+		AllowedScopes:           splitScope(req.Scope),
+		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
+		TokenStrategy:           tokenStrategy,
+		TenantID:                req.TenantID,
+		RequirePKCE:             req.RequirePKCE || req.TokenEndpointAuthMethod == "none",
+		AllowedResources:        append([]string(nil), req.AllowedResources...),
+		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
+	}
+
+	if err := s.clientStore.Update(ctx.Request().Context(), updated); err != nil {
+		s.logger.Error("dcr update failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, projectClientToDCRResponse(updated, ctx))
+}
+
+// handleRegistrationDelete implements RFC 7592 §2.3 — the client
+// itself removes its registration. Auth: bearer matching the
+// registration_access_token. Successful response: 204 No Content
+// per §2.3.
+func (s *Server) handleRegistrationDelete(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	client, ok := s.authorizeRegistrationMgmt(ctx)
+	if !ok {
+		return
+	}
+	if err := s.clientStore.Delete(ctx.Request().Context(), client.ID); err != nil {
+		s.logger.Error("dcr delete failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
+}
+
+// authorizeRegistrationMgmt is the shared auth + lookup gate for
+// every RFC 7592 endpoint. Resolves the client by path param,
+// constant-time compares the presented bearer against the stored
+// registration_access_token, and writes the appropriate error
+// response when checks fail.
+//
+// Returns (client, true) on success; on failure it has already
+// written the response and returns (nil, false).
+func (s *Server) authorizeRegistrationMgmt(ctx HandlerContext) (*Client, bool) {
+	if s.dcrPolicy == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(oauth.ErrRegistrationDisabled))
+		return nil, false
+	}
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return nil, false
+	}
+	id := ctx.Param("client_id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		return nil, false
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), id)
+	if err != nil {
+		// 401 (not 404) because the resource is auth-gated; a 404
+		// would let an unauthed caller probe for client_id existence.
+		// The challenge stays identical across "unknown client",
+		// "missing bearer", and "wrong bearer" to preserve the
+		// anti-enumeration property the catch-all 401 enforces.
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Registration access token missing or invalid")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	bearer := bearerToken(ctx.Request())
+	if bearer == "" || client.RegistrationAccessToken == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Registration access token missing or invalid")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	if subtleConstantTimeStringEq(bearer, client.RegistrationAccessToken) != 1 {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Registration access token missing or invalid")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	return client, true
+}
+
+// projectClientToDCRResponse builds an RFC 7591-shaped response from
+// a stored Client. Re-used by GET/PUT — the registration_access_token
+// is NOT re-emitted (RFC 7592 §2.1: server SHOULD NOT include it on
+// reads; the original /register response is the only canonical
+// distribution point).
+func projectClientToDCRResponse(c *Client, ctx HandlerContext) dcrResponse {
+	return dcrResponse{
+		ClientID:               c.ID,
+		ClientSecret:           c.Secret, // RFC 7592 §2.1 SHOULD include
+		ClientSecretExpiresAt:  0,
+		RegistrationClientURI:  requestBaseURL(ctx.Request()) + oauth.PathRegister + "/" + c.ID,
+		RedirectURIs:           c.RedirectURIs,
+		ClientName:             c.Name,
+		Scope:                  joinScope(c.AllowedScopes),
+		TokenStrategy:          c.TokenStrategy,
+		AllowedAuthenticators:  c.AllowedAuthenticators,
+		AllowedResources:       c.AllowedResources,
+		PostLogoutRedirectURIs: c.PostLogoutRedirectURIs,
+		RequirePKCE:            c.RequirePKCE,
+	}
+}
+
+func joinScope(scopes []string) string {
+	return strings.Join(scopes, " ")
+}
+
+// subtleConstantTimeStringEq wraps subtle.ConstantTimeCompare for
+// strings — it short-circuits on length mismatch (the standard
+// library function does too, but we keep the wrapper local so the
+// length check is explicit and reviewable).
+func subtleConstantTimeStringEq(a, b string) int {
+	if len(a) != len(b) {
+		return 0
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b))
+}
+
+// validateDCRMetadata enforces the subset of RFC 7591 §2 / §5
+// rules this server understands plus the policy's whitelist
+// constraints.
+func validateDCRMetadata(req *dcrRequest, policy *oauth.DCRPolicy) error {
+	// redirect_uris is REQUIRED for grant_type=authorization_code
+	// (the default), OPTIONAL for client_credentials-only clients
+	// (per §2 — "redirect_uris is OPTIONAL ... If the grant types
+	// supported include authorization_code or implicit, then this
+	// metadata REQUIRED").
+	wantsCodeFlow := len(req.GrantTypes) == 0 ||
+		slices.Contains(req.GrantTypes, GrantAuthorizationCode)
+	if wantsCodeFlow && len(req.RedirectURIs) == 0 {
+		return errDCR("redirect_uris required for authorization_code flow")
+	}
+
+	if slices.Contains(req.RedirectURIs, "") {
+		return errDCR("empty redirect_uri")
+	}
+
+	switch req.TokenEndpointAuthMethod {
+	case "", "client_secret_basic", "client_secret_post", "none":
+		// supported
+	default:
+		return errDCR("unsupported token_endpoint_auth_method: " + req.TokenEndpointAuthMethod)
+	}
+
+	for _, g := range req.GrantTypes {
+		if !slices.Contains(SupportedGrants, g) {
+			return errDCR("unsupported grant_type: " + g)
+		}
+	}
+
+	for _, rt := range req.ResponseTypes {
+		switch rt {
+		case "code", "token", "":
+			// supported
+		default:
+			return errDCR("unsupported response_type: " + rt)
+		}
+	}
+
+	if len(policy.AllowedAuthenticators) > 0 {
+		for _, a := range req.AllowedAuthenticators {
+			if !slices.Contains(policy.AllowedAuthenticators, a) {
+				return errDCR("authenticator not permitted by registration policy: " + a)
+			}
+		}
+	}
+
+	return nil
+}
+
+func errDCR(msg string) error {
+	return &dcrError{msg: msg}
+}
+
+type dcrError struct{ msg string }
+
+func (e *dcrError) Error() string { return e.msg }
+
+// mfaResumeState is the JSON-encoded blob persisted alongside the
+// spi.MFAChallenge. Opaque to spi.MFAChallengeStore backends; the SSO server
+// marshals + unmarshals so the post-step-up handler can replay the
+// same finishLogin flow the no-MFA path takes.
+type mfaResumeState struct {
+	Result  *AuthResult  `json:"result"`
+	Request loginRequest `json:"request"`
+}
+
+// issueMFAChallenge mints a single-use challenge ID + persists the
+// frozen login state for resumption. Writes the mfa_required response.
+// Audit: emits mfa_required (success outcome — primary credential was
+// fine, the user just hasn't completed step-up yet).
+func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req loginRequest, client *Client) {
+	stateBlob, err := json.Marshal(&mfaResumeState{Result: result, Request: req})
+	if err != nil {
+		s.logger.Error("mfa: failed to marshal resume state", "error", err, "client", client.ID, "user", result.UserID)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return
+	}
+	id, err := newMFAChallengeID()
+	if err != nil {
+		s.logger.Error("mfa: failed to mint challenge id", "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return
+	}
+	ttl := s.mfaChallengeTTL
+	if ttl <= 0 {
+		ttl = spi.DefaultMFAChallengeTTL
+	}
+	now := time.Now()
+	challenge := &spi.MFAChallenge{
+		ID:           id,
+		SubjectID:    result.UserID,
+		ClientID:     client.ID,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(ttl),
+		RequestState: stateBlob,
+	}
+	if err := s.mfaChallengeStore.Put(ctx.Request().Context(), challenge); err != nil {
+		s.logger.Error("mfa: failed to persist challenge", "error", err, "client", client.ID, "user", result.UserID)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return
+	}
+
+	if s.auditor != nil {
+		evt := &audit.Event{
+			Type:     audit.EventMFARequired,
+			Outcome:  audit.OutcomeSuccess,
+			ActorID:  result.UserID,
+			ClientID: client.ID,
+			Provider: result.Provider,
+			ActorIP:  clientIP(ctx.Request()),
+		}
+		setMeta(evt, KeyMFAChallengeID, id)
+		s.auditor.Record(ctx.Request().Context(), evt)
+	}
+
+	methods := s.mfaProvider.SupportedMethods()
+	// Metric: count one challenge per issuance, labeled by the FIRST
+	// supported method (the user picks among them downstream). Zero
+	// traffic when metrics aren't wired.
+	if s.metrics != nil && len(methods) > 0 {
+		s.metrics.MFAChallengesTotal.WithLabelValues(methods[0]).Inc()
+	}
+	resp := map[string]any{
+		KeyError:          ErrMFARequired, // top-level error field so SPAs treating non-2xx-but-pending uniformly still surface it
+		KeyMFAChallengeID: id,
+		KeyMFAMethods:     methods,
+		KeyIss:            s.resolveIssuer(ctx),
+	}
+
+	// spi.MFABeginner dispatch: providers needing server-side state
+	// (WebAuthn challenge issuance, push notification fan-out, …)
+	// get one Begin call per supported method. Results are bucketed
+	// per method so clients picking method X read only their slice.
+	// Per-method failure is non-fatal — the method stays in
+	// mfa_methods but without an attached method_data entry; the
+	// client can retry out-of-band or pick a different factor.
+	if beginner, ok := s.mfaProvider.(spi.MFABeginner); ok && len(methods) > 0 {
+		methodData := make(map[string]map[string]string, len(methods))
+		for _, method := range methods {
+			data, berr := beginner.Begin(ctx.Request().Context(), result.UserID, method)
+			if berr != nil {
+				s.logger.Error("mfa: begin failed", "method", method, "user", result.UserID, "error", berr)
+				continue
+			}
+			if len(data) > 0 {
+				methodData[method] = data
+			}
+		}
+		if len(methodData) > 0 {
+			resp[KeyMFAMethodData] = methodData
+		}
+	}
+
+	if req.State != "" {
+		resp[KeyState] = req.State
+	}
+	// HTTP 200 (not 400) — the primary credential was accepted; the
+	// pending state is a normal step in the flow, not an error.
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// handleMFAComplete is the POST /auth/mfa endpoint. The client presents
+// the challenge ID + factor name + method-specific params; on success
+// the server replays finishLogin against the frozen state so the
+// response shape matches what the no-MFA path would have returned.
+//
+// Oracle-leak hardening: every failure path (missing challenge,
+// expired, wrong method, wrong factor) collapses to the same
+// HTTP 400 + error=mfa_invalid response so probes can't distinguish
+// the cases.
+func (s *Server) handleMFAComplete(ctx HandlerContext) {
+	// Observe /auth/mfa duration with outcome label. defer + named
+	// outcome lets every return path (auth-invalid, factor-failed,
+	// success, transport-error) account uniformly. The Push factor's
+	// long polling loop dominates this histogram — operators
+	// alerting on push-flow stalls graph p95 here.
+	start := time.Now()
+	outcome := "failure"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.MFACompletionDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+		}
+	}()
+
+	tokenNoStoreHeaders(ctx)
+	if s.mfaProvider == nil || s.mfaChallengeStore == nil {
+		// Endpoint is registered unconditionally so discovery doesn't
+		// have to be re-derived per request, but without a wired
+		// provider it can't do useful work. 404 (not 501) so a probe
+		// can't fingerprint the deployment as MFA-capable-but-misconfigured.
+		ctx.JSON(http.StatusNotFound, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
+	// Mark outcome on the one success path; left as "failure" for
+	// every other return point.
+	_ = outcome
+
+	var req struct {
+		ChallengeID string            `json:"mfa_challenge_id"`
+		Method      string            `json:"mfa_method"`
+		Params      map[string]string `json:"params"`
+		// Top-level convenience fields the flat-form callers prefer
+		// (HTML forms, simple clients). When Params is empty we
+		// collect the per-method known fields from these.
+		Code      string `json:"code"`      // totp
+		Assertion string `json:"assertion"` // webauthn
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
+	if req.ChallengeID == "" || req.Method == "" {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
+
+	challenge, err := s.mfaChallengeStore.Consume(ctx.Request().Context(), req.ChallengeID)
+	if err != nil || challenge == nil {
+		s.recordMFAFailure(ctx, "", req.ChallengeID, req.Method, "challenge_invalid")
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
+
+	// Flat → Params normalization. Params wins when both set so explicit
+	// callers stay in control. The dispatch into spi.MFAProvider is opaque
+	// — only the contract for "totp" / "webauthn" is known here; richer
+	// providers (push notification, hardware key) get whatever Params
+	// the caller supplies plus the flat code/assertion convenience.
+	params := req.Params
+	if params == nil {
+		params = make(map[string]string, 2)
+	}
+	if _, ok := params["code"]; !ok && req.Code != "" {
+		params["code"] = req.Code
+	}
+	if _, ok := params["assertion"]; !ok && req.Assertion != "" {
+		params["assertion"] = req.Assertion
+	}
+
+	if err := s.mfaProvider.Verify(ctx.Request().Context(), challenge.SubjectID, req.Method, params); err != nil {
+		s.recordMFAFailure(ctx, challenge.SubjectID, req.ChallengeID, req.Method, err.Error())
+		s.recordMFACompletion(req.Method, "failure")
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
+	s.recordMFACompletion(req.Method, "success")
+	outcome = "success"
+
+	// Factor verified. Decode the frozen state, re-look-up the client
+	// (could have been deactivated / tenant-suspended in the window
+	// between challenge issue and verify), and resume finishLogin.
+	state := &mfaResumeState{}
+	if err := json.Unmarshal(challenge.RequestState, state); err != nil {
+		s.logger.Error("mfa: failed to decode resume state", "error", err, "challenge", req.ChallengeID)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return
+	}
+	if state.Result == nil {
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return
+	}
+
+	if s.clientStore == nil {
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
+		return
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), challenge.ClientID)
+	if err != nil || client == nil || !client.Active || !clientTenantOK(ctx, client) {
+		// Client was deactivated, deleted, or tenant-suspended between
+		// challenge issue and completion. Surface as inactive_client
+		// rather than mfa_invalid — operators investigating the audit
+		// trail need to know it wasn't the factor that failed.
+		s.recordMFAFailure(ctx, challenge.SubjectID, req.ChallengeID, req.Method, "client_unavailable")
+		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
+		return
+	}
+
+	if s.auditor != nil {
+		evt := &audit.Event{
+			Type:     audit.EventMFASuccess,
+			Outcome:  audit.OutcomeSuccess,
+			ActorID:  challenge.SubjectID,
+			ClientID: client.ID,
+			Provider: state.Result.Provider,
+			ActorIP:  clientIP(ctx.Request()),
+		}
+		setMeta(evt, KeyMFAMethod, req.Method)
+		setMeta(evt, KeyMFAChallengeID, req.ChallengeID)
+		s.auditor.Record(ctx.Request().Context(), evt)
+	}
+
+	// Resume the standard post-risk login flow. finishLogin writes
+	// the response, which can be the normal token/code/form-post
+	// payload — caller can't tell the difference between an MFA-gated
+	// login and a non-gated one (other than the extra round trip).
+	s.finishLogin(ctx, state.Result, state.Request, client)
+}
+
+// recordMFACompletion increments the MFA completion metric for the
+// (method, outcome) pair, but only when the metric is wired AND the
+// method appears in the configured provider's SupportedMethods set.
+// Restricting to known methods bounds metric cardinality — a
+// user-controlled method field would otherwise let attackers spray
+// arbitrary labels into Prometheus storage.
+func (s *Server) recordMFACompletion(method, outcome string) {
+	if s.metrics == nil || s.mfaProvider == nil {
+		return
+	}
+	if slices.Contains(s.mfaProvider.SupportedMethods(), method) {
+		s.metrics.MFACompletionsTotal.WithLabelValues(method, outcome).Inc()
+	}
+}
+
+// recordMFAFailure emits the mfa_failure audit event with the
+// operator-visible reason. The wire response is always mfa_invalid;
+// reason here is for SIEM investigation, never returned to the client.
+func (s *Server) recordMFAFailure(ctx HandlerContext, subjectID, challengeID, method, reason string) {
+	if s.auditor == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:    audit.EventMFAFailure,
+		Outcome: audit.OutcomeFailure,
+		ActorID: subjectID,
+		ActorIP: clientIP(ctx.Request()),
+		Reason:  reason,
+	}
+	if method != "" {
+		setMeta(evt, KeyMFAMethod, method)
+	}
+	if challengeID != "" {
+		setMeta(evt, KeyMFAChallengeID, challengeID)
+	}
+	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// newMFAChallengeID mints a 32-byte crypto/rand identifier encoded as
+// URL-safe base64 without padding (so it survives query params /
+// path segments / form bodies unchanged). 256 bits of entropy — same
+// strength as oauth.AuthCodeStore / oauth.DeviceCodeStore identifiers.
+func newMFAChallengeID() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("mfa: rand.Read: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// userCodeAlphabet matches defaultimpl's — base32 minus easily-confused
+// glyphs. Duplicated here so handle_device.go doesn't import defaultimpl
+// (which would create an import cycle).
+const handlerUserCodeAlphabet = "BCDFGHJKMNPQRSTVWXYZ23456789"
+
+// generateDeviceCodeBytes mints a 32-byte base64url device_code.
+func generateDeviceCodeBytes() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// generateUserCodeBytes mints an 8-char dashed user_code (XXXX-XXXX)
+// from the ambiguous-glyph-free alphabet.
+func generateUserCodeBytes() (string, error) {
+	const length = 8
+	out := make([]byte, length)
+	for i := range length {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(handlerUserCodeAlphabet))))
+		if err != nil {
+			return "", err
+		}
+		out[i] = handlerUserCodeAlphabet[n.Int64()]
+	}
+	return string(out[:4]) + "-" + string(out[4:]), nil
+}
+
+// handleDeviceCode is the device-initiated endpoint of RFC 8628.
+// The device POSTs its client_id (+ optional scope), the server
+// returns device_code + user_code + verification_uri + interval +
+// expires_in. The device then displays user_code + verification_uri
+// to the user and starts polling /token.
+func (s *Server) handleDeviceCode(ctx HandlerContext) {
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		return
+	}
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	var req struct {
+		ClientID string   `json:"client_id"`
+		Scope    string   `json:"scope"`
+		Nonce    string   `json:"nonce"`
+		Resource []string `json:"resource"` // RFC 8707 resource indicators
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if req.ClientID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		return
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return
+	}
+	if !client.Active {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
+		return
+	}
+	if !clientTenantOK(ctx, client) {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		return
+	}
+	if !client.AreResourcesAllowed(req.Resource) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		return
+	}
+
+	deviceCode, err := generateDeviceCodeBytes()
+	if err != nil {
+		s.logger.Error("device code generation failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	userCode, err := generateUserCodeBytes()
+	if err != nil {
+		s.logger.Error("user code generation failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	// TTL resolution precedence: per-client > server-wide > default.
+	// Same shape as Client.RefreshTokenTTL / Client.AccessTokenTTL.
+	ttl := client.DeviceCodeTTL
+	if ttl <= 0 {
+		ttl = s.deviceCodeTTL
+	}
+	if ttl <= 0 {
+		ttl = DefaultDeviceCodeTTL
+	}
+	interval := client.DeviceCodePollInterval
+	if interval <= 0 {
+		interval = s.deviceCodeInterval
+	}
+	if interval <= 0 {
+		interval = DefaultDevicePollMin
+	}
+	scopes := splitScope(req.Scope)
+
+	// Store the normalized (dashless, uppercase) form as the lookup
+	// key so /device/verify accepts the user_code with OR without the
+	// cosmetic dash. The dashed form goes back to the device for
+	// display only.
+	dc := &oauth.DeviceCode{
+		DeviceCode: deviceCode,
+		UserCode:   normalizeUserCode(userCode),
+		ClientID:   client.ID,
+		Scopes:     scopes,
+		Nonce:      req.Nonce,
+		Interval:   interval,
+		Resources:  append([]string(nil), req.Resource...),
+		ExpiresAt:  time.Now().Add(ttl),
+	}
+	if err := s.deviceCodeStore.Issue(ctx.Request().Context(), dc); err != nil {
+		s.logger.Error("device code issue failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordDeviceCodeIssued(ctx, client.ID)
+
+	base := s.deviceVerifyBaseURL
+	if base == "" {
+		base = requestBaseURL(ctx.Request()) + PathDeviceVerify
+	}
+	complete := base
+	if strings.Contains(complete, "?") {
+		complete += "&user_code=" + userCode
+	} else {
+		complete += "?user_code=" + userCode
+	}
+
+	ctx.JSON(http.StatusOK, map[string]any{
+		"device_code":               deviceCode,
+		"user_code":                 userCode,
+		"verification_uri":          base,
+		"verification_uri_complete": complete,
+		"expires_in":                int(ttl.Seconds()),
+		"interval":                  int(interval.Seconds()),
+	})
+}
+
+// handleDeviceVerify is the user-facing approval endpoint. The user
+// has already authenticated separately (via /auth/login → bearer
+// token, or any other path); they present the bearer here along
+// with the user_code they read from the device + an approve/deny
+// flag. The server validates both and updates the device code's
+// state so the next device poll succeeds (or returns access_denied).
+func (s *Server) handleDeviceVerify(ctx HandlerContext) {
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		return
+	}
+	if err := s.requireDeps(DepTokenIssuer); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	bearer := bearerToken(ctx.Request())
+	if bearer == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
+	if err != nil || claims == nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return
+	}
+
+	var req struct {
+		UserCode string `json:"user_code"`
+		Approve  bool   `json:"approve"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	userCode := normalizeUserCode(req.UserCode)
+	if userCode == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	// All user_code lookups go through the normalized form so
+	// dashed / dashless / mixed-case inputs all resolve to the same
+	// entry (typo tolerance on a code the user typed by hand).
+	dc, err := s.deviceCodeStore.GetByUserCode(ctx.Request().Context(), userCode)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+
+	provider := ""
+	if attrProvider, ok := claims.Extra["provider"]; ok {
+		provider = attrProvider
+	}
+
+	// dc.UserCode is already the normalized form (we store dashless);
+	// approval/denial routes back through the same key.
+	if req.Approve {
+		if err := s.deviceCodeStore.Approve(ctx.Request().Context(),
+			dc.UserCode, claims.Subject, provider, claims.Extra); err != nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+	} else {
+		if err := s.deviceCodeStore.Deny(ctx.Request().Context(), dc.UserCode); err != nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return
+		}
+	}
+	s.recordDeviceCodeDecision(ctx, claims.Subject, dc.ClientID, req.Approve)
+
+	ctx.JSON(http.StatusOK, map[string]any{KeyStatus: StatusOK})
+}
+
+// handleDeviceTokenGrant is the device's poll path on /token. Called
+// from the GrantDeviceCode case in handleToken; pulled out so the
+// switch stays readable.
+//
+// Returns one of the RFC 8628 §3.5 sentinels:
+//   - authorization_pending: user hasn't acted yet
+//   - slow_down: device polled faster than Interval (RFC says +5s)
+//   - access_denied: user explicitly denied
+//   - expired_token: TTL elapsed
+//   - invalid_grant: unknown code / wrong client
+//
+// or a standard token response on success.
+func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, deviceCode string) {
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		return
+	}
+	if deviceCode == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	dc, err := s.deviceCodeStore.GetByDeviceCode(ctx.Request().Context(), deviceCode)
+	if err != nil {
+		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrExpiredToken))
+			return
+		}
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+	// Bind: a device_code issued for client A can't be polled by client B.
+	if dc.ClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+
+	// slow_down: poll arrived within Interval of the previous poll.
+	now := time.Now()
+	if !dc.LastPoll.IsZero() && now.Sub(dc.LastPoll) < dc.Interval {
+		_ = s.deviceCodeStore.UpdateLastPoll(ctx.Request().Context(), deviceCode, now)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrSlowDown))
+		return
+	}
+	_ = s.deviceCodeStore.UpdateLastPoll(ctx.Request().Context(), deviceCode, now)
+
+	if dc.Denied {
+		_ = s.deviceCodeStore.Delete(ctx.Request().Context(), deviceCode)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrAccessDenied))
+		return
+	}
+	if !dc.Approved {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrAuthorizationPending))
+		return
+	}
+
+	// Approved → mint tokens, then delete the device code (single-use).
+	strategy, ti, err := s.issuerForClient(client)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+		return
+	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, dc.UserID)
+	token, err := ti.Issue(ctx.Request().Context(), &Subject{
+		ID: issuedSub, Provider: dc.Provider, Claims: dc.Attributes,
+		Resources: dc.Resources,
+		ClientID:  client.ID,
+		AuthTime:  time.Now(),
+		AMR:       []string{dc.Provider},
+		TTL:       client.AccessTokenTTL,
+	}, dc.Scopes)
+	if err != nil {
+		s.logger.Error("device token issuance failed", "strategy", strategy, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	resp := map[string]any{
+		KeyAccessToken:   token.AccessToken,
+		KeyTokenType:     token.TokenType,
+		KeyExpiresIn:     token.ExpiresIn,
+		KeyScope:         token.Scope,
+		KeyTokenStrategy: strategy,
+	}
+	if s.refreshTokenStore != nil {
+		// Device grant doesn't accept authorization_details today; pass
+		// nil so refresh rotations don't fabricate a binding the user
+		// never consented to.
+		rt, err := s.issueRefreshToken(ctx.Request().Context(),
+			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "", client.RefreshTokenTTL)
+		if err != nil {
+			s.logger.Error("refresh token issue failed", "error", err)
+		} else {
+			resp[KeyRefreshToken] = rt
+			s.recordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
+		}
+	}
+	if slices.Contains(dc.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
+		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+			Subject:  issuedSub,
+			Audience: client.ID,
+			Nonce:    dc.Nonce,
+			AuthTime: time.Now(),
+			AMR:      []string{dc.Provider},
+			Claims:   dc.Attributes,
+		})
+		if err != nil {
+			s.logger.Error("id token issue failed", "error", err)
+		} else {
+			resp[KeyIDToken] = idToken
+			s.recordIDTokenIssued(ctx, client.ID, dc.UserID)
+		}
+	}
+	s.recordTokenIssued(ctx, client.ID, strategy, dc.UserID)
+	s.recordSubjectClientAccess(ctx.Request().Context(), dc.UserID, client.ID)
+	_ = s.deviceCodeStore.Delete(ctx.Request().Context(), deviceCode)
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// normalizeUserCode strips dashes + uppercases for lookup tolerance.
+func normalizeUserCode(s string) string {
+	return strings.ToUpper(strings.ReplaceAll(s, "-", ""))
+}
+
+// splitScope parses a space-delimited scope string into a slice,
+// returning nil for empty input so the oauth.AuthCode / oauth.DeviceCode entry's
+// Scopes field stays nil-not-empty.
+func splitScope(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, " ")
+}
+
+// Query parameter accepted by the /permissions/me, /menus/me, /roles/me
+// endpoints to scope the lookup to a particular APP.
+const QueryClientID = "client_id"
+
+// Response keys for the permission endpoints.
+const (
+	KeyPermissions = "permissions"
+	KeyRoles       = "roles"
+	KeyMenus       = "menus"
+	KeyClient      = "client_id"
+)
+
+// Error codes for the permission endpoints.
+const (
+	ErrPermissionProviderNotConfigured = "permission_provider_not_configured"
+	ErrPermissionLookupFailed          = "permission_lookup_failed"
+)
+
+// authenticatedSubject resolves the bearer token to a user ID + client ID.
+// client_id resolution: explicit query param > token audience > "".
+func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID string, ok bool) {
+	tokenString := bearerToken(ctx.Request())
+	if tokenString == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return "", "", false
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return "", "", false
+	}
+	clientID = ctx.Query(QueryClientID)
+	if clientID == "" && len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+	return claims.Subject, clientID, true
+}
+
+func (s *Server) handleMyPermissions(ctx HandlerContext) {
+	userID, clientID, ok := s.authenticatedSubject(ctx)
+	if !ok {
+		return
+	}
+	if s.permissions == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
+		return
+	}
+	perms, err := s.permissions.Permissions(ctx.Request().Context(), userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("permissions lookup failed", "user", userID, "client", clientID, "error", err)
+		s.recordPermissionQuery(ctx, userID, clientID, KeyPermissions, false)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
+		return
+	}
+	if perms == nil {
+		perms = []permissions.Permission{}
+	}
+	s.recordPermissionQuery(ctx, userID, clientID, KeyPermissions, true)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyClient:      clientID,
+		KeyPermissions: perms,
+	})
+}
+
+func (s *Server) handleMyRoles(ctx HandlerContext) {
+	userID, clientID, ok := s.authenticatedSubject(ctx)
+	if !ok {
+		return
+	}
+	if s.permissions == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
+		return
+	}
+	roles, err := s.permissions.Roles(ctx.Request().Context(), userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("roles lookup failed", "user", userID, "client", clientID, "error", err)
+		s.recordPermissionQuery(ctx, userID, clientID, KeyRoles, false)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
+		return
+	}
+	if roles == nil {
+		roles = []permissions.Role{}
+	}
+	s.recordPermissionQuery(ctx, userID, clientID, KeyRoles, true)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyClient: clientID,
+		KeyRoles:  roles,
+	})
+}
+
+func (s *Server) handleMyMenus(ctx HandlerContext) {
+	userID, clientID, ok := s.authenticatedSubject(ctx)
+	if !ok {
+		return
+	}
+	if s.permissions == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrPermissionProviderNotConfigured))
+		return
+	}
+	menus, err := s.permissions.Menus(ctx.Request().Context(), userID, clientID)
+	if err != nil {
+		s.logger.Error("menus lookup failed", "user", userID, "client", clientID, "error", err)
+		s.recordPermissionQuery(ctx, userID, clientID, KeyMenus, false)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrPermissionLookupFailed))
+		return
+	}
+	if menus == nil {
+		menus = permissions.MenuTree{}
+	}
+	s.recordPermissionQuery(ctx, userID, clientID, KeyMenus, true)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyClient: clientID,
+		KeyMenus:  menus,
+	})
+}
+
+// resolvePermissionsForLogin pulls the bundle that gets embedded in a login
+// response. Errors are swallowed and turned into empty slices so login never
+// fails due to a permission lookup hiccup.
+func (s *Server) resolvePermissionsForLogin(ctx context.Context, userID, clientID string) (
+	[]permissions.Role, []permissions.Permission, permissions.MenuTree,
+) {
+	if s.permissions == nil {
+		return nil, nil, nil
+	}
+	roles, err := s.permissions.Roles(ctx, userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("login embed: roles", "error", err)
+	}
+	perms, err := s.permissions.Permissions(ctx, userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		s.logger.Error("login embed: permissions", "error", err)
+	}
+	menus, err := s.permissions.Menus(ctx, userID, clientID)
+	if err != nil {
+		s.logger.Error("login embed: menus", "error", err)
+	}
+	return roles, perms, menus
+}
+
+func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kind string, ok bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventPermissionQuery
+	e.ActorID = userID
+	e.ClientID = clientID
+	if ok {
+		e.Outcome = audit.OutcomeSuccess
+	} else {
+		e.Outcome = audit.OutcomeFailure
+	}
+	setMeta(e, "kind", kind)
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// Response keys for netpolicy endpoints.
+const (
+	KeyNetPolicies = "policies"
+	KeyNetClass    = "class"
+	KeyNetPolicy   = "policy"
+)
+
+// JSON payload for POST /api/v1/netpolicy/policies. Mirrors the netpolicy.Policy
+// fields callers are allowed to set — Version and UpdatedAt are server-stamped.
+type netPolicyPayload struct {
+	Name                string            `json:"name"`
+	CIDRs               []string          `json:"cidrs,omitempty"`
+	Hostnames           []string          `json:"hostnames,omitempty"`
+	Priority            int32             `json:"priority,omitempty"`
+	AdvertisedBaseURL   string            `json:"advertised_base_url,omitempty"`
+	AdvertisedJWKSURL   string            `json:"advertised_jwks_url,omitempty"`
+	AdvertisedLogoutURL string            `json:"advertised_logout_url,omitempty"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+}
+
+func (p *netPolicyPayload) toPolicy() *netpolicy.Policy {
+	return &netpolicy.Policy{
+		Name:                p.Name,
+		CIDRs:               p.CIDRs,
+		Hostnames:           p.Hostnames,
+		Priority:            p.Priority,
+		AdvertisedBaseURL:   p.AdvertisedBaseURL,
+		AdvertisedJWKSURL:   p.AdvertisedJWKSURL,
+		AdvertisedLogoutURL: p.AdvertisedLogoutURL,
+		Metadata:            p.Metadata,
+	}
+}
+
+func (s *Server) handleListNetPolicies(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	policies, err := s.netStore.List(ctx.Request().Context())
+	if err != nil {
+		s.logger.Error("netpolicy list", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetPolicies: policies})
+}
+
+func (s *Server) handleGetNetPolicy(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	name := ctx.Param("name")
+	if name == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	p, err := s.netStore.Get(ctx.Request().Context(), name)
+	if errors.Is(err, netpolicy.ErrNotFound) {
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNetPolicyNotFound))
+		return
+	}
+	if err != nil {
+		s.logger.Error("netpolicy get", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetPolicy: p})
+}
+
+func (s *Server) handleApplyNetPolicy(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	var payload netPolicyPayload
+	if err := ctx.Bind(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
+		return
+	}
+	if payload.Name == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	stored, err := s.netStore.Apply(ctx.Request().Context(), payload.toPolicy())
+	if err != nil {
+		s.logger.Error("netpolicy apply", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordNetPolicyMutation(ctx, audit.EventNetPolicyApply, stored.Name)
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetPolicy: stored})
+}
+
+func (s *Server) handleDeleteNetPolicy(ctx HandlerContext) {
+	if s.netStore == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	name := ctx.Param("name")
+	if name == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if err := s.netStore.Delete(ctx.Request().Context(), name); err != nil {
+		s.logger.Error("netpolicy delete", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordNetPolicyMutation(ctx, audit.EventNetPolicyDelete, name)
+	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: StatusOK})
+}
+
+func (s *Server) handleClassifyNetPolicy(ctx HandlerContext) {
+	if s.netClassifier == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	remoteAddr := ctx.Query("remote_addr")
+	host := ctx.Query("host")
+	p := s.netClassifier.Classify(remoteAddr, host)
+	if p == nil {
+		ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: ""})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: p.Name, KeyNetPolicy: p})
+}
+
+// handleResolveMeNetPolicy classifies the CURRENT request and returns the
+// matched policy. Convenience endpoint for clients that want to discover
+// "which JWKS URL / callback URL should I use" without re-implementing the
+// classification.
+func (s *Server) handleResolveMeNetPolicy(ctx HandlerContext) {
+	if s.netClassifier == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrNetPolicyNotConfigured))
+		return
+	}
+	r := ctx.Request()
+	remoteAddr := r.RemoteAddr
+	host := r.Host
+	p := s.netClassifier.Classify(remoteAddr, host)
+	if p == nil {
+		ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: ""})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyNetClass: p.Name, KeyNetPolicy: p})
+}
+
+// ClassifyRequest is exposed for embedders that want to classify a request
+// in their own middleware. Returns nil when no classifier is wired or no
+// policy matches.
+func (s *Server) ClassifyRequest(r *http.Request) *netpolicy.Policy {
+	if s.netClassifier == nil || r == nil {
+		return nil
+	}
+	return s.netClassifier.Classify(r.RemoteAddr, r.Host)
+}
+
+func (s *Server) recordNetPolicyMutation(ctx HandlerContext, t audit.EventType, name string) {
+	if s.auditor == nil {
+		return
+	}
+	r := ctx.Request()
+	s.auditor.Record(reqContext(r), &audit.Event{
+		Type:      t,
+		Outcome:   audit.OutcomeSuccess,
+		Timestamp: time.Now().UTC(),
+		ActorIP:   r.RemoteAddr,
+		UserAgent: r.UserAgent(),
+		Reason:    "name=" + name,
+	})
+}
+
+// reqContext returns r.Context() but never nil — defensive against rare
+// stdlib edge cases (custom transports etc.).
+func reqContext(r *http.Request) context.Context {
+	if r == nil {
+		return context.Background()
+	}
+	if ctx := r.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
+// Query parameter names for /audit/events.
+const (
+	QueryAuditType      = "type"
+	QueryAuditActorID   = "actor_id"
+	QueryAuditClientID  = "client_id"
+	QueryAuditProvider  = "provider"
+	QueryAuditOutcome   = "outcome"
+	QueryAuditRequestID = "request_id"
+	QueryAuditTraceID   = "trace_id"
+	QueryAuditSince     = "since"
+	QueryAuditUntil     = "until"
+	QueryAuditLimit     = "limit"
+	QueryAuditOffset    = "offset"
+)
+
+// Response keys for /audit/events.
+const (
+	KeyAuditEvents = "events"
+	KeyAuditCount  = "count"
+)
+
+// Error codes for /audit/events.
+const (
+	ErrAuditNotEnabled    = "audit_not_enabled"
+	ErrAuditEventNotFound = "audit_event_not_found"
+)
+
+func (s *Server) handleAuditEvents(ctx HandlerContext) {
+	if s.auditor == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrAuditNotEnabled))
+		return
+	}
+
+	q, err := parseAuditQuery(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBodyWithDescription(ErrInvalidRequest, err.Error()))
+		return
+	}
+
+	events, err := s.auditor.Sink().Query(ctx.Request().Context(), q)
+	if err != nil {
+		s.logger.Error("audit query failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyAuditEvents: events,
+		KeyAuditCount:  len(events),
+	})
+}
+
+func (s *Server) handleAuditEventByID(ctx HandlerContext) {
+	if s.auditor == nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrAuditNotEnabled))
+		return
+	}
+
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+
+	event, err := s.auditor.Sink().Get(ctx.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, audit.ErrEventNotFound) {
+			ctx.JSON(http.StatusNotFound, errorBody(ErrAuditEventNotFound))
+			return
+		}
+		s.logger.Error("audit get failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	ctx.JSON(http.StatusOK, event)
+}
+
+func parseAuditQuery(ctx HandlerContext) (audit.Query, error) {
+	q := audit.Query{
+		Type:      audit.EventType(ctx.Query(QueryAuditType)),
+		ActorID:   ctx.Query(QueryAuditActorID),
+		ClientID:  ctx.Query(QueryAuditClientID),
+		Provider:  ctx.Query(QueryAuditProvider),
+		Outcome:   audit.Outcome(ctx.Query(QueryAuditOutcome)),
+		RequestID: ctx.Query(QueryAuditRequestID),
+		TraceID:   ctx.Query(QueryAuditTraceID),
+	}
+	if v := ctx.Query(QueryAuditSince); v != "" {
+		t, err := parseAuditTime(v)
+		if err != nil {
+			return q, err
+		}
+		q.Since = t
+	}
+	if v := ctx.Query(QueryAuditUntil); v != "" {
+		t, err := parseAuditTime(v)
+		if err != nil {
+			return q, err
+		}
+		q.Until = t
+	}
+	if v := ctx.Query(QueryAuditLimit); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return q, err
+		}
+		q.Limit = n
+	}
+	if v := ctx.Query(QueryAuditOffset); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return q, err
+		}
+		q.Offset = n
+	}
+	return q, nil
+}
+
+// parseAuditTime accepts RFC3339 ("2006-01-02T15:04:05Z") and also Unix
+// seconds for convenience from CLI testing.
+func parseAuditTime(v string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Unix(n, 0), nil
+	}
+	return time.Time{}, errors.New("expected RFC3339 timestamp or unix seconds")
+}
+
+// auditEventFromRequest pre-fills an Event with caller-side
+// metadata (IP, user-agent, request ID, trace context, plus geo
+// when the geo middleware is wired). Handlers fill the rest.
+// TracingMiddleware populates the headers this function reads;
+// without that middleware installed, RequestID/TraceID/SpanID
+// stay empty. GeoMiddleware similarly populates the geo metadata
+// keys; without it, no geo.* metadata appears.
+func auditEventFromRequest(ctx HandlerContext) *audit.Event {
+	r := ctx.Request()
+	e := &audit.Event{
+		RequestID:    r.Header.Get(HeaderRequestID),
+		ParentSpanID: r.Header.Get(HeaderParentSpanID),
+		ActorIP:      clientIP(r),
+		UserAgent:    r.Header.Get("User-Agent"),
+	}
+	if tp := r.Header.Get(HeaderTraceparent); tp != "" {
+		if tc, err := tracer.ParseTraceparent(tp); err == nil {
+			e.TraceID = tc.TraceID
+			e.SpanID = tc.SpanID
+		}
+	}
+	enrichEventTenant(ctx, e)
+	enrichEventGeo(ctx, e)
+	return e
+}
+
+// enrichEventTenant lifts tenant routing results onto
+// Event.Metadata under the tenant.* prefix. No-op when the
+// tenant middleware didn't run (no store wired, unknown host,
+// suspended tenant). Tenant goes onto every audit event so
+// SIEM filters like "show me failed logins for tenant X" become
+// a single Metadata key check.
+func enrichEventTenant(ctx HandlerContext, e *audit.Event) {
+	r, ok := TenantFromHandlerContext(ctx)
+	if !ok || r.Tenant == nil {
+		return
+	}
+	setMeta(e, "tenant.id", r.Tenant.ID)
+	setMeta(e, "tenant.slug", r.Tenant.Slug)
+	if r.Domain != nil {
+		setMeta(e, "tenant.domain", r.Domain.Hostname)
+	}
+}
+
+// enrichEventGeo lifts geo lookup results from HandlerContext onto
+// Event.Metadata under the geo.* prefix. No-op when the geo
+// middleware didn't run (no Lookup, ErrNotFound, nil Provider).
+// Only non-empty fields are projected so audit consumers can do a
+// presence check rather than a value check.
+func enrichEventGeo(ctx HandlerContext, e *audit.Event) {
+	info, ok := GeoFromHandlerContext(ctx)
+	if !ok {
+		return
+	}
+	setMeta(e, "geo.country_code", info.CountryCode)
+	setMeta(e, "geo.region", info.Region)
+	setMeta(e, "geo.city", info.City)
+	setMeta(e, "geo.recommended_language", info.RecommendedLanguage)
+}
+
+// setMeta writes key=val into e.Metadata, lazily allocating the map
+// and skipping empty values. Use this instead of `e.Metadata = map[...]{...}`
+// — direct assignment would clobber whatever auditEventFromRequest
+// already populated (geo enrichment, future fields).
+func setMeta(e *audit.Event, key, val string) {
+	if val == "" {
+		return
+	}
+	if e.Metadata == nil {
+		e.Metadata = make(map[string]string, 4)
+	}
+	e.Metadata[key] = val
+}
+
+// ctxKeyLoginStart is the HandlerContext.Set/Get key holding the
+// time.Time stamped at /auth/login entry. Used by recordLogin* to
+// observe the per-provider login duration histogram.
+const ctxKeyLoginStart = "_sso_login_start"
+
+// observeLoginDuration computes elapsed since the stamp + observes
+// the histogram. Safe no-op when metrics aren't wired or the stamp
+// is absent (defensive — tests may bypass handleLogin).
+func (s *Server) observeLoginDuration(ctx HandlerContext, provider, outcome string) {
+	if s.metrics == nil {
+		return
+	}
+	v := ctx.Get(ctxKeyLoginStart)
+	start, ok := v.(time.Time)
+	if !ok {
+		return
+	}
+	s.metrics.LoginDuration.WithLabelValues(provider, outcome).Observe(time.Since(start).Seconds())
+}
+
+// recordLoginFailure emits a login-failure audit event AND bumps the
+// failure counter on the metrics registry (nil-safe). Reason is one of
+// the Err* constants describing why authentication was refused.
+func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reason string) {
+	if s.metrics != nil {
+		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "failure").Inc()
+	}
+	s.observeLoginDuration(ctx, provider, "failure")
+	s.dispatchLoginAnomaly(ctx, "", clientID, provider, "failure", reason)
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLoginFailure
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.Provider = provider
+	e.Reason = reason
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// dispatchLoginAnomaly hands a anomaly.LoginEvent to the AnomalyRunner.
+// Nil-safe — no runner = no-op zero overhead. SubjectID is
+// optional on failure paths (the credential validator may not
+// have resolved a user); detectors needing it skip the subject-
+// scoped checks.
+func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, provider, outcome, failureReason string) {
+	if s.anomalyRunner == nil {
+		return
+	}
+	r := ctx.Request()
+	event := &anomaly.LoginEvent{
+		SubjectID:     subjectID,
+		ClientID:      clientID,
+		Provider:      provider,
+		Outcome:       outcome,
+		FailureReason: failureReason,
+		RemoteIP:      clientIP(r),
+		UserAgent:     r.Header.Get("User-Agent"),
+		Timestamp:     time.Now(),
+	}
+	if info, ok := GeoFromHandlerContext(ctx); ok {
+		event.Geo = info
+	}
+	if tp := r.Header.Get(HeaderTraceparent); tp != "" {
+		if tc, err := tracer.ParseTraceparent(tp); err == nil {
+			event.TraceID = tc.TraceID
+		}
+	}
+	s.anomalyRunner.Dispatch(r.Context(), event)
+}
+
+// recordLoginSuccess emits a login event after a fully successful login flow
+// AND bumps the success counter + tokens_issued counter on the metrics
+// registry (nil-safe).
+func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+	if s.metrics != nil {
+		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "success").Inc()
+		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
+	}
+	s.observeLoginDuration(ctx, provider, "success")
+	s.dispatchLoginAnomaly(ctx, userID, clientID, provider, "success", "")
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLogin
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.Provider = provider
+	e.TokenStrategy = strategy
+	e.ActorID = userID
+	e.SessionID = sessionID
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordLogout emits a logout event with what was actually revoked.
+func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLogout
+	e.Outcome = audit.OutcomeSuccess
+	e.SessionID = sessionID
+	if len(revoked) > 0 {
+		setMeta(e, "revoked", strings.Join(revoked, ","))
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordLogoutNotifySuccess emits a `logout_notified` audit
+// event for a successful back-channel logout fanout. ClientID is
+// the RP that was notified; ActorID is the user whose logout
+// triggered the notification.
+func (s *Server) recordLogoutNotifySuccess(ctx HandlerContext, clientID, subject, uri string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLogoutNotified
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subject
+	setMeta(e, "uri", uri)
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordLogoutNotifyFailure emits a `logout_notified` audit
+// event with Outcome=failure when the back-channel POST failed
+// or the RP returned a non-2xx status. The error string lands
+// in Reason so SIEMs can alert on patterns ("rp-X always 503").
+func (s *Server) recordLogoutNotifyFailure(ctx HandlerContext, clientID, subject, reason string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventLogoutNotified
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.ActorID = subject
+	e.Reason = reason
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordAccountLocked emits an account_locked audit event. Fires
+// both when a NEW lockout engages (after the failure crossed the
+// threshold) and when a subsequent attempt arrives while the
+// lock is still active — operators want both signals to
+// distinguish "lock just engaged" from "attacker keeps trying
+// against a locked account". The lockoutKey lands in ActorID so
+// SIEMs can pivot on it.
+func (s *Server) recordAccountLocked(ctx HandlerContext, clientID, provider, lockKey string, until time.Time) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventAccountLocked
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.Provider = provider
+	e.ActorID = lockKey
+	if !until.IsZero() {
+		setMeta(e, "until", until.UTC().Format(time.RFC3339))
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordCodeSent emits a code_sent event for two-step flows (phone/email).
+// target is intentionally not stored in full to limit PII spread; only its
+// type lives in Provider, the value goes into a short metadata key.
+func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventCodeSent
+	e.Provider = provider
+	if ok {
+		e.Outcome = audit.OutcomeSuccess
+	} else {
+		e.Outcome = audit.OutcomeFailure
+	}
+	if target != "" {
+		setMeta(e, "target", maskTarget(target))
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordTokenIssued emits a token_issued event (used for grant flows).
+func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventTokenIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.TokenStrategy = strategy
+	e.ActorID = subjectID
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordRefreshTokenIssued emits a refresh_token_issued event. Set
+// rotation=true on the rotation path so SIEMs can separate first-
+// issue (login / authz_code) from rotation (refresh_token grant).
+func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectID string, rotation bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventRefreshTokenIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	if rotation {
+		setMeta(e, "rotation", "true")
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordIDTokenIssued emits an id_token_issued event whenever an
+// OIDC id_token is appended to the response.
+func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventIDTokenIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordDeviceCodeIssued emits a device_code_issued event at the
+// start of an RFC 8628 device authorization grant.
+func (s *Server) recordDeviceCodeIssued(ctx HandlerContext, clientID string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventDeviceCodeIssued
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordDeviceCodeApproved / Denied emit at the consent step.
+// userID is the user who hit /device/verify; deviceClientID is the
+// client_id that originally requested the device authorization.
+func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClientID string, approved bool) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	if approved {
+		e.Type = audit.EventDeviceCodeApproved
+		e.Outcome = audit.OutcomeSuccess
+	} else {
+		e.Type = audit.EventDeviceCodeDenied
+		e.Outcome = audit.OutcomeFailure
+	}
+	e.ActorID = userID
+	setMeta(e, "device_client_id", deviceClientID)
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// recordRefreshTokenReuse emits a refresh_token_reuse_detected event.
+// Fired from the rotation grant when the store signals
+// oauth.ErrRefreshTokenReused — a security signal worth routing to alerting.
+func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventRefreshTokenReuse
+	e.Outcome = audit.OutcomeFailure
+	e.ClientID = clientID
+	e.Reason = "family=" + familyID
+	if killed > 0 {
+		setMeta(e, "killed", itoa(killed))
+	}
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// itoa is a tiny strconv-free int formatter — keeps audit_handler.go
+// free of a strconv import for one call site.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+// recordCallbackFailure emits a callback_failure event.
+func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
+	if s.auditor == nil {
+		return
+	}
+	e := auditEventFromRequest(ctx)
+	e.Type = audit.EventCallbackFailure
+	e.Outcome = audit.OutcomeFailure
+	e.Provider = provider
+	e.Reason = reason
+	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// maskTarget redacts the bulk of a phone number or email so the event remains
+// auditable without storing the raw identifier.
+func maskTarget(t string) string {
+	if at := strings.IndexByte(t, '@'); at > 0 {
+		// email: keep first char + domain
+		if at == 1 {
+			return t[:1] + "***" + t[at:]
+		}
+		return t[:1] + "***" + t[at-1:]
+	}
+	if len(t) > 4 {
+		return t[:2] + strings.Repeat("*", len(t)-4) + t[len(t)-2:]
+	}
+	return "***"
+}
+
+func clientIP(r *http.Request) string {
+	if h := r.Header.Get("X-Forwarded-For"); h != "" {
+		if i := strings.IndexByte(h, ','); i > 0 {
+			return strings.TrimSpace(h[:i])
+		}
+		return strings.TrimSpace(h)
+	}
+	if h := r.Header.Get("X-Real-IP"); h != "" {
+		return h
+	}
+	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
+		return r.RemoteAddr[:i]
+	}
+	return r.RemoteAddr
+}
+
+// PathOIDCDiscovery is the OpenID Connect Discovery 1.0 metadata
+// endpoint (also the de-facto location for RFC 8414 OAuth 2.0
+// Authorization Server Metadata since most ecosystems collapsed them).
+const PathOIDCDiscovery = "/.well-known/openid-configuration"
+
+// oidcConfiguration mirrors OpenID Connect Discovery 1.0 §3 +
+// RFC 8414 §2 fields. Optional fields are omitempty so the wire stays
+// minimal — relying parties branch on presence per the spec.
+type oidcConfiguration struct {
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	UserInfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
+	JWKSURI               string `json:"jwks_uri"`
+	EndSessionEndpoint    string `json:"end_session_endpoint,omitempty"`
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
+	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`
+	PushedAuthReqEndpoint string `json:"pushed_authorization_request_endpoint,omitempty"`
+	RequirePushedAuthReq  bool   `json:"require_pushed_authorization_requests,omitempty"`
+	// RFC 9101 §10.5 — true when every registered client enforces
+	// signed request objects (RequireSignedRequestObject=true on
+	// the Client). Advertised AS-wide because the spec field is
+	// boolean (no per-client surface in discovery). Stays false
+	// when any client still accepts unsigned authorization
+	// requests — matching the strictest-possible-promise semantics
+	// the field implies.
+	RequireSignedRequestObjectGlobal  bool     `json:"require_signed_request_object,omitempty"`
+	ResponseTypesSupported            []string `json:"response_types_supported"`
+	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
+	SubjectTypesSupported             []string `json:"subject_types_supported"`
+	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported,omitempty"`
+	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+
+	// RFC 8414 §2 + RFC 7662 §6: same set of client auth methods
+	// the introspection endpoint accepts. The /token + /par +
+	// /introspect + /revoke endpoints all share the same auth
+	// pipeline in this server, so we advertise the same list on
+	// each.
+	IntrospectionEndpointAuthMethodsSupported []string `json:"introspection_endpoint_auth_methods_supported,omitempty"`
+	// RFC 8414 §2 + RFC 7009 §4.1.2: same set for the revocation
+	// endpoint.
+	RevocationEndpointAuthMethodsSupported []string `json:"revocation_endpoint_auth_methods_supported,omitempty"`
+	// RFC 9126 §5: client auth methods accepted on /par. Mirrors
+	// the /token list since /par shares the same auth pipeline.
+	PushedAuthorizationRequestEndpointAuthMethodsSupported []string `json:"pushed_authorization_request_endpoint_auth_methods_supported,omitempty"`
+	CodeChallengeMethodsSupported                          []string `json:"code_challenge_methods_supported,omitempty"`
+	ClaimsSupported                                        []string `json:"claims_supported,omitempty"`
+
+	// RFC 9207 §3 — when true, this AS includes `iss` on every
+	// authorization response (success + error). Constant true here
+	// because handleLogin unconditionally stamps it via
+	// authzErrorBody / resolveIssuer.
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported"`
+
+	// RFC 9396 §13 — the union of every registered client's
+	// AllowedAuthorizationDetailsTypes. Empty / omitted when no
+	// client has declared a type allowlist (the parameter is
+	// still accepted but unconstrained).
+	AuthorizationDetailsTypesSupported []string `json:"authorization_details_types_supported,omitempty"`
+
+	// OIDC Back-Channel Logout 1.0 §2.1 — true when this server
+	// will POST logout tokens to RPs' backchannel_logout_uri
+	// endpoints. Set when both LogoutTokenIssuer + LogoutNotifier
+	// are wired via WithBackchannelLogout.
+	BackchannelLogoutSupported bool `json:"backchannel_logout_supported,omitempty"`
+	// BackchannelLogoutSessionSupported flips true when the AS
+	// stamps `sid` in access + ID tokens — that is, when a
+	// SessionManager is wired. Without a session manager every
+	// token has empty sid, so advertising session support would
+	// be a lie. With one wired, /end_session reads the sid from
+	// the id_token_hint and forwards it on logout_tokens, letting
+	// RPs invalidate the specific session rather than every
+	// session for the subject.
+	BackchannelLogoutSessionSupported bool `json:"backchannel_logout_session_supported,omitempty"`
+
+	// OIDC Front-Channel Logout 1.0 §2.1 — true when at least one
+	// registered client opts in via FrontchannelLogoutURI. The
+	// server's /end_session handler then renders an HTML iframe
+	// page instead of the bare 302/204 response. Per-client
+	// metadata (the URI itself) is not advertised in discovery;
+	// it's pre-registered out-of-band like every other client
+	// secret.
+	FrontchannelLogoutSupported bool `json:"frontchannel_logout_supported,omitempty"`
+	// FrontchannelLogoutSessionSupported mirrors the back-channel
+	// flag — true when SessionManager is wired so id_tokens
+	// carry a sid claim the RP can correlate to its local
+	// session at logout time.
+	FrontchannelLogoutSessionSupported bool `json:"frontchannel_logout_session_supported,omitempty"`
+
+	// OIDC Core §3.1.2.1 — the prompt values this AS understands.
+	// "none" enables silent renewal via id_token_hint; the others
+	// are accepted but currently lower the request to its default
+	// interactive path (login/consent/select_account UIs aren't
+	// rendered by this server, only their downstream signaling).
+	PromptValuesSupported []string `json:"prompt_values_supported,omitempty"`
+
+	// OIDC Core §3.1.2.1 + Form Post Response Mode 1.0 — the
+	// response delivery modes this AS supports for authorization
+	// responses. `form_post` triggers the HTML auto-POST page;
+	// `query` / `fragment` are accepted but currently just
+	// influence the response shape the RP's own JS handles
+	// (this server is JSON-bodied for /auth/login by default).
+	ResponseModesSupported []string `json:"response_modes_supported,omitempty"`
+
+	// OIDC Core §5.5 — true when the AS accepts the `claims`
+	// request parameter. Always true here (the parameter is
+	// validated for JSON-object shape and threaded into
+	// AuthRequest.RequestedClaims; authenticators / issuers that
+	// honor it project the requested claims into output).
+	ClaimsParameterSupported bool `json:"claims_parameter_supported"`
+
+	// OIDC Core §5.3.2 — JWS algs supported for signing /userinfo
+	// responses when the client's `userinfo_signed_response_alg`
+	// metadata is set. Empty / omitted = signed userinfo not
+	// available (the oidc.IDTokenIssuer doesn't implement oidc.UserinfoSigner).
+	UserinfoSigningAlgValuesSupported []string `json:"userinfo_signing_alg_values_supported,omitempty"`
+
+	// RFC 9449 §5.1 — JWS algs accepted on the DPoP proof
+	// header. Always EdDSA today (matches every other JWT path
+	// on this server). Presence of the field signals the AS
+	// supports DPoP at all.
+	DPoPSigningAlgValuesSupported []string `json:"dpop_signing_alg_values_supported,omitempty"`
+
+	// RFC 8705 §3.3 — true when the AS supports issuing tokens
+	// bound to mTLS client certificates. Flipped when
+	// WithClientCertExtractor is wired.
+	TLSClientCertificateBoundAccessTokens bool `json:"tls_client_certificate_bound_access_tokens,omitempty"`
+
+	// RFC 8705 §5 — when the AS terminates mTLS on a different
+	// hostname / port than the standard endpoints (typical edge:
+	// `auth.example.com` for bearer flows, `mtls.example.com` for
+	// cert-authenticated flows), publish the alternates here.
+	// RPs that need cert-bound issuance route to the alias; plain
+	// bearer continues hitting the regular endpoints. This server
+	// publishes the same endpoint URLs on both sides today (the
+	// HTTPS server accepts certs on every endpoint), so RPs see
+	// identical hostnames but the field's presence signals "mTLS
+	// is operationally available." Operators with split-hostname
+	// terminations override via deploy-side proxy rewriting.
+	MTLSEndpointAliases *MTLSEndpointAliases `json:"mtls_endpoint_aliases,omitempty"`
+
+	// OIDC Discovery §3 `acr_values_supported`. Populated from
+	// the operator-declared `WithSupportedACRValues` — empty /
+	// omitted when no list is configured. RPs branching on ACR
+	// (step-up auth, FAPI 2.0) use this to validate what they
+	// can request from the AS.
+	ACRValuesSupported []string `json:"acr_values_supported,omitempty"`
+
+	// OIDC Discovery §3 operator metadata. Pointed at by RPs
+	// during consent ("by signing in you accept ..." linking to
+	// op_policy_uri / op_tos_uri) and used by integrators looking
+	// up the AS's own SDK reference (service_documentation).
+	// Populated via `WithOperatorMetadata`; omitted when unset.
+	OpPolicyURI          string `json:"op_policy_uri,omitempty"`
+	OpTosURI             string `json:"op_tos_uri,omitempty"`
+	ServiceDocumentation string `json:"service_documentation,omitempty"`
+
+	// OIDC Discovery §3 `claim_types_supported`. RPs introspect
+	// what claim shapes the AS emits — "normal" (claims are
+	// inline in the id_token / userinfo response), "aggregated"
+	// (claims arrive as a JWT inside the response), "distributed"
+	// (claims at a fetchable URL). This server only emits the
+	// inline normal form; advertised as ["normal"] for spec
+	// completeness so OIDC conformance suites pass without
+	// inferring the default.
+	ClaimTypesSupported []string `json:"claim_types_supported,omitempty"`
+
+	// OIDC Core §3.1.2.1 `display` parameter — values RPs may pass
+	// to hint the auth UI form factor (page / popup / touch / wap).
+	// This server renders no chrome itself (authenticators own the
+	// UI), but advertises "page" — the spec default — so OIDC
+	// conformance suites don't have to infer it. RPs requesting
+	// other values get the same default path; the parameter is
+	// accepted on the wire without being acted on.
+	DisplayValuesSupported []string `json:"display_values_supported,omitempty"`
+
+	// OIDC Core §9 — JWS algorithms the AS accepts on the
+	// `client_assertion` JWT for `private_key_jwt` client
+	// authentication. RPs introspect this to know which alg to
+	// sign their assertion with. Matches the same EdDSA-only
+	// surface JAR + DPoP advertise.
+	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+
+	// Same JWS algorithm advertisement for the introspect /
+	// revoke / PAR endpoints — all share the JWT-assertion path
+	// so they accept the same alg set.
+	IntrospectionEndpointAuthSigningAlgValuesSupported              []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
+	RevocationEndpointAuthSigningAlgValuesSupported                 []string `json:"revocation_endpoint_auth_signing_alg_values_supported,omitempty"`
+	PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported []string `json:"pushed_authorization_request_endpoint_auth_signing_alg_values_supported,omitempty"`
+
+	// RFC 9101 §10.5 — true when the `request` parameter is
+	// accepted on /auth/login. Always true here.
+	RequestParameterSupported bool `json:"request_parameter_supported"`
+	// RequestURIParameterSupported reflects whether the AS accepts
+	// `request_uri` as an HTTPS URL it will fetch (RFC 9101 §5.2.2)
+	// — flipped true when `WithJARFetcher` is wired. The PAR
+	// `urn:ietf:params:oauth:request_uri:` prefix is ALWAYS accepted
+	// when a oauth.PARStore is wired (advertised separately via
+	// pushed_authorization_request_endpoint).
+	RequestURIParameterSupported bool `json:"request_uri_parameter_supported"`
+	// RequestObjectSigningAlgValuesSupported lists the alg values
+	// the JAR verifier accepts on the request JWT. EdDSA today.
+	RequestObjectSigningAlgValuesSupported []string `json:"request_object_signing_alg_values_supported,omitempty"`
+
+	// RFC 9101 §6.4 encrypted JAR. Populated when WithJARDecrypter
+	// is wired — the SupportedAlgs() / SupportedEncs() the decrypter
+	// reports surface here so RPs know which alg + enc to use when
+	// constructing the JWE. Omitted (the fields disappear from the
+	// JSON) when no decrypter is wired; encrypted requests are
+	// rejected with invalid_request_object in that case.
+	RequestObjectEncryptionAlgValuesSupported []string `json:"request_object_encryption_alg_values_supported,omitempty"`
+	RequestObjectEncryptionEncValuesSupported []string `json:"request_object_encryption_enc_values_supported,omitempty"`
+
+	// RFC 8414 §2.1 — when set, contains a JWS over the same
+	// metadata claims as the surrounding document. RPs MUST verify
+	// the signature with JWKS before trusting any endpoint; if the
+	// signed_metadata fields disagree with the plaintext, the
+	// signed payload wins. Wired via `WithMetadataSigner` — left
+	// empty (and field omitted) when no signer is plugged in.
+	SignedMetadata string `json:"signed_metadata,omitempty"`
+
+	// MFA orchestration (SnapLink extension; non-standard). When
+	// [WithMFAProvider] + [WithMFAChallengeStore] are wired, MFAEndpoint
+	// points at /auth/mfa and MFAMethodsSupported lists the factor
+	// names the provider can verify. Discovery clients branch on the
+	// presence of MFAEndpoint to know whether to handle the
+	// mfa_required response shape. Fields omitted from the JSON when
+	// MFA is not wired (preserves wire-shape parity with vanilla OIDC
+	// discovery for callers that don't speak the extension).
+	MFAEndpoint         string   `json:"mfa_endpoint,omitempty"`
+	MFAMethodsSupported []string `json:"mfa_methods_supported,omitempty"`
+}
+
+// MTLSEndpointAliases is the RFC 8705 §5 alias map. Only endpoints
+// that participate in client authentication / token issuance need
+// alternates; discovery, JWKS, and end_session aren't gated on mTLS.
+// Empty fields are omitted from the JSON output so the structure
+// stays compact for deployments that publish a subset of endpoints.
+type MTLSEndpointAliases struct {
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
+	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
+	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
+	UserInfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
+	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`
+	PushedAuthReqEndpoint string `json:"pushed_authorization_request_endpoint,omitempty"`
+}
+
+// codeChallengeMethodsFor advertises the PKCE methods this AS will
+// actually accept. OAuth 2.1 strict mode forbids `plain` server-wide
+// (RFC 7636 §4.2 marks it weaker; 2.1 §7.5.2 mandates S256), so the
+// discovery list MUST shrink to ["S256"] when the operator enabled
+// the strict flag. Otherwise both are accepted on the wire and both
+// are advertised. Per-client AllowedPKCEMethods narrows further at
+// the request path; the discovery list reflects the AS-wide ceiling.
+func codeChallengeMethodsFor(s *Server) []string {
+	if s.oauth21Strict {
+		return []string{PKCEMethodS256}
+	}
+	return []string{PKCEMethodS256, PKCEMethodPlain}
+}
+
+// responseTypesFor mirrors codeChallengeMethodsFor. OAuth 2.1 §1.1
+// retires the implicit grant (response_type=token), so strict mode
+// MUST omit it from the discovery advertisement — otherwise an RP
+// scanning discovery sees "token" supported, sends the request, and
+// gets unsupported_response_type at runtime. The mismatch is a real
+// integration footgun: lock the wire down to what we actually accept.
+func responseTypesFor(s *Server) []string {
+	if s.oauth21Strict {
+		return []string{"code"}
+	}
+	return []string{"code", "token"}
+}
+
+// subjectTypesFor reflects WithPairwiseSubjectStore — every server
+// advertises "public" (the default), and "pairwise" only when an
+// operator wired the store so the AS can actually resolve pairwise
+// subs at resource time. Advertising pairwise without the store
+// would be a footgun: RPs registering with subject_type=pairwise
+// would silently get public subs.
+func subjectTypesFor(s *Server) []string {
+	if s.pairwiseStore != nil {
+		return []string{"public", "pairwise"}
+	}
+	return []string{"public"}
+}
+
+// signDiscoveryMetadata marshals cfg to JSON with SignedMetadata
+// cleared, re-parses as a claim map, and asks the wired
+// oidc.MetadataSigner to JWS it. The signed payload must equal the
+// plaintext fields per RFC 8414 §2.1; we enforce that by sourcing
+// the claims from the same struct, with one round-trip through
+// json (Marshal + Unmarshal) to get the map shape the signer
+// expects.
+func (s *Server) signDiscoveryMetadata(ctx context.Context, cfg *oidcConfiguration) (string, error) {
+	if s.metadataSigner == nil {
+		return "", nil
+	}
+	saved := cfg.SignedMetadata
+	cfg.SignedMetadata = ""
+	defer func() { cfg.SignedMetadata = saved }()
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", err
+	}
+	return s.metadataSigner.SignMetadata(ctx, claims)
+}
+
+// Both `require_signed_request_object` (RFC 9101 §10.5) and
+// `require_pushed_authorization_requests` (RFC 9126 §5) derive from
+// scanning the client store. They share the cached
+// clientDiscoverySnapshot so a single iteration powers every
+// derivation across one discovery doc request.
+
+// handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
+// RFC 8414 metadata document. Always wired by Mount (no opt-in
+// option) — relying parties expect this endpoint at a fixed URL
+// per the spec.
+//
+// Absolute URLs are derived from the incoming request (scheme +
+// host) so the same SSO server can be advertised under multiple
+// hostnames without a per-deployment base-URL configuration knob.
+// Operators behind a TLS-terminating proxy MUST forward
+// X-Forwarded-Proto so the discovery endpoint advertises https,
+// not http — otherwise OIDC RPs refuse the issuer per §4.3.
+func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
+	base := requestBaseURL(ctx.Request())
+	// Body cache: skip the marshal + struct assembly when a recent
+	// rendering for this base URL is still fresh. Keyed by base URL
+	// so multi-host SSO doesn't conflate. Honors If-None-Match so
+	// well-behaved RP libraries can short-circuit to 304.
+	if s.discoveryDocCacheTTL > 0 {
+		if entry := s.lookupDiscoveryDocCache(base); entry != nil {
+			s.writeDiscoveryDoc(ctx, entry)
+			return
+		}
+	}
+	// Single client-store iteration powers every derived field below
+	// (scopes union, RequirePAR-any, RequireSignedRequestObject-all,
+	// frontchannel_logout_supported, authorization_details types
+	// union). TTL-cached across requests so a hot RP polling the
+	// discovery doc doesn't pay 5× ClientStore.List per call.
+	clientSnap := s.discoverySnapshot(ctx.Request().Context())
+	cfg := oidcConfiguration{
+		Issuer:                 base,
+		AuthorizationEndpoint:  base + PathLogin,
+		TokenEndpoint:          base + PathToken,
+		UserInfoEndpoint:       base + PathUserInfo,
+		JWKSURI:                base + PathJWKS,
+		EndSessionEndpoint:     base + PathEndSession,
+		RevocationEndpoint:     base + PathRevoke,
+		IntrospectionEndpoint:  base + PathIntrospect,
+		ResponseTypesSupported: responseTypesFor(s),
+		GrantTypesSupported:    append([]string(nil), SupportedGrants...),
+		SubjectTypesSupported:  subjectTypesFor(s),
+		TokenEndpointAuthMethodsSupported: []string{
+			"client_secret_basic",
+			"client_secret_post",
+			"private_key_jwt", // RFC 7521 + 7523
+			// RFC 6749 §2.1 / OIDC Core §9 — public clients (SPAs,
+			// native apps) authenticate only by client_id + PKCE,
+			// so `none` is the spec-defined method for them. DCR
+			// already accepts it (handle_register.go), so advertise
+			// it here so RP libraries don't reject the AS during
+			// metadata validation.
+			"none",
+		},
+		// Introspection + revocation share the same client-auth
+		// pipeline as /token, so advertise the same list.
+		IntrospectionEndpointAuthMethodsSupported: []string{
+			"client_secret_basic", "client_secret_post", "private_key_jwt",
+		},
+		RevocationEndpointAuthMethodsSupported: []string{
+			"client_secret_basic", "client_secret_post", "private_key_jwt",
+		},
+		CodeChallengeMethodsSupported: codeChallengeMethodsFor(s),
+		// RFC 9207 §3: this server always includes `iss` in
+		// authorization responses (see handleLogin + resolveIssuer).
+		AuthorizationResponseIssParameterSupported: true,
+		// RFC 9101 §10.5: JAR `request` parameter accepted; URL
+		// fetched `request_uri` flips true when WithJARFetcher is
+		// wired (set below).
+		RequestParameterSupported:              true,
+		RequestURIParameterSupported:           false,
+		RequestObjectSigningAlgValuesSupported: []string{"EdDSA"},
+		ClaimsParameterSupported:               true,
+	}
+	if s.jarFetcher != nil {
+		cfg.RequestURIParameterSupported = true
+	}
+	if s.jarDecrypter != nil {
+		// Advertising the alg + enc lists tells RPs which JWE shapes
+		// the AS will accept on the `request` parameter. RPs that don't
+		// see these fields know to fall back to plain JWS JAR (which
+		// is always accepted).
+		cfg.RequestObjectEncryptionAlgValuesSupported = s.jarDecrypter.SupportedAlgs()
+		cfg.RequestObjectEncryptionEncValuesSupported = s.jarDecrypter.SupportedEncs()
+	}
+	// MFA orchestration is advertised only when both Provider + Store
+	// are wired — having Provider without Store would be a misconfig
+	// (handleMFAComplete returns 404 in that state) so we don't leak
+	// the endpoint into discovery either.
+	if s.mfaProvider != nil && s.mfaChallengeStore != nil {
+		cfg.MFAEndpoint = base + PathMFAComplete
+		cfg.MFAMethodsSupported = s.mfaProvider.SupportedMethods()
+	}
+	// When the operator overrode the issuer name with WithIssuer, prefer
+	// that — many production deployments set issuer to the canonical
+	// public URL even when the SSO server is internally reachable at a
+	// different host.
+	if s.issuer != "" && s.issuer != DefaultIssuer {
+		cfg.Issuer = s.issuer
+	}
+	if s.idTokenIssuer != nil {
+		// We always sign with EdDSA today; when more signers land this
+		// list should reflect every registered signature algorithm.
+		cfg.IDTokenSigningAlgValuesSupported = []string{"EdDSA"}
+		// Userinfo signing capability is gated on the issuer
+		// implementing the oidc.UserinfoSigner extension. The default
+		// Ed25519JWTIssuer does — third-party implementations may
+		// not, and the omitempty serialization correctly hides the
+		// claim in that case.
+		if _, ok := s.idTokenIssuer.(oidc.UserinfoSigner); ok {
+			cfg.UserinfoSigningAlgValuesSupported = []string{"EdDSA"}
+		}
+	}
+	if s.parStore != nil {
+		// RFC 9126 §5: advertise the PAR endpoint so RPs that prefer
+		// the pushed-request flow can discover it. The server-wide
+		// `require_pushed_authorization_requests` discovery flag is
+		// flipped when ANY registered client has RequirePAR=true —
+		// matches the OIDC convention where a discovery boolean
+		// reflects "is this supported anywhere".
+		cfg.PushedAuthReqEndpoint = base + PathPAR
+		cfg.PushedAuthorizationRequestEndpointAuthMethodsSupported = []string{
+			"client_secret_basic", "client_secret_post", "private_key_jwt",
+		}
+		if clientSnap.requirePAR {
+			cfg.RequirePushedAuthReq = true
+		}
+	}
+	if s.dcrPolicy != nil {
+		// RFC 7591 §3: advertise the registration endpoint so
+		// dynamic clients can discover it. The initial access
+		// token (when required) is distributed out-of-band, not
+		// via discovery.
+		cfg.RegistrationEndpoint = base + oauth.PathRegister
+	}
+	if len(clientSnap.scopes) > 0 {
+		cfg.ScopesSupported = clientSnap.scopes
+	}
+	if len(clientSnap.authorizationDetailTypes) > 0 {
+		cfg.AuthorizationDetailsTypesSupported = clientSnap.authorizationDetailTypes
+	}
+	if s.logoutTokenIssuer != nil && s.logoutNotifier != nil {
+		cfg.BackchannelLogoutSupported = true
+		if s.sessionMgr != nil {
+			cfg.BackchannelLogoutSessionSupported = true
+		}
+	}
+	if clientSnap.frontchannelLogout {
+		cfg.FrontchannelLogoutSupported = true
+		if s.sessionMgr != nil {
+			cfg.FrontchannelLogoutSessionSupported = true
+		}
+	}
+	cfg.ClaimsSupported = []string{
+		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",
+		"nonce", "auth_time", "amr", "acr", "azp",
+	}
+	// DPoP advertisement is unconditional — the handler accepts
+	// the `DPoP` header on /token whenever it's present; there's
+	// no opt-in store to wire.
+	cfg.DPoPSigningAlgValuesSupported = []string{"EdDSA"}
+	if s.clientCertExtractor != nil {
+		cfg.TLSClientCertificateBoundAccessTokens = true
+		cfg.MTLSEndpointAliases = &MTLSEndpointAliases{
+			TokenEndpoint:         cfg.TokenEndpoint,
+			RevocationEndpoint:    cfg.RevocationEndpoint,
+			IntrospectionEndpoint: cfg.IntrospectionEndpoint,
+			UserInfoEndpoint:      cfg.UserInfoEndpoint,
+			RegistrationEndpoint:  cfg.RegistrationEndpoint,
+			PushedAuthReqEndpoint: cfg.PushedAuthReqEndpoint,
+		}
+	}
+	if len(s.supportedACRValues) > 0 {
+		cfg.ACRValuesSupported = append([]string(nil), s.supportedACRValues...)
+	}
+	cfg.OpPolicyURI = s.opPolicyURI
+	cfg.OpTosURI = s.opTosURI
+	cfg.ServiceDocumentation = s.serviceDocumentation
+	cfg.ClaimTypesSupported = []string{"normal"}
+	cfg.DisplayValuesSupported = []string{"page"}
+	if clientSnap.requireSignedRequestObject {
+		cfg.RequireSignedRequestObjectGlobal = true
+	}
+	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	cfg.RevocationEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	if s.parStore != nil {
+		cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	}
+	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
+	// run silent renewal via id_token_hint. The other prompt
+	// values (login / consent / select_account) aren't surfaced
+	// today because this server doesn't render those UIs itself;
+	// the RP is responsible for the interactive flow.
+	cfg.PromptValuesSupported = []string{PromptNone}
+
+	// Form Post Response Mode 1.0: every shape this server can
+	// emit. `form_post` is the value-add (auto-POST HTML page);
+	// query + fragment are advertised for spec completeness so
+	// RPs that introspect discovery know they're accepted on
+	// the wire.
+	cfg.ResponseModesSupported = []string{
+		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
+	}
+
+	// RFC 8414 §2.1 signed_metadata MUST be produced AFTER every
+	// other field is finalized so the signed claims match what RPs
+	// see in the plaintext fields. The signing itself excludes the
+	// signed_metadata field (chicken-and-egg) — claims are sourced
+	// from the cfg struct via json round-trip.
+	if s.metadataSigner != nil {
+		if jws, err := s.signDiscoveryMetadata(ctx.Request().Context(), &cfg); err != nil {
+			s.logger.Error("signed_metadata generation failed", "error", err)
+		} else {
+			cfg.SignedMetadata = jws
+		}
+	}
+
+	// ttl <= 0 disables both in-process caching AND the response-side
+	// ETag / Cache-Control headers — every request renders fresh and
+	// downstream caches (CDN, RP libraries) are told not to cache.
+	if s.discoveryDocCacheTTL <= 0 {
+		ctx.JSON(http.StatusOK, cfg)
+		return
+	}
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		s.logger.Error("discovery marshal failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	entry := buildDiscoveryDocEntry(body, s.discoveryDocCacheTTL)
+	s.storeDiscoveryDocCache(base, entry)
+	s.writeDiscoveryDoc(ctx, entry)
+}
+
+// requestBaseURL derives an absolute scheme://host base from the
+// request. Honors X-Forwarded-Proto / X-Forwarded-Host from a known
+// edge proxy; falls back to req.TLS for scheme and req.Host
+// otherwise. Internet-facing deployments without an edge proxy that
+// strips and re-sets those headers MUST install a stricter base
+// extractor — XFF spoofing on a public endpoint can serve the wrong
+// scheme to OIDC RPs.
+func requestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		// First hop only — some chains comma-separate.
+		if i := strings.IndexByte(v, ','); i >= 0 {
+			v = v[:i]
+		}
+		scheme = strings.TrimSpace(v)
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		if i := strings.IndexByte(v, ','); i >= 0 {
+			v = v[:i]
+		}
+		host = strings.TrimSpace(v)
+	}
+	return scheme + "://" + host
+}
+
+// JWK + JWKSProvider + PathJWKS + DefaultJWKSCacheMaxAge moved to core/jwks.go
+// (data type / interface / wire constants).
+
+func (s *Server) handleJWKS(ctx HandlerContext) {
+	keys := make([]JWK, 0)
+	for _, ti := range s.tokenIssuers {
+		jp, ok := ti.(JWKSProvider)
+		if !ok {
+			continue
+		}
+		ks, err := jp.JWKS(ctx.Request().Context())
+		if err != nil {
+			s.logger.Error("jwks provider failed", "error", err)
+			continue
+		}
+		keys = append(keys, ks...)
+	}
+	// JAR JWE decrypter typically also implements JWKSProvider so its
+	// public encryption key (use: "enc") publishes alongside the
+	// issuer signing keys (use: "sig"). A single JWKS doc covers both
+	// roles; RPs branch on `use` to know which key to encrypt to vs
+	// verify with.
+	if jp, ok := s.jarDecrypter.(JWKSProvider); ok {
+		ks, err := jp.JWKS(ctx.Request().Context())
+		if err != nil {
+			s.logger.Error("jwks decrypter failed", "error", err)
+		} else {
+			keys = append(keys, ks...)
+		}
+	}
+
+	body, err := json.Marshal(map[string]any{"keys": keys})
+	if err != nil {
+		s.logger.Error("jwks marshal failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+
+	// ETag = strong validator. RP libraries can send If-None-Match on
+	// poll-style fetches to short-circuit when keys haven't rotated.
+	// Weak validator semantics ("W/") would be wrong here — the JSON
+	// is byte-exact (json.Marshal is deterministic for the same input
+	// modulo map iteration; the keys slice ordering is stable across
+	// one process lifetime, so any change means real key rotation).
+	sum := sha256.Sum256(body)
+	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:8]) + `"`
+
+	w := ctx.ResponseWriter()
+	r := ctx.Request()
+	w.Header().Set(HeaderContentType, ContentTypeJSON)
+	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(s.jwksCacheMaxAge().Seconds())))
+	w.Header().Set("ETag", etag)
+
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) jwksCacheMaxAge() time.Duration {
+	if s.jwksCacheTTL > 0 {
+		return s.jwksCacheTTL
+	}
+	return DefaultJWKSCacheMaxAge
+}
+
+// silentRenewalRequest captures the subset of /auth/login parameters
+// the OIDC prompt=none silent flow needs. Bound from the inline req
+// struct in handleLogin so the silent-renewal path can be tested and
+// reasoned about in isolation.
+type silentRenewalRequest struct {
+	ClientID             string
+	Scope                []string
+	State                string
+	Nonce                string
+	Resource             []string
+	AuthorizationDetails json.RawMessage
+	IDTokenHint          string
+	// MaxAge is the OIDC Core §3.1.2.1 max_age parameter — when
+	// non-nil, the silent renewal is rejected with login_required
+	// if the hint's auth_time is older than this many seconds.
+	// nil = no max_age constraint (RP didn't pass one).
+	MaxAge *int64
+}
+
+// parsePromptValues splits the OIDC prompt parameter and returns the
+// unique non-empty values. Empty input returns nil so the caller can
+// short-circuit with a `len() == 0` check.
+func parsePromptValues(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	seen := make(map[string]struct{}, 4)
+	out := make([]string, 0, 4)
+	for _, v := range strings.Fields(raw) {
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+// promptHasNone reports whether the prompt parameter requests silent
+// authentication. Convenience over scanning the slice at each site.
+func promptHasNone(values []string) bool {
+	for _, v := range values {
+		if v == PromptNone {
+			return true
+		}
+	}
+	return false
+}
+
+// handleSilentRenewal implements OIDC Core §3.1.2.1's prompt=none flow.
+// The RP loads /auth/login in a hidden iframe with prompt=none +
+// id_token_hint to probe whether the End-User still has an active
+// session — when yes, a freshly minted access (and id) token returns
+// without any UI; when no, error login_required tells the iframe to
+// fall back to the visible login flow.
+//
+// Spec checkpoints satisfied here:
+//
+//   - §3.1.2.1: prompt=none MUST NOT be combined with other prompt
+//     values (caller validated this).
+//   - §3.1.2.6: missing or unverifiable id_token_hint → login_required.
+//   - §3.1.2.6: no active End-User session → login_required.
+//   - §3.1.2.6: hint subject doesn't match the live session → login_required.
+//   - The new ID token's `auth_time` MUST equal the original — no fresh
+//     authentication event happened, so the factor freshness signal
+//     downstream services see is preserved (RFC 9068 §2.2).
+//
+// Returns true when the silent flow handled the response (caller MUST
+// bail). False on a non-prompt-none request (caller continues).
+func (s *Server) handleSilentRenewal(ctx HandlerContext, prompts []string, req silentRenewalRequest, client *Client) bool {
+	if !promptHasNone(prompts) {
+		return false
+	}
+	// §3.1.2.1: "none" cannot be combined with any other prompt
+	// value; mixing them is meaningless ("don't show UI AND show
+	// login UI") and the spec mandates invalid_request.
+	if len(prompts) > 1 {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "prompt=none must not be combined with other prompt values"))
+		return true
+	}
+	if req.IDTokenHint == "" {
+		// Without a hint we have no way to identify which user
+		// the silent renewal targets; the only spec-correct
+		// answer is login_required (§3.1.2.6).
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+		return true
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), req.IDTokenHint)
+	if err != nil || claims == nil {
+		// A bad-signature hint is indistinguishable from "no
+		// session" on the wire (§3.1.2.6's login_required is
+		// the catch-all for "AS needs user reauth"). Don't leak
+		// which failure mode triggered it.
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+		return true
+	}
+	// The hint's client_id binding MUST match the requesting client
+	// — a hint minted for client A can't be redeemed by client B
+	// for a silent renewal (cross-RP confused deputy defense).
+	hintedClientID := claims.ClientID
+	if hintedClientID == "" && len(claims.Audience) > 0 {
+		hintedClientID = claims.Audience[0]
+	}
+	if hintedClientID != "" && hintedClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+		return true
+	}
+	// OIDC Core §3.1.2.1 max_age: when the RP sets it, the AS MUST
+	// reauthenticate if the elapsed time since auth_time exceeds
+	// the value. prompt=none can't reauthenticate (no UI allowed),
+	// so the only spec-correct response is login_required —
+	// telling the iframe to fall back to the visible login flow.
+	// max_age=0 collapses to "always reauthenticate"; nil = no
+	// constraint. A zero auth_time means the original token was
+	// minted without RFC 9068 claim population — treat as
+	// unverifiable freshness and reject the silent renewal.
+	if req.MaxAge != nil {
+		if claims.AuthTime.IsZero() {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+			return true
+		}
+		if time.Since(claims.AuthTime) > time.Duration(*req.MaxAge)*time.Second {
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+			return true
+		}
+	}
+
+	if s.sessionMgr == nil {
+		// No session manager wired = no notion of "active session";
+		// safest default is login_required so a misconfigured
+		// silent flow falls back cleanly.
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+		return true
+	}
+	sessions, err := s.sessionMgr.ListByUser(ctx.Request().Context(), claims.Subject)
+	if err != nil || len(sessions) == 0 {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+		return true
+	}
+	hasLive := false
+	for _, sess := range sessions {
+		if sess == nil || sess.Revoked || sess.IsExpired() {
+			continue
+		}
+		hasLive = true
+		break
+	}
+	if !hasLive {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrLoginRequired))
+		return true
+	}
+
+	// Issue the renewed access token. Note the explicit reuse of
+	// AuthTime/AMR/ACR from the original ID token — silent renewal
+	// does NOT represent a fresh end-user auth event, so downstream
+	// services consuming RFC 9068 claims see the original factor
+	// strength rather than a misleading "just-authenticated" timestamp.
+	strategy, ti, err := s.issuerForClient(client)
+	if err != nil {
+		s.logger.Error("no token strategy for client during silent renewal", "client", client.ID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrNoTokenStrategy))
+		return true
+	}
+	scopes := req.Scope
+	if len(scopes) == 0 {
+		// Caller didn't repeat the original scopes — preserve
+		// what the hint token carried so the renewed token has
+		// the same authority. (If the RP wants to downscope it
+		// supplies a subset in the request.)
+		scopes = claims.Scopes
+	}
+	token, err := ti.Issue(ctx.Request().Context(), &Subject{
+		ID:                   claims.Subject,
+		Resources:            req.Resource,
+		ClientID:             client.ID,
+		AuthTime:             claims.AuthTime,
+		ACR:                  claims.ACR,
+		AMR:                  append([]string(nil), claims.AMR...),
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
+		Actor:                claims.Actor,
+		// SID stays locked to the hint's session — silent renewal
+		// targets the same session the original id_token was minted
+		// for, so RPs that bound their local state to the sid see
+		// continuity across renewals.
+		SID: claims.SID,
+		TTL: client.AccessTokenTTL,
+	}, scopes)
+	if err != nil {
+		s.logger.Error("silent renewal token issuance failed", "strategy", strategy, "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return true
+	}
+
+	resp := map[string]any{
+		KeyAccessToken:   token.AccessToken,
+		KeyTokenType:     token.TokenType,
+		KeyExpiresIn:     token.ExpiresIn,
+		KeyScope:         token.Scope,
+		KeyTokenStrategy: strategy,
+		KeyIss:           s.resolveIssuer(ctx),
+	}
+	if req.State != "" {
+		resp[KeyState] = req.State
+	}
+
+	// OIDC id_token: when openid scope present + ID token issuer
+	// is wired, mint a fresh id_token alongside. The nonce echoes
+	// the request nonce per §3.1.3.7 (the RP correlates this
+	// renewed token with its current auth round trip).
+	if s.idTokenIssuer != nil && scopeContainsOpenID(scopes) {
+		idTok, idErr := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+			Subject:  claims.Subject,
+			Audience: client.ID,
+			Nonce:    req.Nonce,
+			AuthTime: claims.AuthTime,
+			ACR:      claims.ACR,
+			AMR:      append([]string(nil), claims.AMR...),
+			SID:      claims.SID,
+		})
+		if idErr != nil {
+			s.logger.Error("silent renewal id_token issuance failed", "error", idErr)
+		} else {
+			resp[KeyIDToken] = idTok
+		}
+	}
+
+	// Silent renewal reuses the original session; emit a token-
+	// issued event at the same shape as a fresh login success so
+	// auditors see continuous activity per (client, subject).
+	s.recordLoginSuccess(ctx, client.ID, "silent_renewal", strategy, claims.Subject, "")
+	ctx.JSON(http.StatusOK, resp)
+	return true
+}
+
+// scopeContainsOpenID is a small helper used by the silent flow + ID
+// token plumbing to gate openid-only behaviors. Independent of
+// strings.Contains-on-joined to avoid the "openid_extra" false match.
+func scopeContainsOpenID(scopes []string) bool {
+	for _, s := range scopes {
+		if s == ScopeOpenID {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultDiscoveryCacheTTL is the freshness window for client-store-
+// derived discovery fields. 5 seconds is short enough that DCR /
+// admin client edits visibly propagate (humans typically wait > 5s
+// before refreshing the discovery doc) and long enough that a busy
+// RP polling /.well-known/openid-configuration N times per second
+// doesn't pay 5× ClientStore.List per request. When 0, the cache is
+// disabled entirely (legacy behavior).
+const defaultDiscoveryCacheTTL = 5 * time.Second
+
+// clientDiscoverySnapshot memoizes the discovery-doc fields that
+// derive from iterating the entire client store. Computing them
+// requires one ClientStore.List + a pass per derivation; without
+// caching, every /.well-known/openid-configuration hit pays 5×
+// List + 5× iteration. With caching, the cost amortizes across the
+// TTL window.
+//
+// IMPORTANT: every field here MUST be safe to read concurrently
+// after the snapshot is published via atomic.Pointer. We copy slices
+// at compute-time so downstream readers can't mutate the snapshot
+// in place.
+type clientDiscoverySnapshot struct {
+	requirePAR                 bool
+	requireSignedRequestObject bool
+	frontchannelLogout         bool
+	scopes                     []string
+	authorizationDetailTypes   []string
+	expiresAt                  time.Time
+}
+
+// WithDiscoveryCacheTTL overrides the freshness window for the
+// client-store-derived discovery fields. Pass 0 to disable the
+// cache (every request re-iterates the client store — useful when
+// running in a hot-reload dev loop where DCR edits must reflect
+// instantly). Defaults to defaultDiscoveryCacheTTL.
+func WithDiscoveryCacheTTL(d time.Duration) Option {
+	return func(s *Server) { s.discoveryCacheTTL = d }
+}
+
+// discoverySnapshot returns the current client-store-derived snapshot,
+// refreshing it via single-flight when stale or absent. Safe for
+// concurrent use. When the client store is unavailable or returns
+// an error, the snapshot has empty/false fields (the legacy
+// "degraded discovery" behavior) — discovery MUST keep serving even
+// when the store is sick.
+func (s *Server) discoverySnapshot(ctx context.Context) *clientDiscoverySnapshot {
+	ttl := s.discoveryCacheTTL
+	if ttl == 0 {
+		// Caching disabled — compute every time. The single-flight
+		// path is bypassed so dev-loop hot-reload sees DCR edits
+		// instantly.
+		return s.computeDiscoverySnapshot(ctx)
+	}
+	if snap := s.discoveryCache.Load(); snap != nil && time.Now().Before(snap.expiresAt) {
+		return snap
+	}
+	s.discoveryCacheMu.Lock()
+	defer s.discoveryCacheMu.Unlock()
+	// Re-check after acquiring the lock — a peer may have refreshed
+	// while we waited. Standard double-checked-locking pattern.
+	if snap := s.discoveryCache.Load(); snap != nil && time.Now().Before(snap.expiresAt) {
+		return snap
+	}
+	snap := s.computeDiscoverySnapshot(ctx)
+	s.discoveryCache.Store(snap)
+	return snap
+}
+
+// computeDiscoverySnapshot does the expensive client-store iteration
+// once and projects all four derived fields. Splitting compute from
+// the cache wrapper lets tests assert the projection directly
+// without poking the cache.
+func (s *Server) computeDiscoverySnapshot(ctx context.Context) *clientDiscoverySnapshot {
+	snap := &clientDiscoverySnapshot{expiresAt: time.Now().Add(s.discoveryCacheTTL)}
+	if s.idTokenIssuer != nil {
+		snap.scopes = []string{ScopeOpenID}
+	}
+	if s.clientStore == nil {
+		return snap
+	}
+	clients, err := s.clientStore.List(ctx)
+	if err != nil {
+		return snap
+	}
+	scopesSeen := map[string]struct{}{}
+	if s.idTokenIssuer != nil {
+		scopesSeen[ScopeOpenID] = struct{}{}
+	}
+	adTypesSeen := map[string]struct{}{}
+	allRequireSignedRequestObject := len(clients) > 0
+	for _, c := range clients {
+		if c == nil {
+			allRequireSignedRequestObject = false
+			continue
+		}
+		if c.RequirePAR {
+			snap.requirePAR = true
+		}
+		if !c.RequireSignedRequestObject {
+			allRequireSignedRequestObject = false
+		}
+		if c.FrontchannelLogoutURI != "" {
+			snap.frontchannelLogout = true
+		}
+		for _, sc := range c.AllowedScopes {
+			if sc != "" {
+				scopesSeen[sc] = struct{}{}
+			}
+		}
+		for _, t := range c.AllowedAuthorizationDetailsTypes {
+			if t != "" {
+				adTypesSeen[t] = struct{}{}
+			}
+		}
+	}
+	snap.requireSignedRequestObject = allRequireSignedRequestObject
+	snap.scopes = sortedKeys(scopesSeen)
+	if len(adTypesSeen) > 0 {
+		snap.authorizationDetailTypes = sortedKeys(adTypesSeen)
+	}
+	return snap
+}
+
+func sortedKeys(m map[string]struct{}) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// DefaultDiscoveryDocCacheTTL bounds how long a rendered discovery
+// document may serve from cache. Same scale as the snapshot cache
+// (which feeds the dynamic fields below). Set <= 0 via
+// [WithDiscoveryDocCacheTTL] to disable body caching while keeping
+// snapshot caching in place — useful when an upstream CDN already
+// caches and operators want every origin hit to be fresh.
+const DefaultDiscoveryDocCacheTTL = 5 * time.Second
+
+// discoveryDocEntry is the cached, pre-marshaled discovery document
+// for a given base URL. body + etag are computed together so the
+// HTTP layer just writes both.
+type discoveryDocEntry struct {
+	body      []byte
+	etag      string
+	expiresAt time.Time
+}
+
+func (e *discoveryDocEntry) fresh() bool {
+	return e != nil && time.Now().Before(e.expiresAt)
+}
+
+// buildDiscoveryDocEntry computes the strong ETag (sha256 prefix) and
+// the expiry. Pure function so it's safe to call without the cache
+// lock held.
+func buildDiscoveryDocEntry(body []byte, ttl time.Duration) *discoveryDocEntry {
+	sum := sha256.Sum256(body)
+	return &discoveryDocEntry{
+		body:      body,
+		etag:      `"` + base64.RawURLEncoding.EncodeToString(sum[:8]) + `"`,
+		expiresAt: time.Now().Add(ttl),
+	}
+}
+
+// lookupDiscoveryDocCache returns a fresh cached entry for base, or
+// nil to signal "render fresh". The sync.Map keeps reads lock-free
+// in the hot path.
+func (s *Server) lookupDiscoveryDocCache(base string) *discoveryDocEntry {
+	v, ok := s.discoveryDocCache.Load(base)
+	if !ok {
+		return nil
+	}
+	entry, _ := v.(*discoveryDocEntry)
+	if entry.fresh() {
+		return entry
+	}
+	// Stale — drop so the next caller re-renders.
+	s.discoveryDocCache.Delete(base)
+	return nil
+}
+
+func (s *Server) storeDiscoveryDocCache(base string, entry *discoveryDocEntry) {
+	s.discoveryDocCache.Store(base, entry)
+}
+
+// writeDiscoveryDoc emits the cached document with Cache-Control +
+// ETag headers and honors If-None-Match → 304.
+func (s *Server) writeDiscoveryDoc(ctx HandlerContext, entry *discoveryDocEntry) {
+	w := ctx.ResponseWriter()
+	r := ctx.Request()
+	w.Header().Set(HeaderContentType, ContentTypeJSON)
+	maxAge := int(s.discoveryDocCacheTTL.Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(maxAge))
+	w.Header().Set("ETag", entry.etag)
+	if match := r.Header.Get("If-None-Match"); match != "" && match == entry.etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(entry.body)
+}
+
+// WithDiscoveryDocCacheTTL configures how long a rendered discovery
+// document body may serve from cache. ttl <= 0 disables body caching
+// (snapshot caching via [WithDiscoveryCacheTTL] continues independently).
+// Default is [DefaultDiscoveryDocCacheTTL].
+func WithDiscoveryDocCacheTTL(ttl time.Duration) Option {
+	return func(s *Server) { s.discoveryDocCacheTTL = ttl }
+}
+
+// OIDC + RFC 9207 response-shaping helpers. Three concerns clustered
+// here for navigability:
+//
+//   1. resolveIssuer + authzErrorBody* — RFC 9207 issuer-identification
+//      stamping on every authorization-endpoint response.
+//   2. renderFormPostResponse + helpers — OIDC Form Post Response Mode 1.0
+//      auto-submit HTML for response_mode=form_post.
+//   3. maybeSignUserInfo — OIDC userinfo signed-response (JWT) path.
+//
+// All three live on *Server because they reach into Server fields
+// (issuer, idTokenIssuer, clientStore, logger).
+
+// -----------------------------------------------------------------------------
+// RFC 9207 — OAuth 2.0 Authorization Server Issuer Identification.
+//
+// Defense against mix-up attacks: when a client is configured with
+// multiple authorization servers, an attacker can attempt to trick the
+// client into accepting an authorization response from one AS as if it
+// came from another. Including the AS issuer identifier in every
+// authorization response lets the client verify "this code/token came
+// from the AS I expected" before redeeming the code at the token
+// endpoint.
+//
+// RFC 9207 §2 is written for redirect-based responses (`?iss=...`
+// query param on the redirect to the RP). This server's /auth/login is
+// a BFF-shaped JSON endpoint rather than a 302-redirect endpoint; the
+// adaptation is to include `iss` in the JSON response body alongside
+// `code` / `state` / `error`. A client that builds the redirect URI
+// on the SPA side can propagate the value into `iss=...` as the spec
+// intends.
+
+// resolveIssuer returns the issuer identifier this server stamps in
+// authorization responses. Matches the value advertised in the OIDC
+// discovery document: operator-configured `WithIssuer` value when set
+// and not the default sentinel; otherwise the request's base URL.
+//
+// Critical invariant: the value returned here MUST equal
+// `oidcConfiguration.Issuer` for the same request — RFC 9207 §2
+// requires the `iss` parameter to be the same identifier the AS
+// publishes via discovery, so a client comparing them detects mix-up.
+func (s *Server) resolveIssuer(ctx HandlerContext) string {
+	if s.issuer != "" && s.issuer != DefaultIssuer {
+		return s.issuer
+	}
+	return requestBaseURL(ctx.Request())
+}
+
+// authzErrorBody returns the standard error envelope for an
+// authorization endpoint response with `iss` stamped per RFC 9207 §2.
+// Use this in handleLogin (and any future authorization endpoint) —
+// NOT in token / userinfo / callback handlers, which are not
+// authorization responses.
+func (s *Server) authzErrorBody(ctx HandlerContext, code string) map[string]string {
+	return map[string]string{
+		KeyError: code,
+		KeyIss:   s.resolveIssuer(ctx),
+	}
+}
+
+// authzErrorBodyDesc is authzErrorBody plus an error_description.
+func (s *Server) authzErrorBodyDesc(ctx HandlerContext, code, desc string) map[string]string {
+	return map[string]string{
+		KeyError:            code,
+		KeyErrorDescription: desc,
+		KeyIss:              s.resolveIssuer(ctx),
+	}
+}
+
+// -----------------------------------------------------------------------------
+// OpenID Connect Form Post Response Mode 1.0.
+//
+// The RP requests `response_mode=form_post` when it wants the
+// authorization response delivered as an HTML auto-submitted POST
+// to its redirect_uri, rather than the default query-string redirect.
+// Useful for RPs that handle POST bodies more naturally than parsing
+// fragment / query parameters, and for delivering longer responses
+// (id_token, etc.) without URL-length limits.
+//
+// Spec: https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html
+//
+// This implementation:
+//   - Renders a minimal HTML document with a hidden form whose body
+//     POSTs {code, state, iss} to redirect_uri.
+//   - Auto-submits via a body onload handler — operators using strict
+//     CSP that blocks inline event handlers should serve this
+//     endpoint outside their CSP middleware OR allowlist a 'self'
+//     script-src for /auth/login.
+//   - Provides a manual submit button inside <noscript> so RPs that
+//     disable JS still see a fallback (the user clicks once).
+//   - All response values pass through html/template's
+//     auto-escaping (URL context for action=, attribute context for
+//     value=), so an attacker can't break out of the form fields.
+//   - Hardens response headers: X-Frame-Options: DENY (clickjacking)
+//     + Cache-Control: no-store + Referrer-Policy: no-referrer
+//     (don't leak the AS's URL to the RP via Referer; the auth
+//     response itself is what the RP needs).
+
+// ResponseModeFormPost is the OIDC Form Post Response Mode 1.0
+// magic string for the `response_mode` parameter.
+const ResponseModeFormPost = "form_post"
+
+// ResponseModeQuery is the default response_mode for response_type=code
+// per OIDC Core §3.1.2.5: parameters appended to the redirect_uri's
+// query string.
+const ResponseModeQuery = "query"
+
+// ResponseModeFragment is the default response_mode for token-bearing
+// response types (implicit flow). Parameters delivered after `#`.
+const ResponseModeFragment = "fragment"
+
+// formPostTemplate renders the auto-POST HTML page. The form
+// elements are scoped via id="f" so the noscript fallback button's
+// `form="f"` association keeps working even though the button
+// itself lives outside the form (HTML5 spec).
+var formPostTemplate = template.Must(template.New("formPost").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Submitting…</title>
+</head>
+<body onload="document.forms[0].submit()">
+<noscript>
+<p>JavaScript is required to complete sign-in. Please click the button below to continue.</p>
+</noscript>
+<form id="f" method="POST" action="{{.RedirectURI}}">
+<input type="hidden" name="code" value="{{.Code}}">
+{{if .State}}<input type="hidden" name="state" value="{{.State}}">{{end}}
+<input type="hidden" name="iss" value="{{.Iss}}">
+<noscript><button type="submit">Continue</button></noscript>
+</form>
+</body>
+</html>
+`))
+
+// formPostData carries the values rendered into the response HTML.
+// One struct (rather than a map) so html/template can pick the
+// correct escaping context per field at parse time.
+type formPostData struct {
+	RedirectURI string
+	Code        string
+	State       string
+	Iss         string
+}
+
+// renderFormPostResponse delivers the OIDC Form Post Response Mode
+// 1.0 HTML for a successful authorization_code response. Called
+// instead of ctx.JSON when response_mode=form_post.
+func (s *Server) renderFormPostResponse(ctx HandlerContext, redirectURI, code, state string) {
+	w := ctx.ResponseWriter()
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(http.StatusOK)
+	_ = formPostTemplate.Execute(w, formPostData{
+		RedirectURI: redirectURI,
+		Code:        code,
+		State:       state,
+		Iss:         s.resolveIssuer(ctx),
+	})
+}
+
+// isValidResponseMode reports whether the supplied `response_mode`
+// value is one this server understands. Empty is always valid (it
+// means "use the response_type-defined default") so callers MUST
+// short-circuit on empty before this check.
+func isValidResponseMode(mode string) bool {
+	switch mode {
+	case ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost:
+		return true
+	}
+	return false
+}
+
+// -----------------------------------------------------------------------------
+// OIDC userinfo signed-response (JWT) path.
+
+// userinfoSignedAlgEdDSA is the only `userinfo_signed_response_alg`
+// value this server can satisfy today — matches the access-token /
+// id-token signing algorithm.
+const userinfoSignedAlgEdDSA = "EdDSA"
+
+// maybeSignUserInfo returns true when it has handled the response
+// (signed JWT delivered to ctx) — callers MUST bail. False means
+// the caller should fall through to the JSON response path.
+//
+// The signed-JWT path fires only when:
+//   - clientID resolves to a registered client AND
+//   - that client's UserinfoSignedResponseAlg is set AND
+//   - the wired oidc.IDTokenIssuer implements oidc.UserinfoSigner
+//
+// Unsupported alg values (anything besides EdDSA) fall through to
+// JSON — the spec says the AS MUST honor the request OR return JSON
+// when it can't; we choose the latter to keep RPs working.
+func (s *Server) maybeSignUserInfo(ctx HandlerContext, clientID string, body map[string]any) bool {
+	if s.idTokenIssuer == nil || s.clientStore == nil || clientID == "" {
+		return false
+	}
+	signer, ok := s.idTokenIssuer.(oidc.UserinfoSigner)
+	if !ok {
+		return false
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
+	if err != nil || client == nil || client.UserinfoSignedResponseAlg == "" {
+		return false
+	}
+	if client.UserinfoSignedResponseAlg != userinfoSignedAlgEdDSA {
+		// Unsupported alg — fall through to JSON. The RP picks
+		// up the misconfiguration from a discovery comparison.
+		return false
+	}
+	jwt, err := signer.SignUserInfo(ctx.Request().Context(), client.ID, body)
+	if err != nil {
+		s.logger.Error("userinfo sign failed", "error", err, "client", client.ID)
+		return false
+	}
+	w := ctx.ResponseWriter()
+	w.Header().Set("Content-Type", "application/jwt")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(jwt))
+	return true
+}
