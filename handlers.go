@@ -1811,23 +1811,7 @@ func (s *Server) recordMFACompletion(method, outcome string) {
 // operator-visible reason. The wire response is always mfa_invalid;
 // reason here is for SIEM investigation, never returned to the client.
 func (s *Server) recordMFAFailure(ctx HandlerContext, subjectID, challengeID, method, reason string) {
-	if s.auditor == nil {
-		return
-	}
-	evt := &audit.Event{
-		Type:    audit.EventMFAFailure,
-		Outcome: audit.OutcomeFailure,
-		ActorID: subjectID,
-		ActorIP: audit.ClientIP(ctx.Request()),
-		Reason:  reason,
-	}
-	if method != "" {
-		audit.SetMeta(evt, KeyMFAMethod, method)
-	}
-	if challengeID != "" {
-		audit.SetMeta(evt, KeyMFAChallengeID, challengeID)
-	}
-	s.auditor.Record(ctx.Request().Context(), evt)
+	audit.RecordMFAFailure(s.auditor, ctx, subjectID, challengeID, method, reason)
 }
 
 // newMFAChallengeID mints a 32-byte crypto/rand identifier encoded as

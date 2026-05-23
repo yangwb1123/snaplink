@@ -276,18 +276,25 @@ func RecordCallbackFailure(rec *Recorder, ctx core.HandlerContext, provider, rea
 }
 
 // RecordMFAFailure emits an mfa_failure event with caller-supplied
-// details on the failed factor.
+// details on the failed factor. Mirrors the metadata key shape used
+// by the original Server.recordMFAFailure (mfa_method / mfa_challenge_id).
 func RecordMFAFailure(rec *Recorder, ctx core.HandlerContext, subjectID, challengeID, method, reason string) {
 	if rec == nil {
 		return
 	}
-	e := EventFromRequest(ctx)
-	e.Type = EventMFAFailure
-	e.Outcome = OutcomeFailure
-	e.ActorID = subjectID
-	e.Reason = reason
-	SetMeta(e, "challenge_id", challengeID)
-	SetMeta(e, "method", method)
+	e := &Event{
+		Type:    EventMFAFailure,
+		Outcome: OutcomeFailure,
+		ActorID: subjectID,
+		ActorIP: ClientIP(ctx.Request()),
+		Reason:  reason,
+	}
+	if method != "" {
+		SetMeta(e, core.KeyMFAMethod, method)
+	}
+	if challengeID != "" {
+		SetMeta(e, core.KeyMFAChallengeID, challengeID)
+	}
 	rec.Record(ctx.Request().Context(), e)
 }
 
