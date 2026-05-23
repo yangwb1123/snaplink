@@ -2592,41 +2592,19 @@ type MTLSEndpointAliases struct {
 // codeChallengeMethodsFor advertises the PKCE methods this AS will
 // actually accept. OAuth 2.1 strict mode forbids `plain` server-wide
 // (RFC 7636 §4.2 marks it weaker; 2.1 §7.5.2 mandates S256), so the
-// discovery list MUST shrink to ["S256"] when the operator enabled
-// the strict flag. Otherwise both are accepted on the wire and both
-// are advertised. Per-client AllowedPKCEMethods narrows further at
-// the request path; the discovery list reflects the AS-wide ceiling.
+// codeChallengeMethodsFor / responseTypesFor / subjectTypesFor delegate
+// to oidc.* — see oidc/discovery_options.go for the OAuth 2.1 strict
+// reasoning + pairwise-advertise gate.
 func codeChallengeMethodsFor(s *Server) []string {
-	if s.oauth21Strict {
-		return []string{PKCEMethodS256}
-	}
-	return []string{PKCEMethodS256, PKCEMethodPlain}
+	return oidc.CodeChallengeMethodsFor(s.oauth21Strict)
 }
 
-// responseTypesFor mirrors codeChallengeMethodsFor. OAuth 2.1 §1.1
-// retires the implicit grant (response_type=token), so strict mode
-// MUST omit it from the discovery advertisement — otherwise an RP
-// scanning discovery sees "token" supported, sends the request, and
-// gets unsupported_response_type at runtime. The mismatch is a real
-// integration footgun: lock the wire down to what we actually accept.
 func responseTypesFor(s *Server) []string {
-	if s.oauth21Strict {
-		return []string{"code"}
-	}
-	return []string{"code", "token"}
+	return oidc.ResponseTypesFor(s.oauth21Strict)
 }
 
-// subjectTypesFor reflects WithPairwiseSubjectStore — every server
-// advertises "public" (the default), and "pairwise" only when an
-// operator wired the store so the AS can actually resolve pairwise
-// subs at resource time. Advertising pairwise without the store
-// would be a footgun: RPs registering with subject_type=pairwise
-// would silently get public subs.
 func subjectTypesFor(s *Server) []string {
-	if s.pairwiseStore != nil {
-		return []string{"public", "pairwise"}
-	}
-	return []string{"public"}
+	return oidc.SubjectTypesFor(s.pairwiseStore != nil)
 }
 
 // signDiscoveryMetadata marshals cfg to JSON with SignedMetadata
@@ -3494,17 +3472,8 @@ func (s *Server) renderFormPostResponse(ctx HandlerContext, redirectURI, code, s
 	})
 }
 
-// isValidResponseMode reports whether the supplied `response_mode`
-// value is one this server understands. Empty is always valid (it
-// means "use the response_type-defined default") so callers MUST
-// short-circuit on empty before this check.
-func isValidResponseMode(mode string) bool {
-	switch mode {
-	case ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost:
-		return true
-	}
-	return false
-}
+// isValidResponseMode delegates to oidc.IsValidResponseMode.
+func isValidResponseMode(mode string) bool { return oidc.IsValidResponseMode(mode) }
 
 // -----------------------------------------------------------------------------
 // OIDC userinfo signed-response (JWT) path.
