@@ -111,7 +111,7 @@ const (
 	// which factor the caller is responding with.
 	//
 	// KeyMFAMethodData carries per-method server-issued challenge data
-	// from providers that implement [MFABeginner] — e.g. WebAuthn's
+	// from providers that implement [spi.MFABeginner] — e.g. WebAuthn's
 	// CredentialAssertion options + ceremony session id. Shape is
 	// {method_name: {key: value}}; methods that don't need Begin
 	// state are absent. Clients echo the relevant keys back into the
@@ -163,8 +163,8 @@ const (
 	ErrPayloadTooLarge           = "payload_too_large"
 
 	// MFA orchestration. ErrMFARequired is the pending status returned
-	// by /auth/login when the RiskScorer decided RequireMFA and a
-	// MFAProvider is wired — the response carries mfa_challenge_id +
+	// by /auth/login when the spi.RiskScorer decided RequireMFA and a
+	// spi.MFAProvider is wired — the response carries mfa_challenge_id +
 	// mfa_methods instead of tokens. ErrMFAInvalid is the single wire
 	// response /auth/mfa returns for every failure (unknown / expired /
 	// already-consumed challenge, unsupported method, wrong factor) per

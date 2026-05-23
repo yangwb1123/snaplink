@@ -2,6 +2,8 @@
 // driven by a YAML config file.
 package main
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"crypto/ed25519"
@@ -35,8 +37,8 @@ import (
 // point.
 type forceRequireMFAScorer struct{}
 
-func (forceRequireMFAScorer) Score(_ context.Context, _ *sso.RiskRequest) (*sso.RiskAssessment, error) {
-	return &sso.RiskAssessment{Decision: sso.DecisionRequireMFA}, nil
+func (forceRequireMFAScorer) Score(_ context.Context, _ *spi.RiskRequest) (*spi.RiskAssessment, error) {
+	return &spi.RiskAssessment{Decision: spi.DecisionRequireMFA}, nil
 }
 
 const (

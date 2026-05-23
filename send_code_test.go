@@ -26,8 +26,8 @@ func (s *stubSMS) Send(_ context.Context, target, _ string) error {
 }
 
 // buildSendCodeServer wires a fresh Server with the phone authenticator (a
-// CodeSender) + the password authenticator (NOT a CodeSender) so tests can
-// hit both branches of handleSendCode's CodeSender type assertion.
+// spi.CodeSender) + the password authenticator (NOT a spi.CodeSender) so tests can
+// hit both branches of handleSendCode's spi.CodeSender type assertion.
 func buildSendCodeServer(t *testing.T, sms *stubSMS) (*httptest.Server, *audit.MemorySink) {
 	t.Helper()
 
@@ -132,7 +132,7 @@ func TestSendCode_UnknownProvider(t *testing.T) {
 }
 
 func TestSendCode_ProviderIsNotCodeSender(t *testing.T) {
-	// PasswordAuthenticator does NOT implement CodeSender — the handler
+	// PasswordAuthenticator does NOT implement spi.CodeSender — the handler
 	// must reject the request with the dedicated error code.
 	srv, _ := buildSendCodeServer(t, &stubSMS{})
 	code, body := postSendCode(t, srv, map[string]any{

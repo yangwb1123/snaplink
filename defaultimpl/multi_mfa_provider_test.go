@@ -1,11 +1,12 @@
 package defaultimpl_test
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
@@ -213,8 +214,8 @@ func TestMultiMFAProvider_SatisfiesBothInterfaces(t *testing.T) {
 	// Type assertions are also enforced at package-level via interface
 	// guards; this test is a behavioral check that the SDK can use
 	// the composite identically to a leaf provider.
-	var _ sso.MFAProvider = m
-	if _, ok := any(m).(sso.MFABeginner); !ok {
+	var _ spi.MFAProvider = m
+	if _, ok := any(m).(spi.MFABeginner); !ok {
 		t.Fatal("MultiMFAProvider should implement MFABeginner so single-call providers in the mix don't break Begin dispatch")
 	}
 }

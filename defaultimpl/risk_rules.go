@@ -1,16 +1,16 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
-
-	"github.com/snaplink/sso"
 )
 
-// RuleBasedRiskScorer is the reference rule-based [sso.RiskScorer].
+// RuleBasedRiskScorer is the reference rule-based [spi.RiskScorer].
 // It is intentionally simple — the 80% case of an operator who wants
 // declarative deny-by-IP / deny-by-country / allow-only-from-these
 // without writing Go. Anything more involved (impossible-travel,
@@ -100,10 +100,10 @@ func NewRuleBasedRiskScorer(cfg RuleBasedRiskScorerConfig) (*RuleBasedRiskScorer
 	return s, nil
 }
 
-// Score implements [sso.RiskScorer].
-func (s *RuleBasedRiskScorer) Score(_ context.Context, req *sso.RiskRequest) (*sso.RiskAssessment, error) {
+// Score implements [spi.RiskScorer].
+func (s *RuleBasedRiskScorer) Score(_ context.Context, req *spi.RiskRequest) (*spi.RiskAssessment, error) {
 	if req == nil {
-		return &sso.RiskAssessment{Decision: sso.DecisionAllow}, nil
+		return &spi.RiskAssessment{Decision: spi.DecisionAllow}, nil
 	}
 	ip := parseRequestIP(req.RemoteIP)
 	if ip != nil {
@@ -144,10 +144,10 @@ countryRules:
 			return deny("country_allow_list", "geo-missing"), nil
 		}
 	}
-	return &sso.RiskAssessment{Decision: sso.DecisionAllow}, nil
+	return &spi.RiskAssessment{Decision: spi.DecisionAllow}, nil
 }
 
-var _ sso.RiskScorer = (*RuleBasedRiskScorer)(nil)
+var _ spi.RiskScorer = (*RuleBasedRiskScorer)(nil)
 
 func parseIPOrCIDR(raw string, nets *[]*net.IPNet, set map[string]struct{}) error {
 	raw = strings.TrimSpace(raw)
@@ -184,16 +184,16 @@ func parseRequestIP(raw string) net.IP {
 	return net.ParseIP(raw)
 }
 
-func geoCountry(req *sso.RiskRequest) string {
+func geoCountry(req *spi.RiskRequest) string {
 	if req.Geo == nil {
 		return ""
 	}
 	return strings.ToUpper(strings.TrimSpace(req.Geo.CountryCode))
 }
 
-func deny(tag, reason string) *sso.RiskAssessment {
-	return &sso.RiskAssessment{
-		Decision: sso.DecisionDeny,
+func deny(tag, reason string) *spi.RiskAssessment {
+	return &spi.RiskAssessment{
+		Decision: spi.DecisionDeny,
 		Reason:   reason,
 		Tags:     []string{tag},
 	}

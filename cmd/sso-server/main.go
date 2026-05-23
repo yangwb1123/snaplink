@@ -5,6 +5,8 @@
 // TLS itself or sits behind an OpenResty / Envoy / NGINX reverse proxy.
 package main
 
+import "github.com/snaplink/sso/spi"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -276,7 +278,7 @@ type app struct {
 	netStop <-chan struct{}
 }
 
-func run(cfg *config.Config, logger sso.Logger, tlsCert, tlsKey, grpcListen string) error {
+func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string) error {
 	a, err := buildApp(cfg, logger)
 	if err != nil {
 		return err
@@ -485,7 +487,7 @@ func newGRPCServer(a *app) *grpc.Server {
 // buildHTTPHandler composes the SSO Server's runtime handler with the
 // optional grpc-gateway admin reverse proxy. The gateway is mounted under
 // /api/v1/admin/ and gated by AdminMiddleware (bearer + admin scope).
-func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handler, error) {
+func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handler, error) {
 	base := a.server.Handler()
 	// WebAuthn ceremony routes mount on the SSO router itself so they
 	// share the same middleware stack (tracing, metrics, rate-limit,
@@ -596,7 +598,7 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger sso.Logger) (http.Handl
 // and runs every built-in step that hasn't yet been applied. Errors are
 // fatal — the operator must succeed at first-boot init before we accept
 // any traffic.
-func runBootstrap(cfg *config.Config, a *app, logger sso.Logger) error {
+func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {
 	statePath := cfg.Bootstrap.StatePath
 	if statePath == "" {
 		statePath = "bootstrap.json"
@@ -698,7 +700,7 @@ func runBootstrap(cfg *config.Config, a *app, logger sso.Logger) error {
 // coordination is requested — Runner falls back to single-replica path.
 // The closer (when non-nil) MUST be called after the Runner exits to
 // release the etcd client / file handles.
-func buildBootstrapLock(cfg *config.Config, logger sso.Logger) (lock.Lock, func(), error) {
+func buildBootstrapLock(cfg *config.Config, logger spi.Logger) (lock.Lock, func(), error) {
 	switch strings.ToLower(cfg.Bootstrap.Lock.Backend) {
 	case "", "noop":
 		return nil, nil, nil
@@ -968,7 +970,7 @@ func parseHeaderCertEncoding(s string) (security.HeaderCertEncoding, error) {
 	}
 }
 
-func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger sso.Logger) (sso.DPoPNonceProvider, error) {
+func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger spi.Logger) (sso.DPoPNonceProvider, error) {
 	if cfg.KeyFile != "" {
 		raw, err := os.ReadFile(cfg.KeyFile)
 		if err != nil {
@@ -1201,7 +1203,7 @@ func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) 
 // registry SPI. Returns the kind ("memory" or "etcd") so caller
 // can decide whether a /readyz check is meaningful (memory has no
 // backend state to probe).
-func buildRegistry(cfg *config.RegistryConfig, logger sso.Logger) (registry.Registry, string, error) {
+func buildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Registry, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "", "memory":
@@ -1260,7 +1262,7 @@ func resolveServiceID(explicit, issuer string) string {
 // DSN see harmless duplicate-seed warnings rather than wedged
 // startup. AssignRoles overwrites (matches the memory peer's SET
 // semantics) so re-seeds idempotently re-apply the YAML state.
-func buildPermissionsProvider(cfg *config.Config, logger sso.Logger) (permissions.Provider, error) {
+func buildPermissionsProvider(cfg *config.Config, logger spi.Logger) (permissions.Provider, error) {
 	if !cfg.Permissions.Enabled {
 		return nil, nil
 	}
@@ -1332,7 +1334,7 @@ func buildPermissionsProvider(cfg *config.Config, logger sso.Logger) (permission
 // sso.WithRiskScorer with their own implementation — the
 // RuleBasedRiskScorer is the declarative 80% case, not a
 // framework for embedding richer policies.
-func buildRiskScorer(cfg *config.RiskConfig, logger sso.Logger) (sso.RiskScorer, error) {
+func buildRiskScorer(cfg *config.RiskConfig, logger spi.Logger) (spi.RiskScorer, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -1369,7 +1371,7 @@ func buildRiskScorer(cfg *config.RiskConfig, logger sso.Logger) (sso.RiskScorer,
 //
 // The returned mode string is a short backend identifier emitted in
 // the startup log + suitable for /readyz wiring suffixes.
-func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger) (sso.MFAProvider, sso.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, error) {
+func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, error) {
 	if !cfg.Enabled {
 		return nil, nil, 0, "", nil, nil
 	}
@@ -1395,7 +1397,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 	// boot step is required.
 	backend := strings.ToLower(strings.TrimSpace(cfg.Challenge.Backend))
 	var (
-		store     sso.MFAChallengeStore
+		store     spi.MFAChallengeStore
 		storeKind string
 	)
 	switch backend {
@@ -1445,7 +1447,7 @@ type pushStoreCapture struct {
 	store *sqlitestores.PushApprovalStore
 }
 
-func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFAPushConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger sso.Logger, capture *pushStoreCapture) (sso.MFAProvider, error) {
+func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFAPushConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger, capture *pushStoreCapture) (spi.MFAProvider, error) {
 	switch kind {
 	case "totp":
 		if totpAuth == nil {
@@ -1475,7 +1477,7 @@ func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFA
 			return nil, errors.New("mfa.provider.kind=multi requires at least two entries in mfa.provider.kinds")
 		}
 		seen := make(map[string]struct{}, len(outerKinds))
-		innerProviders := make([]sso.MFAProvider, 0, len(outerKinds))
+		innerProviders := make([]spi.MFAProvider, 0, len(outerKinds))
 		for _, inner := range outerKinds {
 			innerKind := strings.ToLower(strings.TrimSpace(inner))
 			if innerKind == "" {
@@ -1541,7 +1543,7 @@ func buildPushWebhookTransport(cfg config.MFAPushWebhookConfig) (defaultimpl.Pus
 	return defaultimpl.NewHTTPWebhookPushTransport(cfg.URL, opts...)
 }
 
-func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAProvider, *sqlitestores.PushApprovalStore, error) {
+func buildPushMFAProvider(cfg config.MFAPushConfig, logger spi.Logger) (spi.MFAProvider, *sqlitestores.PushApprovalStore, error) {
 	// Backend: memory for single-replica; sqlite for cluster.
 	var (
 		store       defaultimpl.PushApprovalStore
@@ -1615,7 +1617,7 @@ func buildPushMFAProvider(cfg config.MFAPushConfig, logger sso.Logger) (sso.MFAP
 // Returns (nil, "", nil) when network is disabled. The returned kind
 // is "memory" or "etcd"; cmd uses it to decide whether to register a
 // /readyz check (memory has no backend health signal to report).
-func buildNetworkStore(cfg *config.NetworkConfig, logger sso.Logger) (netpolicy.Store, string, error) {
+func buildNetworkStore(cfg *config.NetworkConfig, logger spi.Logger) (netpolicy.Store, string, error) {
 	if !cfg.Enabled {
 		return nil, "", nil
 	}
@@ -1661,7 +1663,7 @@ func buildNetworkStore(cfg *config.NetworkConfig, logger sso.Logger) (netpolicy.
 // SnapshotConfig. Returns (nil, nil, nil) when snapshot.enabled=false. The
 // Snapshotter / Restorer that depend on the runtime stores are wired
 // separately inside buildApp once those stores exist.
-func buildSnapshotSubsystem(cfg *config.Config, logger sso.Logger) (*snapshot.Pipeline, snapshot.Storage, error) {
+func buildSnapshotSubsystem(cfg *config.Config, logger spi.Logger) (*snapshot.Pipeline, snapshot.Storage, error) {
 	if !cfg.Snapshot.Enabled {
 		return nil, nil, nil
 	}
@@ -1764,7 +1766,7 @@ func loadAESGCMKey(cfg config.SnapshotEncryptionConfig) ([]byte, error) {
 // buildReleaseSubsystem materialises the releases.ReleaseStore +
 // Pinner + Registry from ReleasesConfig. Returns (nil, nil, nil)
 // when releases.enabled=false.
-func buildReleaseSubsystem(cfg *config.Config, logger sso.Logger) (*releases.Registry, releases.ReleaseStore, error) {
+func buildReleaseSubsystem(cfg *config.Config, logger spi.Logger) (*releases.Registry, releases.ReleaseStore, error) {
 	if !cfg.Releases.Enabled {
 		return nil, nil, nil
 	}
@@ -1877,7 +1879,7 @@ func (a *snapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID st
 // and seeds any declared tenants + domains. Returns (nil, nil)
 // when tenant.enabled=false so cmd can pass the result to
 // sso.WithTenantStore unconditionally (the option no-ops on nil).
-func buildTenantStore(cfg *config.Config, logger sso.Logger) (tenant.Store, error) {
+func buildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, error) {
 	if !cfg.Tenant.Enabled {
 		return nil, nil
 	}
@@ -1938,7 +1940,7 @@ func buildTenantStore(cfg *config.Config, logger sso.Logger) (tenant.Store, erro
 // buildGeoProvider materialises the geo.Provider from GeoConfig.
 // Returns nil when geo.enabled=false so cmd can pass the result to
 // sso.WithGeoProvider unconditionally (the option no-ops on nil).
-func buildGeoProvider(cfg *config.Config, logger sso.Logger) (geo.Provider, error) {
+func buildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, error) {
 	if !cfg.Geo.Enabled {
 		return nil, nil
 	}
@@ -1963,15 +1965,15 @@ func buildGeoProvider(cfg *config.Config, logger sso.Logger) (geo.Provider, erro
 	}
 }
 
-// bootstrapLogger adapts sso.Logger to bootstrap.Logger (Info/Error pair).
-type bootstrapLogger struct{ inner sso.Logger }
+// bootstrapLogger adapts spi.Logger to bootstrap.Logger (Info/Error pair).
+type bootstrapLogger struct{ inner spi.Logger }
 
 func (b bootstrapLogger) Info(msg string, kv ...any)  { b.inner.Info(msg, kv...) }
 func (b bootstrapLogger) Error(msg string, kv ...any) { b.inner.Error(msg, kv...) }
 
 // buildApp wires every SDK component the config asks for and returns them
 // as a bundle so HTTP and gRPC entrypoints can share instances.
-func buildApp(cfg *config.Config, logger sso.Logger) (*app, error) {
+func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// Metrics constructed early so the retention schedulers can emit
 	// counters when they fire. The asyncSink collector + WithMetrics
 	// wiring still happen later (after the audit subsystem builds
@@ -2720,7 +2722,7 @@ func pushApprovalStoreIface(s *sqlitestores.PushApprovalStore) defaultimpl.PushA
 // Same shutdown contract as the audit / snapshot retention loops:
 // close done on exit; Prune errors logged but don't tear down the
 // loop. First prune fires after the first interval, not immediately.
-func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger sso.Logger, m *metrics.Metrics) {
+func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2755,7 +2757,7 @@ func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqli
 // PruneOldest errors don't tear down the loop — a transient
 // storage outage shouldn't suspend retention forever; the loop
 // logs + waits for the next tick.
-func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger sso.Logger, m *metrics.Metrics) {
+func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2794,7 +2796,7 @@ func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage sna
 //
 // Prune errors are logged but don't stop the loop — a transient
 // SQLite contention shouldn't tear down retention forever.
-func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger sso.Logger, m *metrics.Metrics) {
+func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -2828,7 +2830,7 @@ func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsql
 // + that gets wrapped by MultiSink+Webhook+Async). Backend selects
 // between in-process MemorySink and the SQLite-backed Sink. Returns
 // the sink + a short identifier used as the ReadyCheck suffix.
-func buildPrimaryAuditSink(cfg config.AuditConfig, logger sso.Logger) (audit.Sink, string, error) {
+func buildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger) (audit.Sink, string, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		logger.Info("audit: primary sink", "backend", "memory", "capacity", cfg.MemoryCapacity)
@@ -2959,7 +2961,7 @@ type passwordSeed struct {
 // sit in the same order of magnitude — without that, an attacker
 // could split "real cost-10 user" from "dummy cost-12 unknown user"
 // by latency.
-func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger sso.Logger) (authenticators.PasswordVerifier, int) {
+func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int) {
 	seeds := make(map[string]passwordSeed, len(users))
 	dummyCost := bcrypt.DefaultCost
 	seeded := 0
@@ -3040,7 +3042,7 @@ func loadBcryptHashFile(path string) ([]byte, error) {
 // orchestration wraps the TOTP authenticator with TOTPMFAProvider so
 // step-up and primary auth share one secret store + skew policy.
 // Both return nil when the corresponding authenticator is disabled.
-func buildAuthenticators(cfg *config.Config, logger sso.Logger) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator) {
+func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
@@ -3294,7 +3296,7 @@ func logEndpoints(cfg *config.Config, grpcListen string) {
 
 // --- helpers ---
 
-// slogLogger adapts log/slog to the sso.Logger interface so the SDK can hand
+// slogLogger adapts log/slog to the spi.Logger interface so the SDK can hand
 // off to whatever sink the operator wants (stdout, journald, file...).
 type slogLogger struct{ inner *slog.Logger }
 

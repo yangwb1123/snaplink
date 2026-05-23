@@ -53,6 +53,8 @@ security/                           Per-account lockout, JTI replay,
 oauth/                              AuthCode/DeviceCode/RefreshToken/PAR
                                     stores, DCR + RAR + claims-param
                                     validators
+spi/                                Standalone SPIs: Logger, CodeSender,
+                                    RiskScorer, MFAProvider+Challenge
 authenticators/                     9 pluggable + webauthn/ helper
 defaultimpl/                        Default issuer + Memory* stores
 defaultimpl/sqlite/                 Pure-Go SQLite (no CGO)

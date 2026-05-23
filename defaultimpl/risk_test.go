@@ -1,15 +1,16 @@
 package defaultimpl_test
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
 )
 
 func TestNoopRiskScorer_AlwaysAllows(t *testing.T) {
-	got, err := defaultimpl.NoopRiskScorer{}.Score(context.Background(), &sso.RiskRequest{
+	got, err := defaultimpl.NoopRiskScorer{}.Score(context.Background(), &spi.RiskRequest{
 		SubjectID: "alice",
 		ClientID:  "web-app",
 		Provider:  "password",
@@ -17,7 +18,7 @@ func TestNoopRiskScorer_AlwaysAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Score: %v", err)
 	}
-	if got.Decision != sso.DecisionAllow {
+	if got.Decision != spi.DecisionAllow {
 		t.Errorf("Decision = %q, want Allow", got.Decision)
 	}
 	if got.Score != 0 {
@@ -32,10 +33,10 @@ func TestNoopRiskScorer_NilRequest_StillAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Score(nil): %v", err)
 	}
-	if got.Decision != sso.DecisionAllow {
+	if got.Decision != spi.DecisionAllow {
 		t.Errorf("Decision = %q, want Allow", got.Decision)
 	}
 }
 
-// Compile-time guard: defaultimpl.NoopRiskScorer satisfies sso.RiskScorer.
-var _ sso.RiskScorer = defaultimpl.NoopRiskScorer{}
+// Compile-time guard: defaultimpl.NoopRiskScorer satisfies spi.RiskScorer.
+var _ spi.RiskScorer = defaultimpl.NoopRiskScorer{}

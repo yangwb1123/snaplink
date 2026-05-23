@@ -159,10 +159,10 @@ type AnomalyRetentionConfig struct {
 	Interval       time.Duration `yaml:"interval"`         // 0 → 1h default; loop cadence
 }
 
-// RiskConfig wires the reference rule-based [sso.RiskScorer] into
+// RiskConfig wires the reference rule-based [spi.RiskScorer] into
 // cmd. Operators with non-trivial risk needs (impossible-travel,
 // device fingerprint deltas, ML scoring) fork cmd and pass their
-// own [sso.RiskScorer] via WithRiskScorer — this config covers the
+// own [spi.RiskScorer] via WithRiskScorer — this config covers the
 // 80% case of declarative deny-by-IP / deny-by-country /
 // allow-only-from-these.
 //
@@ -182,7 +182,7 @@ type RiskConfig struct {
 
 // MFAConfig wires the step-up MFA orchestration that gates risk-
 // flagged logins through a second factor. When [RiskConfig] (or any
-// custom [sso.RiskScorer] supplied via the SDK) returns
+// custom [spi.RiskScorer] supplied via the SDK) returns
 // DecisionRequireMFA, /auth/login responds with mfa_required +
 // challenge_id; the client posts the second factor to /auth/mfa
 // and on success the server replays the standard token-mint response
@@ -199,7 +199,7 @@ type RiskConfig struct {
 // /auth/login?provider=totp flow uses — one enrollment, two roles
 // (requires authenticators.totp.enabled). Custom factors (WebAuthn
 // step-up, push notification, hardware FIDO2) implement
-// [sso.MFAProvider] directly and bypass this YAML knob.
+// [spi.MFAProvider] directly and bypass this YAML knob.
 type MFAConfig struct {
 	Enabled   bool               `yaml:"enabled"`
 	Provider  MFAProviderConfig  `yaml:"provider"`
@@ -314,7 +314,7 @@ type MFAPushCallbackConfig struct {
 // A is consumable on replica B (which load balancers without session
 // affinity always demand).
 //
-// TTL defaults to [sso.DefaultMFAChallengeTTL] (5 minutes) when
+// TTL defaults to [spi.DefaultMFAChallengeTTL] (5 minutes) when
 // unset / <= 0.
 type MFAChallengeConfig struct {
 	Backend string                   `yaml:"backend"`

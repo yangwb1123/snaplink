@@ -1,20 +1,20 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/snaplink/sso"
 )
 
-// MultiMFAProvider composes several [sso.MFAProvider] impls into a
+// MultiMFAProvider composes several [spi.MFAProvider] impls into a
 // single dispatcher so a deployment can offer multiple step-up
 // factors concurrently (e.g. TOTP for users without WebAuthn
 // authenticators + WebAuthn for users with them). SupportedMethods
 // aggregates across every wired provider in declaration order;
 // Verify routes by method name. Begin (when a provider implements
-// [sso.MFABeginner]) is forwarded only to providers whose
+// [spi.MFABeginner]) is forwarded only to providers whose
 // SupportedMethods include the requested method, so non-Beginner
 // providers don't accidentally absorb Begin calls.
 //
@@ -28,8 +28,8 @@ import (
 // MFAProvider via WithMFAProvider; the multiplexer is invisible to
 // /auth/login and /auth/mfa beyond the aggregated method list.
 type MultiMFAProvider struct {
-	providers []sso.MFAProvider
-	byMethod  map[string]sso.MFAProvider
+	providers []spi.MFAProvider
+	byMethod  map[string]spi.MFAProvider
 	methods   []string
 }
 
@@ -38,11 +38,11 @@ type MultiMFAProvider struct {
 // SupportedMethods; methods conflicting across providers fail
 // construction. Empty providers slice → ErrMFANoProviders (refuse
 // to wire a no-op dispatcher).
-func NewMultiMFAProvider(providers ...sso.MFAProvider) (*MultiMFAProvider, error) {
+func NewMultiMFAProvider(providers ...spi.MFAProvider) (*MultiMFAProvider, error) {
 	if len(providers) == 0 {
 		return nil, ErrMFANoProviders
 	}
-	byMethod := make(map[string]sso.MFAProvider)
+	byMethod := make(map[string]spi.MFAProvider)
 	methods := make([]string, 0)
 	for i, p := range providers {
 		if p == nil {
@@ -94,7 +94,7 @@ func (m *MultiMFAProvider) Verify(ctx context.Context, subjectID, method string,
 }
 
 // Begin routes Begin calls to the right provider iff that provider
-// implements [sso.MFABeginner]. Providers that don't need server-
+// implements [spi.MFABeginner]. Providers that don't need server-
 // side setup (TOTP) return (nil, nil) here — the SSO server
 // interprets that as "no per-method data" and omits the method's
 // entry from the mfa_required response's mfa_method_data bucket.
@@ -107,7 +107,7 @@ func (m *MultiMFAProvider) Begin(ctx context.Context, subjectID, method string) 
 	if !ok {
 		return nil, ErrMFAUnknownMethod
 	}
-	if b, ok := p.(sso.MFABeginner); ok {
+	if b, ok := p.(spi.MFABeginner); ok {
 		return b.Begin(ctx, subjectID, method)
 	}
 	return nil, nil
@@ -126,6 +126,6 @@ var (
 // Interface guards. The MFABeginner assertion is what makes the
 // composite useful for mixed single-call / two-call factor sets.
 var (
-	_ sso.MFAProvider = (*MultiMFAProvider)(nil)
-	_ sso.MFABeginner = (*MultiMFAProvider)(nil)
+	_ spi.MFAProvider = (*MultiMFAProvider)(nil)
+	_ spi.MFABeginner = (*MultiMFAProvider)(nil)
 )

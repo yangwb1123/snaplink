@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"net/http"
 	"strings"
@@ -46,7 +48,7 @@ func CORS(allowedOrigins []string) MiddlewareFunc {
 }
 
 // LoggerMiddleware logs each request.
-func LoggerMiddleware(l Logger) MiddlewareFunc {
+func LoggerMiddleware(l spi.Logger) MiddlewareFunc {
 	return func(ctx HandlerContext) {
 		l.Info("request",
 			"method", ctx.Request().Method,

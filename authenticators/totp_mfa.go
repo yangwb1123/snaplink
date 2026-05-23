@@ -8,11 +8,11 @@ import (
 )
 
 // TOTPMFAProvider verifies TOTP codes as a SECOND factor — after the
-// primary credential succeeded and the configured [sso.RiskScorer]
-// returned [sso.DecisionRequireMFA]. The provider is a thin adapter
+// primary credential succeeded and the configured [spi.RiskScorer]
+// returned [spi.DecisionRequireMFA]. The provider is a thin adapter
 // over an existing [TOTPAuthenticator] so the same TOTPStore + skew
 // configuration serves both roles (primary auth via Authenticator
-// interface; step-up via [sso.MFAProvider] interface).
+// interface; step-up via [spi.MFAProvider] interface).
 //
 // Wire with [sso.WithMFAProvider]:
 //

@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"crypto/rand"
 	"encoding/base64"
@@ -13,7 +15,7 @@ import (
 )
 
 // mfaResumeState is the JSON-encoded blob persisted alongside the
-// MFAChallenge. Opaque to MFAChallengeStore backends; the SSO server
+// spi.MFAChallenge. Opaque to spi.MFAChallengeStore backends; the SSO server
 // marshals + unmarshals so the post-step-up handler can replay the
 // same finishLogin flow the no-MFA path takes.
 type mfaResumeState struct {
@@ -40,10 +42,10 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 	}
 	ttl := s.mfaChallengeTTL
 	if ttl <= 0 {
-		ttl = DefaultMFAChallengeTTL
+		ttl = spi.DefaultMFAChallengeTTL
 	}
 	now := time.Now()
-	challenge := &MFAChallenge{
+	challenge := &spi.MFAChallenge{
 		ID:           id,
 		SubjectID:    result.UserID,
 		ClientID:     client.ID,
@@ -84,14 +86,14 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 		KeyIss:            s.resolveIssuer(ctx),
 	}
 
-	// MFABeginner dispatch: providers needing server-side state
+	// spi.MFABeginner dispatch: providers needing server-side state
 	// (WebAuthn challenge issuance, push notification fan-out, …)
 	// get one Begin call per supported method. Results are bucketed
 	// per method so clients picking method X read only their slice.
 	// Per-method failure is non-fatal — the method stays in
 	// mfa_methods but without an attached method_data entry; the
 	// client can retry out-of-band or pick a different factor.
-	if beginner, ok := s.mfaProvider.(MFABeginner); ok && len(methods) > 0 {
+	if beginner, ok := s.mfaProvider.(spi.MFABeginner); ok && len(methods) > 0 {
 		methodData := make(map[string]map[string]string, len(methods))
 		for _, method := range methods {
 			data, berr := beginner.Begin(ctx.Request().Context(), result.UserID, method)
@@ -179,7 +181,7 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 	}
 
 	// Flat → Params normalization. Params wins when both set so explicit
-	// callers stay in control. The dispatch into MFAProvider is opaque
+	// callers stay in control. The dispatch into spi.MFAProvider is opaque
 	// — only the contract for "totp" / "webauthn" is known here; richer
 	// providers (push notification, hardware key) get whatever Params
 	// the caller supplies plus the flat code/assertion convenience.

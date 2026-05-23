@@ -1,6 +1,8 @@
 package sso_test
 
-// RiskScorer SPI integration — verifies the hook in handleLogin
+import "github.com/snaplink/sso/spi"
+
+// spi.RiskScorer SPI integration — verifies the hook in handleLogin
 // respects scorer decisions (Allow / Deny / RequireMFA-treated-as-Allow)
 // AND that scorer errors fail OPEN (login proceeds, log the error).
 //
@@ -27,34 +29,34 @@ import (
 	"github.com/snaplink/sso/permissions"
 )
 
-// stubScorer is a controllable RiskScorer for tests. Decision and
+// stubScorer is a controllable spi.RiskScorer for tests. spi.Decision and
 // returnErr are pulled atomically so tests can flip behavior mid-run
 // without locks; calls is the recording counter.
 type stubScorer struct {
-	decision  atomic.Value // sso.Decision
+	decision  atomic.Value // spi.Decision
 	returnErr atomic.Value // error
 	calls     atomic.Int32
 }
 
-func newStubScorer(d sso.Decision) *stubScorer {
+func newStubScorer(d spi.Decision) *stubScorer {
 	s := &stubScorer{}
 	s.decision.Store(d)
 	return s
 }
 
-func (s *stubScorer) Score(_ context.Context, _ *sso.RiskRequest) (*sso.RiskAssessment, error) {
+func (s *stubScorer) Score(_ context.Context, _ *spi.RiskRequest) (*spi.RiskAssessment, error) {
 	s.calls.Add(1)
 	if e, ok := s.returnErr.Load().(error); ok && e != nil {
 		return nil, e
 	}
-	d, _ := s.decision.Load().(sso.Decision)
-	return &sso.RiskAssessment{Decision: d}, nil
+	d, _ := s.decision.Load().(spi.Decision)
+	return &spi.RiskAssessment{Decision: d}, nil
 }
 
 // buildRiskHarness is a focused mirror of e2e_test.go's buildE2E
 // — minimal server, one user, one client, no gRPC backend. Optionally
-// wires a RiskScorer when scorer != nil.
-func buildRiskHarness(t *testing.T, scorer sso.RiskScorer) (*httptest.Server, *audit.MemorySink) {
+// wires a spi.RiskScorer when scorer != nil.
+func buildRiskHarness(t *testing.T, scorer spi.RiskScorer) (*httptest.Server, *audit.MemorySink) {
 	t.Helper()
 
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("risk-test"))
@@ -132,7 +134,7 @@ func TestRiskScorer_NoScorer_ZeroOverhead(t *testing.T) {
 }
 
 func TestRiskScorer_Allow_LoginProceeds(t *testing.T) {
-	stub := newStubScorer(sso.DecisionAllow)
+	stub := newStubScorer(spi.DecisionAllow)
 	srv, _ := buildRiskHarness(t, stub)
 	resp := loginRisk(t, srv)
 	defer resp.Body.Close()
@@ -145,7 +147,7 @@ func TestRiskScorer_Allow_LoginProceeds(t *testing.T) {
 }
 
 func TestRiskScorer_Deny_Returns403_AndEmitsFailureEvent(t *testing.T) {
-	stub := newStubScorer(sso.DecisionDeny)
+	stub := newStubScorer(spi.DecisionDeny)
 	srv, sink := buildRiskHarness(t, stub)
 	resp := loginRisk(t, srv)
 	defer resp.Body.Close()
@@ -183,7 +185,7 @@ func TestRiskScorer_Deny_Returns403_AndEmitsFailureEvent(t *testing.T) {
 
 func TestRiskScorer_ScorerError_FailsOpen(t *testing.T) {
 	// Contract: a scorer that errors must NOT block login.
-	stub := newStubScorer(sso.DecisionDeny) // would deny if it ran clean
+	stub := newStubScorer(spi.DecisionDeny) // would deny if it ran clean
 	stub.returnErr.Store(errors.New("scorer offline"))
 	srv, _ := buildRiskHarness(t, stub)
 
@@ -200,7 +202,7 @@ func TestRiskScorer_RequireMFA_TreatedAsAllow_v1(t *testing.T) {
 	// reserved-for-future. Today the server treats it as Allow so a
 	// scorer can emit it without breaking flows before MFA
 	// orchestration lands.
-	stub := newStubScorer(sso.DecisionRequireMFA)
+	stub := newStubScorer(spi.DecisionRequireMFA)
 	srv, _ := buildRiskHarness(t, stub)
 
 	resp := loginRisk(t, srv)
@@ -210,8 +212,8 @@ func TestRiskScorer_RequireMFA_TreatedAsAllow_v1(t *testing.T) {
 	}
 }
 
-// Compile-time guard: stubScorer satisfies sso.RiskScorer.
-var _ sso.RiskScorer = (*stubScorer)(nil)
+// Compile-time guard: stubScorer satisfies spi.RiskScorer.
+var _ spi.RiskScorer = (*stubScorer)(nil)
 
 // Used to keep `time` import for the (possible) future direct timestamp assertion.
 var _ = time.Now

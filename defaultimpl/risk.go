@@ -1,12 +1,12 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
-
-	"github.com/snaplink/sso"
 )
 
-// NoopRiskScorer always returns sso.DecisionAllow with score 0. The
+// NoopRiskScorer always returns spi.DecisionAllow with score 0. The
 // zero-overhead default when no risk-scoring backend is configured —
 // operators who don't pass [sso.WithRiskScorer] get this behavior
 // implicitly (the Server's nil-check skips the scorer entirely, no
@@ -16,9 +16,9 @@ import (
 // scoring" wiring (rather than nil) have a typed stand-in.
 type NoopRiskScorer struct{}
 
-// Score returns Allow unconditionally. Implements [sso.RiskScorer].
-func (NoopRiskScorer) Score(_ context.Context, _ *sso.RiskRequest) (*sso.RiskAssessment, error) {
-	return &sso.RiskAssessment{Decision: sso.DecisionAllow}, nil
+// Score returns Allow unconditionally. Implements [spi.RiskScorer].
+func (NoopRiskScorer) Score(_ context.Context, _ *spi.RiskRequest) (*spi.RiskAssessment, error) {
+	return &spi.RiskAssessment{Decision: spi.DecisionAllow}, nil
 }
 
-var _ sso.RiskScorer = NoopRiskScorer{}
+var _ spi.RiskScorer = NoopRiskScorer{}

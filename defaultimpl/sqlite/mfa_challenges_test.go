@@ -1,13 +1,13 @@
 package sqlite
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 func newMFAChallengeStoreForTest(t *testing.T) *MFAChallengeStore {
@@ -22,9 +22,9 @@ func newMFAChallengeStoreForTest(t *testing.T) *MFAChallengeStore {
 	return store
 }
 
-func sampleMFAChallenge() *sso.MFAChallenge {
+func sampleMFAChallenge() *spi.MFAChallenge {
 	now := time.Now().UTC()
-	return &sso.MFAChallenge{
+	return &spi.MFAChallenge{
 		ID:           "ch-abcdef0123456789",
 		SubjectID:    "user-alice",
 		ClientID:     "demo-client",
@@ -73,7 +73,7 @@ func TestMFAChallengeStore_ConsumeIsSingleUse(t *testing.T) {
 		t.Fatalf("first Consume: %v", err)
 	}
 	_, err := store.Consume(ctx, c.ID)
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("second Consume: got %v, want ErrMFAChallengeNotFound", err)
 	}
 }
@@ -81,7 +81,7 @@ func TestMFAChallengeStore_ConsumeIsSingleUse(t *testing.T) {
 func TestMFAChallengeStore_ConsumeUnknownReturnsNotFound(t *testing.T) {
 	store := newMFAChallengeStoreForTest(t)
 	_, err := store.Consume(context.Background(), "ch-nonexistent")
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("unknown id: got %v, want ErrMFAChallengeNotFound", err)
 	}
 }
@@ -96,7 +96,7 @@ func TestMFAChallengeStore_ExpiredEntryReturnsNotFound(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	_, err := store.Consume(ctx, c.ID)
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("expired: got %v, want ErrMFAChallengeNotFound", err)
 	}
 	// Even though Consume returned NotFound, the row should have been
@@ -104,7 +104,7 @@ func TestMFAChallengeStore_ExpiredEntryReturnsNotFound(t *testing.T) {
 	// expired path doesn't leak rows that would compound on every
 	// failed challenge).
 	_, err = store.Consume(ctx, c.ID)
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("second Consume on expired: got %v, want ErrMFAChallengeNotFound", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestMFAChallengeStore_PutEmptyIDRejected(t *testing.T) {
 	c := sampleMFAChallenge()
 	c.ID = ""
 	err := store.Put(context.Background(), c)
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("empty id: got %v, want ErrMFAChallengeNotFound", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestMFAChallengeStore_PutEmptyIDRejected(t *testing.T) {
 func TestMFAChallengeStore_PutNilRejected(t *testing.T) {
 	store := newMFAChallengeStoreForTest(t)
 	err := store.Put(context.Background(), nil)
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("nil challenge: got %v, want ErrMFAChallengeNotFound", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestMFAChallengeStore_PutNilRejected(t *testing.T) {
 func TestMFAChallengeStore_ConsumeEmptyIDReturnsNotFound(t *testing.T) {
 	store := newMFAChallengeStoreForTest(t)
 	_, err := store.Consume(context.Background(), "")
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
 		t.Fatalf("empty id: got %v, want ErrMFAChallengeNotFound", err)
 	}
 }

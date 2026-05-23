@@ -1,5 +1,7 @@
 package webauthn
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"bytes"
 	"context"
@@ -7,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-
-	"github.com/snaplink/sso"
 )
 
 // MethodWebAuthn is the canonical wire name for the WebAuthn factor
@@ -17,7 +17,7 @@ import (
 const MethodWebAuthn = "webauthn"
 
 // WebAuthnMFAProvider adapts the [Helper] login ceremony to the
-// SSO server's [sso.MFAProvider] / [sso.MFABeginner] SPI. Step-up
+// SSO server's [spi.MFAProvider] / [spi.MFABeginner] SPI. Step-up
 // shares the same WebAuthn enrollment a primary
 // /webauthn/login/{begin,finish} ceremony would use — one user
 // record, two consumer roles (primary auth + MFA factor).
@@ -109,7 +109,7 @@ func (p *WebAuthnMFAProvider) Begin(ctx context.Context, subjectID, method strin
 // claim a different identity. Returned errors are intentionally
 // distinct so the cmd-side / SDK-side audit trail can distinguish
 // "wrong identity" from "bad signature" — the wire response still
-// collapses both to mfa_invalid per [sso.MFAProvider]'s contract.
+// collapses both to mfa_invalid per [spi.MFAProvider]'s contract.
 func (p *WebAuthnMFAProvider) Verify(ctx context.Context, subjectID, method string, params map[string]string) error {
 	if method != MethodWebAuthn {
 		return ErrWebAuthnMFAUnsupportedMethod
@@ -160,6 +160,6 @@ var (
 // publishes against — keeps the root sso package free of import
 // cycles).
 var (
-	_ sso.MFAProvider = (*WebAuthnMFAProvider)(nil)
-	_ sso.MFABeginner = (*WebAuthnMFAProvider)(nil)
+	_ spi.MFAProvider = (*WebAuthnMFAProvider)(nil)
+	_ spi.MFABeginner = (*WebAuthnMFAProvider)(nil)
 )

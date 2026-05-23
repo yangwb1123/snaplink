@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/spi"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -37,7 +39,7 @@ type Server struct {
 	sessionMgr                     SessionManager
 	router                         Router
 	middleware                     []MiddlewareFunc
-	logger                         Logger
+	logger                         spi.Logger
 	auditor                        *audit.Recorder
 	auditAPI                       bool
 	requestIDMW                    bool
@@ -52,9 +54,9 @@ type Server struct {
 	tenantMiddlewareOpts           TenantMiddlewareOptions
 	tenantSuspensionEnabled        bool
 	tenantSuspensionCache          *suspensionCache
-	riskScorer                     RiskScorer
-	mfaProvider                    MFAProvider
-	mfaChallengeStore              MFAChallengeStore
+	riskScorer                     spi.RiskScorer
+	mfaProvider                    spi.MFAProvider
+	mfaChallengeStore              spi.MFAChallengeStore
 	mfaChallengeTTL                time.Duration
 	anomalyRunner                  *anomaly.Runner
 	metrics                        *metrics.Metrics
@@ -128,7 +130,7 @@ func NewServer(opts ...Option) *Server {
 		authenticators:       make(map[string]Authenticator),
 		tokenIssuers:         make(map[string]TokenIssuer),
 		issuer:               DefaultIssuer,
-		logger:               NopLogger{},
+		logger:               spi.NopLogger{},
 		discoveryCacheTTL:    defaultDiscoveryCacheTTL,
 		discoveryDocCacheTTL: DefaultDiscoveryDocCacheTTL,
 	}
@@ -241,7 +243,7 @@ func WithSessionManager(sm SessionManager) Option {
 }
 
 // WithLogger sets the logger.
-func WithLogger(l Logger) Option {
+func WithLogger(l spi.Logger) Option {
 	return func(s *Server) { s.logger = l }
 }
 
@@ -659,14 +661,14 @@ func WithTenantMiddlewareOptions(opts TenantMiddlewareOptions) Option {
 
 // WithRiskScorer plugs in a fraud / abuse evaluator that runs on every
 // /auth/login attempt after credential validation but before token
-// issuance. See [RiskScorer] for the contract — fail-open on scorer
-// errors, default [DecisionAllow] when this option is not set.
-func WithRiskScorer(r RiskScorer) Option {
+// issuance. See [spi.RiskScorer] for the contract — fail-open on scorer
+// errors, default [spi.DecisionAllow] when this option is not set.
+func WithRiskScorer(r spi.RiskScorer) Option {
 	return func(s *Server) { s.riskScorer = r }
 }
 
-// WithMFAProvider activates MFA orchestration: when the RiskScorer
-// returns [DecisionRequireMFA] AND this option is set, /auth/login
+// WithMFAProvider activates MFA orchestration: when the spi.RiskScorer
+// returns [spi.DecisionRequireMFA] AND this option is set, /auth/login
 // returns a pending mfa_required response (challenge ID + supported
 // methods) instead of tokens. The client follows up with POST
 // /auth/mfa carrying the challenge ID + factor proof. Without this
@@ -678,7 +680,7 @@ func WithRiskScorer(r RiskScorer) Option {
 // the first time a challenge would be issued — fail-loud, since a
 // silent fallthrough to Allow would defeat the security control the
 // scorer asked for).
-func WithMFAProvider(p MFAProvider) Option {
+func WithMFAProvider(p spi.MFAProvider) Option {
 	return func(s *Server) { s.mfaProvider = p }
 }
 
@@ -699,12 +701,12 @@ func WithAnomalyRunner(r *anomaly.Runner) Option {
 // WithMFAChallengeStore persists in-flight MFA challenges (the state
 // between /auth/login returning mfa_required and /auth/mfa completing
 // the factor). ttl controls how long a challenge stays redeemable;
-// pass 0 to inherit [DefaultMFAChallengeTTL].
+// pass 0 to inherit [spi.DefaultMFAChallengeTTL].
 //
 // Backends: [defaultimpl.MemoryMFAChallengeStore] for single-replica
 // deploys, the SQLite peer for cluster-shared state. Required when
 // [WithMFAProvider] is set.
-func WithMFAChallengeStore(store MFAChallengeStore, ttl time.Duration) Option {
+func WithMFAChallengeStore(store spi.MFAChallengeStore, ttl time.Duration) Option {
 	return func(s *Server) {
 		s.mfaChallengeStore = store
 		if ttl > 0 {

@@ -1,5 +1,7 @@
 package main
 
+import "github.com/snaplink/sso/spi"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -26,7 +28,7 @@ import (
 // Returns (nil, nil, nil, nil) when the subsystem is disabled — the
 // caller skips the wiring. Returns the underlying stores so cmd can
 // register their Ping method as a /readyz dependency.
-func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger sso.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
+func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
 	if !cfg.Enabled {
 		return nil, nil, nil, nil
 	}

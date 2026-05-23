@@ -2,7 +2,7 @@
 // subsystem — detector SPI + async dispatcher + login event/signal
 // types + per-subject login history + per-IP failure counter SPIs.
 //
-// The synchronous [github.com/snaplink/sso.RiskScorer] makes
+// The synchronous [github.com/snaplink/spi.RiskScorer] makes
 // millisecond-budget allow/deny/require-MFA decisions on the request
 // path. This package handles signals that require WINDOWED state
 // (impossible travel, velocity, new device, brute-force shadow) and
@@ -21,29 +21,8 @@ import (
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/spi"
 )
-
-// Logger is the minimal logging interface the runner uses. Mirrors
-// sso.Logger so consumers can pass the same logger they use for the
-// SSO server. Defined locally to avoid the anomaly→sso circular
-// import (sso imports anomaly for the WithAnomalyRunner option).
-type Logger interface {
-	Info(msg string, keysAndValues ...any)
-	Error(msg string, keysAndValues ...any)
-	Debug(msg string, keysAndValues ...any)
-}
-
-// NopLogger discards all log output.
-type NopLogger struct{}
-
-// Info implements Logger.
-func (NopLogger) Info(string, ...any) {}
-
-// Error implements Logger.
-func (NopLogger) Error(string, ...any) {}
-
-// Debug implements Logger.
-func (NopLogger) Debug(string, ...any) {}
 
 // Detector runs OFF the request hot path on every login event
 // (success or failure) and surfaces behavioral anomalies the
@@ -210,7 +189,7 @@ type Runner struct {
 	// Metrics + logger left as fields for testability; cmd wires
 	// real values, tests inject stubs.
 	metrics *metricsCallbacks
-	logger  Logger
+	logger  spi.Logger
 
 	// dropPolicy controls what happens when the queue is full.
 	// "drop_newest" returns immediately (default; load-shedding);
@@ -272,7 +251,7 @@ func WithDropPolicy(p DropPolicy) Option {
 // WithLogger overrides the runner's logger. Used internally
 // by cmd to share the cmd-level slog; embedders typically don't
 // touch this.
-func WithLogger(l Logger) Option {
+func WithLogger(l spi.Logger) Option {
 	return func(r *Runner) {
 		if l != nil {
 			r.logger = l
@@ -314,7 +293,7 @@ func NewRunner(detectors []Detector, sink Sink, opts ...Option) *Runner {
 		queueSize:  1024,
 		workers:    4,
 		dropPolicy: DropNewest,
-		logger:     NopLogger{},
+		logger:     spi.NopLogger{},
 	}
 	for _, opt := range opts {
 		opt(r)

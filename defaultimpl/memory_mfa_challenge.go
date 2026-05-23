@@ -1,14 +1,14 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
-// MemoryMFAChallengeStore is the in-process [sso.MFAChallengeStore].
+// MemoryMFAChallengeStore is the in-process [spi.MFAChallengeStore].
 // Single-replica deploys + tests; cluster deploys want the SQLite
 // (or Redis, when that lands) peer so a challenge issued by replica A
 // can be consumed by replica B.
@@ -17,20 +17,20 @@ import (
 // same pattern MemoryAuthCodeStore / MemoryDeviceCodeStore use.
 type MemoryMFAChallengeStore struct {
 	mu      sync.Mutex
-	entries map[string]*sso.MFAChallenge
+	entries map[string]*spi.MFAChallenge
 }
 
 // NewMemoryMFAChallengeStore builds an empty MFA challenge store.
 func NewMemoryMFAChallengeStore() *MemoryMFAChallengeStore {
-	return &MemoryMFAChallengeStore{entries: make(map[string]*sso.MFAChallenge)}
+	return &MemoryMFAChallengeStore{entries: make(map[string]*spi.MFAChallenge)}
 }
 
 // Put persists c keyed by c.ID. Caller MUST set both ID and ExpiresAt;
 // the store performs no defaulting (default-TTL policy lives in the
 // SSO server so memory + sqlite peers stay schema-flat).
-func (m *MemoryMFAChallengeStore) Put(_ context.Context, c *sso.MFAChallenge) error {
+func (m *MemoryMFAChallengeStore) Put(_ context.Context, c *spi.MFAChallenge) error {
 	if c == nil || c.ID == "" {
-		return sso.ErrMFAChallengeNotFound
+		return spi.ErrMFAChallengeNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -46,15 +46,15 @@ func (m *MemoryMFAChallengeStore) Put(_ context.Context, c *sso.MFAChallenge) er
 // Consume atomically deletes + returns the matching challenge.
 // Missing / expired / already-consumed → ErrMFAChallengeNotFound.
 // Anti-enumeration: caller MUST collapse all three to one wire shape.
-func (m *MemoryMFAChallengeStore) Consume(_ context.Context, id string) (*sso.MFAChallenge, error) {
+func (m *MemoryMFAChallengeStore) Consume(_ context.Context, id string) (*spi.MFAChallenge, error) {
 	if id == "" {
-		return nil, sso.ErrMFAChallengeNotFound
+		return nil, spi.ErrMFAChallengeNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	entry, ok := m.entries[id]
 	if !ok {
-		return nil, sso.ErrMFAChallengeNotFound
+		return nil, spi.ErrMFAChallengeNotFound
 	}
 	delete(m.entries, id)
 	// Single-use semantic: even if the caller's clock disagrees with
@@ -62,7 +62,7 @@ func (m *MemoryMFAChallengeStore) Consume(_ context.Context, id string) (*sso.MF
 	// the wire contract consistent with the SQLite peer which prunes
 	// expired rows lazily on Consume too.
 	if time.Now().After(entry.ExpiresAt) {
-		return nil, sso.ErrMFAChallengeNotFound
+		return nil, spi.ErrMFAChallengeNotFound
 	}
 	return entry, nil
 }

@@ -1,5 +1,7 @@
 package defaultimpl
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"crypto/rand"
@@ -7,8 +9,6 @@ import (
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 // MethodPush is the canonical wire name for the push-notification
@@ -102,7 +102,7 @@ func (f PushTransportFunc) Send(ctx context.Context, approvalID, subjectID strin
 }
 
 // PushMFAProvider is the reference push-notification MFA factor.
-// Implements both [sso.MFAProvider] and [sso.MFABeginner] — Begin
+// Implements both [spi.MFAProvider] and [spi.MFABeginner] — Begin
 // issues a fresh approval id, calls the transport to deliver it,
 // and returns the approval id under mfa_method_data["push"]
 // {approval_id: <id>}; Verify polls the PushApprovalStore until
@@ -374,8 +374,8 @@ func newPushApprovalID() (string, error) {
 
 // Interface guards.
 var (
-	_ sso.MFAProvider   = (*PushMFAProvider)(nil)
-	_ sso.MFABeginner   = (*PushMFAProvider)(nil)
+	_ spi.MFAProvider   = (*PushMFAProvider)(nil)
+	_ spi.MFABeginner   = (*PushMFAProvider)(nil)
 	_ PushApprovalStore = (*MemoryPushApprovalStore)(nil)
 	_ PushTransport     = PushTransportFunc(nil)
 )

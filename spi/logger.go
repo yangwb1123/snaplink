@@ -1,4 +1,4 @@
-package sso
+package spi
 
 // Logger is the interface for SDK logging.
 type Logger interface {

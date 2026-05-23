@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"errors"
@@ -185,7 +187,7 @@ func TestLoggerMiddleware_LogsMethodAndPath(t *testing.T) {
 }
 
 func TestNopLogger_DoesNotPanic(t *testing.T) {
-	var l sso.Logger = sso.NopLogger{}
+	var l spi.Logger = spi.NopLogger{}
 	l.Info("x", "k", "v")
 	l.Error("x", "k", "v")
 	l.Debug("x", "k", "v")

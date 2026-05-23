@@ -1,7 +1,9 @@
 package sso_test
 
+import "github.com/snaplink/sso/spi"
+
 // MFA orchestration end-to-end. Exercises:
-//   - RiskScorer DecisionRequireMFA + MFAProvider wired → /auth/login
+//   - spi.RiskScorer spi.DecisionRequireMFA + spi.MFAProvider wired → /auth/login
 //     returns mfa_required (no tokens, no session)
 //   - POST /auth/mfa with the matching challenge ID + valid TOTP code
 //     resumes the login and mints tokens with the same response shape
@@ -13,7 +15,7 @@ package sso_test
 //     the same mfa_invalid wire response (oracle-leak hardening)
 //
 // Reuses the buildRiskHarness pattern from risk_test.go but plugs in
-// an MFAProvider + MFAChallengeStore so DecisionRequireMFA actually
+// an spi.MFAProvider + spi.MFAChallengeStore so spi.DecisionRequireMFA actually
 // gates the flow.
 
 import (
@@ -74,10 +76,10 @@ func validTOTPCode(t *testing.T, secret []byte) string {
 
 // buildMFAHarness wires the same primary-credential setup risk_test.go
 // uses, then plugs in:
-//   - a stub RiskScorer that always returns DecisionRequireMFA
+//   - a stub spi.RiskScorer that always returns spi.DecisionRequireMFA
 //   - a TOTPMFAProvider with one enrolled user (subject "alice", same
 //     secret as the totpStubStore)
-//   - an in-memory MFAChallengeStore
+//   - an in-memory spi.MFAChallengeStore
 //
 // Returns the running httptest server, the audit sink for assertions,
 // and the shared TOTP secret so callers can mint valid codes.
@@ -116,7 +118,7 @@ func buildMFAHarness(t *testing.T) (*httptest.Server, *audit.MemorySink, []byte)
 	sink := audit.NewMemorySink(50)
 	recorder := audit.New(sink)
 
-	scorer := newStubScorer(sso.DecisionRequireMFA)
+	scorer := newStubScorer(spi.DecisionRequireMFA)
 
 	srv := sso.NewServer(
 		sso.WithIssuer("mfa-test"),
@@ -180,7 +182,7 @@ func completeMFA(t *testing.T, srv *httptest.Server, challengeID, method, code s
 	return resp.StatusCode, out
 }
 
-// TestMFA_HappyPath — RiskScorer says RequireMFA → /auth/login returns
+// TestMFA_HappyPath — spi.RiskScorer says RequireMFA → /auth/login returns
 // mfa_required + challenge id; /auth/mfa with a valid TOTP code resumes
 // the flow and mints tokens with the standard direct-mint response.
 func TestMFA_HappyPath(t *testing.T) {
@@ -309,14 +311,14 @@ func TestMFA_UnsupportedMethod(t *testing.T) {
 	}
 }
 
-// TestMFA_NoProviderWired_FallsThroughToAllow — when MFAProvider is
-// not configured but the scorer returns DecisionRequireMFA, the
+// TestMFA_NoProviderWired_FallsThroughToAllow — when spi.MFAProvider is
+// not configured but the scorer returns spi.DecisionRequireMFA, the
 // historical no-op behavior (treat as Allow) MUST be preserved so
 // callers wiring a forward-looking scorer aren't broken before MFA
 // orchestration ships in their deployment.
 func TestMFA_NoProviderWired_FallsThroughToAllow(t *testing.T) {
 	// Reuse the risk_test.go harness which doesn't wire WithMFAProvider.
-	stub := newStubScorer(sso.DecisionRequireMFA)
+	stub := newStubScorer(spi.DecisionRequireMFA)
 	srv, _ := buildRiskHarness(t, stub)
 
 	resp := loginRisk(t, srv)
@@ -335,8 +337,8 @@ func TestMFA_NoProviderWired_FallsThroughToAllow(t *testing.T) {
 	}
 }
 
-// stubBeginnerProvider implements both sso.MFAProvider and
-// sso.MFABeginner so the dispatch path can be exercised without
+// stubBeginnerProvider implements both spi.MFAProvider and
+// spi.MFABeginner so the dispatch path can be exercised without
 // pulling in WebAuthn's go-jose dependency tree. methods is the
 // SupportedMethods return; beginErr controls whether Begin succeeds
 // (returns the data map) or errors (skipped non-fatally per the SPI
@@ -360,10 +362,10 @@ func (s *stubBeginnerProvider) Begin(_ context.Context, _, method string) (map[s
 }
 
 // buildMFAHarnessWithProvider mirrors buildMFAHarness but lets the
-// caller supply a custom MFAProvider — exercises Beginner dispatch
+// caller supply a custom spi.MFAProvider — exercises Beginner dispatch
 // + multi-method paths without inheriting buildMFAHarness's hard-
 // coded TOTP wiring.
-func buildMFAHarnessWithProvider(t *testing.T, provider sso.MFAProvider) (*httptest.Server, *audit.MemorySink) {
+func buildMFAHarnessWithProvider(t *testing.T, provider spi.MFAProvider) (*httptest.Server, *audit.MemorySink) {
 	t.Helper()
 
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("mfa-test"))
@@ -391,7 +393,7 @@ func buildMFAHarnessWithProvider(t *testing.T, provider sso.MFAProvider) (*httpt
 	prov := permissions.NewMemoryProvider()
 	sink := audit.NewMemorySink(50)
 	recorder := audit.New(sink)
-	scorer := newStubScorer(sso.DecisionRequireMFA)
+	scorer := newStubScorer(spi.DecisionRequireMFA)
 	store := defaultimpl.NewMemoryMFAChallengeStore()
 
 	srv := sso.NewServer(
@@ -414,7 +416,7 @@ func buildMFAHarnessWithProvider(t *testing.T, provider sso.MFAProvider) (*httpt
 }
 
 // TestMFA_BeginnerDispatch_PopulatesMethodData proves that when a
-// provider implements MFABeginner, the mfa_required response carries
+// provider implements spi.MFABeginner, the mfa_required response carries
 // the per-method server-issued challenge data under mfa_method_data.
 // This is what unblocks two-call factors like WebAuthn — the client
 // needs the assertion options + session id before it can sign.

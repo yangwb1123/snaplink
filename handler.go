@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/spi"
+
 import "github.com/snaplink/sso/oauth"
 
 import (
@@ -526,7 +528,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if g, ok := GeoFromHandlerContext(ctx); ok {
 			geoInfo = g
 		}
-		assessment, riskErr := s.riskScorer.Score(ctx.Request().Context(), &RiskRequest{
+		assessment, riskErr := s.riskScorer.Score(ctx.Request().Context(), &spi.RiskRequest{
 			SubjectID: result.UserID,
 			ClientID:  req.ClientID,
 			Provider:  req.Provider,
@@ -545,12 +547,12 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			if s.metrics != nil {
 				s.metrics.RiskDecisionsTotal.WithLabelValues(string(assessment.Decision)).Inc()
 			}
-			if assessment.Decision == DecisionDeny {
+			if assessment.Decision == spi.DecisionDeny {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrRiskDenied)
 				ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrRiskDenied))
 				return
 			}
-			if assessment.Decision == DecisionRequireMFA && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+			if assessment.Decision == spi.DecisionRequireMFA && s.mfaProvider != nil && s.mfaChallengeStore != nil {
 				// Step-up gate engaged: persist the in-flight state and
 				// return mfa_required so the client follows up at
 				// /auth/mfa. issueMFAChallenge writes the response;
@@ -558,7 +560,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 				s.issueMFAChallenge(ctx, result, req, client)
 				return
 			}
-			// DecisionRequireMFA with NO provider wired falls through to
+			// spi.DecisionRequireMFA with NO provider wired falls through to
 			// Allow — preserves the historical no-op behavior so callers
 			// configuring a forward-looking scorer aren't broken when
 			// they pre-date MFA orchestration. Operators who do ship MFA
@@ -1847,7 +1849,7 @@ func (s *Server) handleSendCode(ctx HandlerContext) {
 		return
 	}
 
-	sender, ok := auth.(CodeSender)
+	sender, ok := auth.(spi.CodeSender)
 	if !ok {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrProviderDoesNotSendCodes))
 		return

@@ -1,5 +1,7 @@
 package main
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"errors"
@@ -7,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/config"
@@ -93,7 +94,7 @@ func TestBuildMFA_TOTPWithSQLiteStore(t *testing.T) {
 	// Round-trip a challenge through the freshly-built store. Confirms
 	// migration ran + the wired backend can satisfy the SDK contract.
 	ctx := context.Background()
-	c := &sso.MFAChallenge{
+	c := &spi.MFAChallenge{
 		ID:        "ch-roundtrip",
 		SubjectID: "user-1",
 		ClientID:  "client-1",
@@ -231,7 +232,7 @@ func TestBuildMFA_ZeroTTLPassesThrough(t *testing.T) {
 }
 
 // TestBuildMFA_StoreSurfacesNotFoundSentinel sanity-checks that the
-// wired store returns the sso.ErrMFAChallengeNotFound sentinel on
+// wired store returns the spi.ErrMFAChallengeNotFound sentinel on
 // missing IDs — anti-enumeration depends on this.
 func TestBuildMFA_StoreSurfacesNotFoundSentinel(t *testing.T) {
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
@@ -244,8 +245,8 @@ func TestBuildMFA_StoreSurfacesNotFoundSentinel(t *testing.T) {
 		t.Fatalf("buildMFA: %v", err)
 	}
 	_, err = store.Consume(context.Background(), "missing-id")
-	if !errors.Is(err, sso.ErrMFAChallengeNotFound) {
-		t.Fatalf("Consume(missing): got %v want sso.ErrMFAChallengeNotFound", err)
+	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
+		t.Fatalf("Consume(missing): got %v want spi.ErrMFAChallengeNotFound", err)
 	}
 }
 
@@ -279,8 +280,8 @@ func TestBuildMFA_WebAuthnWithMemoryStore(t *testing.T) {
 	// Webauthn provider implements MFABeginner — the wired interface
 	// type assertion is what unblocks step-up factors needing
 	// server-side challenge issuance.
-	if _, ok := provider.(sso.MFABeginner); !ok {
-		t.Errorf("wired provider does not satisfy sso.MFABeginner — Begin dispatch won't fire")
+	if _, ok := provider.(spi.MFABeginner); !ok {
+		t.Errorf("wired provider does not satisfy spi.MFABeginner — Begin dispatch won't fire")
 	}
 }
 
@@ -341,7 +342,7 @@ func TestBuildMFA_MultiKindComposesBothFactors(t *testing.T) {
 			t.Errorf("composite missing method %q (got %v)", m, methods)
 		}
 	}
-	if _, ok := provider.(sso.MFABeginner); !ok {
+	if _, ok := provider.(spi.MFABeginner); !ok {
 		t.Error("composite should implement MFABeginner so WebAuthn dispatch fires")
 	}
 }
@@ -455,8 +456,8 @@ func TestBuildMFA_PushKindWithMemoryStore(t *testing.T) {
 	}
 	// Push provider implements MFABeginner so the mfa_required
 	// response can carry the approval_id back to the client.
-	if _, ok := provider.(sso.MFABeginner); !ok {
-		t.Error("push provider should satisfy sso.MFABeginner")
+	if _, ok := provider.(spi.MFABeginner); !ok {
+		t.Error("push provider should satisfy spi.MFABeginner")
 	}
 }
 

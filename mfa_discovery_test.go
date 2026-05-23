@@ -1,5 +1,7 @@
 package sso_test
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"encoding/json"
@@ -12,7 +14,7 @@ import (
 	"github.com/snaplink/sso/defaultimpl"
 )
 
-// stubDiscoveryProvider is a minimal MFAProvider that lets the
+// stubDiscoveryProvider is a minimal spi.MFAProvider that lets the
 // discovery test pin the wire shape without pulling in the
 // concrete TOTP / WebAuthn / Push impls — keeps the test focused
 // on the discovery code rather than the provider integration.
@@ -25,7 +27,7 @@ func (s *stubDiscoveryProvider) Verify(_ context.Context, _, _ string, _ map[str
 	return nil
 }
 
-func newDiscoveryHarness(t *testing.T, provider sso.MFAProvider) *httptest.Server {
+func newDiscoveryHarness(t *testing.T, provider spi.MFAProvider) *httptest.Server {
 	t.Helper()
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{ID: "test", Active: true, TokenStrategy: "jwt"})

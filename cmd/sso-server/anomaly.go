@@ -1,5 +1,7 @@
 package main
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"encoding/hex"
@@ -8,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/config"
@@ -37,7 +38,7 @@ type anomalyRuntime struct {
 //   - empty IPSalt (privacy invariant violation)
 //   - no detectors enabled (runner would be no-op)
 //   - sqlite backend selected without dsn
-func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics.Metrics, logger sso.Logger) (*anomalyRuntime, error) {
+func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics.Metrics, logger spi.Logger) (*anomalyRuntime, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}

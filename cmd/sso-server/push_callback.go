@@ -1,5 +1,7 @@
 package main
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"encoding/json"
 	"errors"
@@ -29,13 +31,13 @@ type pushCallbackDeps struct {
 	Store        defaultimpl.PushApprovalStore
 	BearerToken  string       // empty disables bearer-token check
 	AllowedCIDRs []*net.IPNet // empty disables IP gate
-	Logger       sso.Logger
+	Logger       spi.Logger
 }
 
 // buildPushCallbackDeps assembles pushCallbackDeps from the YAML
 // config — parses the CIDR strings into *net.IPNet (failing loud
 // on bad input rather than silently dropping the entry).
-func buildPushCallbackDeps(cfg config.MFAPushCallbackConfig, store defaultimpl.PushApprovalStore, logger sso.Logger) (*pushCallbackDeps, error) {
+func buildPushCallbackDeps(cfg config.MFAPushCallbackConfig, store defaultimpl.PushApprovalStore, logger spi.Logger) (*pushCallbackDeps, error) {
 	allowed := make([]*net.IPNet, 0, len(cfg.AllowedCIDRs))
 	for _, c := range cfg.AllowedCIDRs {
 		_, ipnet, err := net.ParseCIDR(strings.TrimSpace(c))

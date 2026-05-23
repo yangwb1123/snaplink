@@ -1,13 +1,13 @@
 package sqlite
 
+import "github.com/snaplink/sso/spi"
+
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/snaplink/sso"
 )
 
 // mfaChallengesSchema persists in-flight MFA step-up state between
@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_mfa_challenges_expires_at
     ON mfa_challenges(expires_at);
 `
 
-// MFAChallengeStore is the SQLite-backed [sso.MFAChallengeStore].
+// MFAChallengeStore is the SQLite-backed [spi.MFAChallengeStore].
 // Suitable for multi-replica deployments — a challenge issued by the
 // replica that handled /auth/login is consumable by whichever replica
 // the client's /auth/mfa POST lands on (so MFA survives a load
@@ -94,9 +94,9 @@ func (s *MFAChallengeStore) Ping(ctx context.Context) error {
 // Put persists a freshly-issued challenge. Caller MUST set both ID
 // and ExpiresAt; the store performs no defaulting (default-TTL policy
 // lives in the SSO server so memory + sqlite peers stay schema-flat).
-func (s *MFAChallengeStore) Put(ctx context.Context, c *sso.MFAChallenge) error {
+func (s *MFAChallengeStore) Put(ctx context.Context, c *spi.MFAChallenge) error {
 	if c == nil || c.ID == "" {
-		return sso.ErrMFAChallengeNotFound
+		return spi.ErrMFAChallengeNotFound
 	}
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO mfa_challenges (
@@ -116,9 +116,9 @@ func (s *MFAChallengeStore) Put(ctx context.Context, c *sso.MFAChallenge) error 
 // Missing, expired, or already-consumed entries all return
 // ErrMFAChallengeNotFound — the SSO server collapses every case to
 // the same 400 mfa_invalid wire response (anti-enumeration).
-func (s *MFAChallengeStore) Consume(ctx context.Context, id string) (*sso.MFAChallenge, error) {
+func (s *MFAChallengeStore) Consume(ctx context.Context, id string) (*spi.MFAChallenge, error) {
 	if id == "" {
-		return nil, sso.ErrMFAChallengeNotFound
+		return nil, spi.ErrMFAChallengeNotFound
 	}
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM mfa_challenges WHERE id = ?
@@ -126,14 +126,14 @@ func (s *MFAChallengeStore) Consume(ctx context.Context, id string) (*sso.MFACha
 		id,
 	)
 	var (
-		out          sso.MFAChallenge
+		out          spi.MFAChallenge
 		createdUnix  int64
 		expiresUnix  int64
 		requestState []byte
 	)
 	if err := row.Scan(&out.SubjectID, &out.ClientID, &createdUnix, &expiresUnix, &requestState); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, sso.ErrMFAChallengeNotFound
+			return nil, spi.ErrMFAChallengeNotFound
 		}
 		return nil, fmt.Errorf("sqlite: consume mfa_challenge: %w", err)
 	}
@@ -146,9 +146,9 @@ func (s *MFAChallengeStore) Consume(ctx context.Context, id string) (*sso.MFACha
 	// the deletion alone is sufficient to enforce both single-use and
 	// the expiry boundary.
 	if time.Now().After(out.ExpiresAt) {
-		return nil, sso.ErrMFAChallengeNotFound
+		return nil, spi.ErrMFAChallengeNotFound
 	}
 	return &out, nil
 }
 
-var _ sso.MFAChallengeStore = (*MFAChallengeStore)(nil)
+var _ spi.MFAChallengeStore = (*MFAChallengeStore)(nil)
