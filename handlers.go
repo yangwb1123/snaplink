@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
 	"slices"
@@ -3356,57 +3355,10 @@ const ResponseModeQuery = "query"
 // response types (implicit flow). Parameters delivered after `#`.
 const ResponseModeFragment = "fragment"
 
-// formPostTemplate renders the auto-POST HTML page. The form
-// elements are scoped via id="f" so the noscript fallback button's
-// `form="f"` association keeps working even though the button
-// itself lives outside the form (HTML5 spec).
-var formPostTemplate = template.Must(template.New("formPost").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Submitting…</title>
-</head>
-<body onload="document.forms[0].submit()">
-<noscript>
-<p>JavaScript is required to complete sign-in. Please click the button below to continue.</p>
-</noscript>
-<form id="f" method="POST" action="{{.RedirectURI}}">
-<input type="hidden" name="code" value="{{.Code}}">
-{{if .State}}<input type="hidden" name="state" value="{{.State}}">{{end}}
-<input type="hidden" name="iss" value="{{.Iss}}">
-<noscript><button type="submit">Continue</button></noscript>
-</form>
-</body>
-</html>
-`))
-
-// formPostData carries the values rendered into the response HTML.
-// One struct (rather than a map) so html/template can pick the
-// correct escaping context per field at parse time.
-type formPostData struct {
-	RedirectURI string
-	Code        string
-	State       string
-	Iss         string
-}
-
-// renderFormPostResponse delivers the OIDC Form Post Response Mode
-// 1.0 HTML for a successful authorization_code response. Called
-// instead of ctx.JSON when response_mode=form_post.
+// renderFormPostResponse delegates to oidc.RenderFormPostResponse —
+// the template + escaping contract lives there.
 func (s *Server) renderFormPostResponse(ctx HandlerContext, redirectURI, code, state string) {
-	w := ctx.ResponseWriter()
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("X-Frame-Options", "DENY")
-	h.Set("Cache-Control", "no-store")
-	h.Set("Referrer-Policy", "no-referrer")
-	w.WriteHeader(http.StatusOK)
-	_ = formPostTemplate.Execute(w, formPostData{
-		RedirectURI: redirectURI,
-		Code:        code,
-		State:       state,
-		Iss:         s.resolveIssuer(ctx),
-	})
+	oidc.RenderFormPostResponse(ctx, redirectURI, code, state, s.resolveIssuer(ctx))
 }
 
 // isValidResponseMode delegates to oidc.IsValidResponseMode.
