@@ -12,12 +12,42 @@
 
 ---
 
+## v2.3（2026-05-25）—— 本轮已落地
+
+10 轮开发交付了两条主线，更新如下：
+
+- **跨副本失效总线（v2.2 边界情况 → 已落地）**：新 `cluster/` 包 ——
+  `Bus` SPI（Publish/Subscribe/Close）+ `Event{Kind,Key,Payload}` +
+  memory peer（进程内扇出）+ etcd peer（跨进程，prefix WATCH + 短租约
+  自清理）。`Server.InvalidateTenantSuspensionCache` /
+  `InvalidateDiscoveryCache` 现在本地失效后经 bus publish，各副本
+  `StartInvalidationBus` 订阅并清本地缓存。cmd 经 `cluster.bus.backend`
+  接入（fail-open，非 readiness 依赖）。两个消费者：
+  `KindTenantSuspension`（暂停跨副本即时生效）+ `KindDiscoveryReload`
+  （client 改动后各副本重算 discovery）。
+- **§1 签名密钥治理（部分落地）**：
+  - `Ed25519Signer` 接缝 + `WithEd25519ExternalSigner`——签名操作可换成
+    KMS/HSM 后端，私钥不入进程；5 个签名点全部 fail-closed 传播错误。
+  - `RotateKey`/`RetireKey` 运行时重叠期轮换（keyMu 守护，`-race` 验证），
+    旧 kid 降级 verify-only 在 JWKS 保留至 TTL。
+  - `StartRotation` 自动轮换调度器 + cmd `keys.rotation.*` 配置 +
+    `signing_key_rotated` 审计 + `sso_signing_key_rotations_total` 指标 +
+    轮换时 bus 广播 discovery 重载。
+  - **仍缺**：KMS/HSM 具体 peer（awskms/gcpkms/pkcs11）、多算法 allowlist
+    配置化（RS256/ES256）、per-tenant 签名密钥、multi-replica `ActiveKID`
+    强一致（需共享密钥存储——bus 底座已就位）。
+
+下面 5 个方向中，**§1 的轮换闭环已大部分落地**（剩 KMS peer + 多算法 +
+per-tenant）；§2 异常检测此前 v2.1 已落地；**§3 Console、§4 Migration、
+§5 CIBA/JWE/FAPI 仍未动**。
+
 ## v2.1（2026-05-22）之后的复扫结论（2026-05-25）
 
 复扫确认：**v2.1 之后的 40 个 commit 全部是内部结构重构，零新增产品
 能力**——因此本文档的 5 个方向**全部仍然成立、全部未落地**（已逐项
 核验代码：无 `SigningKeyProvider`/KMS/HSM、无 `migrations/` 目录、无
 `web/` Console、无 `compliance/erasure`、无 CIBA、无 Redis 后端）。
+（注：此结论为 v2.2 复扫时点；上方 v2.3 段记录此后 10 轮开发的落地。）
 
 这一轮结构性里程碑（影响"在哪里加代码"，不影响"加什么能力"）：
 
@@ -823,3 +853,4 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 | 2026-05-22 | v2 | 上版 §1 / §2A-B / §5 已大量落地；refocus 到 HSM + 异步异常检测 + Console + migration + FAPI 2.0 |
 | 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
 | 2026-05-25 | v2.2 | **复扫确认 5 方向全部成立、全部未落地**（v2.1 后 40 个 commit 均为内部重构）。记录结构性里程碑：Hexagonal handler 抽取（根目录 → 6 源文件，handler 迁入 oauth//oidc/，`oauth` 不可 import `oidc`）+ 测试按功能归位（89 集成测试入 `test/`，根目录 `.go` 101 → 8）+ AGENTS.md 压缩 977 → 709。新增两条边界情况：**跨副本缓存失效需要 `InvalidationBus` 事件总线**（`InvalidateTenantSuspensionCache` 仅进程内，多副本传播延迟 = 缓存 TTL）+ **DPoP nonce 进程内密钥多副本不安全**。 |
+| 2026-05-25 | v2.3 | **10 轮开发落地**：(1) `cluster/` InvalidationBus（SPI + memory + etcd + cmd wiring + tenant-suspension/discovery 两个消费者）——闭合 v2.2 的跨副本失效边界情况；(2) §1 签名密钥治理大部分落地 —— `Ed25519Signer` KMS/HSM 接缝 + 运行时 `RotateKey`/`RetireKey` 重叠期轮换 + `StartRotation` 自动调度 + cmd `keys.rotation` 配置 + `signing_key_rotated` 审计 + `sso_signing_key_rotations_total` 指标。剩 §1 的 KMS peer/多算法/per-tenant、§3 Console、§4 Migration、§5 CIBA。 |

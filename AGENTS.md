@@ -63,6 +63,9 @@ security/      Lockout, JTI replay, JAR/JWE, step-up, mTLS header extractor,
                subject-client index, ConstantTimeStringEq
 spi/           Standalone SPIs: Logger, CodeSender, RiskScorer, MFAProvider+Challenge
 anomaly/       Async behavioral-detection SPIs
+cluster/       Cross-replica coordination Bus (Publish/Subscribe) for cache
+               invalidation; memory + etcd peers. Server.{InvalidateTenantSuspensionCache,
+               InvalidateDiscoveryCache} publish; StartInvalidationBus subscribes
 middleware/    Auth, CORS, Logger, Tracing, RequestID, no-store, base-URL helpers
 admin/         Admin auth: HTTP middleware + gRPC interceptor + scope rules
 tenant/        Tenant resolution middleware + Tenant/Domain types + Store
@@ -226,6 +229,16 @@ where Hexagonal handlers moved). §2 gotchas apply across grants.
 `Ed25519JWTIssuer` to both `WithTokenIssuer` + `WithIDTokenIssuer`);
 `TokenStrategySession` — opaque, backed by `SessionManager`. Register
 via `sso.WithTokenIssuer(name, issuer)`.
+
+**Signing-key lifecycle** (`Ed25519JWTIssuer`): all sign sites route
+through an `Ed25519Signer` seam — default in-process, or
+`WithEd25519ExternalSigner` for a KMS/HSM-backed key that never enters
+the process. `RotateKey`/`RetireKey` do runtime overlap-window rotation
+(demoted key stays verify-only in JWKS through its TTL); `StartRotation`
+runs the scheduled loop. cmd wires it via `keys.rotation.*` → emits
+`signing_key_rotated` audit + `sso_signing_key_rotations_total` + busts
+the signed discovery cache (JWKS is live). Single-issuer: run on a
+leader or share a KMS signer across replicas.
 
 ---
 
