@@ -21,10 +21,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/migrate"
 	"github.com/snaplink/sso/tenant"
 
 	_ "modernc.org/sqlite"
 )
+
+// migrations is the ordered schema history. v1 is the baseline (schema
+// as shipped before versioned migrations); pre-migration DBs no-op it
+// and get stamped v1.
+var migrations = []migrate.Migration{
+	{Version: 1, Name: "baseline_tenants", SQL: schema},
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS tenants (
@@ -73,7 +81,7 @@ func New(dsn string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("tenant/sqlite: enable foreign keys: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+	if err := migrate.Run(context.Background(), db, "tenant", migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("tenant/sqlite: migrate: %w", err)
 	}
@@ -88,7 +96,7 @@ func NewWithDB(db *sql.DB) (*Store, error) {
 	if _, err := db.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`); err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: enable foreign keys: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+	if err := migrate.Run(context.Background(), db, "tenant", migrations); err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
