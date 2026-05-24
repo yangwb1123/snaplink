@@ -42,7 +42,12 @@ protoc -I proto \
 ### Layout
 
 ```
-Root package (sso) — 6 files total:
+Root package (sso) — 6 non-test files. Integration tests live in
+test/ (package ssotest, full *sso.Server over HTTP via a shared
+harness); true subpackage unit tests live beside their code
+(e.g. security/step_up_auth_test.go). Only godoc examples
+(example_test.go) + white-box (header_client_cert_extractor_test.go,
+package sso) remain at root.
 sso.go                              Server type + Option functions + route registration
 handler.go                          Login flow orchestrator (every endpoint paths through here)
 aliases.go                          core/ + subpackage re-exports for backward compatibility
@@ -905,8 +910,12 @@ requires updating the catalog in the same commit.** SPAs branch on
   ssoclient.AuthClient = (*remote.AuthClient)(nil)` in
   `ssoclient/remote/` — never in `ssoclient/` (cycle).
 - **gRPC name renames**: protoc-gen-go does `ID→Id`, `URL→Url`.
-- **Tests in same package** as behavior. Race / ordering fixes prove
-  with `-count=10+`.
+- **Tests follow the behavior.** Subpackage unit tests live beside
+  the code (`package <pkg>_test` in that dir). Cross-server
+  integration tests — anything that builds a full `*sso.Server` and
+  drives it over HTTP — live in `test/` (`package ssotest`) sharing
+  one fixture harness; add new server-level tests there, not at root.
+  Race / ordering fixes prove with `-count=10+`.
 
 ### Don'ts
 - Don't run `git reset --hard`, `git push --force`, `branch -D`
