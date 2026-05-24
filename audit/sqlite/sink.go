@@ -33,9 +33,19 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/migrate"
 
 	_ "modernc.org/sqlite"
 )
+
+// migrations is the ordered schema history for this backend. v1 is the
+// baseline (the schema as it shipped before versioned migrations) — an
+// already-populated DB no-ops its IF NOT EXISTS statements and is
+// stamped v1; a fresh DB has it created. Future column/index changes
+// append v2, v3, ... here.
+var migrations = []migrate.Migration{
+	{Version: 1, Name: "baseline_audit_events", SQL: schema},
+}
 
 // schema mirrors audit.Event field-by-field for the queryable
 // columns; metadata + the hash-chain pair stay in a JSON blob so
@@ -95,7 +105,7 @@ func New(dsn string) (*Sink, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+	if err := migrate.Run(context.Background(), db, "audit", migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
 	}
@@ -105,7 +115,7 @@ func New(dsn string) (*Sink, error) {
 // NewWithDB wraps an existing *sql.DB — shared-pool deployments
 // reuse the same connection across SDK subsystems.
 func NewWithDB(db *sql.DB) (*Sink, error) {
-	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+	if err := migrate.Run(context.Background(), db, "audit", migrations); err != nil {
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
 	}
 	return &Sink{db: db}, nil
