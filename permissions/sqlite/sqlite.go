@@ -31,10 +31,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/snaplink/sso/migrate"
 	"github.com/snaplink/sso/permissions"
 
 	_ "modernc.org/sqlite"
 )
+
+// migrations is the ordered schema history. v1 is the baseline (schema
+// as shipped before versioned migrations) — pre-migration DBs no-op the
+// IF NOT EXISTS statements and get stamped v1; future changes append.
+var migrations = []migrate.Migration{
+	{Version: 1, Name: "baseline_permissions", SQL: schema},
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS permissions_roles (
@@ -77,7 +85,7 @@ func New(dsn string) (*Provider, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("permissions/sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+	if err := migrate.Run(context.Background(), db, "permissions", migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("permissions/sqlite: migrate: %w", err)
 	}
@@ -87,7 +95,7 @@ func New(dsn string) (*Provider, error) {
 // NewWithDB wraps an existing *sql.DB. Caller owns the connection
 // lifecycle.
 func NewWithDB(db *sql.DB) (*Provider, error) {
-	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+	if err := migrate.Run(context.Background(), db, "permissions", migrations); err != nil {
 		return nil, fmt.Errorf("permissions/sqlite: migrate: %w", err)
 	}
 	return &Provider{db: db}, nil
