@@ -50,6 +50,24 @@ type Config struct {
 	MFA                MFAConfig                `yaml:"mfa"`
 	Anomaly            AnomalyConfig            `yaml:"anomaly"`
 	Cluster            ClusterConfig            `yaml:"cluster"`
+	Keys               KeysConfig               `yaml:"keys"`
+}
+
+// KeysConfig governs signing-key lifecycle.
+type KeysConfig struct {
+	Rotation KeyRotationConfig `yaml:"rotation"`
+}
+
+// KeyRotationConfig drives the automatic signing-key rotation loop.
+// GracePeriod MUST be >= the maximum access-token TTL so tokens minted
+// just before a rotation stay verifiable until they expire. Single-
+// issuer semantics: in a multi-replica cluster, enable this on a single
+// leader (or back the issuer with a shared KMS signer), otherwise
+// replicas advertise divergent kids.
+type KeyRotationConfig struct {
+	Enabled     bool          `yaml:"enabled"`
+	Interval    time.Duration `yaml:"interval"`     // e.g. 2160h (90d)
+	GracePeriod time.Duration `yaml:"grace_period"` // e.g. 168h (7d)
 }
 
 // ClusterConfig wires cross-replica coordination via cluster.Bus. The

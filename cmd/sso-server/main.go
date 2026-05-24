@@ -286,6 +286,11 @@ type app struct {
 	// when unconfigured); busStop closes when its subscriber exits.
 	invalidationBus cluster.Bus
 	busStop         <-chan struct{}
+
+	// keyRotationCancel stops the signing-key rotation loop (nil when
+	// rotation is disabled); keyRotationStop closes when it has exited.
+	keyRotationCancel context.CancelFunc
+	keyRotationStop   <-chan struct{}
 }
 
 func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string) error {
@@ -401,6 +406,16 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if a.busStop != nil {
 		select {
 		case <-a.busStop:
+		case <-ctx.Done():
+		}
+	}
+	// Stop the signing-key rotation loop and wait for it to exit.
+	if a.keyRotationCancel != nil {
+		a.keyRotationCancel()
+	}
+	if a.keyRotationStop != nil {
+		select {
+		case <-a.keyRotationStop:
 		case <-ctx.Done():
 		}
 	}
@@ -1291,6 +1306,20 @@ func buildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (clus
 	default:
 		return nil, "", fmt.Errorf("unknown cluster.bus.backend %q", cfg.Backend)
 	}
+}
+
+// signingKeyRotationConfig translates the YAML rotation config into a
+// defaultimpl.RotationConfig (without OnRotate, which the caller
+// attaches), returning ok=false when rotation is disabled or
+// misconfigured (interval <= 0). Pure so it is unit-testable.
+func signingKeyRotationConfig(cfg config.KeyRotationConfig) (defaultimpl.RotationConfig, bool) {
+	if !cfg.Enabled || cfg.Interval <= 0 {
+		return defaultimpl.RotationConfig{}, false
+	}
+	return defaultimpl.RotationConfig{
+		Interval:    cfg.Interval,
+		GracePeriod: cfg.GracePeriod,
+	}, true
 }
 
 // resolveServiceID derives the registry Service.ID. Explicit YAML
@@ -2648,6 +2677,32 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		return nil, fmt.Errorf("invalidation bus subscribe: %w", err)
 	}
 
+	// Automatic signing-key rotation. OnRotate emits an audit event and
+	// busts the (signed) discovery doc cache cluster-wide — JWKS itself
+	// is computed live, so /jwks.json reflects the new key immediately.
+	var keyRotationStop <-chan struct{}
+	var keyRotationCancel context.CancelFunc
+	if rc, ok := signingKeyRotationConfig(cfg.Keys.Rotation); ok {
+		rec := recorder
+		rc.OnRotate = func(oldKID, newKID string) {
+			if rec != nil {
+				rec.Record(context.Background(), &audit.Event{
+					Type:      audit.EventSigningKeyRotated,
+					Outcome:   audit.OutcomeSuccess,
+					Timestamp: time.Now().UTC(),
+					Reason:    "from=" + oldKID + " to=" + newKID,
+				})
+			}
+			srv.InvalidateDiscoveryCache()
+			logger.Info("signing key rotated", "from", oldKID, "to", newKID)
+		}
+		rotCtx, cancel := context.WithCancel(context.Background())
+		keyRotationCancel = cancel
+		keyRotationStop = jwtIssuer.StartRotation(rotCtx, rc)
+		logger.Info("signing key rotation enabled",
+			"interval", rc.Interval, "grace_period", rc.GracePeriod)
+	}
+
 	var adminMW *sso.AdminMiddleware
 	if cfg.Admin.Enabled {
 		adminMW = sso.NewAdminMiddleware(srv, provider)
@@ -2780,6 +2835,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		netStop:                 netStop,
 		invalidationBus:         invalidationBus,
 		busStop:                 busStop,
+		keyRotationCancel:       keyRotationCancel,
+		keyRotationStop:         keyRotationStop,
 	}, nil
 }
 

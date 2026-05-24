@@ -134,6 +134,12 @@ const (
 	EventReleaseRolledBack EventType = "release_rolled_back"
 	EventReleaseDeleted    EventType = "release_deleted"
 
+	// Signing-key rotation. Emitted by the automatic rotation scheduler
+	// on each rotation. Reason carries "from=<oldKID> to=<newKID>" so
+	// SOC2-style reviews can reconstruct the key timeline (which key was
+	// active when, and when the previous one stopped signing).
+	EventSigningKeyRotated EventType = "signing_key_rotated"
+
 	// OAuth/OIDC token lifecycle beyond the legacy EventTokenIssued.
 	// Refresh + ID Token + device-flow events let SIEMs build per-grant
 	// dashboards (how often is refresh rotating? are device flows being

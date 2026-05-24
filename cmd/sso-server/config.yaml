@@ -730,6 +730,20 @@ cluster:
     # etcd_username: ""
     # etcd_password: ""
 
+# Signing-key lifecycle. Automatic rotation promotes a fresh Ed25519
+# signing key every `interval`, keeping the demoted key verify-only (in
+# JWKS) for `grace_period` so tokens signed just before the swap stay
+# valid. grace_period MUST be >= the longest access-token TTL. Each
+# rotation emits a signing_key_rotated audit event and busts the signed
+# discovery doc cache (JWKS is served live). Single-issuer: in a
+# multi-replica cluster enable this on ONE leader, or back the issuer
+# with a shared KMS signer — otherwise replicas advertise divergent kids.
+keys:
+  rotation:
+    enabled: false
+    interval: 2160h           # 90d
+    grace_period: 168h        # 7d (>= max access-token TTL)
+
 # Multi-tenant + multi-domain routing. Tenant sits above Client: one
 # tenant typically owns many clients (admin / customer / mobile)
 # sharing one audit pipeline. Domains map hostnames to tenants so a
