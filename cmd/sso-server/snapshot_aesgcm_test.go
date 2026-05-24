@@ -81,6 +81,31 @@ func TestLoadAESGCMKey_InlineKeyHex(t *testing.T) {
 	}
 }
 
+// TestLoadAESGCMKey_RawKeyEndingInNewlineByte is the deterministic
+// regression for the flake: a raw 32-byte key whose final byte is 0x0A
+// (or 0x0D) must load verbatim, not be truncated by newline trimming.
+func TestLoadAESGCMKey_RawKeyEndingInNewlineByte(t *testing.T) {
+	for _, last := range []byte{'\n', '\r'} {
+		key := make([]byte, 32)
+		for i := range key {
+			key[i] = byte(i + 1) // non-zero, deterministic
+		}
+		key[31] = last
+		dir := t.TempDir()
+		path := filepath.Join(dir, "raw.bin")
+		if err := os.WriteFile(path, key, 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		got, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
+		if err != nil {
+			t.Fatalf("last=%#x: loadAESGCMKey: %v", last, err)
+		}
+		if len(got) != 32 || string(got) != string(key) {
+			t.Fatalf("last=%#x: raw key truncated/altered: got %d bytes", last, len(got))
+		}
+	}
+}
+
 func TestLoadAESGCMKey_RejectsMissing(t *testing.T) {
 	_, err := loadAESGCMKey(config.SnapshotEncryptionConfig{})
 	if err == nil {

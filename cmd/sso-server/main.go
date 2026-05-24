@@ -1829,6 +1829,14 @@ func loadAESGCMKey(cfg config.SnapshotEncryptionConfig) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("snapshot aes-gcm key file: %w", err)
 		}
+		// A 32-byte file is a raw binary key — use it verbatim. Only trim
+		// a trailing newline for longer (text-encoded hex/base64) key
+		// files. Trimming first would corrupt a raw key whose final byte
+		// is 0x0A/0x0D (~0.78% of random 32-byte keys, e.g. a KMS DEK),
+		// truncating it to 31 bytes and failing the load.
+		if len(b) == 32 {
+			return b, nil
+		}
 		raw = bytes.TrimRight(b, "\r\n")
 	}
 	if len(raw) == 0 {
