@@ -1,6 +1,6 @@
 # ROADMAP
 
-> 基于 2026-05-22 时点对 `github.com/snaplink/sso` 的全局扫描，从资深
+> 基于 2026-05-25 复扫对 `github.com/snaplink/sso` 的全局扫描，从资深
 > 架构师 / PM 视角列出下一阶段投入产出比最高的 5 个扩展方向。
 >
 > 每项包含 **Why now**（这件事为什么比别的事更值得做）、**Scope**
@@ -9,6 +9,38 @@
 >
 > 排序按"如果只能挑一件先做"的优先级。文末附 **边界情况 & 性能优化**
 > 清单 + **优先级摘要**。
+
+---
+
+## v2.1（2026-05-22）之后的复扫结论（2026-05-25）
+
+复扫确认：**v2.1 之后的 40 个 commit 全部是内部结构重构，零新增产品
+能力**——因此本文档的 5 个方向**全部仍然成立、全部未落地**（已逐项
+核验代码：无 `SigningKeyProvider`/KMS/HSM、无 `migrations/` 目录、无
+`web/` Console、无 `compliance/erasure`、无 CIBA、无 Redis 后端）。
+
+这一轮结构性里程碑（影响"在哪里加代码"，不影响"加什么能力"）：
+
+- **Hexagonal handler 抽取**：根目录从 ~68 个 `.go` 收敛到 **6 个非
+  测试源文件**。`handle_introspect` / `handle_revoke[all]` / `handlePAR`
+  / `handleRegister`+`Registration{Get,Put,Delete}` 迁入 `oauth/`；
+  `handleEndSession` / `handleSilentRenewal` / JWKS / form_post /
+  userinfo-sign + discovery-doc cache 迁入 `oidc/`。模式：handler body
+  变 `HandleX(deps Deps, ctx)` 自由函数，`*sso.Server` 经 `accessors.go`
+  实现 `Deps`，根目录留一行委托。**约束：`oauth/` 不能 import `oidc/`**
+  （`oidc` import `oauth`，会成环）。
+- **测试按功能归位**：94 个根目录黑盒测试中，89 个集成测试（构建完整
+  `*sso.Server` 走 HTTP、共享一套 harness）迁入 `test/`（`package
+  ssotest`）；真单元测试随代码进子包（如
+  `security/step_up_auth_test.go`）。根目录 `.go` 从 101 → 8。
+- **AGENTS.md 压缩** 977 → 709 行（保留全部 19 条 wire-contract 不变量
+  + 33 行规范表，只砍叙述）。
+
+**对 roadmap 的影响**：下面 5 个方向的 *Scope* 里凡提到"新建
+`defaultimpl/awskms/`""新建 `audit/sink/clickhouse/`"等子包的，现在落
+在一个更干净的分层上落地；凡涉及 handler 改动的（如 §5 CIBA 的
+`/backchannel-authentication`、§1 的 `/api/v1/admin/keys:rotate`），
+新 handler 应按 Hexagonal `Deps` 模式写进对应子包，而非堆回根目录。
 
 ---
 
@@ -672,6 +704,29 @@ PushMFAProvider 基础设施）。
   + `SessionManager.DeleteByTenant`（后两个 SPI 都还没有，需要
   补）。**关联方向 §3 的 GDPR pipeline**：跨 store 删除工作流是
   一份，suspend / erase / archive 都复用。
+- **跨副本缓存失效需要事件总线（多副本正确性盲点）**：
+  `Server.InvalidateTenantSuspensionCache(id)`
+  （`server_extensions.go:1769`）是**进程内 map 清除**——管理员在副本
+  A 暂停某 tenant 后，副本 B/C 仍按本地 30s TTL
+  （`tenant.suspension_check.cache_ttl`）继续放行该 tenant 的 token。
+  discovery snapshot / discovery-doc / JWKS 三个缓存同样是 per-replica
+  TTL。**安全语义边界**："立即暂停 / 立即吊销 client" 在多副本下实际
+  传播延迟 = 缓存 TTL，这正是已知坏主体仍在工作的窗口；唯一缓解是缩
+  小 TTL，反而加重 §1 deferred Redis 想解的查询压力——两难。仓库已有
+  现成范式：`etcd.Watch` 已驱动 netpolicy + registry 的集群实时更新，
+  但没接到这些 auth 安全缓存上。**建议**：抽 `InvalidationBus` SPI
+  （`Publish(event)` / `Subscribe()`），memory（单节点 no-op）+ etcd
+  （复用 Watch）双 peer；缓存变更点（暂停失效、discovery busting、未来
+  §1 的密钥轮换事件、token 吊销）统一 publish，各副本订阅清本地缓存。
+  这把一次性的失效回调升级成一等公民的集群协调原语，是 §1 密钥轮换的
+  `ActiveKID` 强一致（line 189-193）和"全局 token 黑屏 30 秒"
+  （line 166-169）的共同底座。
+- **DPoP nonce 进程内密钥不安全（多副本）**：`main.go:991` 自带告警
+  *"dpop nonce: no key_file configured — generating process-local key
+  (NOT safe for multi-replica)"*——未配 `key_file` 时每副本各持一把
+  nonce 密钥，nonce 在副本间不可互验。短期：文档强制多副本必须配置
+  共享 `key_file`；长期：nonce 密钥纳入 §1 的 `SigningKeyProvider` /
+  共享存储统一治理。
 - **`/par` 的 body 大小限制**：全局 `body_limit` 默认覆盖所有路径，
   但 JWE-wrapped JAR JWT 可能 > 全局默认。建议 per-endpoint
   override：`security.body_limit.per_endpoint: {"/par": "64KB"}`。
@@ -767,3 +822,4 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 | 2026-05-21 | v1 | 初版（多副本正确性 / WebAuthn / HSM / Console / 协议补完） |
 | 2026-05-22 | v2 | 上版 §1 / §2A-B / §5 已大量落地；refocus 到 HSM + 异步异常检测 + Console + migration + FAPI 2.0 |
 | 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
+| 2026-05-25 | v2.2 | **复扫确认 5 方向全部成立、全部未落地**（v2.1 后 40 个 commit 均为内部重构）。记录结构性里程碑：Hexagonal handler 抽取（根目录 → 6 源文件，handler 迁入 oauth//oidc/，`oauth` 不可 import `oidc`）+ 测试按功能归位（89 集成测试入 `test/`，根目录 `.go` 101 → 8）+ AGENTS.md 压缩 977 → 709。新增两条边界情况：**跨副本缓存失效需要 `InvalidationBus` 事件总线**（`InvalidateTenantSuspensionCache` 仅进程内，多副本传播延迟 = 缓存 TTL）+ **DPoP nonce 进程内密钥多副本不安全**。 |
