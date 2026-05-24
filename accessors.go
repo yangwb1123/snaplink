@@ -189,6 +189,13 @@ func (s *Server) AuthenticateClientCreds(ctx core.HandlerContext, id, secret str
 	return s.authenticateClientCreds(ctx, id, secret)
 }
 
+// RequireClientStore reports whether a ClientStore is wired, returning
+// a non-nil error when the dependency is missing. Exposes the internal
+// requireDeps check to the oauth handler subpackage.
+func (s *Server) RequireClientStore() error {
+	return s.requireDeps(DepClientStore)
+}
+
 // ResolveLocalSubject translates a (possibly pairwise) subject back
 // to the local user identifier. Required by /token/revoke-all so
 // the bulk delete actually hits the row keyed on the local sub.

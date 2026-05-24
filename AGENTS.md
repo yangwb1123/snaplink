@@ -71,7 +71,9 @@ oauth/                              AuthCode/DeviceCode/RefreshToken/PAR
                                     stores, DCR + RAR + claims-param
                                     validators. Hexagonal handlers:
                                     HandleIntrospect, HandleRevoke,
-                                    HandleRevokeAll, HandlePAR
+                                    HandleRevokeAll, HandlePAR,
+                                    HandleRegister + HandleRegistration
+                                    {Get,Put,Delete} (RFC 7591/7592 DCR)
                                     (Deps interface; *sso.Server impl)
 spi/                                Standalone SPIs: Logger, CodeSender,
                                     RiskScorer, MFAProvider+Challenge
