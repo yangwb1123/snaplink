@@ -92,10 +92,26 @@ type Ed25519JWTIssuer struct {
 	revokedMu sync.RWMutex
 	revoked   map[string]struct{}
 
+	// keyMu guards the active signing key (signer/keyID/publicKey) and
+	// the verifyKeys map so RotateKey can swap them at runtime without
+	// racing concurrent Issue/Validate/JWKS calls. Construction-time
+	// option mutation runs before the issuer is shared, so it needs no
+	// lock; only runtime rotation does.
+	keyMu sync.RWMutex
+
 	// signer performs the raw EdDSA signing. Defaults to an in-process
 	// signer holding privateKey; WithEd25519ExternalSigner swaps in a
 	// KMS/HSM-backed signer (private key never enters this process).
 	signer Ed25519Signer
+}
+
+// currentKey snapshots the active signer + its kid together under the
+// read lock, so a token's header kid and its signature always come from
+// the same key even if RotateKey fires mid-issuance.
+func (j *Ed25519JWTIssuer) currentKey() (Ed25519Signer, string) {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
+	return j.signer, j.keyID
 }
 
 // Ed25519Signer abstracts the raw EdDSA signing operation so the
@@ -232,10 +248,74 @@ func WithEd25519ExternalSigner(signer Ed25519Signer, pub ed25519.PublicKey, kid 
 
 // PublicKey returns the verification key so callers can pre-populate
 // caches or pass it to non-JWKS verifiers.
-func (j *Ed25519JWTIssuer) PublicKey() ed25519.PublicKey { return j.publicKey }
+func (j *Ed25519JWTIssuer) PublicKey() ed25519.PublicKey {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
+	return j.publicKey
+}
 
 // KeyID returns the kid string embedded in every issued token's header.
-func (j *Ed25519JWTIssuer) KeyID() string { return j.keyID }
+func (j *Ed25519JWTIssuer) KeyID() string {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
+	return j.keyID
+}
+
+// RotateKey promotes a new signing key, demoting the current signing
+// key to verify-only so tokens it already minted stay valid through
+// their TTL. Pass nil priv to generate a fresh key; pass an explicit
+// key to pin it (multi-replica deployments rotate to the SAME key on
+// every node so JWKS agrees). Returns the new kid. The new public key
+// appears in JWKS immediately; the demoted key remains until RetireKey
+// drops it. Safe for concurrent use with Issue/Validate/JWKS.
+//
+// This rotates the in-process software signer. External (KMS/HSM)
+// signers are rotated by their own backend; use WithEd25519VerifyKey
+// at construction to trust their retired keys.
+func (j *Ed25519JWTIssuer) RotateKey(priv ed25519.PrivateKey) (string, error) {
+	if priv == nil {
+		var err error
+		if _, priv, err = ed25519.GenerateKey(rand.Reader); err != nil {
+			return "", fmt.Errorf("ed25519: rotate generate key: %w", err)
+		}
+	}
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		return "", errors.New("ed25519: rotate: invalid private key")
+	}
+	newKID := fingerprintKid(pub)
+
+	j.keyMu.Lock()
+	defer j.keyMu.Unlock()
+	// Demote the outgoing key: keep its public half in verifyKeys so its
+	// in-flight tokens verify until they expire.
+	if j.publicKey != nil && j.keyID != "" {
+		if j.verifyKeys == nil {
+			j.verifyKeys = make(map[string]ed25519.PublicKey, 2)
+		}
+		j.verifyKeys[j.keyID] = j.publicKey
+	}
+	j.privateKey = priv
+	j.publicKey = pub
+	j.keyID = newKID
+	j.signer = softwareEd25519Signer{priv: priv}
+	j.verifyKeys[newKID] = pub
+	return newKID, nil
+}
+
+// RetireKey removes a verify-only key (typically a previously-rotated
+// signer whose tokens have all expired) so it stops appearing in JWKS.
+// Refuses to retire the active signing key — that would strand every
+// live token. Safe for concurrent use.
+func (j *Ed25519JWTIssuer) RetireKey(kid string) error {
+	j.keyMu.Lock()
+	defer j.keyMu.Unlock()
+	if kid == j.keyID {
+		return errors.New("ed25519: cannot retire the active signing key")
+	}
+	delete(j.verifyKeys, kid)
+	return nil
+}
 
 type ed25519Header struct {
 	Alg string `json:"alg"`
@@ -369,6 +449,7 @@ type ed25519IDPayload struct {
 }
 
 func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes []string) (*sso.Token, error) {
+	sgn, kid := j.currentKey()
 	if subject == nil || subject.ID == "" {
 		return nil, errors.New("ed25519: subject required")
 	}
@@ -386,7 +467,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	// RFC 9068 §2.1: header `typ` MUST be `at+jwt` to distinguish
 	// access tokens from other JWT shapes (ID tokens, generic JWT)
 	// so strict resource servers can reject misrouted tokens.
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTypAT, Kid: j.keyID}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTypAT, Kid: kid}
 
 	// RFC 9068 §2.2 REQUIRES jti — a unique identifier per token,
 	// suitable for replay tracking + revocation lookup. 16 bytes
@@ -438,7 +519,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	if err != nil {
 		return nil, err
 	}
-	sig, err := j.signer.Sign(ctx, signingInput)
+	sig, err := sgn.Sign(ctx, signingInput)
 	if err != nil {
 		return nil, fmt.Errorf("ed25519: sign access token: %w", err)
 	}
@@ -595,6 +676,7 @@ func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
 // projected only when non-zero so the wire stays minimal — relying
 // parties branch on field presence per OIDC Core §2.
 func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequest) (string, error) {
+	sgn, kid := j.currentKey()
 	if req == nil || req.Subject == "" || req.Audience == "" {
 		return "", errors.New("ed25519: id token requires subject + audience")
 	}
@@ -603,7 +685,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 		ttl = j.tokenTTL
 	}
 	now := time.Now()
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
 	payload := ed25519IDPayload{
 		Iss:   j.issuer,
 		Sub:   req.Subject,
@@ -624,7 +706,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	if err != nil {
 		return "", err
 	}
-	sig, err := j.signer.Sign(ctx, signingInput)
+	sig, err := sgn.Sign(ctx, signingInput)
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign id token: %w", err)
 	}
@@ -638,6 +720,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 // caller-supplied claims override these only if they explicitly
 // set them (extension claims merge naturally with the map).
 func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, claims map[string]any) (string, error) {
+	sgn, kid := j.currentKey()
 	if claims == nil {
 		claims = make(map[string]any)
 	}
@@ -649,7 +732,7 @@ func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, cl
 			claims["aud"] = audience
 		}
 	}
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
 	hb, err := json.Marshal(header)
 	if err != nil {
 		return "", err
@@ -659,7 +742,7 @@ func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, cl
 		return "", err
 	}
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := j.signer.Sign(ctx, []byte(signingInput))
+	sig, err := sgn.Sign(ctx, []byte(signingInput))
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign userinfo: %w", err)
 	}
@@ -671,10 +754,11 @@ func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, cl
 // userinfo tokens. Header includes `kid` so an RP that's already
 // fetched JWKS can pick the right key for verification.
 func (j *Ed25519JWTIssuer) SignMetadata(ctx context.Context, claims map[string]any) (string, error) {
+	sgn, kid := j.currentKey()
 	if claims == nil {
 		return "", nil
 	}
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: j.keyID}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
 	hb, err := json.Marshal(header)
 	if err != nil {
 		return "", err
@@ -684,7 +768,7 @@ func (j *Ed25519JWTIssuer) SignMetadata(ctx context.Context, claims map[string]a
 		return "", err
 	}
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := j.signer.Sign(ctx, []byte(signingInput))
+	sig, err := sgn.Sign(ctx, []byte(signingInput))
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign metadata: %w", err)
 	}
@@ -720,6 +804,8 @@ func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
 	if err := json.Unmarshal(raw, &h); err != nil {
 		return nil
 	}
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
 	if h.Kid == "" {
 		return j.publicKey
 	}
@@ -739,6 +825,8 @@ func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
 // fingerprint-sorted order. Stable across one process lifetime so
 // the JWKS ETag stays valid until something actually changes.
 func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
 	out := []sso.JWK{{
 		Kty: jwkKtyOKP,
 		Crv: jwkCrvEd25519,
@@ -875,6 +963,7 @@ const DefaultLogoutTokenTTL = 60 * time.Second
 // access + ID tokens — RPs verify all three with one key
 // lookup.
 func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTokenRequest) (string, error) {
+	sgn, kid := j.currentKey()
 	if req == nil || req.Subject == "" || req.Audience == "" {
 		return "", errors.New("ed25519: logout token requires subject + audience")
 	}
@@ -887,7 +976,7 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.Logout
 		return "", fmt.Errorf("ed25519: generate jti: %w", err)
 	}
 	now := time.Now()
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: logoutTokenTyp, Kid: j.keyID}
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: logoutTokenTyp, Kid: kid}
 	payload := ed25519LogoutPayload{
 		Iss:    j.issuer,
 		Sub:    req.Subject,
@@ -907,7 +996,7 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.Logout
 		return "", err
 	}
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := j.signer.Sign(ctx, []byte(signingInput))
+	sig, err := sgn.Sign(ctx, []byte(signingInput))
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign logout token: %w", err)
 	}
