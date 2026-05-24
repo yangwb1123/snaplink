@@ -1,4 +1,4 @@
-package sso_test
+package security_test
 
 import (
 	"strings"
