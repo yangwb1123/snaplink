@@ -91,6 +91,12 @@ type Metrics struct {
 	AnomaliesDetectedTotal    *prometheus.CounterVec // labels: anomaly_type, severity
 	AnomalyDispatchDropsTotal *prometheus.CounterVec // labels: reason
 	AnomalyInspectErrorsTotal *prometheus.CounterVec // labels: detector
+
+	// SigningKeyRotationsTotal counts automatic signing-key rotations.
+	// No labels — rotation is a single global, low-frequency event;
+	// operators alert if it stops advancing (rotation loop wedged) or
+	// jumps unexpectedly. Zero when rotation is disabled.
+	SigningKeyRotationsTotal prometheus.Counter
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -253,6 +259,13 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "Detector.Inspect calls that returned an error (DB timeout, store unreachable). Surfaces the silently-broken-detector failure mode — operators alert on any non-zero rate per detector.",
 			},
 			[]string{LabelDetector},
+		),
+
+		SigningKeyRotationsTotal: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: NameSigningKeyRotationsTotal,
+				Help: "Automatic signing-key rotations performed. Alert if it stops advancing while rotation is enabled (loop wedged) — RPs would keep verifying against an aging key.",
+			},
 		),
 	}
 }

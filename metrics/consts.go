@@ -21,6 +21,7 @@ const (
 	NameAnomaliesDetectedTotal     = "sso_anomalies_detected_total"
 	NameAnomalyDispatchDropsTotal  = "sso_anomaly_dispatch_drops_total"
 	NameAnomalyInspectErrorsTotal  = "sso_anomaly_inspect_errors_total"
+	NameSigningKeyRotationsTotal   = "sso_signing_key_rotations_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

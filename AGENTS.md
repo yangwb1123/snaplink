@@ -553,6 +553,7 @@ labels; per-endpoint breakdowns come from traces):
 | `sso_anomalies_detected_total` | Counter | anomaly_type, severity |
 | `sso_anomaly_dispatch_drops_total` | Counter | reason |
 | `sso_anomaly_inspect_errors_total` | Counter | detector |
+| `sso_signing_key_rotations_total` | Counter | — |
 
 MFA labels are restricted to the provider's `SupportedMethods()`
 (`totp`/`webauthn`/`push`) — user-controlled values dropped before the

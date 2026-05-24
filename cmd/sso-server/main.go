@@ -2694,6 +2694,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 				})
 			}
 			srv.InvalidateDiscoveryCache()
+			if metricsRegistry != nil {
+				metricsRegistry.SigningKeyRotationsTotal.Inc()
+			}
 			logger.Info("signing key rotated", "from", oldKID, "to", newKID)
 		}
 		rotCtx, cancel := context.WithCancel(context.Background())

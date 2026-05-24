@@ -28,6 +28,29 @@ func TestNew_ConstructsAllVectors(t *testing.T) {
 	if m.AnomaliesDetectedTotal == nil || m.AnomalyDispatchDropsTotal == nil || m.AnomalyInspectErrorsTotal == nil {
 		t.Error("anomaly collectors not initialized")
 	}
+	if m.SigningKeyRotationsTotal == nil {
+		t.Error("signing-key rotation collector not initialized")
+	}
+}
+
+// TestSigningKeyRotationsTotal_ScrapeReportsCounter proves the rotation
+// counter increments and surfaces on /metrics under its canonical name.
+func TestSigningKeyRotationsTotal_ScrapeReportsCounter(t *testing.T) {
+	m := metrics.New()
+	m.SigningKeyRotationsTotal.Inc()
+	m.SigningKeyRotationsTotal.Inc()
+
+	srv := httptest.NewServer(promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), metrics.NameSigningKeyRotationsTotal+" 2") {
+		t.Errorf("expected %q with value 2 in scrape", metrics.NameSigningKeyRotationsTotal)
+	}
 }
 
 func TestMiddleware_NilMetricsIsIdentity(t *testing.T) {
