@@ -91,6 +91,29 @@ type Ed25519JWTIssuer struct {
 
 	revokedMu sync.RWMutex
 	revoked   map[string]struct{}
+
+	// signer performs the raw EdDSA signing. Defaults to an in-process
+	// signer holding privateKey; WithEd25519ExternalSigner swaps in a
+	// KMS/HSM-backed signer (private key never enters this process).
+	signer Ed25519Signer
+}
+
+// Ed25519Signer abstracts the raw EdDSA signing operation so the
+// process-held private key can be swapped for a KMS/HSM-backed signer
+// without touching JWT assembly. Sign receives the JWS signing input
+// (the "header.payload" bytes) and returns the 64-byte Ed25519
+// signature. It MAY return an error (e.g. a KMS round-trip failure);
+// every call site propagates it, so token issuance fails closed rather
+// than emitting an unsigned token.
+type Ed25519Signer interface {
+	Sign(ctx context.Context, message []byte) ([]byte, error)
+}
+
+// softwareEd25519Signer is the default in-process signer.
+type softwareEd25519Signer struct{ priv ed25519.PrivateKey }
+
+func (s softwareEd25519Signer) Sign(_ context.Context, message []byte) ([]byte, error) {
+	return ed25519.Sign(s.priv, message), nil
 }
 
 type Ed25519Option func(*Ed25519JWTIssuer)
@@ -162,13 +185,19 @@ func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	for _, opt := range opts {
 		opt(j)
 	}
-	if j.privateKey == nil {
+	// Generate an in-process key only when neither a private key nor an
+	// external signer was supplied — an external signer holds its own
+	// (KMS/HSM) key and provides the public half via the option.
+	if j.privateKey == nil && j.signer == nil {
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			panic(fmt.Sprintf("ed25519: generate key: %v", err))
 		}
 		j.privateKey = priv
 		j.publicKey = pub
+	}
+	if j.signer == nil {
+		j.signer = softwareEd25519Signer{priv: j.privateKey}
 	}
 	if j.keyID == "" {
 		j.keyID = fingerprintKid(j.publicKey)
@@ -180,6 +209,25 @@ func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	// Validate has one lookup path (no special-case for "primary").
 	j.verifyKeys[j.keyID] = j.publicKey
 	return j
+}
+
+// WithEd25519ExternalSigner injects a signer whose private key lives
+// outside this process (AWS KMS, GCP KMS, an HSM via PKCS#11). pub is
+// the corresponding Ed25519 public key — published in JWKS and used by
+// Validate — and kid names it in issued tokens' headers. The issuer
+// never generates or holds a private key in this mode.
+//
+// pub MUST be the public half of the key the signer signs with;
+// otherwise every issued token fails verification. kid SHOULD be stable
+// across replicas sharing the same external key so JWKS lookups agree.
+func WithEd25519ExternalSigner(signer Ed25519Signer, pub ed25519.PublicKey, kid string) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) {
+		j.signer = signer
+		j.publicKey = pub
+		if kid != "" {
+			j.keyID = kid
+		}
+	}
 }
 
 // PublicKey returns the verification key so callers can pre-populate
@@ -320,7 +368,7 @@ type ed25519IDPayload struct {
 	Extra    map[string]string `json:"ext,omitempty"`
 }
 
-func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes []string) (*sso.Token, error) {
+func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes []string) (*sso.Token, error) {
 	if subject == nil || subject.ID == "" {
 		return nil, errors.New("ed25519: subject required")
 	}
@@ -390,7 +438,10 @@ func (j *Ed25519JWTIssuer) Issue(_ context.Context, subject *sso.Subject, scopes
 	if err != nil {
 		return nil, err
 	}
-	sig := ed25519.Sign(j.privateKey, signingInput)
+	sig, err := j.signer.Sign(ctx, signingInput)
+	if err != nil {
+		return nil, fmt.Errorf("ed25519: sign access token: %w", err)
+	}
 	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
@@ -543,7 +594,7 @@ func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
 // exp, iat). Nonce / AuthTime / AMR / ACR / AZP / extra Claims are
 // projected only when non-zero so the wire stays minimal — relying
 // parties branch on field presence per OIDC Core §2.
-func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *oidc.IDTokenRequest) (string, error) {
+func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequest) (string, error) {
 	if req == nil || req.Subject == "" || req.Audience == "" {
 		return "", errors.New("ed25519: id token requires subject + audience")
 	}
@@ -573,7 +624,10 @@ func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *oidc.IDTokenRequ
 	if err != nil {
 		return "", err
 	}
-	sig := ed25519.Sign(j.privateKey, signingInput)
+	sig, err := j.signer.Sign(ctx, signingInput)
+	if err != nil {
+		return "", fmt.Errorf("ed25519: sign id token: %w", err)
+	}
 	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -583,7 +637,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(_ context.Context, req *oidc.IDTokenRequ
 // (AS issuer) and `aud` (client_id) per OIDC Core §5.3.2; the
 // caller-supplied claims override these only if they explicitly
 // set them (extension claims merge naturally with the map).
-func (j *Ed25519JWTIssuer) SignUserInfo(_ context.Context, audience string, claims map[string]any) (string, error) {
+func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, claims map[string]any) (string, error) {
 	if claims == nil {
 		claims = make(map[string]any)
 	}
@@ -605,7 +659,10 @@ func (j *Ed25519JWTIssuer) SignUserInfo(_ context.Context, audience string, clai
 		return "", err
 	}
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig := ed25519.Sign(j.privateKey, []byte(signingInput))
+	sig, err := j.signer.Sign(ctx, []byte(signingInput))
+	if err != nil {
+		return "", fmt.Errorf("ed25519: sign userinfo: %w", err)
+	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -613,7 +670,7 @@ func (j *Ed25519JWTIssuer) SignUserInfo(_ context.Context, audience string, clai
 // document claims in a JWS using the same key as access + ID +
 // userinfo tokens. Header includes `kid` so an RP that's already
 // fetched JWKS can pick the right key for verification.
-func (j *Ed25519JWTIssuer) SignMetadata(_ context.Context, claims map[string]any) (string, error) {
+func (j *Ed25519JWTIssuer) SignMetadata(ctx context.Context, claims map[string]any) (string, error) {
 	if claims == nil {
 		return "", nil
 	}
@@ -627,7 +684,10 @@ func (j *Ed25519JWTIssuer) SignMetadata(_ context.Context, claims map[string]any
 		return "", err
 	}
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig := ed25519.Sign(j.privateKey, []byte(signingInput))
+	sig, err := j.signer.Sign(ctx, []byte(signingInput))
+	if err != nil {
+		return "", fmt.Errorf("ed25519: sign metadata: %w", err)
+	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -814,7 +874,7 @@ const DefaultLogoutTokenTTL = 60 * time.Second
 // BCL 1.0 §2.4. Same signing key, same kid, same JWKS entry as
 // access + ID tokens — RPs verify all three with one key
 // lookup.
-func (j *Ed25519JWTIssuer) IssueLogoutToken(_ context.Context, req *sso.LogoutTokenRequest) (string, error) {
+func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTokenRequest) (string, error) {
 	if req == nil || req.Subject == "" || req.Audience == "" {
 		return "", errors.New("ed25519: logout token requires subject + audience")
 	}
@@ -847,6 +907,9 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(_ context.Context, req *sso.LogoutTo
 		return "", err
 	}
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig := ed25519.Sign(j.privateKey, []byte(signingInput))
+	sig, err := j.signer.Sign(ctx, []byte(signingInput))
+	if err != nil {
+		return "", fmt.Errorf("ed25519: sign logout token: %w", err)
+	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
