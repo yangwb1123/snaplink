@@ -45,6 +45,9 @@ import (
 	lockEtcd "github.com/snaplink/sso/bootstrap/lock/etcd"
 	lockFile "github.com/snaplink/sso/bootstrap/lock/file"
 	lockNoop "github.com/snaplink/sso/bootstrap/lock/noop"
+	"github.com/snaplink/sso/cluster"
+	clusteretcd "github.com/snaplink/sso/cluster/etcd"
+	clustermemory "github.com/snaplink/sso/cluster/memory"
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
 	"github.com/snaplink/sso/cors"
@@ -278,6 +281,11 @@ type app struct {
 
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
+
+	// invalidationBus is the cross-replica cache-coordination bus (nil
+	// when unconfigured); busStop closes when its subscriber exits.
+	invalidationBus cluster.Bus
+	busStop         <-chan struct{}
 }
 
 func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string) error {
@@ -382,6 +390,17 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if a.netStop != nil {
 		select {
 		case <-a.netStop:
+		case <-ctx.Done():
+		}
+	}
+	// Close the invalidation bus so its subscriber Watch loop exits, then
+	// wait briefly for that goroutine to drain — same shape as netStop.
+	if a.invalidationBus != nil {
+		_ = a.invalidationBus.Close()
+	}
+	if a.busStop != nil {
+		select {
+		case <-a.busStop:
 		case <-ctx.Done():
 		}
 	}
@@ -1232,6 +1251,45 @@ func buildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Regi
 		return reg, "etcd", nil
 	default:
 		return nil, "", fmt.Errorf("unknown registry.backend %q", cfg.Backend)
+	}
+}
+
+// buildInvalidationBus materializes the cross-replica cluster.Bus.
+//
+// Unset backend → nil bus: single-node deployments invalidate caches
+// locally and need no bus, so this is the safe default. memory is
+// per-process (a no-op for multi-replica); etcd is cluster-shared. The
+// etcd path is constructed here so the transitive dep stays out of the
+// cluster SPI, mirroring buildRegistry. Returns the kind for logging;
+// the bus is fail-open, so it intentionally gets no /readyz check.
+func buildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (cluster.Bus, string, error) {
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "":
+		return nil, "", nil
+	case "memory":
+		logger.Info("invalidation bus", "backend", "memory")
+		return clustermemory.New(), "memory", nil
+	case "etcd":
+		if len(cfg.EtcdEndpoints) == 0 {
+			return nil, "", errors.New("cluster.bus.etcd_endpoints required when cluster.bus.backend=etcd")
+		}
+		bus, err := clusteretcd.New(clusteretcd.Config{
+			Endpoints:   cfg.EtcdEndpoints,
+			Prefix:      cfg.EtcdPrefix,
+			DialTimeout: cfg.EtcdDialTimeout,
+			EventTTL:    cfg.EtcdEventTTL,
+			Username:    cfg.EtcdUsername,
+			Password:    cfg.EtcdPassword,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("cluster/etcd: %w", err)
+		}
+		logger.Info("invalidation bus", "backend", "etcd",
+			"endpoints", cfg.EtcdEndpoints, "prefix", cfg.EtcdPrefix)
+		return bus, "etcd", nil
+	default:
+		return nil, "", fmt.Errorf("unknown cluster.bus.backend %q", cfg.Backend)
 	}
 }
 
@@ -2568,7 +2626,27 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = appendReadyCheck(opts, "etcd-registry", reg)
 	}
 
+	// Cross-replica invalidation bus built before NewServer so the option
+	// is in place; the subscriber is started just after (needs the Server).
+	invalidationBus, _, err := buildInvalidationBus(&cfg.Cluster.Bus, logger)
+	if err != nil {
+		return nil, fmt.Errorf("invalidation bus: %w", err)
+	}
+	if invalidationBus != nil {
+		opts = append(opts, sso.WithInvalidationBus(invalidationBus))
+	}
+
 	srv := sso.NewServer(opts...)
+
+	// Background ctx + Close-at-shutdown mirrors the netpolicy Classifier:
+	// closing the bus ends the subscriber Watch, which closes busStop.
+	busStop, err := srv.StartInvalidationBus(context.Background())
+	if err != nil {
+		if invalidationBus != nil {
+			_ = invalidationBus.Close()
+		}
+		return nil, fmt.Errorf("invalidation bus subscribe: %w", err)
+	}
 
 	var adminMW *sso.AdminMiddleware
 	if cfg.Admin.Enabled {
@@ -2700,6 +2778,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		pushApprovalStore:       pushApprovalStoreIface(pushApprovalStore),
 		metrics:                 metricsRegistry,
 		netStop:                 netStop,
+		invalidationBus:         invalidationBus,
+		busStop:                 busStop,
 	}, nil
 }
 

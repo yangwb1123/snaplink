@@ -49,6 +49,31 @@ type Config struct {
 	Risk               RiskConfig               `yaml:"risk"`
 	MFA                MFAConfig                `yaml:"mfa"`
 	Anomaly            AnomalyConfig            `yaml:"anomaly"`
+	Cluster            ClusterConfig            `yaml:"cluster"`
+}
+
+// ClusterConfig wires cross-replica coordination via cluster.Bus. The
+// bus propagates cache invalidations (today: tenant suspension) so an
+// admin action on one replica takes effect on every replica immediately
+// instead of after each node's cache TTL elapses. The memory backend is
+// per-process (effectively a no-op for multi-replica — single-node
+// already invalidates locally); etcd is cluster-shared. The bus is
+// fail-open by design, so it is deliberately NOT a readiness dependency.
+type ClusterConfig struct {
+	Bus ClusterBusConfig `yaml:"bus"`
+}
+
+// ClusterBusConfig selects and configures the invalidation bus backend.
+// The etcd_* fields mirror RegistryConfig for operator familiarity.
+type ClusterBusConfig struct {
+	Backend string `yaml:"backend"` // "" | "memory" | "etcd"
+
+	EtcdEndpoints   []string      `yaml:"etcd_endpoints"`
+	EtcdPrefix      string        `yaml:"etcd_prefix"`
+	EtcdDialTimeout time.Duration `yaml:"etcd_dial_timeout"`
+	EtcdEventTTL    time.Duration `yaml:"etcd_event_ttl"`
+	EtcdUsername    string        `yaml:"etcd_username"`
+	EtcdPassword    string        `yaml:"etcd_password"`
 }
 
 // AnomalyConfig wires the async behavioral anomaly detection

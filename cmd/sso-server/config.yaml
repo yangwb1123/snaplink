@@ -713,6 +713,23 @@ registry:
   # etcd_username: ""
   # etcd_password: ""
 
+# Cross-replica coordination bus. Propagates cache invalidations (today:
+# tenant suspension) so an admin action on one replica takes effect on
+# every replica immediately, instead of after each node's cache TTL.
+# Unset/memory = single-process (no cross-replica effect; the safe
+# default). etcd = cluster-shared. The bus is fail-open, so it is NOT a
+# /readyz dependency — an etcd outage degrades to TTL convergence, never
+# a 503. Start StartInvalidationBus is wired automatically by cmd.
+cluster:
+  bus:
+    backend: ""               # "" (off) | memory | etcd
+    etcd_endpoints: []
+    # etcd_prefix: "/snaplink/cluster/bus"
+    # etcd_dial_timeout: 5s
+    # etcd_event_ttl: 10s     # published-key lease; short by design
+    # etcd_username: ""
+    # etcd_password: ""
+
 # Multi-tenant + multi-domain routing. Tenant sits above Client: one
 # tenant typically owns many clients (admin / customer / mobile)
 # sharing one audit pipeline. Domains map hostnames to tenants so a
