@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
@@ -1771,12 +1772,68 @@ func WithTenantSuspensionCheck(ttl time.Duration) Option {
 // operator flipping Suspended → Active or Active → Suspended takes
 // effect on the next validate, not after the TTL expires.
 //
+// When an invalidation bus is wired ([WithInvalidationBus]), this also
+// publishes the change so every other replica clears its local cache
+// too — closing the cross-replica window where a just-suspended tenant
+// is still honored elsewhere until that node's TTL elapses. Publish
+// failures are logged, not propagated: the local invalidation already
+// succeeded and peers fall back to their TTL, matching the suspension
+// check's fail-open design.
+//
 // Safe to call when no cache is configured (no-op).
 func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
-	if s.tenantSuspensionCache == nil {
-		return
+	if s.tenantSuspensionCache != nil {
+		s.tenantSuspensionCache.invalidate(tenantID)
 	}
-	s.tenantSuspensionCache.invalidate(tenantID)
+	if s.invalidationBus != nil {
+		evt := cluster.Event{Kind: cluster.KindTenantSuspension, Key: tenantID}
+		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", tenantID, "error", err)
+		}
+	}
+}
+
+// StartInvalidationBus begins consuming cross-replica invalidation
+// Events on this replica. Call it once with the process run context;
+// the returned channel closes when the subscriber goroutine exits (ctx
+// cancelled or bus closed), mirroring netpolicy Classifier.Start so cmd
+// can coordinate shutdown the same way.
+//
+// No-op when no bus is wired: returns an already-closed channel and a
+// nil error so callers may invoke it unconditionally.
+func (s *Server) StartInvalidationBus(ctx context.Context) (<-chan struct{}, error) {
+	done := make(chan struct{})
+	if s.invalidationBus == nil {
+		close(done)
+		return done, nil
+	}
+	events, err := s.invalidationBus.Subscribe(ctx)
+	if err != nil {
+		close(done)
+		return done, err
+	}
+	go func() {
+		defer close(done)
+		for evt := range events {
+			s.applyInvalidation(evt)
+		}
+	}()
+	return done, nil
+}
+
+// applyInvalidation clears the local cache a received Event targets. It
+// MUST NOT re-publish — only the originating admin mutation publishes,
+// so receivers clearing their cache here can't trigger a fan-out loop.
+func (s *Server) applyInvalidation(evt cluster.Event) {
+	switch evt.Kind {
+	case cluster.KindTenantSuspension:
+		if s.tenantSuspensionCache != nil {
+			s.tenantSuspensionCache.invalidate(evt.Key)
+		}
+	default:
+		// Unknown kind from a newer peer — ignore rather than error, so a
+		// mixed-version cluster degrades gracefully during a rollout.
+	}
 }
 
 // checkTenantNotSuspended is the post-validation gate. Returns nil

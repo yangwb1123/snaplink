@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/metrics"
@@ -56,6 +57,7 @@ type Server struct {
 	tenantMiddlewareOpts           TenantMiddlewareOptions
 	tenantSuspensionEnabled        bool
 	tenantSuspensionCache          *suspensionCache
+	invalidationBus                cluster.Bus
 	riskScorer                     spi.RiskScorer
 	mfaProvider                    spi.MFAProvider
 	mfaChallengeStore              spi.MFAChallengeStore
@@ -649,6 +651,19 @@ func WithGeoMiddlewareOptions(opts GeoMiddlewareOptions) Option {
 // factory unconditionally.
 func WithTenantStore(s tenant.Store) Option {
 	return func(srv *Server) { srv.tenantStore = s }
+}
+
+// WithInvalidationBus wires a cross-replica coordination bus
+// ([cluster.Bus]). When set, cache-invalidating admin mutations (today:
+// tenant suspension) publish an Event so every other replica clears the
+// matching local cache immediately, instead of waiting out its per-node
+// cache TTL. Call [Server.StartInvalidationBus] with the run context to
+// begin consuming Events on this replica.
+//
+// No-op when unset — single-node deployments invalidate locally and need
+// no bus. A nil bus is treated as unset.
+func WithInvalidationBus(bus cluster.Bus) Option {
+	return func(srv *Server) { srv.invalidationBus = bus }
 }
 
 // WithTenantMiddlewareOptions tunes how the tenant middleware
