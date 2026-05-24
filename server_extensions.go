@@ -1830,6 +1830,8 @@ func (s *Server) applyInvalidation(evt cluster.Event) {
 		if s.tenantSuspensionCache != nil {
 			s.tenantSuspensionCache.invalidate(evt.Key)
 		}
+	case cluster.KindDiscoveryReload:
+		s.invalidateDiscoveryCaches()
 	default:
 		// Unknown kind from a newer peer — ignore rather than error, so a
 		// mixed-version cluster degrades gracefully during a rollout.

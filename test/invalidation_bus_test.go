@@ -2,6 +2,7 @@ package ssotest
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -97,6 +98,86 @@ func TestInvalidationBus_SuspensionPropagatesAcrossReplicas(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// TestInvalidationBus_DiscoveryReloadAcrossReplicas proves a client
+// edit on replica A (which changes the discovery scope union) makes
+// replica B re-render its discovery document immediately via the bus,
+// instead of waiting out B's hour-long discovery cache TTL.
+func TestInvalidationBus_DiscoveryReloadAcrossReplicas(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	bus := clustermemory.New()
+	defer bus.Close()
+
+	// Shared client store (cluster-shared backend stand-in).
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{ID: "dr-c", Active: true, AllowedScopes: []string{"read"}})
+
+	newReplica := func() *sso.Server {
+		return sso.NewServer(
+			sso.WithIssuer("https://dr.example"),
+			sso.WithClientStore(clients),
+			sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))),
+			sso.WithDefaultTokenStrategy("jwt"),
+			sso.WithDiscoveryCacheTTL(time.Hour),    // long: only the bus converges B
+			sso.WithDiscoveryDocCacheTTL(time.Hour), // long: ditto for the rendered doc
+			sso.WithInvalidationBus(bus),
+		)
+	}
+	srvA := newReplica()
+	srvB := newReplica()
+	doneB, err := srvB.StartInvalidationBus(ctx)
+	if err != nil {
+		t.Fatalf("start bus on B: %v", err)
+	}
+	defer func() { cancel(); <-doneB }()
+
+	httpB := httptest.NewServer(srvB.Handler())
+	defer httpB.Close()
+
+	// Prime B's discovery cache (does not yet know "write").
+	if got := discoveryScopes(t, httpB); scopesContain(got, "write") {
+		t.Fatalf("precondition: B already advertises write: %v", got)
+	}
+
+	// Admin edits a client on A: add the "write" scope, then invalidate.
+	_ = clients.Update(ctx, &sso.Client{ID: "dr-c", Active: true, AllowedScopes: []string{"read", "write"}})
+	srvA.InvalidateDiscoveryCache()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if scopesContain(discoveryScopes(t, httpB), "write") {
+			return // B converged via the bus
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("B never advertised the new scope: discovery reload did not propagate")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func discoveryScopes(t *testing.T, srv *httptest.Server) []string {
+	t.Helper()
+	doc := fetchDoc(t, srv)
+	raw, _ := doc["scopes_supported"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func scopesContain(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestInvalidationBus_NilBusNoop confirms zero behavior change when no

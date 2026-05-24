@@ -15,6 +15,7 @@ import (
 
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/oauth"
@@ -2102,6 +2103,37 @@ func (s *Server) lookupDiscoveryDocCache(base string) *discoveryDocEntry {
 
 func (s *Server) storeDiscoveryDocCache(base string, entry *discoveryDocEntry) {
 	s.discoveryDocCache.Store(base, entry)
+}
+
+// invalidateDiscoveryCaches drops both the derived discovery snapshot
+// and every cached rendered document, so the next request recomputes
+// from current client state. Local-only; never publishes (the bus
+// subscriber calls this directly, and InvalidateDiscoveryCache is the
+// publishing entry point).
+func (s *Server) invalidateDiscoveryCaches() {
+	s.discoveryCache.Store(nil)
+	s.discoveryDocCache.Range(func(k, _ any) bool {
+		s.discoveryDocCache.Delete(k)
+		return true
+	})
+}
+
+// InvalidateDiscoveryCache clears this replica's discovery snapshot +
+// rendered-document caches and, when an invalidation bus is wired,
+// publishes a reload so every other replica does the same. Wire this
+// into admin handlers that mutate discovery-affecting client state
+// (scopes, registration) so a config change converges across the
+// cluster immediately rather than after each node's discovery cache
+// TTL. Safe to call unconditionally; publish failures are logged, not
+// propagated (peers fall back to their TTL).
+func (s *Server) InvalidateDiscoveryCache() {
+	s.invalidateDiscoveryCaches()
+	if s.invalidationBus != nil {
+		evt := cluster.Event{Kind: cluster.KindDiscoveryReload}
+		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "error", err)
+		}
+	}
 }
 
 // writeDiscoveryDoc delegates to oidc.WriteDoc with the server's

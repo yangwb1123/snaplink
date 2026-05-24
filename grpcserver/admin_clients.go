@@ -18,10 +18,21 @@ type ClientAdminService struct {
 	adminv1.UnimplementedClientAdminServiceServer
 	store    sso.ClientStore
 	recorder *audit.Recorder
+	// onDiscoveryChange is invoked after a mutation that alters the
+	// discovery document (client scopes feed the discovery scope union).
+	// Wire it to (*sso.Server).InvalidateDiscoveryCache so a client edit
+	// converges across replicas immediately. nil = no-op.
+	onDiscoveryChange func()
 }
 
-func NewClientAdminService(store sso.ClientStore, recorder *audit.Recorder) *ClientAdminService {
-	return &ClientAdminService{store: store, recorder: recorder}
+// NewClientAdminService builds the service. onDiscoveryChange may be nil
+// (e.g. when no discovery cache / bus is wired); pass
+// (*sso.Server).InvalidateDiscoveryCache to propagate client edits.
+func NewClientAdminService(store sso.ClientStore, recorder *audit.Recorder, onDiscoveryChange func()) *ClientAdminService {
+	if onDiscoveryChange == nil {
+		onDiscoveryChange = func() {}
+	}
+	return &ClientAdminService{store: store, recorder: recorder, onDiscoveryChange: onDiscoveryChange}
 }
 
 func (s *ClientAdminService) List(ctx context.Context, _ *adminv1.ListClientsRequest) (*adminv1.ListClientsResponse, error) {
@@ -71,6 +82,7 @@ func (s *ClientAdminService) Create(ctx context.Context, in *adminv1.CreateClien
 		return nil, status.Errorf(codes.Internal, "create: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientCreated, c.ID)
+	s.onDiscoveryChange()
 	return &adminv1.CreateClientResponse{Client: clientToProto(c, false)}, nil
 }
 
@@ -97,6 +109,7 @@ func (s *ClientAdminService) Update(ctx context.Context, in *adminv1.UpdateClien
 		return nil, status.Errorf(codes.Internal, "update: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientUpdated, c.ID)
+	s.onDiscoveryChange()
 	return &adminv1.UpdateClientResponse{Client: clientToProto(c, false)}, nil
 }
 
@@ -111,6 +124,7 @@ func (s *ClientAdminService) Delete(ctx context.Context, in *adminv1.DeleteClien
 		return nil, status.Errorf(codes.Internal, "delete: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientDeleted, in.Id)
+	s.onDiscoveryChange()
 	return &adminv1.DeleteClientResponse{}, nil
 }
 

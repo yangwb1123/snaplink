@@ -31,6 +31,13 @@ const (
 	// status changed; subscribers drop the cached status for Event.Key
 	// (the tenant ID) so the next validate re-reads the tenant store.
 	KindTenantSuspension EventKind = "tenant_suspension"
+
+	// KindDiscoveryReload signals that discovery-affecting state changed
+	// (a client's scopes/registration), so subscribers drop their cached
+	// discovery snapshot + rendered documents and recompute on the next
+	// request. Event.Key is unused (the discovery doc is global, derived
+	// from the union of all clients), so it is empty.
+	KindDiscoveryReload EventKind = "discovery_reload"
 )
 
 // Event is one coordination signal. Key identifies the affected entity

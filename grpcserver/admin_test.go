@@ -35,7 +35,7 @@ func startAdminGRPC(
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
-	adminv1.RegisterClientAdminServiceServer(srv, grpcserver.NewClientAdminService(clientStore, recorder))
+	adminv1.RegisterClientAdminServiceServer(srv, grpcserver.NewClientAdminService(clientStore, recorder, nil))
 	adminv1.RegisterUserAdminServiceServer(srv, grpcserver.NewUserAdminService(userProvider, sessionMgr, recorder))
 	adminv1.RegisterTokenAdminServiceServer(srv, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
 		Sessions:  sessionMgr,
