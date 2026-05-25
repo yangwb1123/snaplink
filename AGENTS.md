@@ -213,16 +213,17 @@ where Hexagonal handlers moved). §2 gotchas apply across grants.
 | OIDC `sid` claim | access + id + logout | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
 | OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `handler.go` + `par.go` + `jar.go` |
 | OIDC Form Post Response Mode | `/auth/login`, `/par`, JAR | always | `oidc/form_post.go` |
+| JARM (JWT Secured Auth Response) | `/auth/login` `response_mode=jwt`/`query.jwt`/`fragment.jwt`/`form_post.jwt` | `WithJARM(signer)` (reuse signing issuer); fail-closed without signer | `oidc/jarm.go` |
 | OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
 | RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `security/jwt_client_assertion.go` |
 | RFC 9207 AS Issuer Id | every `/auth/login` | always | `iss_response.go` |
-| RFC 9068 JWT Access Token | `Ed25519JWTIssuer` | always | `defaultimpl/ed25519_jwt_issuer.go` |
+| RFC 9068 JWT Access Token | `Ed25519JWTIssuer` (EdDSA) / `ECDSAJWTIssuer` (ES256) | always; alg gate via `WithSupportedSigningAlgs`, strict kid→alg | `defaultimpl/ed25519_jwt_issuer.go`, `defaultimpl/ecdsa_jwt_issuer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `mtls_bound.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
 | RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider` | `dpop.go` + `dpop_nonce.go` |
 | RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` (Ed25519JWTIssuer satisfies) | `oidc_discovery.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
-| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)`; rules: PAR-only, signed request, S256 PKCE, code-only, sender-constrained (DPoP/mTLS) | `fapi/` + `handler.go` |
+| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)`; rules: PAR-only, signed request, S256 PKCE, code-only, sender-constrained (DPoP/mTLS), client-auth (private_key_jwt/mTLS, no shared secret) | `fapi/` + `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
 | RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `security/jar*.go` |
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; default `RSAJWEDecrypter` (RSA-OAEP-256 + A256GCM); enc key auto-published in JWKS `use:enc` | `security/jwe.go` |

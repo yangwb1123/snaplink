@@ -114,6 +114,42 @@ GDPR，进企业采购清单）→ ④（SCIM/SAML，补销售清单）→ ⑤�
 
 ---
 
+## v2.8（2026-05-25）—— 第五个 10 轮：ES256 签名 + JARM + FAPI client-auth
+
+两条并行 worktree agent 主线，闭合 v2.7 capstone 标记的"方向 ① 仍剩"与
+"方向 ② 的多算法签名"：
+
+- **ES256（ECDSA P-256）签名**（方向 ②）：新 `defaultimpl/ecdsa_jwt_issuer.go`
+  —— `ECDSAJWTIssuer` 镜像 Ed25519 issuer 的全部接口集（TokenIssuer/
+  IDTokenIssuer/MetadataSigner/UserinfoSigner/LogoutToken/JWKS +
+  RotateKey/RetireKey + `ECDSASigner` KMS 接缝），go-jose v4 签验，JWKS
+  发布 EC 公钥（kty:EC/crv:P-256/x/y）。`WithSupportedSigningAlgs` 把
+  Validate alg allowlist 配置化；**严格 kid→alg**（结构性：ES256 token
+  只过 ES256 issuer、EdDSA 只过 EdDSA，alg=none/RS256/篡改全在签名校验前
+  挡下，R‖S 定长拒 DER）。cmd `keys.signing.alg: eddsa|es256`（rotation
+  调度仍 eddsa-only，es256 + rotation 降级为 warn 跳过）。
+- **JARM（JWT Secured Authorization Response Mode）**（方向 ①）：新
+  `oidc/jarm.go` —— `response_mode=jwt`/`query.jwt`/`fragment.jwt`/
+  `form_post.jwt`，授权响应签为 JWT（iss/aud/exp/code/state）经
+  `oidc.JARMSigner` 接缝（Ed25519/ECDSA issuer 均满足；不碰 issuer 内部）。
+  `WithJARM`，无 signer → `invalid_request` fail-closed。discovery 广告
+  `authorization_signing_alg_values_supported` + 四个 jwt response mode。
+  cmd `oauth.jarm.enabled`。
+- **FAPI client-auth rule**（方向 ①）：`fapi:client_auth` —— 禁
+  client_secret_basic/post/none，要求 private_key_jwt 或 mTLS（FAPI 2.0
+  §5.3.2）。接入既有 `CheckToken` 强制点（enforce 拒 + 审计），随
+  `WithFAPIProfile` 自动生效。
+
+**集成说明**：两 agent 顺序提交到同一分支，Track A 在 Track B 之上构建，
+共享文件（sso.go/handlers.go/fapi/handler.go）已自然整合无冲突；主控补
+cmd 接线（signingIssuer 接口 + rotation 类型断言 + JARM/ES256 选择）+
+capstone。
+
+**仍剩**：RS256/PS256 签名（ES256 已落，RS256 是 stretch 未做）、ES256 的
+StartRotation 调度循环、DPoP/JAR 客户端证明的 ES256 接受、方向 ②的 KMS
+具体 peer（接缝 `ECDSASigner`/`Ed25519Signer` 已就位）、方向 ③ Console/
+GDPR、方向 ④ SCIM/SAML。
+
 ## v2.7（2026-05-25）—— 第四个 10 轮：FAPI 2.0 Compliance Profile + Inspection Mode
 
 v2.6 复扫把 FAPI 2.0 profile 列为新晋 P0（v2.5 响应 JWE 补齐了最后一块
@@ -1049,6 +1085,7 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 | 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
 | 2026-05-25 | v2.2 | **复扫确认 5 方向全部成立、全部未落地**（v2.1 后 40 个 commit 均为内部重构）。记录结构性里程碑：Hexagonal handler 抽取（根目录 → 6 源文件，handler 迁入 oauth//oidc/，`oauth` 不可 import `oidc`）+ 测试按功能归位（89 集成测试入 `test/`，根目录 `.go` 101 → 8）+ AGENTS.md 压缩 977 → 709。新增两条边界情况：**跨副本缓存失效需要 `InvalidationBus` 事件总线**（`InvalidateTenantSuspensionCache` 仅进程内，多副本传播延迟 = 缓存 TTL）+ **DPoP nonce 进程内密钥多副本不安全**。 |
 | 2026-05-25 | v2.3 | **10 轮开发落地**：(1) `cluster/` InvalidationBus（SPI + memory + etcd + cmd wiring + tenant-suspension/discovery 两个消费者）——闭合 v2.2 的跨副本失效边界情况；(2) §1 签名密钥治理大部分落地 —— `Ed25519Signer` KMS/HSM 接缝 + 运行时 `RotateKey`/`RetireKey` 重叠期轮换 + `StartRotation` 自动调度 + cmd `keys.rotation` 配置 + `signing_key_rotated` 审计 + `sso_signing_key_rotations_total` 指标。剩 §1 的 KMS peer/多算法/per-tenant、§3 Console、§4 Migration、§5 CIBA。 |
+| 2026-05-25 | v2.8 | **第五个 10 轮：ES256 签名 + JARM + FAPI client-auth**（两条并行 worktree agent）：(1) `ECDSAJWTIssuer`（ES256/P-256，go-jose，全接口集 + `ECDSASigner` KMS 接缝 + JWKS EC 公钥）+ `WithSupportedSigningAlgs` 配置化 alg gate + 严格 kid→alg + cmd `keys.signing.alg`；(2) JARM（`oidc/jarm.go`，`response_mode=jwt`+三变体，经 `oidc.JARMSigner` 接缝，fail-closed，discovery 广告，cmd `oauth.jarm.enabled`）；(3) FAPI `fapi:client_auth` 规则（禁 shared-secret，要求 private_key_jwt/mTLS）。剩 RS256、ES256 StartRotation、KMS peer、方向③④。 |
 | 2026-05-25 | v2.7 | **第四个 10 轮：FAPI 2.0 Compliance Profile + Inspection Mode**：新 `fapi/` 纯逻辑包（Mode + Validator + 5 条 baseline rule，nil/Off-safe，8 单测）+ `/auth/login` 与 `/token` 强制点接入（inspection 只审计、enforce 拒为标准 `invalid_request`）+ enforce 模式 discovery 反映约束 + `fapi_compliance_violation` 审计 + `sso_fapi_violations_total{rule,mode}` 指标 + cmd `oauth.compliance.{profile,inspection_only}`。刻意不做多算法签名（无 RS256/ES256 signer 时扩 allowlist 是 footgun）。剩方向 ① 的 JARM/client-auth 约束、方向 ②③④。 |
 | 2026-05-25 | v2.5 | **第三个 10 轮：§5 最后一公里协议（前两件）落地**：(1) OIDC JWE 响应加密 —— id_token (Core §10.2) + userinfo (Core §5.3.2)，`Client` 4 个 enc 字段 + DCR 映射 + `security.JWEEncrypter`/`RSAJWEResponseEncrypter` + fail-closed 无 oracle + discovery 广告 + cmd `oidc.response_encryption` + WebAuthn 路径补加密；(2) OIDC CIBA Core 1.0 poll 模式 —— `oauth.CIBAStore`(memory+sqlite/migrate) + `CIBATransport` + `/backchannel-authentication` + `grant=urn:openid:params:grant-type:ciba` poll(`authorization_pending`/`slow_down`) + discovery + 审计 + cmd `ciba.*`(含 PruneExpired 调度)。两条主线并行 worktree agent 开发。剩 §5 的 CIBA ping/push、多 alg、FAPI 2.0 profile；§1 KMS/多算法/per-tenant；§3 Console/GDPR。 |
 | 2026-05-25 | v2.4 | **第二个 10 轮：§4 Schema Migration 框架落地**：`migrate/` 纯 Go runner（versioned / per-namespace / forward-only / `BEGIN IMMEDIATE` 串行 / SQL+Func 步）+ 全部 6 个 SQLite 落点纳管（含 refresh_tokens 的 Func 补列迁移）+ `migrate.Status` + `cmd/sso-migrate` 离线 CLI。附带修复 `loadAESGCMKey` 裸密钥换行裁剪 bug（曾间歇 flake CI）。剩 §1 KMS peer/多算法、§3 Console、§5 CIBA/JWE/FAPI。 |
