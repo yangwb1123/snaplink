@@ -217,7 +217,7 @@ where Hexagonal handlers moved). §2 gotchas apply across grants.
 | OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
 | RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `security/jwt_client_assertion.go` |
 | RFC 9207 AS Issuer Id | every `/auth/login` | always | `iss_response.go` |
-| RFC 9068 JWT Access Token | `Ed25519JWTIssuer` (EdDSA) / `ECDSAJWTIssuer` (ES256) | always; alg gate via `WithSupportedSigningAlgs`, strict kid→alg | `defaultimpl/ed25519_jwt_issuer.go`, `defaultimpl/ecdsa_jwt_issuer.go` |
+| RFC 9068 JWT Access Token | `Ed25519JWTIssuer` (EdDSA) / `ECDSAJWTIssuer` (ES256) / `RSAJWTIssuer` (RS256\|PS256) | always; alg gate via `WithSupportedSigningAlgs`, strict per-issuer kid→alg; all three have `RotateKey`/`RetireKey`/`StartRotation` + KMS signer seam | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `mtls_bound.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
 | RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider` | `dpop.go` + `dpop_nonce.go` |
@@ -247,7 +247,13 @@ the process. `RotateKey`/`RetireKey` do runtime overlap-window rotation
 runs the scheduled loop. cmd wires it via `keys.rotation.*` → emits
 `signing_key_rotated` audit + `sso_signing_key_rotations_total` + busts
 the signed discovery cache (JWKS is live). Single-issuer: run on a
-leader or share a KMS signer across replicas.
+leader or share a KMS signer across replicas. **`ECDSAJWTIssuer` (ES256)
+and `RSAJWTIssuer` (RS256/PS256) mirror this exactly** — same
+`{ECDSA,RSA}Signer` seam, `RotateKey`/`RetireKey`/`StartRotation`, and
+per-issuer alg gate; pick the alg via cmd `keys.signing.alg`
+(`eddsa|es256|rs256|ps256`). Each issuer accepts ONLY its own alg, so
+the multi-issuer `validateAnyToken` path is structurally alg-confusion
+safe; `WithSupportedSigningAlgs` adds a Server-level pre-filter.
 
 ---
 
