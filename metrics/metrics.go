@@ -115,6 +115,13 @@ type Metrics struct {
 	// external signer is wired.
 	SigningOperationsTotal *prometheus.CounterVec   // labels: alg, outcome
 	SigningDuration        *prometheus.HistogramVec // labels: alg
+
+	// SigningBackendUp is 1 while the external signer's last operation
+	// succeeded, 0 after a failure — a directly alertable gauge that
+	// fires BEFORE /readyz drains the replica (the readyz probe tolerates
+	// stale failures; this gauge reflects the last raw outcome). Labels:
+	// alg. Never set when no external signer is wired.
+	SigningBackendUp *prometheus.GaugeVec // labels: alg
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -307,6 +314,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Name:    NameSigningDuration,
 				Help:    "External (KMS/HSM) signing round-trip latency in seconds, labeled by alg. DefBuckets (.005s-10s) cover the typical 5-50ms KMS RTT plus tail; alert on a p99 that threatens token-issuance latency.",
 				Buckets: prometheus.DefBuckets,
+			},
+			[]string{LabelAlg},
+		),
+
+		SigningBackendUp: factory.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: NameSigningBackendUp,
+				Help: "External (KMS/HSM) signing backend health: 1 if the last signing operation succeeded, 0 after a failure. Labeled by alg. Alert on 0 — it fires before /readyz drains the replica. Never set when no external signer is wired.",
 			},
 			[]string{LabelAlg},
 		),

@@ -152,6 +152,31 @@ func TestExternalSignerMetrics(t *testing.T) {
 	}
 }
 
+// TestSigningBackendUpGauge proves the health gauge tracks the last
+// signing outcome: 1 after success, 0 after a failure.
+func TestSigningBackendUpGauge(t *testing.T) {
+	m := metrics.New()
+	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	flaky := &flakySigner{inner: ecPriv}
+	wrapped := instrumentSigner(flaky, "es256", m)
+	digest := make([]byte, 32)
+
+	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if s := scrapeMetrics(t, m); !strings.Contains(s, `sso_signing_backend_up{alg="es256"} 1`) {
+		t.Errorf("after success want up=1, scrape:\n%s", s)
+	}
+
+	flaky.setErr(errKMSDown)
+	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err == nil {
+		t.Fatal("expected sign error")
+	}
+	if s := scrapeMetrics(t, m); !strings.Contains(s, `sso_signing_backend_up{alg="es256"} 0`) {
+		t.Errorf("after failure want up=0, scrape:\n%s", s)
+	}
+}
+
 // scrapeMetrics renders m's registry in the prometheus text exposition
 // format, the same view /metrics serves.
 func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {

@@ -25,6 +25,7 @@ const (
 	NameFAPIViolationsTotal        = "sso_fapi_violations_total"
 	NameSigningOperationsTotal     = "sso_signing_operations_total"
 	NameSigningDuration            = "sso_signing_operation_duration_seconds"
+	NameSigningBackendUp           = "sso_signing_backend_up"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

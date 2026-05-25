@@ -119,11 +119,14 @@ func (s *instrumentedSigner) Sign(rand io.Reader, digest []byte, opts crypto.Sig
 	s.health.record(err)
 	if s.m != nil {
 		outcome := "success"
+		up := 1.0
 		if err != nil {
 			outcome = "error"
+			up = 0
 		}
 		s.m.SigningOperationsTotal.WithLabelValues(s.alg, outcome).Inc()
 		s.m.SigningDuration.WithLabelValues(s.alg).Observe(time.Since(start).Seconds())
+		s.m.SigningBackendUp.WithLabelValues(s.alg).Set(up)
 	}
 	return sig, err
 }

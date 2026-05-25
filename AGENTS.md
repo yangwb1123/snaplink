@@ -438,6 +438,8 @@ provider's `SupportedMethods()` (user values dropped before the registry).
 | `sso_anomalies_detected_total` | Counter | anomaly_type, severity |
 | `sso_anomaly_dispatch_drops_total` / `_inspect_errors_total` | Counter | reason / detector |
 | `sso_signing_key_rotations_total` | Counter | — |
+| `sso_signing_operations_total` / `_operation_duration_seconds` | Counter/Histogram | alg, outcome / alg |
+| `sso_signing_backend_up` | Gauge | alg |
 | `sso_fapi_violations_total` | Counter | rule, mode |
 
 **Retention schedulers** — three cmd-side prune loops, uniformly wired
