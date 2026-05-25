@@ -60,6 +60,10 @@ docs-serve: ## Serve docs/openapi.yaml in swagger-ui on localhost:8088.
 		-v $(PWD)/docs:/spec \
 		swaggerapi/swagger-ui
 
+playground: ## Run the interactive Web UI playground on localhost:8090.
+	@echo "SSO playground at http://localhost:8090 (ctrl-c to stop)"
+	@go run ./examples/playground
+
 ci: fmt vet race build proto-lint ## Run the same checks CI runs.
 
 clean: ## Remove build artifacts.
