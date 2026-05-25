@@ -24,6 +24,7 @@ import (
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/tenant"
 )
@@ -402,6 +403,34 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		if len(jar.Claims) > 0 {
 			req.Claims = oauth.CloneRawJSON(jar.Claims)
+		}
+	}
+
+	// FAPI 2.0 Security Profile (§5.3.1) authorization-request baseline.
+	// Signals are read AFTER the PAR + JAR merge so the rules see the
+	// effective request. Inspection mode audits each violation and lets
+	// the request proceed (the operator's per-RP compliance-gap signal);
+	// enforce mode rejects on the first violation. This layer only
+	// checks — each rule's capability (PAR / JAR / S256 PKCE) must be
+	// independently wired and sent for a client to pass.
+	if s.fapiValidator.Active() {
+		if vs := s.fapiValidator.CheckAuthorization(fapi.AuthorizationContext{
+			ClientID:            req.ClientID,
+			ResponseType:        req.ResponseType,
+			UsedPAR:             req.RequestURI != "",
+			SignedRequest:       req.Request != "",
+			CodeChallenge:       req.CodeChallenge,
+			CodeChallengeMethod: req.CodeChallengeMethod,
+		}); len(vs) > 0 {
+			mode := s.fapiValidator.Mode().String()
+			for _, v := range vs {
+				audit.RecordFAPIViolation(s.auditor, ctx, v.ClientID, v.RuleID, v.Detail, mode)
+			}
+			if s.fapiValidator.Enforcing() {
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "fapi: "+vs[0].RuleID+": "+vs[0].Detail))
+				return
+			}
 		}
 	}
 
