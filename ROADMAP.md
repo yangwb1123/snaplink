@@ -12,6 +12,141 @@
 
 ---
 
+## v2.6（2026-05-25）—— 复扫后的下一阶段 3–5 个高价值方向
+
+> 本节是在 v2.5（JWE 响应加密 + CIBA poll）落地后做的一次全局复扫
+> 结论，**重排**了优先级。下方 v2.5→v2.1 是交付历史，再下方
+> "## 1.～## 5." 是各方向的详细 Scope（未落地部分仍然有效，可直接当
+> 实施蓝本）。本节只回答："如果现在只投 3–5 件事，按 ROI 投哪几件、
+> 为什么。"
+
+### 复扫确认的当前边界（grep 核验，非记忆）
+
+**已落地**（协议层 ≈ 97%）：完整 grant 集 + PAR/DCR/Introspect/Revoke/
+Token-Exchange/RAR + DPoP + mTLS-bound + 9068 + 9207 + JAR（signed +
+**JWE 双向**：请求 §6.4 + **响应 §10.2/§5.3.2，v2.5 新落地**）+ Signed
+Metadata + Pairwise + OAuth 2.1 strict + step-up + BCL/FCL +
+RP-initiated logout + **CIBA poll（v2.5）**；认证因子 9 个 + WebAuthn +
+TOTP/Passkey/Push MFA + 上游 OIDC 联邦；多副本正确性（15+ store SQLite
+peer + `migrate/` 版本化迁移 + `cluster.Bus` 跨副本失效）；运维面
+Snapshot/Release/Bootstrap/Retention + 3 个离线 CLI；签名密钥**运行时
+轮换 + `Ed25519Signer` KMS 接缝 + 审计 + 指标**（v2.3）。
+
+**仍为空白**（逐项 grep 确认）：`web/` Console、`compliance/` GDPR 闭环、
+SAML / SCIM、KMS/HSM **具体** peer（`awskms`/`gcpkms`/`pkcs11` 均无）、
+`SigningKeyProvider` 抽象、**多算法签名**（`supportedJWTAlgs` 仍是
+EdDSA-only map，未配置化）、**FAPI 2.0 profile 总开关**、CIBA 的
+ping/push delivery、Redis 后端（仅 ratelimit 注释提及）。
+
+### 排序后的 3–5 个方向
+
+**① FAPI 2.0 Compliance Profile + Inspection Mode** —— *新晋 P0，因为
+v2.5 补齐了最后一块零件。*
+
+- **Why now**：FAPI 2.0 baseline 的所有强制零件**现在全部就位**——PAR
+  + JAR（必签 + 可加密）+ DPoP/mTLS + pairwise + signed_metadata +
+  **响应 JWE（v2.5 刚补上的最后一块）**。剩的只是 **一个
+  `oauth_compliance: fapi_2` 总开关** + 严格 `alg` allowlist 配置化 +
+  **inspection mode**（"开关打开但只 audit 不拒绝"，发
+  `fapi_compliance_violation{rule_id,client_id}`，让运维拿合规缺口
+  清单逐项 fix）。这是当前**投入最小、销售证据最硬**的一件：开
+  inspection mode 即可对金融/开放银行 RFP 宣称"支持 FAPI 2.0
+  baseline"。详见下方 ## 5 的 profile + inspection 行。
+- **唯一前置依赖**：把 `defaultimpl/ed25519_jwt_issuer.go` 的
+  `supportedJWTAlgs`（EdDSA-only map）做成 `WithSupportedSigningAlgs`
+  配置项 + `kid→alg` 强对应校验（防 alg-confusion）——这块与方向 ②
+  的多算法部分重叠，可合并一个 sprint。
+
+**② 签名密钥治理收口：KMS/HSM 具体 peer + 多算法 + 多副本 ActiveKID
+强一致** —— *合规硬 gate，地基已铺好。*
+
+- **Why now**：v2.3 已落地 `Ed25519Signer` 接缝 + 运行时轮换 + 审计 +
+  `cluster.Bus`，但**私钥仍裸存进程内存**——金融/政府 RFP 第一页就筛
+  掉。剩三件：(a) 一个**具体** KMS peer（`defaultimpl/awskms/`，
+  `kms.Sign`，私钥永不出硬件）作为 `SigningKeyProvider` 首个实现；
+  (b) 多算法（RS256/ES256 并存，与 ① 共用 allowlist 配置化）；
+  (c) **多副本 `ActiveKID` 强一致**——轮换期各副本不能漂移 kid，否则
+  RP 端 JWKS 缓存抓不到刚轮出的 kid。`cluster.Bus` 底座已就位，把
+  ActiveKID 选择经 bus/共享存储收口即可。详见 ## 1（A/B/C）。
+- **边界**：KMS sign 是网络 RTT（5–50ms），需 token TTL 拉长 + 进程内
+  `(kid,payload_hash)→signature` LRU + p99 熔断到本地 fallback kid。
+
+**③ Operator/EndUser UX + GDPR 跨 store 闭环** —— *企业采购 gate，把已
+建好的能力"包装出来卖"。*
+
+- **Why now**：后端 capability 齐整，**面向人的操作面是 0**。竞品
+  （Auth0/WorkOS/Stytch）卖的是"5 分钟 demo→生产，含 UI + 报表 +
+  GDPR 按钮"。两件事：(a) Admin Web Console（`web/admin/`，吃现成 admin
+  REST gateway，零后端改动；首批 Dashboard/Sessions/Audit-Explorer
+  三个 panel 最有 demo 价值）+ 终端用户自助门户；(b) **GDPR erase/export
+  跨 store 工作流**（`compliance/erasure/`）——`DeleteAllForSubject`
+  已有，但多步幂等的 revoke→soft-delete→后台 PII 假名化（保留 hash
+  链可校验性）没串起来。**与"租户暂停的主动吊销"复用同一份跨 store
+  删除流水线**（今天 suspend 只挡新请求，已发 token 仍有效；缺
+  `DeleteByTenant` SPI）。详见 ## 3。
+
+**④ 企业 Provisioning：SCIM 2.0 + SAML 2.0 联邦** —— *企业销售清单上
+仅剩的两行。*
+
+- **Why now**：认证因子与上游 OIDC 联邦已全，**SCIM**（HR/IT 自动开
+  户/停用，`/scim/v2/Users`+`Groups`）与 **SAML 2.0**（仍有大量政府/
+  传统企业 IdP 只说 SAML）是 RFP 表上仅剩会被直接筛掉的两项。各自独立
+  立项（SCIM ≈ 3–4 周，SAML ≈ 4–6 周），不阻塞其他方向。
+
+**⑤（可选）吞吐层：Redis 后端 + 热路径性能** —— *正确性已完备，这是
+扩容课题，等 >1k QPS 客户 inbound 再做。*
+
+- **Why now / why not**：15+ store 的 SQLite peer 已保证**正确性**；
+  Redis 的 ROI 是 **吞吐（>1k QPS）** 而非正确性，代价是引入新有状态
+  依赖。同时可顺手清掉持续清单里的热路径项：BCL 多 RP 扇出
+  `errgroup` 并发化、`validateAnyToken` 先 peek token 形态再 dispatch、
+  `handleJWKS` 加 per-rotation-epoch single-flight、SIGTERM 优雅停机串
+  `http.Server.Shutdown(ctx)` 等 in-flight `/token`。详见文末"边界情况
+  & 性能优化"清单。
+
+### 一句话优先级
+
+**先做 ①（FAPI profile，最小投入最硬证据，仅需顺带把 alg allowlist
+配置化）→ ②（KMS peer 收口合规 gate，与 ① 的多算法合并）→ ③（Console +
+GDPR，进企业采购清单）→ ④（SCIM/SAML，补销售清单）→ ⑤（Redis，等吞吐
+需求）。** ①②可并行（共享 alg-allowlist 配置化这一前置），③④为产品化
+与销售补完，⑤ 按需。
+
+---
+
+## v2.7（2026-05-25）—— 第四个 10 轮：FAPI 2.0 Compliance Profile + Inspection Mode
+
+v2.6 复扫把 FAPI 2.0 profile 列为新晋 P0（v2.5 响应 JWE 补齐了最后一块
+前置零件）。第四个 10 轮交付了方向 ① 的 profile + inspection mode 主体：
+
+- **`fapi/` 纯逻辑包**：`Mode`（Off/Inspection/Enforce）+ `Validator`
+  + 稳定 rule id（`par_required`/`signed_request`/`pkce_s256`/
+  `no_implicit`/`sender_constrained`）。`CheckAuthorization`/`CheckToken`
+  接收已抽取的请求信号、返回违规列表，nil/Off-safe；零 Server 耦合、
+  零环、可隔离单测（8 个单测全覆盖）。
+- **强制点接入**：`/auth/login`（PAR/JAR-merge 之后，信号
+  `usedPAR=request_uri 存在`、`signedRequest=request 存在`）+ `/token`
+  （grant switch 之前，`senderConstrained=DPoP JKT 或 mTLS x5t 存在`，
+  统一覆盖所有 grant）。Inspection 只审计不改响应（FAPI 1 "全或无悬崖"
+  教训）；Enforce 拒为标准 `invalid_request`（rule id 进 error_description
+  + 审计，无新增 wire code、无 oracle）。
+- **Discovery 反映**：Enforce 模式广告 `require_pushed_authorization_requests`
+  / `require_signed_request_object` / `response_types_supported:[code]` /
+  `code_challenge_methods_supported:[S256]`；Inspection 不改 discovery。
+- **可观测**：`fapi_compliance_violation` 审计事件（`fapi_rule`/
+  `fapi_detail`/`fapi_mode`）+ `sso_fapi_violations_total{rule,mode}`
+  指标（inspection ramp-up dashboard：按 rule 看哪些 RP 不合规）。
+- **cmd 接线**：`oauth.compliance.{profile=fapi_2,inspection_only}`。
+
+**刻意不做（已记录原因）**：多算法签名（RS256/ES256）——在只有 EdDSA
+signer 时扩展 Validate allowlist 会接受无法验签的 token（footgun），且
+alg-confusion 已被 EdDSA-only allowlist 挡住（none/HS256 不在内）；待真正
+落地 RS256/ES256 signer（方向 ②）时再一并做。
+
+**方向 ① 仍剩**：FAPI 2.0 的 JARM（签名授权响应）、client-auth 方法约束
+（禁 client_secret_basic）、per-rule 配置化（FAPI 2.0 Advanced）。**方向 ②
+③④ 未动**（KMS peer / Console+GDPR / SCIM+SAML）。
+
 ## v2.5（2026-05-25）—— 第三个 10 轮：§5 最后一公里协议（JWE 响应加密 + CIBA）
 
 第三个 10 轮交付，按 §5 的 ROI 排序闭合两条主线（两条并行 worktree
@@ -914,5 +1049,6 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 | 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
 | 2026-05-25 | v2.2 | **复扫确认 5 方向全部成立、全部未落地**（v2.1 后 40 个 commit 均为内部重构）。记录结构性里程碑：Hexagonal handler 抽取（根目录 → 6 源文件，handler 迁入 oauth//oidc/，`oauth` 不可 import `oidc`）+ 测试按功能归位（89 集成测试入 `test/`，根目录 `.go` 101 → 8）+ AGENTS.md 压缩 977 → 709。新增两条边界情况：**跨副本缓存失效需要 `InvalidationBus` 事件总线**（`InvalidateTenantSuspensionCache` 仅进程内，多副本传播延迟 = 缓存 TTL）+ **DPoP nonce 进程内密钥多副本不安全**。 |
 | 2026-05-25 | v2.3 | **10 轮开发落地**：(1) `cluster/` InvalidationBus（SPI + memory + etcd + cmd wiring + tenant-suspension/discovery 两个消费者）——闭合 v2.2 的跨副本失效边界情况；(2) §1 签名密钥治理大部分落地 —— `Ed25519Signer` KMS/HSM 接缝 + 运行时 `RotateKey`/`RetireKey` 重叠期轮换 + `StartRotation` 自动调度 + cmd `keys.rotation` 配置 + `signing_key_rotated` 审计 + `sso_signing_key_rotations_total` 指标。剩 §1 的 KMS peer/多算法/per-tenant、§3 Console、§4 Migration、§5 CIBA。 |
+| 2026-05-25 | v2.7 | **第四个 10 轮：FAPI 2.0 Compliance Profile + Inspection Mode**：新 `fapi/` 纯逻辑包（Mode + Validator + 5 条 baseline rule，nil/Off-safe，8 单测）+ `/auth/login` 与 `/token` 强制点接入（inspection 只审计、enforce 拒为标准 `invalid_request`）+ enforce 模式 discovery 反映约束 + `fapi_compliance_violation` 审计 + `sso_fapi_violations_total{rule,mode}` 指标 + cmd `oauth.compliance.{profile,inspection_only}`。刻意不做多算法签名（无 RS256/ES256 signer 时扩 allowlist 是 footgun）。剩方向 ① 的 JARM/client-auth 约束、方向 ②③④。 |
 | 2026-05-25 | v2.5 | **第三个 10 轮：§5 最后一公里协议（前两件）落地**：(1) OIDC JWE 响应加密 —— id_token (Core §10.2) + userinfo (Core §5.3.2)，`Client` 4 个 enc 字段 + DCR 映射 + `security.JWEEncrypter`/`RSAJWEResponseEncrypter` + fail-closed 无 oracle + discovery 广告 + cmd `oidc.response_encryption` + WebAuthn 路径补加密；(2) OIDC CIBA Core 1.0 poll 模式 —— `oauth.CIBAStore`(memory+sqlite/migrate) + `CIBATransport` + `/backchannel-authentication` + `grant=urn:openid:params:grant-type:ciba` poll(`authorization_pending`/`slow_down`) + discovery + 审计 + cmd `ciba.*`(含 PruneExpired 调度)。两条主线并行 worktree agent 开发。剩 §5 的 CIBA ping/push、多 alg、FAPI 2.0 profile；§1 KMS/多算法/per-tenant；§3 Console/GDPR。 |
 | 2026-05-25 | v2.4 | **第二个 10 轮：§4 Schema Migration 框架落地**：`migrate/` 纯 Go runner（versioned / per-namespace / forward-only / `BEGIN IMMEDIATE` 串行 / SQL+Func 步）+ 全部 6 个 SQLite 落点纳管（含 refresh_tokens 的 Func 补列迁移）+ `migrate.Status` + `cmd/sso-migrate` 离线 CLI。附带修复 `loadAESGCMKey` 裸密钥换行裁剪 bug（曾间歇 flake CI）。剩 §1 KMS peer/多算法、§3 Console、§5 CIBA/JWE/FAPI。 |
