@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/snaplink/sso"
@@ -57,7 +59,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 			name := "ext-" + tc.alg
 			RegisterExternalSigner(name, staticSigner(tc.signer))
 
-			iss, _, err := buildSigningIssuer(
+			iss, _, _, err := buildSigningIssuer(
 				config.SigningConfig{Alg: tc.alg, External: name},
 				config.ServerConfig{Issuer: "https://sso.test"},
 				nil,
@@ -74,7 +76,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 }
 
 func TestBuildSigningIssuer_UnregisteredExternal(t *testing.T) {
-	_, _, err := buildSigningIssuer(
+	_, _, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa", External: "does-not-exist"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
@@ -90,7 +92,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 	// startup rather than minting tokens no verifier accepts.
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
 	RegisterExternalSigner("ext-mismatch", staticSigner(edPriv))
-	_, _, err := buildSigningIssuer(
+	_, _, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-mismatch"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
@@ -103,7 +105,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 
 func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 	// Empty External keeps the historical in-process key path.
-	iss, alg, err := buildSigningIssuer(
+	iss, alg, probe, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
@@ -118,6 +120,9 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 	if kid := keyIDOf(t, iss); kid == "kms-test-kid" {
 		t.Error("in-process path unexpectedly used the external kid")
 	}
+	if probe != nil {
+		t.Error("in-process path returned a non-nil readiness probe; appendReadyCheck would register a bogus /readyz dependency")
+	}
 }
 
 // TestExternalSignerMetrics proves the external-signer round-trip is
@@ -128,7 +133,7 @@ func TestExternalSignerMetrics(t *testing.T) {
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	RegisterExternalSigner("ext-metrics", staticSigner(ecPriv))
 
-	iss, _, err := buildSigningIssuer(
+	iss, _, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-metrics"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		m,
@@ -169,6 +174,99 @@ func TestRegisterExternalSigner_RejectsBadInput(t *testing.T) {
 	RegisterExternalSigner("ext-dup", staticSigner(nil))
 	assertPanic(t, "duplicate", func() { RegisterExternalSigner("ext-dup", staticSigner(nil)) })
 }
+
+// flakySigner is a crypto.Signer whose Sign outcome is operator-toggled,
+// standing in for a KMS/HSM that goes (un)reachable at runtime.
+type flakySigner struct {
+	inner  crypto.Signer
+	mu     sync.Mutex
+	signEr error
+}
+
+func (f *flakySigner) Public() crypto.PublicKey { return f.inner.Public() }
+
+func (f *flakySigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	f.mu.Lock()
+	er := f.signEr
+	f.mu.Unlock()
+	if er != nil {
+		return nil, er
+	}
+	return f.inner.Sign(rand, digest, opts)
+}
+
+func (f *flakySigner) setErr(er error) {
+	f.mu.Lock()
+	f.signEr = er
+	f.mu.Unlock()
+}
+
+func TestInstrumentSigner_ReadinessProbe(t *testing.T) {
+	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	flaky := &flakySigner{inner: ecPriv}
+
+	// Wrap WITHOUT metrics — readiness must not depend on metrics.
+	wrapped := instrumentSigner(flaky, "es256", nil)
+	probe, ok := wrapped.(interface{ Ping(context.Context) error })
+	if !ok {
+		t.Fatal("instrumented signer does not expose Ping; appendReadyCheck would skip it")
+	}
+
+	// Fresh server, no signing yet: healthy (startup proved reachability).
+	if err := probe.Ping(context.Background()); err != nil {
+		t.Errorf("fresh probe = %v, want healthy", err)
+	}
+
+	digest := make([]byte, 32)
+
+	// A successful sign keeps it green.
+	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if err := probe.Ping(context.Background()); err != nil {
+		t.Errorf("after success probe = %v, want healthy", err)
+	}
+
+	// A failed sign trips it red.
+	flaky.setErr(errKMSDown)
+	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err == nil {
+		t.Fatal("expected sign error from flaky signer")
+	}
+	if err := probe.Ping(context.Background()); err == nil {
+		t.Error("after failure probe = healthy, want red")
+	}
+
+	// Recovery: a subsequent success clears the red.
+	flaky.setErr(nil)
+	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err != nil {
+		t.Fatalf("sign after recovery: %v", err)
+	}
+	if err := probe.Ping(context.Background()); err != nil {
+		t.Errorf("after recovery probe = %v, want healthy", err)
+	}
+}
+
+func TestSignerHealth_StaleFailureRecovers(t *testing.T) {
+	var h signerHealth
+	h.record(errKMSDown)
+	if h.check() == nil {
+		t.Fatal("recent failure should read unhealthy")
+	}
+	// Age the failure past the window with no traffic since: assumed
+	// recovered so /readyz doesn't latch red forever on an idle server.
+	h.mu.Lock()
+	h.lastErrAt = time.Now().Add(-externalSignerHealthWindow - time.Second)
+	h.mu.Unlock()
+	if err := h.check(); err != nil {
+		t.Errorf("stale failure = %v, want healthy (assumed recovered)", err)
+	}
+}
+
+var errKMSDown = errKMS("kms unreachable")
+
+type errKMS string
+
+func (e errKMS) Error() string { return string(e) }
 
 func assertPanic(t *testing.T, what string, f func()) {
 	t.Helper()

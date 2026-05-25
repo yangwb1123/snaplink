@@ -54,38 +54,95 @@ func RegisterExternalSigner(name string, f ExternalSignerFactory) {
 	externalSignerRegistry.factories[name] = f
 }
 
-// instrumentedSigner wraps a crypto.Signer to record signing latency +
-// outcome at the KMS/HSM round-trip boundary. It is the same crypto.Signer
-// interface, so it slots transparently between the operator's factory and
-// the cryptosigner bridge.
-type instrumentedSigner struct {
-	inner crypto.Signer
-	alg   string
-	m     *metrics.Metrics
+// externalSignerHealthWindow bounds how long a failed external-signing
+// attempt keeps /readyz red with no fresh traffic. A failure older than
+// this — with no signing since — is treated as recovered, so the probe
+// doesn't latch red forever on an idle server; real /token traffic
+// re-proves health. Sized for kubelet poll cadence, not tuned per
+// deployment (no config surface).
+const externalSignerHealthWindow = 30 * time.Second
+
+// signerHealth tracks the most recent external-signing outcome so a
+// passive /readyz probe can report KMS/HSM reachability WITHOUT spending
+// a KMS round-trip per poll — production signing traffic is the probe.
+type signerHealth struct {
+	mu        sync.Mutex
+	lastErr   error
+	lastErrAt time.Time
+	lastOKAt  time.Time
 }
 
-func (s instrumentedSigner) Public() crypto.PublicKey { return s.inner.Public() }
+func (h *signerHealth) record(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now()
+	if err != nil {
+		h.lastErr = err
+		h.lastErrAt = now
+		return
+	}
+	h.lastOKAt = now
+}
 
-func (s instrumentedSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+// check reports unhealthy only when the most recent attempt FAILED and
+// that failure is recent. A success after the failure clears it; a stale
+// failure (no traffic since) is assumed recovered. A fresh server with no
+// traffic reads healthy — startup already proved reachability by fetching
+// the public key.
+func (h *signerHealth) check() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.lastErrAt.After(h.lastOKAt) && time.Since(h.lastErrAt) < externalSignerHealthWindow {
+		return h.lastErr
+	}
+	return nil
+}
+
+// instrumentedSigner wraps a crypto.Signer to (1) record signing latency +
+// outcome metrics and (2) track health for the external-signer /readyz
+// probe, both at the KMS/HSM round-trip boundary. It is the same
+// crypto.Signer interface, so it slots transparently between the
+// operator's factory and the cryptosigner bridge, and also exposes
+// Ping(ctx) so appendReadyCheck wires it into /readyz.
+type instrumentedSigner struct {
+	inner  crypto.Signer
+	alg    string
+	m      *metrics.Metrics // nil when metrics are disabled
+	health signerHealth
+}
+
+func (s *instrumentedSigner) Public() crypto.PublicKey { return s.inner.Public() }
+
+func (s *instrumentedSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	start := time.Now()
 	sig, err := s.inner.Sign(rand, digest, opts)
-	outcome := "success"
-	if err != nil {
-		outcome = "error"
+	s.health.record(err)
+	if s.m != nil {
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		s.m.SigningOperationsTotal.WithLabelValues(s.alg, outcome).Inc()
+		s.m.SigningDuration.WithLabelValues(s.alg).Observe(time.Since(start).Seconds())
 	}
-	s.m.SigningOperationsTotal.WithLabelValues(s.alg, outcome).Inc()
-	s.m.SigningDuration.WithLabelValues(s.alg).Observe(time.Since(start).Seconds())
 	return sig, err
 }
 
-// instrumentSigner wraps s to record signing metrics under the given alg
-// label. Returns s unchanged when metrics are disabled or s is nil, so
-// callers can wrap unconditionally.
+// Ping satisfies the readycheck contract appendReadyCheck looks for. It
+// reports the last recent signing failure (if any) so a wedged KMS/HSM
+// trips /readyz before /token requests fail en masse.
+func (s *instrumentedSigner) Ping(context.Context) error { return s.health.check() }
+
+// instrumentSigner wraps s for metrics + health tracking under the given
+// alg label. Returns nil when s is nil, so callers can wrap
+// unconditionally. The wrap happens even when metrics are disabled —
+// readiness must not depend on metrics being on; the metric writes alone
+// are gated on m != nil.
 func instrumentSigner(s crypto.Signer, alg string, m *metrics.Metrics) crypto.Signer {
-	if m == nil || s == nil {
-		return s
+	if s == nil {
+		return nil
 	}
-	return instrumentedSigner{inner: s, alg: alg, m: m}
+	return &instrumentedSigner{inner: s, alg: alg, m: m}
 }
 
 // normalizeAlgLabel maps the configured keys.signing.alg to the bounded

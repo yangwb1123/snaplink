@@ -2128,7 +2128,11 @@ type signingIssuer interface {
 // name (for logging + rotation gating), and any wiring error. An external
 // signer is bridged into the issuer's seam via defaultimpl/cryptosigner;
 // a mismatched key shape fails closed here at startup.
-func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *metrics.Metrics, logger spi.Logger) (signingIssuer, string, error) {
+//
+// The third return value is the instrumented external signer (nil for the
+// in-process key path) — the caller hands it to appendReadyCheck so a
+// wedged KMS/HSM trips /readyz.
+func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *metrics.Metrics, logger spi.Logger) (signingIssuer, string, crypto.Signer, error) {
 	// Resolve an optional external signer (KMS/HSM) up front; its kid
 	// names the key in JWKS and token headers.
 	var extSigner crypto.Signer
@@ -2136,14 +2140,14 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 	if name := strings.TrimSpace(sc.External); name != "" {
 		f, ok := lookupExternalSigner(name)
 		if !ok {
-			return nil, "", fmt.Errorf("keys.signing.external %q is not registered (registered: %v; call RegisterExternalSigner in your cmd binary)", name, registeredExternalSigners())
+			return nil, "", nil, fmt.Errorf("keys.signing.external %q is not registered (registered: %v; call RegisterExternalSigner in your cmd binary)", name, registeredExternalSigners())
 		}
 		s, kid, err := f(context.Background())
 		if err != nil {
-			return nil, "", fmt.Errorf("keys.signing.external %q: %w", name, err)
+			return nil, "", nil, fmt.Errorf("keys.signing.external %q: %w", name, err)
 		}
 		if s == nil {
-			return nil, "", fmt.Errorf("keys.signing.external %q returned a nil signer", name)
+			return nil, "", nil, fmt.Errorf("keys.signing.external %q returned a nil signer", name)
 		}
 		// Instrument the KMS/HSM round-trip (no-op when metrics disabled).
 		extSigner = instrumentSigner(s, normalizeAlgLabel(sc.Alg), m)
@@ -2161,11 +2165,11 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 		if extSigner != nil {
 			sgn, pub, err := cryptosigner.Ed25519(extSigner)
 			if err != nil {
-				return nil, "", fmt.Errorf("keys.signing.external: %w", err)
+				return nil, "", nil, fmt.Errorf("keys.signing.external: %w", err)
 			}
 			opts = append(opts, defaultimpl.WithEd25519ExternalSigner(sgn, pub, extKID))
 		}
-		return defaultimpl.NewEd25519JWTIssuer(opts...), "EdDSA", nil
+		return defaultimpl.NewEd25519JWTIssuer(opts...), "EdDSA", extSigner, nil
 	case "es256", "ecdsa":
 		opts := []defaultimpl.ECDSAOption{
 			defaultimpl.WithECDSAIssuer(srv.Issuer),
@@ -2175,11 +2179,11 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 		if extSigner != nil {
 			sgn, pub, err := cryptosigner.ECDSA(extSigner)
 			if err != nil {
-				return nil, "", fmt.Errorf("keys.signing.external: %w", err)
+				return nil, "", nil, fmt.Errorf("keys.signing.external: %w", err)
 			}
 			opts = append(opts, defaultimpl.WithECDSAExternalSigner(sgn, pub, extKID))
 		}
-		return defaultimpl.NewECDSAJWTIssuer(opts...), "ES256", nil
+		return defaultimpl.NewECDSAJWTIssuer(opts...), "ES256", extSigner, nil
 	case "rs256", "ps256", "rsa":
 		signingAlg := "RS256"
 		if alg == "ps256" {
@@ -2194,13 +2198,13 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 		if extSigner != nil {
 			sgn, pub, err := cryptosigner.RSA(extSigner, signingAlg)
 			if err != nil {
-				return nil, "", fmt.Errorf("keys.signing.external: %w", err)
+				return nil, "", nil, fmt.Errorf("keys.signing.external: %w", err)
 			}
 			opts = append(opts, defaultimpl.WithRSAExternalSigner(sgn, pub, extKID))
 		}
-		return defaultimpl.NewRSAJWTIssuer(opts...), signingAlg, nil
+		return defaultimpl.NewRSAJWTIssuer(opts...), signingAlg, extSigner, nil
 	default:
-		return nil, "", fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
+		return nil, "", nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
 	}
 }
 
@@ -2266,7 +2270,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
 	// EdDSA-specific (type-asserted there).
-	jwtIssuer, signingAlg, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, metricsRegistry, logger)
+	jwtIssuer, signingAlg, externalSigner, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, metricsRegistry, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -2300,6 +2304,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		sso.WithSupportedSigningAlgs(signingAlg),
 	)
 	logger.Info("signing issuer configured", "alg", signingAlg)
+	// An external KMS/HSM signer is a runtime dependency the in-process
+	// key path never had: register its passive health probe so a wedged
+	// signer trips /readyz. nil (in-process key) silently no-ops.
+	opts = appendReadyCheck(opts, "external-signer", externalSigner)
 	opts = appendReadyCheck(opts, "sqlite-identity-clients", clientStore)
 	opts = appendReadyCheck(opts, "sqlite-identity-users", userProvider)
 	opts = appendReadyCheck(opts, "sqlite-identity-sessions", sessionMgr)
