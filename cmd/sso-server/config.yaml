@@ -623,6 +623,12 @@ oauth:
     enabled: false
     timeout: 5s
     max_bytes: 16384    # 16 KB ceiling for a signed JAR body
+  # JARM (JWT Secured Authorization Response Mode). When enabled,
+  # clients may request response_mode=jwt (+ query.jwt / fragment.jwt /
+  # form_post.jwt) and the authorization response is returned as a JWT
+  # signed with the server's existing signing key (no separate key).
+  jarm:
+    enabled: false
   # FAPI 2.0 Security Profile. profile="fapi_2" enables the baseline
   # rule checks (PAR-only, signed request object, S256 PKCE, code-only
   # response type, DPoP/mTLS sender-constrained tokens) at /auth/login
@@ -750,6 +756,13 @@ cluster:
 # multi-replica cluster enable this on ONE leader, or back the issuer
 # with a shared KMS signer — otherwise replicas advertise divergent kids.
 keys:
+  # JWT signing algorithm for the server's own tokens (access /
+  # id_token / userinfo / logout / signed metadata). eddsa (Ed25519,
+  # default) or es256 (ECDSA P-256, the common FAPI choice). Scheduled
+  # rotation below is eddsa-only today; with es256 + rotation enabled,
+  # the scheduled loop is skipped (manual RotateKey/RetireKey still work).
+  signing:
+    alg: eddsa             # eddsa | es256
   rotation:
     enabled: false
     interval: 2160h           # 90d

@@ -91,7 +91,19 @@ type ResponseEncryptionConfig struct {
 
 // KeysConfig governs signing-key lifecycle.
 type KeysConfig struct {
+	Signing  SigningConfig     `yaml:"signing"`
 	Rotation KeyRotationConfig `yaml:"rotation"`
+}
+
+// SigningConfig selects the JWT signing algorithm for the server's own
+// tokens (access / id_token / userinfo / logout / signed metadata).
+type SigningConfig struct {
+	// Alg: "" | "eddsa" (Ed25519, default) | "es256" (ECDSA P-256).
+	// es256 is the common FAPI choice. Scheduled key rotation
+	// (keys.rotation) is currently only available for eddsa; with
+	// es256 + rotation enabled, cmd logs a warning and skips the
+	// scheduled loop (manual RotateKey/RetireKey still work).
+	Alg string `yaml:"alg"`
 }
 
 // KeyRotationConfig drives the automatic signing-key rotation loop.
@@ -581,7 +593,17 @@ type OAuthConfig struct {
 	DeviceCode   OAuthDeviceCodeConfig `yaml:"device_code"`
 	PAR          OAuthStoreConfig      `yaml:"par"`
 	JAR          OAuthJARConfig        `yaml:"jar"`
+	JARM         OAuthJARMConfig       `yaml:"jarm"`
 	Compliance   OAuthComplianceConfig `yaml:"compliance"`
+}
+
+// OAuthJARMConfig opts into JARM (JWT Secured Authorization Response
+// Mode). When enabled, clients may request response_mode=jwt (and the
+// query.jwt / fragment.jwt / form_post.jwt variants) and the
+// authorization response is returned as a signed JWT, signed with the
+// server's existing signing key (no separate key needed).
+type OAuthJARMConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // OAuthComplianceConfig opts into a named OAuth/OIDC security profile.

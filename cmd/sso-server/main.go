@@ -2087,6 +2087,17 @@ func (b bootstrapLogger) Error(msg string, kv ...any) { b.inner.Error(msg, kv...
 
 // buildApp wires every SDK component the config asks for and returns them
 // as a bundle so HTTP and gRPC entrypoints can share instances.
+// signingIssuer is the interface set cmd needs from the JWT signing
+// issuer — satisfied by both *defaultimpl.Ed25519JWTIssuer and
+// *defaultimpl.ECDSAJWTIssuer. The EdDSA-specific scheduled rotation
+// loop is reached via a separate type assertion (ECDSA has no
+// StartRotation today).
+type signingIssuer interface {
+	sso.TokenIssuer
+	oidc.IDTokenIssuer
+	sso.LogoutTokenIssuer
+}
+
 func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// Metrics constructed early so the retention schedulers can emit
 	// counters when they fire. The asyncSink collector + WithMetrics
@@ -2145,11 +2156,29 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity session_manager: %w", err)
 	}
-	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(
-		defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
-		defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),
-		defaultimpl.WithEd25519MaxClockSkew(cfg.Server.MaxClockSkew),
-	)
+	// Signing issuer: EdDSA (default) or ES256 (ECDSA P-256). Both
+	// concrete types satisfy the same interface set; only the scheduled
+	// rotation loop below is EdDSA-specific (type-asserted there).
+	var jwtIssuer signingIssuer
+	var signingAlg string
+	switch alg := strings.ToLower(strings.TrimSpace(cfg.Keys.Signing.Alg)); alg {
+	case "", "eddsa", "ed25519":
+		signingAlg = "EdDSA"
+		jwtIssuer = defaultimpl.NewEd25519JWTIssuer(
+			defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
+			defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),
+			defaultimpl.WithEd25519MaxClockSkew(cfg.Server.MaxClockSkew),
+		)
+	case "es256", "ecdsa":
+		signingAlg = "ES256"
+		jwtIssuer = defaultimpl.NewECDSAJWTIssuer(
+			defaultimpl.WithECDSAIssuer(cfg.Server.Issuer),
+			defaultimpl.WithECDSATokenTTL(cfg.Server.TokenTTL),
+			defaultimpl.WithECDSAMaxClockSkew(cfg.Server.MaxClockSkew),
+		)
+	default:
+		return nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256)", alg)
+	}
 	sessionIssuer := defaultimpl.NewSessionTokenIssuer(
 		defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
 	)
@@ -2174,7 +2203,12 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		// response and OIDC is silently disabled, which is the wrong
 		// default for a binary called "sso-server".
 		sso.WithIDTokenIssuer(jwtIssuer),
+		// Pin the Server-level Validate alg gate to the wired signing
+		// alg so an RP can never select the verification algorithm
+		// (anti alg-confusion); discovery also reflects this set.
+		sso.WithSupportedSigningAlgs(signingAlg),
 	)
+	logger.Info("signing issuer configured", "alg", signingAlg)
 	opts = appendReadyCheck(opts, "sqlite-identity-clients", clientStore)
 	opts = appendReadyCheck(opts, "sqlite-identity-users", userProvider)
 	opts = appendReadyCheck(opts, "sqlite-identity-sessions", sessionMgr)
@@ -2550,6 +2584,14 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			"backend", strings.ToLower(strings.TrimSpace(cfg.CIBA.Backend)),
 			"transport", strings.ToLower(strings.TrimSpace(cfg.CIBA.Transport)))
 	}
+	if cfg.OAuth.JARM.Enabled {
+		js, ok := any(jwtIssuer).(oidc.JARMSigner)
+		if !ok {
+			return nil, fmt.Errorf("oauth.jarm.enabled but the %s signing issuer does not implement JARM signing", signingAlg)
+		}
+		opts = append(opts, sso.WithJARM(js))
+		logger.Info("jarm: enabled (response_mode=jwt)", "signing_alg", signingAlg)
+	}
 	if re := cfg.OIDC.ResponseEncryption; re.Enabled {
 		backend := strings.ToLower(strings.TrimSpace(re.Backend))
 		if backend == "" {
@@ -2776,11 +2818,21 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			}
 			logger.Info("signing key rotated", "from", oldKID, "to", newKID)
 		}
-		rotCtx, cancel := context.WithCancel(context.Background())
-		keyRotationCancel = cancel
-		keyRotationStop = jwtIssuer.StartRotation(rotCtx, rc)
-		logger.Info("signing key rotation enabled",
-			"interval", rc.Interval, "grace_period", rc.GracePeriod)
+		// Scheduled rotation is currently EdDSA-only. ECDSA supports
+		// manual RotateKey/RetireKey but has no StartRotation loop yet,
+		// so degrade gracefully (warn + skip) rather than failing boot.
+		if rotator, ok := jwtIssuer.(interface {
+			StartRotation(context.Context, defaultimpl.RotationConfig) <-chan struct{}
+		}); ok {
+			rotCtx, cancel := context.WithCancel(context.Background())
+			keyRotationCancel = cancel
+			keyRotationStop = rotator.StartRotation(rotCtx, rc)
+			logger.Info("signing key rotation enabled",
+				"interval", rc.Interval, "grace_period", rc.GracePeriod)
+		} else {
+			logger.Info("keys.rotation enabled but the configured signing alg has no scheduled-rotation support; skipping the rotation loop (manual rotation still available)",
+				"alg", signingAlg)
+		}
 	}
 
 	var adminMW *sso.AdminMiddleware
