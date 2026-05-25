@@ -253,6 +253,12 @@ type app struct {
 	pushPruneCancel context.CancelFunc
 	pushPruneDone   <-chan struct{}
 
+	// cibaPruneCancel + cibaPruneDone — same pattern for the CIBA
+	// request store PruneExpired loop. SQLite backend only; memory
+	// store self-prunes via Get's expiry check.
+	cibaPruneCancel context.CancelFunc
+	cibaPruneDone   <-chan struct{}
+
 	// pushApprovalStore is the SQLite-backed handle (or nil for
 	// memory backend / no push factor). Held so buildHTTPHandler
 	// can wire the reference callback handler against it.
@@ -455,6 +461,17 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 			case <-a.pushPruneDone:
 			case <-ctx.Done():
 				logger.Error("push approval pruner did not exit cleanly")
+			}
+		}
+	}
+	// CIBA request pruner: same pattern.
+	if a.cibaPruneCancel != nil {
+		a.cibaPruneCancel()
+		if a.cibaPruneDone != nil {
+			select {
+			case <-a.cibaPruneDone:
+			case <-ctx.Done():
+				logger.Error("ciba request pruner did not exit cleanly")
 			}
 		}
 	}
@@ -2508,6 +2525,44 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithJARFetcher(f))
 	}
+	// CIBA poll mode. SQLite backend surfaces a handle for /readyz +
+	// the optional PruneExpired loop (same contract as push approvals).
+	var cibaPruneCancel context.CancelFunc
+	var cibaPruneDone <-chan struct{}
+	if cfg.CIBA.Enabled {
+		store, transport, sqliteStore, err := buildCIBA(cfg.CIBA, logger)
+		if err != nil {
+			return nil, fmt.Errorf("ciba: %w", err)
+		}
+		opts = append(opts, sso.WithCIBA(store, transport, cfg.CIBA.RequestTTL, cfg.CIBA.Interval))
+		if sqliteStore != nil {
+			opts = appendReadyCheck(opts, "sqlite-ciba", sqliteStore)
+			if pi := cfg.CIBA.PruneInterval; pi > 0 {
+				pruneCtx, cancel := context.WithCancel(context.Background())
+				done := make(chan struct{})
+				cibaPruneCancel = cancel
+				cibaPruneDone = done
+				go runCIBAPrune(pruneCtx, done, sqliteStore, pi, logger, metricsRegistry)
+				logger.Info("ciba: prune scheduler enabled", "interval", pi)
+			}
+		}
+		logger.Info("ciba: enabled (poll mode)",
+			"backend", strings.ToLower(strings.TrimSpace(cfg.CIBA.Backend)),
+			"transport", strings.ToLower(strings.TrimSpace(cfg.CIBA.Transport)))
+	}
+	if re := cfg.OIDC.ResponseEncryption; re.Enabled {
+		backend := strings.ToLower(strings.TrimSpace(re.Backend))
+		if backend == "" {
+			backend = "rsa"
+		}
+		switch backend {
+		case "rsa":
+			opts = append(opts, sso.WithJWEResponseEncrypter(defaultimpl.NewRSAJWEResponseEncrypter()))
+			logger.Info("oidc response encryption: enabled (RSA-OAEP-256 + A256GCM); per-client via id_token/userinfo_encrypted_response_alg")
+		default:
+			return nil, fmt.Errorf("oidc.response_encryption.backend %q unsupported (supported: rsa)", backend)
+		}
+	}
 	if cr := cfg.ClientRegistration; cr.Enabled {
 		opts = append(opts, sso.WithDynamicClientRegistration(oauth.DCRPolicy{
 			InitialAccessToken:    cr.InitialAccessToken,
@@ -2841,6 +2896,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		pushPruneCancel:         pushPruneCancel,
 		anomalyRT:               anomalyRT,
 		pushPruneDone:           pushPruneDone,
+		cibaPruneCancel:         cibaPruneCancel,
+		cibaPruneDone:           cibaPruneDone,
 		pushApprovalStore:       pushApprovalStoreIface(pushApprovalStore),
 		metrics:                 metricsRegistry,
 		netStop:                 netStop,
@@ -2893,6 +2950,85 @@ func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqli
 				logger.Info("push approvals pruned", "deleted", deleted)
 				if m != nil {
 					m.RetentionPrunedTotal.WithLabelValues("push_approvals").Add(float64(deleted))
+				}
+			}
+		}
+	}
+}
+
+// buildCIBA wires the CIBA poll-mode subsystem: the request store
+// (memory | sqlite via the migrate framework) + the out-of-band
+// challenge transport. The transport reuses the push primitives
+// (log | webhook); since root sso cannot import defaultimpl, the
+// PushTransport is adapted to oauth.CIBATransport via CIBATransportFunc.
+// Returns the typed sqlite handle (or nil) for /readyz + prune wiring.
+func buildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth.CIBATransport, *sqlitestores.CIBAStore, error) {
+	var (
+		store       oauth.CIBAStore
+		sqliteStore *sqlitestores.CIBAStore
+	)
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "", "memory":
+		store = defaultimpl.NewMemoryCIBAStore()
+	case "sqlite":
+		if cfg.SQLiteDSN == "" {
+			return nil, nil, nil, errors.New("ciba.sqlite_dsn required when backend=sqlite")
+		}
+		s, err := sqlitestores.NewCIBAStore(cfg.SQLiteDSN)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("ciba.sqlite: %w", err)
+		}
+		store = s
+		sqliteStore = s
+	default:
+		return nil, nil, nil, fmt.Errorf("unknown ciba.backend %q (supported: memory, sqlite)", cfg.Backend)
+	}
+
+	var pt defaultimpl.PushTransport
+	switch strings.ToLower(strings.TrimSpace(cfg.Transport)) {
+	case "", "log":
+		pt = defaultimpl.PushTransportFunc(func(_ context.Context, id, subject string, _ map[string]string) error {
+			logger.Info("ciba challenge delivered (log-only transport — set transport=webhook for real push)",
+				"auth_req_id", id, "subject", subject)
+			return nil
+		})
+	case "webhook":
+		t, err := buildPushWebhookTransport(cfg.Webhook)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		pt = t
+	default:
+		return nil, nil, nil, fmt.Errorf("unknown ciba.transport %q (supported: log, webhook)", cfg.Transport)
+	}
+	return store, oauth.CIBATransportFunc(pt.Send), sqliteStore, nil
+}
+
+// runCIBAPrune wakes every interval and calls CIBAStore.PruneExpired
+// to bound the request table. Same shutdown contract as the audit /
+// snapshot / push retention loops: close done on exit, errors logged
+// but never tear down the loop, first prune fires after the interval.
+func runCIBAPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.CIBAStore, interval time.Duration, logger spi.Logger, m *metrics.Metrics) {
+	defer close(done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			deleted, err := store.PruneExpired(ctx)
+			if err != nil {
+				logger.Error("ciba requests prune failed", "error", err)
+				if m != nil {
+					m.RetentionPruneErrorTotal.WithLabelValues("ciba").Inc()
+				}
+				continue
+			}
+			if deleted > 0 {
+				logger.Info("ciba requests pruned", "deleted", deleted)
+				if m != nil {
+					m.RetentionPrunedTotal.WithLabelValues("ciba").Add(float64(deleted))
 				}
 			}
 		}

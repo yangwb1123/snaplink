@@ -135,6 +135,14 @@ type webauthnDeps struct {
 	RefreshTokenTTL   time.Duration
 	IDTokenIssuer     oidc.IDTokenIssuer
 	Metrics           *metrics.Metrics // nil-safe; emit only when present
+
+	// EncryptIDToken routes a freshly-signed id_token through the
+	// server's JWE response-encryption path (fail-closed: returns
+	// ("", false) when the client opted into encryption but it
+	// failed, so the caller omits the id_token rather than leaking
+	// cleartext). Nil-safe: nil means no encryption layer wired, so
+	// the signed token passes through. Set in mountWebAuthnRoutes.
+	EncryptIDToken func(ctx context.Context, client *sso.Client, signed string) (string, bool)
 }
 
 // mountWebAuthnRoutes registers the four ceremony endpoints on the
@@ -150,6 +158,10 @@ func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
 	if deps == nil || deps.Helper == nil {
 		return nil
 	}
+	// Route WebAuthn-minted id_tokens through the server's response
+	// encryption (fail-closed for encryption-opted-in clients), so the
+	// /webauthn/login/finish path matches /auth/login's contract.
+	deps.EncryptIDToken = srv.EncryptIDTokenForClient
 	routes := []struct {
 		path    string
 		handler http.HandlerFunc
@@ -460,7 +472,17 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, err)
 		}
-		result.IDToken = idToken
+		// Fail-closed encryption: a client that registered
+		// id_token_encrypted_response_alg gets a JWE; if encryption
+		// is requested but fails, omit the id_token (no cleartext
+		// leak) rather than returning the signed form.
+		if deps.EncryptIDToken != nil {
+			if enc, ok := deps.EncryptIDToken(ctx, client, idToken); ok {
+				result.IDToken = enc
+			}
+		} else {
+			result.IDToken = idToken
+		}
 	}
 	// refresh_token: gated on a wired oauth.RefreshTokenStore — matches
 	// /auth/login + /token authorization_code which both issue

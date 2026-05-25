@@ -51,6 +51,42 @@ type Config struct {
 	Anomaly            AnomalyConfig            `yaml:"anomaly"`
 	Cluster            ClusterConfig            `yaml:"cluster"`
 	Keys               KeysConfig               `yaml:"keys"`
+	CIBA               CIBAConfig               `yaml:"ciba"`
+	OIDC               OIDCConfig               `yaml:"oidc"`
+}
+
+// CIBAConfig opts into OIDC CIBA (Client-Initiated Backchannel
+// Authentication) poll mode. The out-of-band challenge is delivered
+// via the same transport primitives as push MFA (log | webhook):
+// server issues an auth_req_id, a device confirms out-of-band, the
+// client polls /token with grant_type=urn:openid:params:grant-type:ciba.
+type CIBAConfig struct {
+	Enabled       bool                 `yaml:"enabled"`
+	Backend       string               `yaml:"backend"`        // memory | sqlite
+	SQLiteDSN     string               `yaml:"sqlite_dsn"`     // required when backend=sqlite
+	RequestTTL    time.Duration        `yaml:"request_ttl"`    // 0 → SDK default
+	Interval      time.Duration        `yaml:"interval"`       // poll interval advertised to clients; 0 → SDK default
+	Transport     string               `yaml:"transport"`      // log | webhook
+	Webhook       MFAPushWebhookConfig `yaml:"webhook"`        // used when transport=webhook
+	PruneInterval time.Duration        `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
+}
+
+// OIDCConfig holds OIDC-specific server toggles that don't belong to
+// the OAuth store layer.
+type OIDCConfig struct {
+	// ResponseEncryption opts into JWE-encrypting id_token and
+	// /userinfo responses for clients that register
+	// id_token_encrypted_response_alg / userinfo_encrypted_response_alg.
+	// The encrypter is stateless and reads each recipient's public
+	// key from the client's registered JWKS (use:"enc"); no server-
+	// side key material is required.
+	ResponseEncryption ResponseEncryptionConfig `yaml:"response_encryption"`
+}
+
+// ResponseEncryptionConfig selects the JWE response-encryption backend.
+type ResponseEncryptionConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Backend string `yaml:"backend"` // "" | "rsa" (RSA-OAEP-256 + A256GCM)
 }
 
 // KeysConfig governs signing-key lifecycle.
