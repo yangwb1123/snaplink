@@ -2930,9 +2930,11 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			}
 			logger.Info("signing key rotated", "from", oldKID, "to", newKID)
 		}
-		// Scheduled rotation is currently EdDSA-only. ECDSA supports
-		// manual RotateKey/RetireKey but has no StartRotation loop yet,
-		// so degrade gracefully (warn + skip) rather than failing boot.
+		// All four built-in signing algs (EdDSA/ES256/RS256/PS256) ship a
+		// StartRotation scheduler. The type assertion still guards the
+		// loop so a custom WithTokenIssuer that implements only manual
+		// RotateKey/RetireKey degrades gracefully (warn + skip) rather
+		// than failing boot.
 		if rotator, ok := jwtIssuer.(interface {
 			StartRotation(context.Context, defaultimpl.RotationConfig) <-chan struct{}
 		}); ok {
@@ -2940,9 +2942,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			keyRotationCancel = cancel
 			keyRotationStop = rotator.StartRotation(rotCtx, rc)
 			logger.Info("signing key rotation enabled",
-				"interval", rc.Interval, "grace_period", rc.GracePeriod)
+				"alg", signingAlg, "interval", rc.Interval, "grace_period", rc.GracePeriod)
 		} else {
-			logger.Info("keys.rotation enabled but the configured signing alg has no scheduled-rotation support; skipping the rotation loop (manual rotation still available)",
+			logger.Info("keys.rotation enabled but the configured signing issuer has no scheduled-rotation support; skipping the rotation loop (manual rotation still available)",
 				"alg", signingAlg)
 		}
 	}
