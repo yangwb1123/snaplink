@@ -12,6 +12,41 @@
 
 ---
 
+## v2.5（2026-05-25）—— 第三个 10 轮：§5 最后一公里协议（JWE 响应加密 + CIBA）
+
+第三个 10 轮交付，按 §5 的 ROI 排序闭合两条主线（两条并行 worktree
+agent 开发，主线整合 + cmd 接线 + capstone 由主控完成）：
+
+- **OIDC JWE 响应加密（OIDC Core §10.2 / §5.3.2）**：镜像既有请求方向
+  JWE-JAR 基础设施做响应方向。`Client` 新增 4 个 OIDC-Core 命名字段
+  （`IDTokenEncryptedResponseAlg`/`_Enc`、`UserinfoEncryptedResponseAlg`/
+  `_Enc`）+ DCR 映射；新 `security.JWEEncrypter` SPI + 默认
+  `RSAJWEResponseEncrypter`（RSA-OAEP-256 + A256GCM）；`WithJWEResponseEncrypter`
+  接线。id_token 产出 `JWE(JWS(...))` 嵌套，`/userinfo` 输出
+  `application/jwt` JWE。**fail-closed / 无 oracle**：opted-in 客户端加密
+  失败 → id_token 省略 / userinfo 单一 `server_error`，绝不区分"缺 RP 公钥"
+  与"加密计算失败"。discovery 在 wire 后才广告 4 个
+  `*_encryption_{alg,enc}_values_supported`。cmd 经 `oidc.response_encryption`
+  接入；WebAuthn `/webauthn/login/finish` 的 id_token 也补走加密
+  （堵住 Track A 发现的明文泄漏缺口）。
+- **OIDC CIBA Core 1.0 poll 模式**：复用 push 流的"服务端 challenge →
+  带外确认 → 轮询"语义。新 `oauth.CIBAStore`（memory + sqlite，经 §4
+  migrate 框架，ns `ciba_requests`）+ `oauth.CIBATransport`（结构等同
+  `defaultimpl.PushTransport`，避免 root→defaultimpl 环）+
+  `/backchannel-authentication` Hexagonal handler + `/token` 的
+  `grant_type=urn:openid:params:grant-type:ciba`，poll 复用 device-flow
+  的 `authorization_pending`/`slow_down` + oracle-leak collapse。
+  `WithCIBA` 接线；discovery 广告 `backchannel_*`；3 个审计事件经
+  `setMeta`。cmd 经 `ciba.*` 接入（log/webhook transport + sqlite
+  PruneExpired 调度器，镜像 push approval retention loop）。
+
+**§5 仍剩**（非阻塞）：CIBA 的 ping/push delivery 模式（仅做了 poll）、
+id_token/userinfo 加密的多 alg（仅 RSA-OAEP-256）、FAPI 2.0 profile 总
+开关 + inspection mode（前置零件现已更齐——PAR + JAR + DPoP/mTLS +
+pairwise + signed_metadata + 响应 JWE 都在了，缺统一开关 + 严格 alg
+allowlist 配置化）。**§1 仍剩** KMS/HSM 具体 peer + 多算法签名 +
+per-tenant；**§3 Console + GDPR** 未动。
+
 ## v2.4（2026-05-25）—— §4 Schema Migration 框架已落地
 
 第二个 10 轮交付，闭合 roadmap §4（"今天不做明天更贵"的 P1）：
@@ -879,4 +914,5 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 | 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
 | 2026-05-25 | v2.2 | **复扫确认 5 方向全部成立、全部未落地**（v2.1 后 40 个 commit 均为内部重构）。记录结构性里程碑：Hexagonal handler 抽取（根目录 → 6 源文件，handler 迁入 oauth//oidc/，`oauth` 不可 import `oidc`）+ 测试按功能归位（89 集成测试入 `test/`，根目录 `.go` 101 → 8）+ AGENTS.md 压缩 977 → 709。新增两条边界情况：**跨副本缓存失效需要 `InvalidationBus` 事件总线**（`InvalidateTenantSuspensionCache` 仅进程内，多副本传播延迟 = 缓存 TTL）+ **DPoP nonce 进程内密钥多副本不安全**。 |
 | 2026-05-25 | v2.3 | **10 轮开发落地**：(1) `cluster/` InvalidationBus（SPI + memory + etcd + cmd wiring + tenant-suspension/discovery 两个消费者）——闭合 v2.2 的跨副本失效边界情况；(2) §1 签名密钥治理大部分落地 —— `Ed25519Signer` KMS/HSM 接缝 + 运行时 `RotateKey`/`RetireKey` 重叠期轮换 + `StartRotation` 自动调度 + cmd `keys.rotation` 配置 + `signing_key_rotated` 审计 + `sso_signing_key_rotations_total` 指标。剩 §1 的 KMS peer/多算法/per-tenant、§3 Console、§4 Migration、§5 CIBA。 |
+| 2026-05-25 | v2.5 | **第三个 10 轮：§5 最后一公里协议（前两件）落地**：(1) OIDC JWE 响应加密 —— id_token (Core §10.2) + userinfo (Core §5.3.2)，`Client` 4 个 enc 字段 + DCR 映射 + `security.JWEEncrypter`/`RSAJWEResponseEncrypter` + fail-closed 无 oracle + discovery 广告 + cmd `oidc.response_encryption` + WebAuthn 路径补加密；(2) OIDC CIBA Core 1.0 poll 模式 —— `oauth.CIBAStore`(memory+sqlite/migrate) + `CIBATransport` + `/backchannel-authentication` + `grant=urn:openid:params:grant-type:ciba` poll(`authorization_pending`/`slow_down`) + discovery + 审计 + cmd `ciba.*`(含 PruneExpired 调度)。两条主线并行 worktree agent 开发。剩 §5 的 CIBA ping/push、多 alg、FAPI 2.0 profile；§1 KMS/多算法/per-tenant；§3 Console/GDPR。 |
 | 2026-05-25 | v2.4 | **第二个 10 轮：§4 Schema Migration 框架落地**：`migrate/` 纯 Go runner（versioned / per-namespace / forward-only / `BEGIN IMMEDIATE` 串行 / SQL+Func 步）+ 全部 6 个 SQLite 落点纳管（含 refresh_tokens 的 Func 补列迁移）+ `migrate.Status` + `cmd/sso-migrate` 离线 CLI。附带修复 `loadAESGCMKey` 裸密钥换行裁剪 bug（曾间歇 flake CI）。剩 §1 KMS peer/多算法、§3 Console、§5 CIBA/JWE/FAPI。 |

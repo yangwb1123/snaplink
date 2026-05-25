@@ -744,6 +744,38 @@ keys:
     interval: 2160h           # 90d
     grace_period: 168h        # 7d (>= max access-token TTL)
 
+# OIDC CIBA (Client-Initiated Backchannel Authentication), poll mode.
+# Server issues an auth_req_id, delivers an out-of-band challenge via
+# the same transport primitives as push MFA (log | webhook), and the
+# client polls /token with
+# grant_type=urn:openid:params:grant-type:ciba until the user confirms
+# (authorization_pending / slow_down until then). Advertised in
+# discovery only when enabled.
+ciba:
+  enabled: false
+  backend: "memory"          # memory | sqlite (sqlite shares state across replicas)
+  sqlite_dsn: ""             # required when backend=sqlite
+  request_ttl: 0s            # auth_req_id lifetime; 0 -> SDK default
+  interval: 0s               # poll interval advertised to clients; 0 -> SDK default
+  transport: "log"           # log | webhook (webhook reuses the push webhook config shape)
+  webhook:
+    url: ""
+    bearer_token: ""
+    timeout: 0s
+  prune_interval: 0s         # sqlite-only background PruneExpired cadence; 0 disables
+
+# OIDC response encryption (JWE). When enabled, clients that register
+# id_token_encrypted_response_alg / userinfo_encrypted_response_alg
+# receive a JWE(JWS(...)) nested response; the recipient public key is
+# read from each client's registered JWKS (use:"enc"), so no server-
+# side key material is needed. Encryption failure for an opted-in
+# client fails closed (id_token omitted / userinfo server_error) with
+# no missing-key-vs-crypto-failure oracle.
+oidc:
+  response_encryption:
+    enabled: false
+    backend: "rsa"           # rsa (RSA-OAEP-256 + A256GCM)
+
 # Multi-tenant + multi-domain routing. Tenant sits above Client: one
 # tenant typically owns many clients (admin / customer / mobile)
 # sharing one audit pipeline. Domains map hostnames to tenants so a

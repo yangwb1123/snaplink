@@ -223,6 +223,9 @@ where Hexagonal handlers moved). §2 gotchas apply across grants.
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
 | RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `security/jar*.go` |
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; default `RSAJWEDecrypter` (RSA-OAEP-256 + A256GCM); enc key auto-published in JWKS `use:enc` | `security/jwe.go` |
+| OIDC Core §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg`/`_Enc`; default `RSAJWEResponseEncrypter`; RP enc key from `Client.JWKS` `use:enc` | `oidc/userinfo_signing.go` + `server_extensions.go`(`maybeEncryptIDToken`) |
+| OIDC Core §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg`/`_Enc` | `oidc/userinfo_signing.go` |
+| OIDC CIBA Core 1.0 (poll) | `/backchannel-authentication`, `/token` (`grant=urn:openid:params:grant-type:ciba`) | `WithCIBA` (store + transport); challenge via push-style `CIBATransport` | `oauth/ciba.go` + `oauth/handle_ciba.go` |
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by Risk `RequireMFA`) | `mfa.go` + `handle_mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
 
@@ -287,6 +290,7 @@ report a DB's per-namespace versions offline.
 | Rate limiter | `security.rate_limit.backend` |
 | WebAuthn (users + sessions) | `webauthn.storage.{users,sessions}.backend` |
 | MFA challenges / Push approvals | `mfa.{challenge,provider.push}.backend` |
+| CIBA requests | `ciba.backend` |
 | Audit sink / Permissions | `audit.backend` / `permissions.backend` |
 | Tenants + Domains | `tenant.backend` |
 | Recent logins / IP failure counter | `anomaly.{recent_login,ip_failure}.backend` |
