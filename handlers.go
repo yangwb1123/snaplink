@@ -2106,6 +2106,18 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
 	}
 
+	// FAPI 2.0 enforce mode: the profile makes these constraints
+	// server-wide and unconditional, so the discovery doc MUST advertise
+	// them as required (RP metadata validation then reflects reality).
+	// Inspection mode deliberately leaves discovery unchanged — it only
+	// audits, so advertising hard requirements there would mislead RPs.
+	if s.fapiValidator.Enforcing() {
+		cfg.RequirePushedAuthReq = true
+		cfg.RequireSignedRequestObjectGlobal = true
+		cfg.ResponseTypesSupported = []string{"code"}
+		cfg.CodeChallengeMethodsSupported = []string{PKCEMethodS256}
+	}
+
 	// RFC 8414 §2.1 signed_metadata MUST be produced AFTER every
 	// other field is finalized so the signed claims match what RPs
 	// see in the plaintext fields. The signing itself excludes the
