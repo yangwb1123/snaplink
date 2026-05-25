@@ -425,6 +425,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			mode := s.fapiValidator.Mode().String()
 			for _, v := range vs {
 				audit.RecordFAPIViolation(s.auditor, ctx, v.ClientID, v.RuleID, v.Detail, mode)
+				if s.metrics != nil {
+					s.metrics.FAPIViolationsTotal.WithLabelValues(v.RuleID, mode).Inc()
+				}
 			}
 			if s.fapiValidator.Enforcing() {
 				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
@@ -1300,6 +1303,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			mode := s.fapiValidator.Mode().String()
 			for _, v := range vs {
 				audit.RecordFAPIViolation(s.auditor, ctx, v.ClientID, v.RuleID, v.Detail, mode)
+				if s.metrics != nil {
+					s.metrics.FAPIViolationsTotal.WithLabelValues(v.RuleID, mode).Inc()
+				}
 			}
 			if s.fapiValidator.Enforcing() {
 				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))

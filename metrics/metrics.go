@@ -97,6 +97,13 @@ type Metrics struct {
 	// operators alert if it stops advancing (rotation loop wedged) or
 	// jumps unexpectedly. Zero when rotation is disabled.
 	SigningKeyRotationsTotal prometheus.Counter
+
+	// FAPIViolationsTotal counts FAPI 2.0 baseline rule violations.
+	// Labels: rule (the 5 fapi:* ids — bounded), mode (inspection |
+	// enforce). The inspection-mode ramp-up dashboard: graph
+	// rate(...) by rule to see which RPs / requests fail which rule
+	// before flipping to enforce. Zero when the FAPI profile is off.
+	FAPIViolationsTotal *prometheus.CounterVec
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -266,6 +273,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Name: NameSigningKeyRotationsTotal,
 				Help: "Automatic signing-key rotations performed. Alert if it stops advancing while rotation is enabled (loop wedged) — RPs would keep verifying against an aging key.",
 			},
+		),
+
+		FAPIViolationsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameFAPIViolationsTotal,
+				Help: "FAPI 2.0 baseline rule violations. Labels: rule (fapi:par_required/signed_request/pkce_s256/no_implicit/sender_constrained), mode (inspection/enforce). In inspection mode, graph rate() by rule to find non-compliant RPs before flipping to enforce.",
+			},
+			[]string{LabelFAPIRule, LabelFAPIMode},
 		),
 	}
 }
