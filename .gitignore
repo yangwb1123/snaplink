@@ -25,3 +25,6 @@ coverage.out
 
 # Claude Code session state
 .claude/
+
+# stray binary from `go build -o playground ./examples/playground`
+/playground
