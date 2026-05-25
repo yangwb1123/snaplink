@@ -1283,6 +1283,31 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 	}
 
+	// FAPI 2.0 Security Profile — issued access tokens MUST be
+	// sender-constrained via DPoP or mTLS. Checked once here, before
+	// the grant switch, so it applies uniformly to every grant that
+	// mints an access token. Inspection mode audits and proceeds;
+	// enforce mode rejects with invalid_request (a bearer-only token
+	// request is the violation, not a credential failure — no oracle
+	// concern). The rule id lands in the audit event; the wire stays
+	// the standard error code.
+	if s.fapiValidator.Active() {
+		if vs := s.fapiValidator.CheckToken(fapi.TokenContext{
+			ClientID:          req.ClientID,
+			GrantType:         req.GrantType,
+			SenderConstrained: dpopJKT != "" || mtlsX5T != "",
+		}); len(vs) > 0 {
+			mode := s.fapiValidator.Mode().String()
+			for _, v := range vs {
+				audit.RecordFAPIViolation(s.auditor, ctx, v.ClientID, v.RuleID, v.Detail, mode)
+			}
+			if s.fapiValidator.Enforcing() {
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+				return
+			}
+		}
+	}
+
 	var scopes []string
 	if req.Scope != "" {
 		scopes = strings.Split(req.Scope, " ")
