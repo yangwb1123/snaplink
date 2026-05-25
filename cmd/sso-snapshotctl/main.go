@@ -32,6 +32,8 @@ import (
 	storagefile "github.com/snaplink/sso/snapshot/storage/file"
 )
 
+const progName = "sso-snapshotctl"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -51,25 +53,29 @@ func main() {
 		usage()
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "sso-snapshotctl: unknown subcommand %q\n", cmd)
+		fmt.Fprintf(os.Stderr, progName+": unknown subcommand %q\n", cmd)
 		usage()
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sso-snapshotctl: %v\n", err)
+		fmt.Fprintf(os.Stderr, progName+": %v\n", err)
 		os.Exit(1)
 	}
 }
 
+// usage prints the standard "<prog> — <desc> / Usage / Subcommands" banner.
 func usage() {
-	fmt.Fprintln(os.Stderr, `sso-snapshotctl <subcommand> [flags]
+	fmt.Fprintln(os.Stderr, progName+` — offline snapshot inspection + verification.
+
+Usage:
+  `+progName+` <subcommand> [flags]
 
 Subcommands:
   list     List snapshot ids in a storage directory.
   inspect  Print the envelope header for one snapshot (no decryption).
   verify   Load + decrypt + checksum-verify one snapshot.
 
-Run "sso-snapshotctl <subcommand> -h" for subcommand flags.`)
+Run "`+progName+` <subcommand> -h" for subcommand flags.`)
 }
 
 func runList(args []string) error {

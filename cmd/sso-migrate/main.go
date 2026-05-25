@@ -32,6 +32,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const progName = "sso-migrate"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -45,26 +47,29 @@ func main() {
 		usage()
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, progName+": unknown subcommand %q\n", os.Args[1])
 		usage()
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, progName+":", err)
 		os.Exit(1)
 	}
 }
 
+// usage prints the standard "<prog> — <desc> / Usage / Subcommands" banner.
 func usage() {
-	fmt.Fprint(os.Stderr, `sso-migrate — offline SQLite schema-migration inspection
+	fmt.Fprintln(os.Stderr, progName+` — offline SQLite schema-migration inspection.
 
 Usage:
-  sso-migrate status --dsn <sqlite-dsn> [--json]
+  `+progName+` status --dsn <sqlite-dsn> [--json]
+
+Subcommands:
+  status   Report the latest applied migration version per namespace.
 
 Examples:
-  sso-migrate status --dsn 'file:/var/lib/sso/sso.db?mode=ro'
-  sso-migrate status --dsn ./sso.db --json
-`)
+  `+progName+` status --dsn 'file:/var/lib/sso/sso.db?mode=ro'
+  `+progName+` status --dsn ./sso.db --json`)
 }
 
 func runStatus(args []string) error {

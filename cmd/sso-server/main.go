@@ -107,6 +107,7 @@ const (
 )
 
 func main() {
+	flag.Usage = usage
 	// Bound to Config fields via FlagSource below. The values themselves
 	// aren't read directly — Loader resolves them when building *Config,
 	// so a flag without --foo on argv leaves the file / env value alone.
@@ -3681,8 +3682,28 @@ func (l *slogLogger) Info(msg string, kv ...any)  { l.inner.Info(msg, kv...) }
 func (l *slogLogger) Error(msg string, kv ...any) { l.inner.Error(msg, kv...) }
 func (l *slogLogger) Debug(msg string, kv ...any) { l.inner.Debug(msg, kv...) }
 
+// progName prefixes every diagnostic so multi-binary deployments can
+// tell which tool emitted a line.
+const progName = "sso-server"
+
+// usage prints the standard "<prog> — <desc> / Usage / Flags" banner
+// shared in style across the sso-* CLIs. Wired as flag.Usage so -h and
+// parse errors render it.
+func usage() {
+	fmt.Fprint(os.Stderr, progName+` — OAuth 2.0 / OIDC SSO server.
+
+Usage:
+  `+progName+` [flags]
+
+Flags:
+`)
+	flag.PrintDefaults()
+}
+
+// fail prints "<prog>: <msg>" to stderr and exits 1 (runtime error).
+// CLI-misuse errors should exit 2 via flag.Usage instead.
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
 	os.Exit(1)
 }
 

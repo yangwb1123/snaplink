@@ -32,7 +32,24 @@ import (
 	"github.com/snaplink/sso/audit"
 )
 
+const progName = "sso-audit-verify"
+
+// usage prints the standard "<prog> — <desc> / Usage / Flags" banner.
+// Wired as flag.Usage so -h and parse errors render it.
+func usage() {
+	fmt.Fprint(os.Stderr, progName+` — verify the tamper-evident audit hash chain offline.
+
+Usage:
+  `+progName+` --from-file events.json
+  `+progName+` --from-url https://sso.example.com --bearer $ADMIN_TOKEN
+
+Flags:
+`)
+	flag.PrintDefaults()
+}
+
 func main() {
+	flag.Usage = usage
 	fromFile := flag.String("from-file", "", "path to JSON array of audit events (mutually exclusive with --from-url)")
 	fromURL := flag.String("from-url", "", "base URL of the SSO server (mutually exclusive with --from-file)")
 	bearer := flag.String("bearer", "", "admin bearer token for the /api/v1/audit/events API (required with --from-url)")
@@ -42,10 +59,10 @@ func main() {
 	flag.Parse()
 
 	if *fromFile == "" && *fromURL == "" {
-		fail("one of --from-file or --from-url is required")
+		usageErr("one of --from-file or --from-url is required")
 	}
 	if *fromFile != "" && *fromURL != "" {
-		fail("--from-file and --from-url are mutually exclusive")
+		usageErr("--from-file and --from-url are mutually exclusive")
 	}
 
 	var events []*audit.Event
@@ -54,12 +71,12 @@ func main() {
 		events, err = readFromFile(*fromFile, *limit)
 	} else {
 		if *bearer == "" {
-			fail("--bearer is required with --from-url")
+			usageErr("--bearer is required with --from-url")
 		}
 		events, err = readFromURL(*fromURL, *bearer, *limit, *pageSize, time.Duration(*timeoutSec)*time.Second)
 	}
 	if err != nil {
-		fail("load events: " + err.Error())
+		errorf("load events: %v", err)
 	}
 	if len(events) == 0 {
 		fmt.Println("no events to verify")
@@ -184,8 +201,15 @@ func reverseEvents(s []*audit.Event) {
 	}
 }
 
-func fail(msg string) {
-	fmt.Fprintf(os.Stderr, "sso-audit-verify: %s\n", msg)
-	flag.Usage()
+// usageErr prints "<prog>: <msg>", the usage banner, and exits 2 (CLI misuse).
+func usageErr(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
+	usage()
 	os.Exit(2)
+}
+
+// errorf prints "<prog>: <msg>" and exits 1 (runtime error).
+func errorf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
+	os.Exit(1)
 }
