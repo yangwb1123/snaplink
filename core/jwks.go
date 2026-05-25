@@ -18,8 +18,10 @@ type JWK struct {
 	Kid string `json:"kid,omitempty"`
 
 	// OKP (Ed25519): Crv + X
+	// EC (P-256/ES256): Crv + X + Y
 	Crv string `json:"crv,omitempty"`
 	X   string `json:"x,omitempty"`
+	Y   string `json:"y,omitempty"`
 
 	// RSA: N + E
 	N string `json:"n,omitempty"`
