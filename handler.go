@@ -788,8 +788,8 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		})
 		if err != nil {
 			s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
-		} else {
-			resp[KeyIDToken] = idToken
+		} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+			resp[KeyIDToken] = enc
 			s.recordIDTokenIssued(ctx, client.ID, result.UserID)
 		}
 	}
@@ -1372,8 +1372,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			})
 			if err != nil {
 				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
-			} else {
-				resp[KeyIDToken] = idToken
+			} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+				resp[KeyIDToken] = enc
 				s.recordIDTokenIssued(ctx, client.ID, info.UserID)
 			}
 		}

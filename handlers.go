@@ -1094,8 +1094,8 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		})
 		if err != nil {
 			s.logger.Error("id token issue failed", "error", err)
-		} else {
-			resp[KeyIDToken] = idToken
+		} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+			resp[KeyIDToken] = enc
 			s.recordIDTokenIssued(ctx, client.ID, dc.UserID)
 		}
 	}
