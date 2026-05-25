@@ -2176,8 +2176,19 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			defaultimpl.WithECDSATokenTTL(cfg.Server.TokenTTL),
 			defaultimpl.WithECDSAMaxClockSkew(cfg.Server.MaxClockSkew),
 		)
+	case "rs256", "ps256", "rsa":
+		signingAlg = "RS256"
+		if alg == "ps256" {
+			signingAlg = "PS256"
+		}
+		jwtIssuer = defaultimpl.NewRSAJWTIssuer(
+			defaultimpl.WithRSAIssuer(cfg.Server.Issuer),
+			defaultimpl.WithRSAAlg(signingAlg),
+			defaultimpl.WithRSATokenTTL(cfg.Server.TokenTTL),
+			defaultimpl.WithRSAMaxClockSkew(cfg.Server.MaxClockSkew),
+		)
 	default:
-		return nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256)", alg)
+		return nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
 	}
 	sessionIssuer := defaultimpl.NewSessionTokenIssuer(
 		defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
