@@ -619,7 +619,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	// early so a bad value fails BEFORE any side-effects (auth code
 	// issue, session create). Empty is always valid and falls
 	// through to the response_type's default mode.
-	if req.ResponseMode != "" && !isValidResponseMode(req.ResponseMode) {
+	if req.ResponseMode != "" && !s.isValidResponseMode(req.ResponseMode) {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
 		return
 	}
@@ -699,6 +699,19 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		// post-fetch redirect.
 		if req.ResponseMode == ResponseModeFormPost {
 			s.renderFormPostResponse(ctx, req.RedirectURI, code, req.State)
+			return
+		}
+
+		// JARM — sign the authorization response into a JWT carried as
+		// the single `response` parameter (query / fragment / form_post
+		// per the sub-mode; the bare `jwt` alias resolves to query). A
+		// JARM mode only reaches here when a signer is wired (gated in
+		// isValidResponseMode); a signing failure fails closed with
+		// invalid_request rather than leaking the bare code.
+		if oidc.IsJARMResponseMode(req.ResponseMode) {
+			if !oidc.RenderJARMResponse(ctx, s.jarmSigner, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+			}
 			return
 		}
 
@@ -1182,9 +1195,11 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		return
 	}
 	// HTTP Basic auth takes precedence over body fields per RFC 6749 §2.3.1.
+	var basicAuthUsed bool
 	if id, secret, ok := basicClientCreds(ctx.Request()); ok {
 		req.ClientID = id
 		req.ClientSecret = secret
+		basicAuthUsed = true
 	}
 
 	// RFC 7521 §4.2 + RFC 7523 §2.2 — JWT bearer client authentication.
@@ -1295,10 +1310,27 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	// concern). The rule id lands in the audit event; the wire stays
 	// the standard error code.
 	if s.fapiValidator.Active() {
+		// Classify the client-authentication method used on this token
+		// request so the FAPI client-auth rule can reject shared-secret
+		// auth. private_key_jwt (assertion) and mTLS (client cert) are
+		// the only FAPI-permitted methods; Basic / body secret map to
+		// the prohibited shared-secret methods.
+		clientAuthMethod := fapi.ClientAuthNone
+		switch {
+		case req.ClientAssertion != "":
+			clientAuthMethod = fapi.ClientAuthPrivateKeyJWT
+		case mtlsX5T != "":
+			clientAuthMethod = fapi.ClientAuthTLS
+		case basicAuthUsed:
+			clientAuthMethod = fapi.ClientAuthSecretBasic
+		case req.ClientSecret != "":
+			clientAuthMethod = fapi.ClientAuthSecretPost
+		}
 		if vs := s.fapiValidator.CheckToken(fapi.TokenContext{
 			ClientID:          req.ClientID,
 			GrantType:         req.GrantType,
 			SenderConstrained: dpopJKT != "" || mtlsX5T != "",
+			ClientAuthMethod:  clientAuthMethod,
 		}); len(vs) > 0 {
 			mode := s.fapiValidator.Mode().String()
 			for _, v := range vs {

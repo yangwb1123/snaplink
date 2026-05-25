@@ -153,6 +153,36 @@ func TestFAPI_Off_NoViolations(t *testing.T) {
 	}
 }
 
+// TestFAPI_Enforce_ClientAuthRejectsSharedSecret proves a token
+// request authenticated with HTTP Basic (client_secret_basic) violates
+// the FAPI client-auth rule under enforce mode: rejected with
+// invalid_request and a fapi:client_auth audit event. FAPI 2.0
+// prohibits shared-secret client authentication.
+func TestFAPI_Enforce_ClientAuthRejectsSharedSecret(t *testing.T) {
+	srv, sink := fapiFixture(t, sso.FAPIModeEnforce)
+	form := "grant_type=client_credentials&scope=openid"
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/token", bytes.NewReader([]byte(form)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(fapiClientID, "")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("enforce mode must reject shared-secret client auth, got %d: %s", resp.StatusCode, rb)
+	}
+	var out map[string]string
+	_ = json.Unmarshal(rb, &out)
+	if out["error"] != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", out["error"])
+	}
+	if rules := fapiViolationRules(t, sink); !rules["fapi:client_auth"] {
+		t.Errorf("expected fapi:client_auth violation, got %v", rules)
+	}
+}
+
 // TestFAPI_Enforce_DiscoveryReflectsConstraints checks the enforce-mode
 // discovery doc advertises the hard requirements; inspection leaves it
 // unchanged.

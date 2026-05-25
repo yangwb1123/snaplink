@@ -3621,7 +3621,12 @@ components:
           type: string
         response_mode:
           type: string
-          enum: [query, fragment, form_post]
+          description: >-
+            OIDC Core response mode. The jwt / query.jwt / fragment.jwt /
+            form_post.jwt values select JWT Secured Authorization Response
+            Mode (JARM) and are only accepted when a JARM signer is wired
+            (otherwise invalid_request).
+          enum: [query, fragment, form_post, jwt, query.jwt, fragment.jwt, form_post.jwt]
         acr_values:
           type: string
         ui_locales:

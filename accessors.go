@@ -7,6 +7,7 @@ package sso
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/snaplink/sso/anomaly"
@@ -104,6 +105,9 @@ func (s *Server) IDTokenIssuer() oidc.IDTokenIssuer { return s.idTokenIssuer }
 // MetadataSigner returns the wired MetadataSigner (nil when not configured).
 func (s *Server) MetadataSigner() oidc.MetadataSigner { return s.metadataSigner }
 
+// JARMSigner returns the wired JARM signer (nil when JARM is not configured).
+func (s *Server) JARMSigner() oidc.JARMSigner { return s.jarmSigner }
+
 // MFAProvider returns the wired MFAProvider (nil when not configured).
 func (s *Server) MFAProvider() spi.MFAProvider { return s.mfaProvider }
 
@@ -154,6 +158,48 @@ func (s *Server) TokenIssuers() map[string]core.TokenIssuer { return s.tokenIssu
 
 // LogoutTokenIssuer returns the wired LogoutTokenIssuer (nil when not configured).
 func (s *Server) LogoutTokenIssuer() LogoutTokenIssuer { return s.logoutTokenIssuer }
+
+// SigningAlgValues returns the distinct JWS `alg` values the wired
+// signers actually publish, for the discovery doc's *_signing_alg_
+// values_supported lists. When WithSupportedSigningAlgs was set it wins
+// (the operator's explicit allowlist is authoritative). Otherwise the
+// set is derived from every registered JWKSProvider issuer's JWKS `alg`
+// fields (so wiring an ECDSAJWTIssuer advertises ES256, an
+// Ed25519JWTIssuer advertises EdDSA, and a mixed deployment advertises
+// both). Falls back to ["EdDSA"] when nothing is derivable, preserving
+// the historical default. Order is deterministic (sorted).
+func (s *Server) SigningAlgValues(ctx context.Context) []string {
+	if len(s.supportedSigningAlgs) > 0 {
+		out := append([]string(nil), s.supportedSigningAlgs...)
+		sort.Strings(out)
+		return out
+	}
+	seen := map[string]struct{}{}
+	for _, ti := range s.tokenIssuers {
+		jp, ok := ti.(core.JWKSProvider)
+		if !ok {
+			continue
+		}
+		jwks, err := jp.JWKS(ctx)
+		if err != nil {
+			continue
+		}
+		for _, k := range jwks {
+			if k.Alg != "" {
+				seen[k.Alg] = struct{}{}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return []string{"EdDSA"}
+	}
+	out := make([]string, 0, len(seen))
+	for a := range seen {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // LogoutNotifier returns the wired LogoutNotifier (nil when not configured).
 func (s *Server) LogoutNotifier() LogoutNotifier { return s.logoutNotifier }

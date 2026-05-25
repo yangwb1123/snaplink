@@ -1664,6 +1664,12 @@ type oidcConfiguration struct {
 	// (this server is JSON-bodied for /auth/login by default).
 	ResponseModesSupported []string `json:"response_modes_supported,omitempty"`
 
+	// JARM (JWT Secured Authorization Response Mode) — JWS algs the AS
+	// uses to sign the authorization response JWT. Omitted unless a
+	// JARM signer is wired (WithJARM); its presence signals JARM
+	// support alongside the jwt response_modes.
+	AuthorizationSigningAlgValuesSupported []string `json:"authorization_signing_alg_values_supported,omitempty"`
+
 	// OIDC Core §5.5 — true when the AS accepts the `claims`
 	// request parameter. Always true here (the parameter is
 	// validated for JSON-object shape and threaded into
@@ -1990,17 +1996,20 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	if s.issuer != "" && s.issuer != DefaultIssuer {
 		cfg.Issuer = s.issuer
 	}
+	// Signing algs are derived from the wired signers (EdDSA for an
+	// Ed25519JWTIssuer, ES256 for an ECDSAJWTIssuer, both in a mixed
+	// deployment) or pinned by WithSupportedSigningAlgs. See
+	// (*Server).SigningAlgValues.
+	signingAlgs := s.SigningAlgValues(ctx.Request().Context())
 	if s.idTokenIssuer != nil {
-		// We always sign with EdDSA today; when more signers land this
-		// list should reflect every registered signature algorithm.
-		cfg.IDTokenSigningAlgValuesSupported = []string{"EdDSA"}
+		cfg.IDTokenSigningAlgValuesSupported = signingAlgs
 		// Userinfo signing capability is gated on the issuer
 		// implementing the oidc.UserinfoSigner extension. The default
 		// Ed25519JWTIssuer does — third-party implementations may
 		// not, and the omitempty serialization correctly hides the
 		// claim in that case.
 		if _, ok := s.idTokenIssuer.(oidc.UserinfoSigner); ok {
-			cfg.UserinfoSigningAlgValuesSupported = []string{"EdDSA"}
+			cfg.UserinfoSigningAlgValuesSupported = signingAlgs
 		}
 	}
 	if s.cibaStore != nil {
@@ -2104,6 +2113,17 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	// the wire.
 	cfg.ResponseModesSupported = []string{
 		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
+	}
+
+	// JARM — advertise the jwt response modes + the signing alg only
+	// when a JARM signer is wired (WithJARM). EdDSA is the alg the
+	// default Ed25519 signer uses.
+	if s.jarmSigner != nil {
+		cfg.ResponseModesSupported = append(cfg.ResponseModesSupported,
+			oidc.ResponseModeJWT, oidc.ResponseModeQueryJWT,
+			oidc.ResponseModeFragmentJWT, oidc.ResponseModeFormPostJWT,
+		)
+		cfg.AuthorizationSigningAlgValuesSupported = []string{"EdDSA"}
 	}
 
 	// FAPI 2.0 enforce mode: the profile makes these constraints
@@ -2512,8 +2532,18 @@ func (s *Server) renderFormPostResponse(ctx HandlerContext, redirectURI, code, s
 	oidc.RenderFormPostResponse(ctx, redirectURI, code, state, s.resolveIssuer(ctx))
 }
 
-// isValidResponseMode delegates to oidc.IsValidResponseMode.
-func isValidResponseMode(mode string) bool { return oidc.IsValidResponseMode(mode) }
+// isValidResponseMode reports whether mode is acceptable on this
+// server. The plain modes (query / fragment / form_post) are always
+// valid; the JARM modes (jwt / query.jwt / fragment.jwt /
+// form_post.jwt) are valid only when a JARM signer is wired — without
+// one they fail closed (invalid_request) rather than silently
+// degrading to an unsigned response.
+func (s *Server) isValidResponseMode(mode string) bool {
+	if oidc.IsValidResponseMode(mode) {
+		return true
+	}
+	return s.jarmSigner != nil && oidc.IsJARMResponseMode(mode)
+}
 
 // maybeSignUserInfo delegates to oidc.MaybeSignUserInfo — see that
 // function for the EdDSA-only + UserinfoSigner type-assert gate.

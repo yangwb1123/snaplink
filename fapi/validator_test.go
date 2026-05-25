@@ -97,6 +97,58 @@ func TestCheckToken_SenderConstraint(t *testing.T) {
 	}
 }
 
+func TestCheckToken_ClientAuth(t *testing.T) {
+	v := fapi.New(fapi.ModeEnforce)
+	cases := []struct {
+		method   string
+		violates bool
+	}{
+		{fapi.ClientAuthPrivateKeyJWT, false},
+		{fapi.ClientAuthTLS, false},
+		{fapi.ClientAuthSelfSignedTLS, false},
+		{"", false}, // unclassified — skipped
+		{fapi.ClientAuthSecretBasic, true},
+		{fapi.ClientAuthSecretPost, true},
+		{fapi.ClientAuthNone, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method, func(t *testing.T) {
+			// SenderConstrained=true isolates the client-auth rule.
+			got := v.CheckToken(fapi.TokenContext{ClientID: "c1", SenderConstrained: true, ClientAuthMethod: tc.method})
+			has := false
+			for _, viol := range got {
+				if viol.RuleID == fapi.RuleClientAuth {
+					has = true
+					if viol.ClientID != "c1" {
+						t.Errorf("ClientID = %q, want c1", viol.ClientID)
+					}
+					if viol.Detail == "" {
+						t.Error("Detail must be non-empty")
+					}
+				}
+			}
+			if has != tc.violates {
+				t.Errorf("method=%q: client-auth violation = %v, want %v (got %v)", tc.method, has, tc.violates, ruleIDs(got))
+			}
+		})
+	}
+}
+
+func TestCheckClientAuth_Standalone(t *testing.T) {
+	v := fapi.New(fapi.ModeEnforce)
+	if got := v.CheckClientAuth("c1", fapi.ClientAuthPrivateKeyJWT); len(got) != 0 {
+		t.Errorf("private_key_jwt compliant, got %v", ruleIDs(got))
+	}
+	got := v.CheckClientAuth("c1", fapi.ClientAuthSecretBasic)
+	if len(got) != 1 || got[0].RuleID != fapi.RuleClientAuth {
+		t.Errorf("secret_basic must violate %q, got %v", fapi.RuleClientAuth, ruleIDs(got))
+	}
+	var nilV *fapi.Validator
+	if got := nilV.CheckClientAuth("c1", fapi.ClientAuthSecretBasic); got != nil {
+		t.Errorf("nil validator CheckClientAuth = %v, want nil", got)
+	}
+}
+
 // TestNilAndOff_NoChecks proves the nil-safe / ModeOff contract the
 // integration points rely on to call unconditionally.
 func TestNilAndOff_NoChecks(t *testing.T) {

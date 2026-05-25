@@ -8,6 +8,7 @@ import "github.com/snaplink/sso/oauth"
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -102,6 +103,7 @@ type Server struct {
 	clientCertExtractor            ClientCertExtractor
 	dpopNonceProvider              DPoPNonceProvider
 	metadataSigner                 oidc.MetadataSigner
+	jarmSigner                     oidc.JARMSigner
 	jwksCacheTTL                   time.Duration
 	supportedACRValues             []string
 	opPolicyURI                    string
@@ -130,6 +132,22 @@ type Server struct {
 	// hash; empty falls back to security.DefaultPairwiseSalt.
 	pairwiseStore security.PairwiseSubjectStore
 	pairwiseSalt  string
+
+	// supportedSigningAlgs is the Server-level Validate-time alg
+	// allowlist (defense-in-depth on top of each issuer's own
+	// allowlist). When non-empty, validateAnyToken parses every
+	// inbound compact JWS header and rejects — BEFORE handing the
+	// token to any issuer — tokens whose `alg` isn't listed. This is
+	// the critical anti-alg-confusion property (AGENTS.md §2): the
+	// verification algorithm is fixed by the Server's wired signers,
+	// never chosen by the RP via the token header. Empty = no extra
+	// Server-level gate; each issuer still enforces its own allowlist.
+	//
+	// It does NOT relax per-issuer enforcement: even an allowlisted
+	// alg must still match the key type of the kid the issuer
+	// resolves, so an ES256-labelled token only verifies against an
+	// ES256 key and an EdDSA-labelled token only against an EdDSA key.
+	supportedSigningAlgs []string
 }
 
 // Option configures the Server.
@@ -166,6 +184,30 @@ func WithAuthenticator(a Authenticator) Option {
 // If no client-level strategy is set, the Server's default strategy is used.
 func WithTokenIssuer(name string, ti TokenIssuer) Option {
 	return func(s *Server) { s.tokenIssuers[name] = ti }
+}
+
+// WithSupportedSigningAlgs sets the Server-level Validate-time JWS `alg`
+// allowlist. validateAnyToken parses every inbound compact-JWS bearer's
+// header and rejects any token whose `alg` is not in this list BEFORE
+// dispatching to any issuer — the critical anti-alg-confusion gate
+// (AGENTS.md §2): the verification algorithm is dictated by the Server's
+// wired signers, never selected by the relying party through the token
+// header.
+//
+// Pass exactly the algorithms of the issuer(s) you wired, e.g.
+// `WithSupportedSigningAlgs("EdDSA")` for an Ed25519-only deployment,
+// `WithSupportedSigningAlgs("ES256")` for ECDSA-only, or both during a
+// migration. This does NOT loosen per-issuer enforcement: each issuer
+// independently rejects a token whose `alg` doesn't match the key type
+// of the kid it resolves, so listing "ES256" can never make an
+// EdDSA-signed token verify, and vice versa.
+//
+// Unset = no Server-level gate (each issuer still enforces its own
+// allowlist; the multi-issuer dispatcher tries each in turn).
+func WithSupportedSigningAlgs(algs ...string) Option {
+	return func(s *Server) {
+		s.supportedSigningAlgs = append([]string(nil), algs...)
+	}
 }
 
 // WithAccountLockout wires a per-account brute-force defense.
@@ -254,6 +296,21 @@ func WithFAPIProfile(mode fapi.Mode) Option {
 		}
 		s.fapiValidator = fapi.New(mode)
 	}
+}
+
+// WithJARM enables JWT Secured Authorization Response Mode (JARM). The
+// signer (an oidc.JARMSigner / oidc.MetadataSigner — the wired
+// Ed25519JWTIssuer satisfies it) signs the authorization response into
+// a JWT delivered as the single `response` parameter, defending the
+// front-channel response against tampering and mix-up.
+//
+// Once wired, /auth/login accepts response_mode=jwt (and the dotted
+// query.jwt / fragment.jwt / form_post.jwt variants) and discovery
+// advertises the JARM response modes plus
+// authorization_signing_alg_values_supported. Without a signer,
+// response_mode=jwt fails closed with invalid_request.
+func WithJARM(signer oidc.JARMSigner) Option {
+	return func(s *Server) { s.jarmSigner = signer }
 }
 
 // WithDefaultTokenStrategy names the strategy used when a Client does not
@@ -1308,6 +1365,17 @@ func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims,
 // validateAnyToken tries each registered issuer until one accepts the token.
 // Returned issuerName lets callers correlate revocations or audit logs.
 func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
+	// Server-level alg allowlist gate (defense-in-depth). When
+	// configured via WithSupportedSigningAlgs, reject any compact-JWS
+	// bearer whose header `alg` isn't allowed BEFORE any issuer runs —
+	// so the verification algorithm is fixed by the operator, never
+	// picked by the RP. Opaque (non-JWT) tokens carry no JOSE header
+	// and pass through untouched to the session/opaque issuers.
+	if len(s.supportedSigningAlgs) > 0 {
+		if alg, ok := jwsHeaderAlg(token); ok && !algAllowed(alg, s.supportedSigningAlgs) {
+			return nil, "", fmt.Errorf("token alg %q not in supported_signing_algs", alg)
+		}
+	}
 	var lastErr error
 	for name, ti := range s.tokenIssuers {
 		// Skip issuers that explicitly opt out of this token's shape.
@@ -1391,6 +1459,48 @@ func isUnknownTokenErr(err error) bool {
 	msg := err.Error()
 	for _, needle := range []string{"not found", "unknown", "no such"} {
 		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// jwsHeaderAlg extracts the `alg` from a compact-JWS bearer's JOSE
+// header without verifying anything. Returns (alg, true) for a
+// well-formed three-segment token with a decodable JSON header
+// carrying a non-empty alg; (",", false) otherwise — opaque tokens,
+// malformed input, or a header missing alg all report "no JWS alg" so
+// the caller passes them through to the opaque/session issuers
+// untouched. The decode is intentionally lenient: this is a fast
+// pre-filter, NOT the authoritative parse (each issuer re-parses and
+// re-validates its own tokens).
+func jwsHeaderAlg(token string) (string, bool) {
+	first := strings.IndexByte(token, '.')
+	if first <= 0 {
+		return "", false
+	}
+	// Require exactly two dots (three segments) to look like a JWS.
+	if strings.Count(token, ".") != 2 {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token[:first])
+	if err != nil {
+		return "", false
+	}
+	var h struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(raw, &h); err != nil || h.Alg == "" {
+		return "", false
+	}
+	return h.Alg, true
+}
+
+// algAllowed reports whether alg is in the allowlist (case-sensitive,
+// per RFC 7518 alg names).
+func algAllowed(alg string, allow []string) bool {
+	for _, a := range allow {
+		if a == alg {
 			return true
 		}
 	}

@@ -74,6 +74,25 @@ const (
 	// sender-constrained via DPoP (RFC 9449) or mTLS (RFC 8705);
 	// bearer tokens are prohibited.
 	RuleSenderConstrained = "fapi:sender_constrained"
+
+	// RuleClientAuth — confidential clients MUST authenticate with an
+	// asymmetric method: private_key_jwt (RFC 7521/7523) or mTLS
+	// (RFC 8705). Shared-secret authentication
+	// (client_secret_basic / client_secret_post) is prohibited (FAPI
+	// 2.0 §5.3.2).
+	RuleClientAuth = "fapi:client_auth"
+)
+
+// Client-authentication method identifiers (OAuth 2.0 token endpoint
+// auth methods, RFC 8414). The caller classifies the detected method
+// into one of these and passes it to CheckClientAuth.
+const (
+	ClientAuthNone          = "none"
+	ClientAuthSecretBasic   = "client_secret_basic"
+	ClientAuthSecretPost    = "client_secret_post"
+	ClientAuthPrivateKeyJWT = "private_key_jwt"
+	ClientAuthTLS           = "tls_client_auth"
+	ClientAuthSelfSignedTLS = "self_signed_tls_client_auth"
 )
 
 // Violation is one failed baseline rule for one request. Detail is
