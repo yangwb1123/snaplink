@@ -1879,3 +1879,39 @@ func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaim
 	}
 	return nil
 }
+
+// maybeEncryptIDToken applies OIDC ID Token encryption when the client
+// registered an id_token_encrypted_response_alg. It returns the value
+// to place in the response and whether emission is safe.
+//
+//   - Client opted out (empty alg): returns (signed, true) — the plain
+//     signed JWS is emitted unchanged.
+//   - Client opted in AND encryption succeeds: returns (jwe, true) —
+//     the nested JWE(JWS(...)) is emitted.
+//   - Client opted in but no encrypter is wired OR encryption fails
+//     (missing/unusable RP enc key, crypto failure): returns ("",
+//     false) — FAIL CLOSED. The caller MUST omit id_token rather than
+//     leak a cleartext token a client explicitly asked to have
+//     encrypted. The missing-key vs crypto-failure distinction never
+//     reaches the wire (a single omission).
+func (s *Server) maybeEncryptIDToken(ctx context.Context, client *Client, signed string) (string, bool) {
+	if client == nil || client.IDTokenEncryptedResponseAlg == "" {
+		return signed, true
+	}
+	if s.jweResponseEncrypter == nil {
+		s.logger.Error("id_token encryption requested but no JWEResponseEncrypter wired; omitting id_token", "client", client.ID)
+		return "", false
+	}
+	enc := client.IDTokenEncryptedResponseEnc
+	if enc == "" {
+		enc = "A256GCM"
+	}
+	jwe, err := s.jweResponseEncrypter.Encrypt(ctx, []byte(signed), client.JWKS, client.IDTokenEncryptedResponseAlg, enc)
+	if err != nil {
+		// Undifferentiated: missing key and crypto failure both land
+		// here and both omit the token (no oracle).
+		s.logger.Error("id_token encryption failed; omitting id_token", "error", err, "client", client.ID)
+		return "", false
+	}
+	return jwe, true
+}

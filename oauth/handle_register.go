@@ -39,6 +39,12 @@ type DCRRequest struct {
 	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris"`
 	TenantID                string   `json:"tenant_id"`
 	RequirePKCE             bool     `json:"require_pkce"`
+
+	// OIDC Core JWE response-encryption metadata (§2 / §5.3.2).
+	IDTokenEncryptedResponseAlg  string `json:"id_token_encrypted_response_alg"`
+	IDTokenEncryptedResponseEnc  string `json:"id_token_encrypted_response_enc"`
+	UserinfoEncryptedResponseAlg string `json:"userinfo_encrypted_response_alg"`
+	UserinfoEncryptedResponseEnc string `json:"userinfo_encrypted_response_enc"`
 }
 
 // DCRResponse is the RFC 7591 §3.2.1 successful-registration body.
@@ -64,18 +70,37 @@ type DCRResponse struct {
 	AllowedResources        []string `json:"allowed_resources,omitempty"`
 	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
 	RequirePKCE             bool     `json:"require_pkce,omitempty"`
+
+	IDTokenEncryptedResponseAlg  string `json:"id_token_encrypted_response_alg,omitempty"`
+	IDTokenEncryptedResponseEnc  string `json:"id_token_encrypted_response_enc,omitempty"`
+	UserinfoEncryptedResponseAlg string `json:"userinfo_encrypted_response_alg,omitempty"`
+	UserinfoEncryptedResponseEnc string `json:"userinfo_encrypted_response_enc,omitempty"`
 }
 
 // validateDCRRequest adapts the wire DTO to DCRMetadata and runs the
 // shared policy validation against the canonical grant set.
 func validateDCRRequest(req *DCRRequest, policy *DCRPolicy) error {
-	return ValidateDCRMetadata(&DCRMetadata{
-		RedirectURIs:            req.RedirectURIs,
-		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
-		GrantTypes:              req.GrantTypes,
-		ResponseTypes:           req.ResponseTypes,
-		AllowedAuthenticators:   req.AllowedAuthenticators,
-	}, policy, core.SupportedGrants, core.GrantAuthorizationCode)
+	meta := &DCRMetadata{
+		RedirectURIs:                 req.RedirectURIs,
+		TokenEndpointAuthMethod:      req.TokenEndpointAuthMethod,
+		GrantTypes:                   req.GrantTypes,
+		ResponseTypes:                req.ResponseTypes,
+		AllowedAuthenticators:        req.AllowedAuthenticators,
+		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
+	}
+	if err := ValidateDCRMetadata(meta, policy, core.SupportedGrants, core.GrantAuthorizationCode); err != nil {
+		return err
+	}
+	// Copy back the canonical (enc-defaulted) values so the persisted
+	// client carries the resolved pair.
+	req.IDTokenEncryptedResponseAlg = meta.IDTokenEncryptedResponseAlg
+	req.IDTokenEncryptedResponseEnc = meta.IDTokenEncryptedResponseEnc
+	req.UserinfoEncryptedResponseAlg = meta.UserinfoEncryptedResponseAlg
+	req.UserinfoEncryptedResponseEnc = meta.UserinfoEncryptedResponseEnc
+	return nil
 }
 
 // HandleRegister implements RFC 7591 Dynamic Client Registration.
@@ -185,6 +210,11 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
 		RegistrationAccessToken: regToken,
+
+		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
 	}
 
 	if err := d.ClientStoreAccessor().Add(ctx.Request().Context(), client); err != nil {
@@ -213,6 +243,11 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		AllowedResources:        client.AllowedResources,
 		PostLogoutRedirectURIs:  client.PostLogoutRedirectURIs,
 		RequirePKCE:             client.RequirePKCE,
+
+		IDTokenEncryptedResponseAlg:  client.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:  client.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg: client.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc: client.UserinfoEncryptedResponseEnc,
 	}
 
 	ctx.JSON(http.StatusCreated, resp)
@@ -272,6 +307,11 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		RequirePKCE:             req.RequirePKCE || req.TokenEndpointAuthMethod == "none",
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
+
+		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
 	}
 
 	if err := d.ClientStoreAccessor().Update(ctx.Request().Context(), updated); err != nil {
@@ -366,5 +406,10 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 		AllowedResources:       c.AllowedResources,
 		PostLogoutRedirectURIs: c.PostLogoutRedirectURIs,
 		RequirePKCE:            c.RequirePKCE,
+
+		IDTokenEncryptedResponseAlg:  c.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:  c.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg: c.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc: c.UserinfoEncryptedResponseEnc,
 	}
 }

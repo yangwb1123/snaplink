@@ -179,6 +179,37 @@ type Client struct {
 	// access token's signature.
 	UserinfoSignedResponseAlg string `json:"userinfo_signed_response_alg,omitempty" yaml:"userinfo_signed_response_alg,omitempty"`
 
+	// IDTokenEncryptedResponseAlg / IDTokenEncryptedResponseEnc are
+	// the OIDC Core §2 / §10.2 client metadata naming the JWE key-
+	// management (`alg`) + content-encryption (`enc`) algorithms the
+	// AS uses to encrypt the ID Token to this client's public
+	// encryption key. When _Alg is non-empty AND a response JWE
+	// encrypter is wired (WithJWEResponseEncrypter), the signed ID
+	// Token JWS is wrapped in a JWE → nested JWE(JWS(...)); the RP
+	// decrypts with its private key, then verifies the inner
+	// signature. _Enc defaults to "A256GCM" when _Alg is set but
+	// _Enc is empty. Empty _Alg = plaintext (signed-only) ID Token,
+	// the default. The recipient public key is taken from the
+	// client's JWKS entry with `use: "enc"`. Fail-closed: if _Alg is
+	// set but no encrypter is wired or no usable encryption key is
+	// found, the ID Token is omitted rather than emitted in the clear.
+	IDTokenEncryptedResponseAlg string `json:"id_token_encrypted_response_alg,omitempty" yaml:"id_token_encrypted_response_alg,omitempty"`
+	IDTokenEncryptedResponseEnc string `json:"id_token_encrypted_response_enc,omitempty" yaml:"id_token_encrypted_response_enc,omitempty"`
+
+	// UserinfoEncryptedResponseAlg / UserinfoEncryptedResponseEnc are
+	// the OIDC Core §5.3.2 client metadata naming the JWE `alg` +
+	// `enc` the AS uses to encrypt the /userinfo response. When _Alg
+	// is non-empty AND a response JWE encrypter is wired, /userinfo
+	// returns `Content-Type: application/jwt` carrying a JWE (over the
+	// signed JWS when UserinfoSignedResponseAlg is also set, else over
+	// the raw JSON claim set). _Enc defaults to "A256GCM" when _Alg is
+	// set but _Enc is empty. Recipient key resolution + fail-closed
+	// semantics mirror the ID Token fields above; encryption failure
+	// collapses to a single server_error (no missing-key vs crypto-
+	// failure oracle).
+	UserinfoEncryptedResponseAlg string `json:"userinfo_encrypted_response_alg,omitempty" yaml:"userinfo_encrypted_response_alg,omitempty"`
+	UserinfoEncryptedResponseEnc string `json:"userinfo_encrypted_response_enc,omitempty" yaml:"userinfo_encrypted_response_enc,omitempty"`
+
 	// BackchannelLogoutURI is the OIDC Back-Channel Logout 1.0
 	// §2.5 endpoint the AS POSTs a signed logout_token to when
 	// the user logs out of the SSO server. Empty = back-channel

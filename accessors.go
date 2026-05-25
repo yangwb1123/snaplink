@@ -75,6 +75,17 @@ func (s *Server) JARFetcher() security.JARFetcher { return s.jarFetcher }
 // JARDecrypter returns the wired JWE decrypter (nil when not configured).
 func (s *Server) JARDecrypter() security.JWEDecrypter { return s.jarDecrypter }
 
+// JWEResponseEncrypter returns the wired response-direction JWE
+// encrypter (nil when not configured), backing the id_token + userinfo
+// encryption paths.
+func (s *Server) JWEResponseEncrypter() security.JWEEncrypter { return s.jweResponseEncrypter }
+
+// EncryptIDTokenForClient backs oidc.SilentRenewalDeps — delegates to
+// the shared maybeEncryptIDToken fail-closed wrapper.
+func (s *Server) EncryptIDTokenForClient(ctx context.Context, client *Client, signed string) (string, bool) {
+	return s.maybeEncryptIDToken(ctx, client, signed)
+}
+
 // AccountLockout returns the wired account lockout (nil when not configured).
 func (s *Server) AccountLockout() security.AccountLockout { return s.accountLockout }
 

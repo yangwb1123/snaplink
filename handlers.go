@@ -1157,8 +1157,8 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 		})
 		if err != nil {
 			s.logger.Error("id token issue failed", "error", err)
-		} else {
-			resp[KeyIDToken] = idToken
+		} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+			resp[KeyIDToken] = enc
 			s.recordIDTokenIssued(ctx, client.ID, dc.UserID)
 		}
 	}
@@ -1773,6 +1773,19 @@ type oidcConfiguration struct {
 	RequestObjectEncryptionAlgValuesSupported []string `json:"request_object_encryption_alg_values_supported,omitempty"`
 	RequestObjectEncryptionEncValuesSupported []string `json:"request_object_encryption_enc_values_supported,omitempty"`
 
+	// OIDC Core §3 response-encryption metadata. Populated only when
+	// WithJWEResponseEncrypter is wired (the response-direction mirror
+	// of the request_object_encryption_* fields above) — the encrypter's
+	// SupportedAlgs() / SupportedEncs() surface here so RPs know which
+	// alg + enc to register for id_token / userinfo encryption. Omitted
+	// (fields disappear from the JSON) when no encrypter is wired;
+	// clients that nonetheless register an encrypted_response_alg get a
+	// fail-closed response.
+	IDTokenEncryptionAlgValuesSupported  []string `json:"id_token_encryption_alg_values_supported,omitempty"`
+	IDTokenEncryptionEncValuesSupported  []string `json:"id_token_encryption_enc_values_supported,omitempty"`
+	UserinfoEncryptionAlgValuesSupported []string `json:"userinfo_encryption_alg_values_supported,omitempty"`
+	UserinfoEncryptionEncValuesSupported []string `json:"userinfo_encryption_enc_values_supported,omitempty"`
+
 	// RFC 8414 §2.1 — when set, contains a JWS over the same
 	// metadata claims as the surrounding document. RPs MUST verify
 	// the signature with JWKS before trusting any endpoint; if the
@@ -1950,6 +1963,17 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		// is always accepted).
 		cfg.RequestObjectEncryptionAlgValuesSupported = s.jarDecrypter.SupportedAlgs()
 		cfg.RequestObjectEncryptionEncValuesSupported = s.jarDecrypter.SupportedEncs()
+	}
+	if s.jweResponseEncrypter != nil {
+		// Response-direction JWE: advertise the alg + enc the AS can
+		// produce so RPs register a matching id_token / userinfo
+		// encrypted_response_alg + _enc (and publish a use:enc JWKS key).
+		algs := s.jweResponseEncrypter.SupportedAlgs()
+		encs := s.jweResponseEncrypter.SupportedEncs()
+		cfg.IDTokenEncryptionAlgValuesSupported = algs
+		cfg.IDTokenEncryptionEncValuesSupported = encs
+		cfg.UserinfoEncryptionAlgValuesSupported = algs
+		cfg.UserinfoEncryptionEncValuesSupported = encs
 	}
 	// MFA orchestration is advertised only when both Provider + Store
 	// are wired — having Provider without Store would be a misconfig

@@ -96,6 +96,7 @@ type Server struct {
 	subjectClientIndex             security.SubjectClientIndex
 	jarFetcher                     security.JARFetcher
 	jarDecrypter                   security.JWEDecrypter
+	jweResponseEncrypter           security.JWEEncrypter
 	clientCertExtractor            ClientCertExtractor
 	dpopNonceProvider              DPoPNonceProvider
 	metadataSigner                 oidc.MetadataSigner
@@ -458,6 +459,27 @@ func WithJARFetcher(fetcher security.JARFetcher) Option {
 // request_object_encryption_enc_values_supported.
 func WithJARDecrypter(d security.JWEDecrypter) Option {
 	return func(s *Server) { s.jarDecrypter = d }
+}
+
+// WithJWEResponseEncrypter enables OIDC response encryption — the
+// response-direction mirror of WithJARDecrypter. When wired, clients
+// that registered an `id_token_encrypted_response_alg` get their signed
+// ID Token JWS wrapped in a nested JWE(JWS(...)), and clients with
+// `userinfo_encrypted_response_alg` get an encrypted /userinfo response
+// (`Content-Type: application/jwt`). The recipient public key is taken
+// from the client's registered JWKS (`use: "enc"`).
+//
+// One encrypter covers both id_token + userinfo. Without it, clients
+// that registered an encrypted-response alg fail closed (the ID Token is
+// omitted, userinfo returns server_error) rather than downgrading to a
+// cleartext response.
+//
+// Default impl: [defaultimpl.RSAJWEResponseEncrypter] (RSA-OAEP-256 +
+// A256GCM). Discovery advertises the supported alg + enc lists only when
+// this option is wired — see id_token_encryption_*_values_supported +
+// userinfo_encryption_*_values_supported.
+func WithJWEResponseEncrypter(e security.JWEEncrypter) Option {
+	return func(s *Server) { s.jweResponseEncrypter = e }
 }
 
 // WithClientCertExtractor enables RFC 8705 §3 mTLS certificate-

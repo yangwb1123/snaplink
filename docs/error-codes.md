@@ -134,6 +134,7 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `use_dpop_nonce`   | 400 (AS) / 401 (RS) | DPoP nonce required but missing / invalid; fresh nonce delivered via `DPoP-Nonce` header | Retry with the new nonce embedded in the proof's `nonce` claim |
 | `user_not_found`   | 404  | Token is valid but the subject id has no User record                                               | Recreate the user (admin) or rebind                        |
 | `unauthorized`     | 401  | Generic auth check failure (admin middleware)                                                      | Re-authenticate                                            |
+| `server_error`     | 500  | `/userinfo` could not produce the encrypted response the client registered (`userinfo_encrypted_response_alg`): no encrypter wired, no usable `use:enc` JWK, or a crypto failure. Undifferentiated by design (no missing-key vs crypto-failure oracle) — never downgrades to cleartext | Check the client's `JWKS` carries a usable `use:enc` key and the AS has a response encrypter wired; retry |
 
 ---
 

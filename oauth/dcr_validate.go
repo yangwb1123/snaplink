@@ -13,7 +13,33 @@ type DCRMetadata struct {
 	GrantTypes              []string
 	ResponseTypes           []string
 	AllowedAuthenticators   []string
+
+	// OIDC Core JWE response-encryption metadata. Validated +
+	// defaulted in place (see normalizeAndValidateEncryption) — the
+	// caller copies the (possibly defaulted) values back onto the
+	// stored Client.
+	IDTokenEncryptedResponseAlg  string
+	IDTokenEncryptedResponseEnc  string
+	UserinfoEncryptedResponseAlg string
+	UserinfoEncryptedResponseEnc string
 }
+
+// supportedJWEResponseAlgs / supportedJWEResponseEncs enumerate the
+// JWE algorithms the default response encrypter (RSAJWEResponseEncrypter)
+// can satisfy. DCR rejects anything outside these so a client can't
+// register an alg the AS will silently fail to honor at issuance time.
+// Operators wiring a richer JWEEncrypter must extend this list (and the
+// discovery advertisement follows the encrypter's SupportedAlgs/Encs).
+var (
+	supportedJWEResponseAlgs = []string{"RSA-OAEP-256"}
+	supportedJWEResponseEncs = []string{"A256GCM"}
+)
+
+// DefaultJWEResponseEnc is the `enc` applied when a client registers an
+// `*_encrypted_response_alg` without a matching `*_enc`. OIDC Core §10.2
+// makes A256GCM the conventional default and it matches the request-
+// direction JWE pipeline (RSAJWEDecrypter).
+const DefaultJWEResponseEnc = "A256GCM"
 
 // ValidateDCRMetadata enforces the subset of RFC 7591 §2 / §5 rules
 // this server understands plus the policy's whitelist constraints.
@@ -72,7 +98,41 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 		}
 	}
 
+	if err := normalizeAndValidateEncryption(req); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// normalizeAndValidateEncryption validates the OIDC JWE response-
+// encryption metadata and defaults `enc` to DefaultJWEResponseEnc when
+// the corresponding `alg` is set but `enc` is empty. Mutates req in
+// place so the caller persists the canonical values. An `enc` without
+// an `alg` is rejected (no key-management algorithm to apply).
+func normalizeAndValidateEncryption(req *DCRMetadata) error {
+	normalize := func(name string, alg, enc *string) error {
+		if *alg == "" {
+			if *enc != "" {
+				return ErrDCR(name + "_encrypted_response_enc set without _alg")
+			}
+			return nil
+		}
+		if !slices.Contains(supportedJWEResponseAlgs, *alg) {
+			return ErrDCR("unsupported " + name + "_encrypted_response_alg: " + *alg)
+		}
+		if *enc == "" {
+			*enc = DefaultJWEResponseEnc
+		}
+		if !slices.Contains(supportedJWEResponseEncs, *enc) {
+			return ErrDCR("unsupported " + name + "_encrypted_response_enc: " + *enc)
+		}
+		return nil
+	}
+	if err := normalize("id_token", &req.IDTokenEncryptedResponseAlg, &req.IDTokenEncryptedResponseEnc); err != nil {
+		return err
+	}
+	return normalize("userinfo", &req.UserinfoEncryptedResponseAlg, &req.UserinfoEncryptedResponseEnc)
 }
 
 // ErrDCR wraps a DCR validation failure message as a typed error so

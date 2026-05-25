@@ -22,6 +22,13 @@ type SilentRenewalDeps interface {
 	AuthzErrorBodyDesc(ctx core.HandlerContext, code, desc string) map[string]string
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	RecordLoginSuccess(ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string)
+
+	// EncryptIDTokenForClient applies OIDC ID Token encryption when the
+	// client opted in (id_token_encrypted_response_alg set). Returns the
+	// value to emit and whether emission is safe; ok=false means fail
+	// closed (omit the token rather than leak cleartext). Pass-through
+	// (returns signed, true) when the client didn't opt in.
+	EncryptIDTokenForClient(ctx context.Context, client *core.Client, signed string) (string, bool)
 }
 
 // HandleSilentRenewal implements OIDC Core §3.1.2.1's prompt=none
@@ -197,8 +204,8 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 		})
 		if idErr != nil {
 			d.SrvLogger().Error("silent renewal id_token issuance failed", "error", idErr)
-		} else {
-			resp[core.KeyIDToken] = idTok
+		} else if enc, ok := d.EncryptIDTokenForClient(ctx.Request().Context(), client, idTok); ok {
+			resp[core.KeyIDToken] = enc
 		}
 	}
 
