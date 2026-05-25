@@ -12,7 +12,32 @@
 
 ---
 
-## v2.3（2026-05-25）—— 本轮已落地
+## v2.4（2026-05-25）—— §4 Schema Migration 框架已落地
+
+第二个 10 轮交付，闭合 roadmap §4（"今天不做明天更贵"的 P1）：
+
+- **`migrate/` 纯 Go 迁移 runner**（零外部依赖，未引 goose——符合仓库
+  低依赖取向）：`Migration{Version,Name,SQL|Func}` + `Run` 在单个
+  `BEGIN IMMEDIATE` 事务内按序前向应用，per-namespace 版本表
+  （`schema_migrations_<ns>`）。baseline = 现有 schema，已有库 no-op +
+  盖 v1，新库照建。`Func` 步支持条件/数据迁移（PRAGMA 查列后补列）。
+  并发副本经 runner 的 `PRAGMA busy_timeout` 串行化（修正：mattn 式
+  `_busy_timeout` DSN 参数 modernc 不认）。
+- **全部 6 个 SQLite 落点已纳管**：audit / permissions / tenant /
+  webauthn(users+sessions) / defaultimpl(14 store) / ratelimit；
+  refresh_tokens 用 `Func` 迁移保留其遗留补列升级（且修了旧路径可能漏建
+  family_id 索引的隐患）。
+- **`migrate.Status` + `cmd/sso-migrate status --dsn`**：离线读取任意
+  库的 per-namespace schema 版本（部署前检查 / DR 演练），与
+  `sso-audit-verify`/`sso-snapshotctl` 同属只读离线 CLI。
+- **附带修复**：`loadAESGCMKey` 对结尾为 0x0A/0x0D 的 32 字节裸密钥
+  （KMS DEK）误做换行裁剪 → 截断失败（~0.78% 概率，曾间歇性 flake CI）。
+
+**§4 仍剩**（非阻塞）：cmd 共享 `*sql.DB` 后的 schema-version 指标/就绪
+门、跨 store 物理备份的 snapshot v2、down-migration（生产仍建议
+restore-from-snapshot 而非 schema 回滚）。
+
+## v2.3（2026-05-25）—— 上一轮已落地
 
 10 轮开发交付了两条主线，更新如下：
 
@@ -854,3 +879,4 @@ backend 接入 migration runner，3 个 sprint 就摊完。
 | 2026-05-22 | v2.1 | **§2（异步行为异常检测）整组落地**：`AnomalyDetector` SPI + `AsyncAnomalyRunner` 调度池 + `RecentLoginStore` / `IPFailureCounter` 两套 SPI（memory + sqlite peer 双后端）+ 5 个参考 detector（impossible_travel / velocity_burst / new_device / new_country / brute_force_shadow）+ 3 个新 metric vector + cmd YAML 完整 wire。剩 §1 HSM / §3 Console / §4 Migration / §5 CIBA。 |
 | 2026-05-25 | v2.2 | **复扫确认 5 方向全部成立、全部未落地**（v2.1 后 40 个 commit 均为内部重构）。记录结构性里程碑：Hexagonal handler 抽取（根目录 → 6 源文件，handler 迁入 oauth//oidc/，`oauth` 不可 import `oidc`）+ 测试按功能归位（89 集成测试入 `test/`，根目录 `.go` 101 → 8）+ AGENTS.md 压缩 977 → 709。新增两条边界情况：**跨副本缓存失效需要 `InvalidationBus` 事件总线**（`InvalidateTenantSuspensionCache` 仅进程内，多副本传播延迟 = 缓存 TTL）+ **DPoP nonce 进程内密钥多副本不安全**。 |
 | 2026-05-25 | v2.3 | **10 轮开发落地**：(1) `cluster/` InvalidationBus（SPI + memory + etcd + cmd wiring + tenant-suspension/discovery 两个消费者）——闭合 v2.2 的跨副本失效边界情况；(2) §1 签名密钥治理大部分落地 —— `Ed25519Signer` KMS/HSM 接缝 + 运行时 `RotateKey`/`RetireKey` 重叠期轮换 + `StartRotation` 自动调度 + cmd `keys.rotation` 配置 + `signing_key_rotated` 审计 + `sso_signing_key_rotations_total` 指标。剩 §1 的 KMS peer/多算法/per-tenant、§3 Console、§4 Migration、§5 CIBA。 |
+| 2026-05-25 | v2.4 | **第二个 10 轮：§4 Schema Migration 框架落地**：`migrate/` 纯 Go runner（versioned / per-namespace / forward-only / `BEGIN IMMEDIATE` 串行 / SQL+Func 步）+ 全部 6 个 SQLite 落点纳管（含 refresh_tokens 的 Func 补列迁移）+ `migrate.Status` + `cmd/sso-migrate` 离线 CLI。附带修复 `loadAESGCMKey` 裸密钥换行裁剪 bug（曾间歇 flake CI）。剩 §1 KMS peer/多算法、§3 Console、§5 CIBA/JWE/FAPI。 |

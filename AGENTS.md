@@ -84,7 +84,9 @@ ratelimit/ cors/ metrics/ tracing/   Middleware + observability
 config/{etcd}/   YAML + env + etcd + flag loader
 proto/ gen/proto/ grpcserver/   Protobuf + generated Go + gRPC services + REST gateway
 ssoclient/{local,remote,dev,bootstrap}/   Consumer-facing clients
-cmd/{sso-server,sso-audit-verify,sso-snapshotctl}/   Binary + offline CLIs
+migrate/       Pure-Go SQLite schema-migration runner (versioned, per-namespace,
+               forward-only); every sqlite backend routes New through migrate.Run
+cmd/{sso-server,sso-audit-verify,sso-snapshotctl,sso-migrate}/   Binary + offline CLIs
 deploy/{openresty,k8s,compose,grafana}/   Operator artifacts
 test/          Server-level integration suite (package ssotest)
 ```
@@ -254,11 +256,24 @@ AccountLockout read-modify-write in `BEGIN IMMEDIATE`; PushApproval
 SetStatus `UPDATE … WHERE status='pending'`.
 
 Prod DSN `file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000`;
-shared-pool tests `file::memory:?cache=shared`. Schema via `CREATE TABLE
-IF NOT EXISTS` at construction. `New<Provider>(dsn)` / `Close()` /
-`New<Provider>WithDB(db)`. `sql.ErrNoRows` → typed `ErrNoSuchX`;
-timestamps Unix-ns INTEGER. **Next multi-table backend MUST bring
-goose/golang-migrate.**
+shared-pool tests `file::memory:?cache=shared`. `New<Provider>(dsn)` /
+`Close()` / `New<Provider>WithDB(db)`. `sql.ErrNoRows` → typed
+`ErrNoSuchX`; timestamps Unix-ns INTEGER.
+
+**Schema migrations via `migrate/`** (pure-Go, no external dep). Every
+backend declares `var migrations = []migrate.Migration{{Version:1,
+Name:"baseline", SQL:<schema>}}` and routes `New`/`NewWithDB` through
+`migrate.Run(ctx, db, "<namespace>", migrations)` (defaultimpl/sqlite
+stores share the `ensureSchema(db, ns, schema)` helper). v1 = the
+existing schema, so a populated DB no-ops the baseline + is stamped v1;
+fresh DBs are created. **Per-store namespace** (`schema_migrations_<ns>`)
+— stores may share one DSN, so each tracks its own version. Forward-only;
+applied in one `BEGIN IMMEDIATE` txn (replicas serialize via the
+runner's `PRAGMA busy_timeout`, NOT the mattn-style `_busy_timeout` DSN
+param which modernc ignores). New column/index → append v2+ (SQL, or a
+`Func` step for conditional/data migrations, e.g. refresh_tokens'
+add-column-if-missing). `migrate.Status` + `sso-migrate status --dsn`
+report a DB's per-namespace versions offline.
 
 **Cluster-shared coverage** (each has memory + sqlite peer; YAML toggle):
 
@@ -640,6 +655,7 @@ is the legacy single-source entry.
 | `cmd/sso-server` | Production binary |
 | `cmd/sso-audit-verify` | Offline hash-chain check (`--from-url` paginates / `--from-file` JSON) |
 | `cmd/sso-snapshotctl` | Offline snapshot `list|inspect|verify` (passphrase-capable) |
+| `cmd/sso-migrate` | Offline schema-version inspection (`status --dsn` → per-namespace versions) |
 
 Both offline CLIs work directly against wire artifacts (no running
 server) — backup-integrity + DR drills.
@@ -720,4 +736,4 @@ on `error`, never `error_description`.
 Conventional (`feat(area):`, `fix(area):`, `chore:`, `docs:`),
 imperative subject, blank line, body explains why. Co-author trailer
 when AI-assisted. Don't commit binaries (`sso-server` /
-`sso-audit-verify` / `sso-snapshotctl` ignored).
+`sso-audit-verify` / `sso-snapshotctl` / `sso-migrate` ignored).
