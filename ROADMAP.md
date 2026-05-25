@@ -12,7 +12,108 @@
 
 ---
 
-## v2.6（2026-05-25）—— 复扫后的下一阶段 3–5 个高价值方向
+## v3.0（2026-05-25）—— post-v2.9 复扫：重排后的 3–5 个方向【当前生效】
+
+> 这是 v2.7–v2.9 三轮交付（FAPI 2.0 profile + 四算法签名矩阵 + JARM）
+> 之后做的一次全局复扫。**下方 v2.6 节的 ①②已落地、结论已过期**，本
+> 节取而代之，作为当前生效的优先级。grep 核验、非记忆。
+
+### 复扫确认的当前边界
+
+**已落地**（协议层 ≈ 98%）：完整 grant 集 + PAR/DCR/Introspect/Revoke/
+Token-Exchange/RAR + DPoP + mTLS-bound + 9068 + 9207 + JAR（signed +
+JWE 双向）+ Signed Metadata + Pairwise + OAuth 2.1 strict + step-up +
+BCL/FCL + RP-logout + CIBA poll + **JARM** + **FAPI 2.0 profile
+（Inspection/Enforce）** + **四算法签名矩阵（EdDSA/ES256/RS256/PS256，
+均含运行时轮换 + 调度 + `{Ed25519,ECDSA,RSA}Signer` KMS 接缝 + 严格
+alg-confusion 防护）**；认证因子 9 + WebAuthn + TOTP/Passkey/Push MFA +
+上游 OIDC 联邦；**异步行为异常检测**（`AsyncAnomalyRunner` + 5 个
+detector，旧 §2 已落地）；多副本正确性（15+ store SQLite peer +
+`migrate/` 版本化迁移 + `cluster.Bus` 跨副本失效）；运维面
+Snapshot/Release/Bootstrap/Retention + 4 个离线 CLI。
+
+**仍为空白**（逐项 grep 确认）：KMS/HSM **具体** peer
+（`awskms`/`gcpkms`/`pkcs11` 均无；接缝已就位）、统一
+`SigningKeyProvider` 抽象、per-tenant 签名密钥、`web/` Admin Console、
+`compliance/` GDPR 闭环、`scim/`、`saml/`、Redis 后端、CIBA 的
+ping/push delivery、id_token/userinfo JWE 的多 alg（仅 RSA-OAEP-256）。
+
+### 排序后的方向
+
+**① KMS/HSM 具体 peer + ActiveKID 多副本强一致** —— *新晋明确 P0：
+剩余工作量最小，合规门槛最硬。*
+
+- **Why now**：四算法矩阵 + 运行时轮换 + 调度 + 审计 + `{Ed25519,
+  ECDSA,RSA}Signer` 接缝在 v2.9 已 **100% 铺好**——私钥仍裸存进程内存
+  这一项却让金融/政府 RFP 第一页就筛掉（FIPS 140-2/3、PCI-DSS、SOC2
+  Type II 要求私钥永不出硬件）。现在缺的只是 **把接缝接到一个具体
+  后端**：首个 `defaultimpl/awskms/`（`aws-sdk-go-v2` 的 `kms.Sign`），
+  之后 `gcpkms`/`pkcs11`（YubiHSM/SoftHSM/Thales 通吃）同模式。这是
+  "地基全铺好、只差一块砖"的最高 ROI 项。
+- **Scope**：(a) 抽出统一 `SigningKeyProvider`（`Sign`/`PublicJWKS`/
+  `ActiveKID`/`Rotate`），现有三 issuer 套壳零行为变更；(b) `awskms`
+  peer + aws-sdk 依赖决策；(c) **多副本 `ActiveKID` 强一致**——轮换期
+  各副本不能漂移 kid（否则 N 副本颁发 N 种 kid 签的 token，RP 端 JWKS
+  缓存抓不到刚轮出的 kid）。`cluster.Bus` 底座已就位，把 ActiveKID
+  选择经 bus/共享存储收口即可。
+- **边界**：KMS sign 是网络 RTT（5–50ms），比进程内 `ed25519.Sign`
+  慢三个数量级——需 token TTL 拉长 + 进程内 `(kid,payload_hash)→sig`
+  LRU + p99 熔断到本地 fallback kid。JWKS ETag 改 `sha256(canonical)`
+  防 KMS 公钥 JSON 字节序抖动。详见下方 ## 1（A/B/C）。
+
+**② Operator/EndUser UX：Admin Console + GDPR 跨 store 闭环** ——
+*企业采购 gate；把已建好的能力"包装出来卖"。*
+
+- **Why now**：后端 capability 齐整，**面向人的操作面仍是 0**。竞品
+  （Auth0/WorkOS/Stytch）卖的是"5 分钟 demo→生产，含 UI + 报表 +
+  GDPR 按钮"。无 Console = 进不了企业采购清单。零后端改动即可起步
+  （吃现成 admin REST gateway）。两件事：(a) `web/admin/` SPA，首批
+  Dashboard/Sessions/Audit-Explorer 三 panel 最有 demo 价值 + 终端
+  用户自助门户；(b) **GDPR erase/export 跨 store 工作流**
+  （`compliance/erasure/`）——`DeleteAllForSubject` 已有，但多步幂等的
+  revoke→soft-delete→后台 PII 假名化（保留 hash 链可校验性）没串起来。
+- **复用点**：**与"租户暂停的主动吊销"共用同一份跨 store 删除流水线**
+  ——今天 suspend 只挡新请求（已发 token 仍有效），缺 `DeleteByTenant`
+  SPI。两个需求一次 SPI 解决。详见下方 ## 3。
+
+**③ 企业 Provisioning：SCIM 2.0 + SAML 2.0** —— *RFP 表上仅剩的两行。*
+
+- **Why now**：认证因子与上游 OIDC 联邦已全，**SCIM**（HR/IT 自动
+  开户/停用，`/scim/v2/Users`+`Groups`）与 **SAML 2.0**（大量政府/
+  传统企业 IdP 只说 SAML）是仅剩会被直接筛掉的两项。各自独立立项
+  （SCIM ≈ 3–4 周，SAML ≈ 4–6 周），不阻塞其他方向。
+
+**④ 吞吐层：Redis 后端 + 热路径性能** —— *正确性已完备，扩容课题。*
+
+- **Why now / why not**：15+ store 的 SQLite peer 已保证 **正确性**；
+  Redis 的 ROI 是 **吞吐（>1k QPS）** 而非正确性，代价是新有状态依赖
+  ——等真有高 QPS 客户 inbound 再做。可顺手清掉热路径项：BCL 多 RP
+  扇出 `errgroup` 并发化、`validateAnyToken` 先 peek token 形态再
+  dispatch、`handleJWKS` 加 per-rotation-epoch single-flight、SIGTERM
+  优雅停机串 `http.Server.Shutdown(ctx)` 等 in-flight `/token`。详见
+  文末"边界情况 & 性能优化"清单。
+
+**⑤（协议收尾）per-tenant 签名密钥 + CIBA ping/push + 多 alg JWE** ——
+*last-mile，新方向随 v2.9 浮现。*
+
+- **Why now**：四算法矩阵 + KMS 接缝就位、tenant SPI 成熟后，
+  **per-tenant 签名密钥** 成为合乎逻辑的下一步——今天同进程持所有
+  tenant 私钥，单次 memory dump 暴露所有 tenant 的伪造能力；
+  `Tenant.SigningKey` 指向独立 Provider + `/tenant/{id}/.well-known/
+  jwks.json` + 按 `iss` claim 路由验签即可。附带：CIBA ping/push
+  delivery（仅做了 poll）、id_token/userinfo JWE 的多 alg（仅
+  RSA-OAEP-256）。低优，按客户需求触发。
+
+### 一句话优先级
+
+**先做 ①（KMS peer，地基全铺好只差一块砖，最硬合规证据）→ ②
+（Console + GDPR，进企业采购清单，零后端改动起步）→ ③（SCIM/SAML，
+补销售清单）→ ④（Redis，等吞吐需求）→ ⑤（per-tenant 签名 + CIBA
+ping/push，协议收尾）。** ① 与 ② 可并行（无共享前置）。
+
+---
+
+## v2.6（2026-05-25）—— 复扫后的下一阶段 3–5 个高价值方向【已被 v3.0 取代】
 
 > 本节是在 v2.5（JWE 响应加密 + CIBA poll）落地后做的一次全局复扫
 > 结论，**重排**了优先级。下方 v2.5→v2.1 是交付历史，再下方
