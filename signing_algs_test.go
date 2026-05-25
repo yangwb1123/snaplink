@@ -38,6 +38,8 @@ func TestJWSHeaderAlg(t *testing.T) {
 	}{
 		{mkJWS(t, "ES256"), "ES256", true},
 		{mkJWS(t, "EdDSA"), "EdDSA", true},
+		{mkJWS(t, "RS256"), "RS256", true},
+		{mkJWS(t, "PS256"), "PS256", true},
 		{"opaque-session-token", "", false},
 		{"two.segments", "", false},
 		{"a.b.c.d", "", false},
@@ -82,5 +84,32 @@ func TestSupportedSigningAlgsGate(t *testing.T) {
 	}
 	if !fake.validated {
 		t.Error("opaque token was incorrectly gated")
+	}
+}
+
+// TestSupportedSigningAlgsGate_RSA proves the gate admits the RSA algs
+// when allowlisted (RS256/PS256) and pre-filters them when not.
+func TestSupportedSigningAlgsGate_RSA(t *testing.T) {
+	fake := &fakeJWTIssuer{}
+	s := NewServer(
+		WithTokenIssuer("jwt", fake),
+		WithSupportedSigningAlgs("RS256", "PS256"),
+	)
+	for _, alg := range []string{"RS256", "PS256"} {
+		fake.validated = false
+		if _, _, err := s.validateAnyToken(context.Background(), mkJWS(t, alg)); err != nil {
+			t.Errorf("%s token rejected despite allowlist: %v", alg, err)
+		}
+		if !fake.validated {
+			t.Errorf("%s: issuer.Validate did not run for an allowed alg", alg)
+		}
+	}
+	// ES256 not in the allowlist → gated out before the issuer.
+	fake.validated = false
+	if _, _, err := s.validateAnyToken(context.Background(), mkJWS(t, "ES256")); err == nil {
+		t.Error("ES256 accepted despite RS256/PS256-only allowlist")
+	}
+	if fake.validated {
+		t.Error("issuer.Validate ran for a disallowed alg")
 	}
 }
