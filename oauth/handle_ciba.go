@@ -70,19 +70,20 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 	}
 
 	var req struct {
-		ClientID            string   `json:"client_id"`
-		ClientSecret        string   `json:"client_secret"`
-		Scope               string   `json:"scope"`
-		LoginHint           string   `json:"login_hint"`            // OIDC Core §3.1.2.1
-		IDTokenHint         string   `json:"id_token_hint"`         // OIDC Core §3.1.2.1
-		LoginHintToken      string   `json:"login_hint_token"`      // CIBA Core §7.1
-		BindingMessage      string   `json:"binding_message"`       // CIBA Core §7.1
-		ACRValues           string   `json:"acr_values"`            // OIDC Core §3.1.2.1
-		Nonce               string   `json:"nonce"`                 // OIDC nonce
-		Resource            []string `json:"resource"`              // RFC 8707
-		UserCode            string   `json:"user_code"`             // CIBA Core §7.1 (user-code mode — unsupported)
-		ClientAssertion     string   `json:"client_assertion"`      // RFC 7521 + 7523
-		ClientAssertionType string   `json:"client_assertion_type"` // RFC 7521 + 7523
+		ClientID                string   `json:"client_id"`
+		ClientSecret            string   `json:"client_secret"`
+		Scope                   string   `json:"scope"`
+		LoginHint               string   `json:"login_hint"`                // OIDC Core §3.1.2.1
+		IDTokenHint             string   `json:"id_token_hint"`             // OIDC Core §3.1.2.1
+		LoginHintToken          string   `json:"login_hint_token"`          // CIBA Core §7.1
+		BindingMessage          string   `json:"binding_message"`           // CIBA Core §7.1
+		ACRValues               string   `json:"acr_values"`                // OIDC Core §3.1.2.1
+		Nonce                   string   `json:"nonce"`                     // OIDC nonce
+		Resource                []string `json:"resource"`                  // RFC 8707
+		UserCode                string   `json:"user_code"`                 // CIBA Core §7.1 (user-code mode — unsupported)
+		ClientNotificationToken string   `json:"client_notification_token"` // CIBA Core §7.1 (ping/push delivery)
+		ClientAssertion         string   `json:"client_assertion"`          // RFC 7521 + 7523
+		ClientAssertionType     string   `json:"client_assertion_type"`     // RFC 7521 + 7523
 	}
 	if err := BindParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
@@ -170,18 +171,19 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 	}
 	now := time.Now()
 	authReqID, err := d.CIBAStore().Issue(ctx.Request().Context(), &CIBARequest{
-		ClientID:       req.ClientID,
-		SubjectID:      subjectID,
-		Provider:       provider,
-		Scopes:         SplitScope(req.Scope),
-		ACRValues:      req.ACRValues,
-		BindingMessage: req.BindingMessage,
-		Resources:      req.Resource,
-		Nonce:          req.Nonce,
-		Status:         CIBAPending,
-		Interval:       interval,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(ttl),
+		ClientID:                req.ClientID,
+		SubjectID:               subjectID,
+		Provider:                provider,
+		Scopes:                  SplitScope(req.Scope),
+		ACRValues:               req.ACRValues,
+		BindingMessage:          req.BindingMessage,
+		Resources:               req.Resource,
+		Nonce:                   req.Nonce,
+		ClientNotificationToken: req.ClientNotificationToken,
+		Status:                  CIBAPending,
+		Interval:                interval,
+		CreatedAt:               now,
+		ExpiresAt:               now.Add(ttl),
 	})
 	if err != nil {
 		d.SrvLogger().Error("ciba issue failed", "error", err)

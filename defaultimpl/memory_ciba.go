@@ -40,20 +40,21 @@ func (m *MemoryCIBAStore) Issue(_ context.Context, req *oauth.CIBARequest) (stri
 		return "", err
 	}
 	stored := &oauth.CIBARequest{
-		AuthReqID:      id,
-		ClientID:       req.ClientID,
-		SubjectID:      req.SubjectID,
-		Provider:       req.Provider,
-		Scopes:         append([]string(nil), req.Scopes...),
-		ACRValues:      req.ACRValues,
-		BindingMessage: req.BindingMessage,
-		Resources:      append([]string(nil), req.Resources...),
-		Nonce:          req.Nonce,
-		RequestContext: cloneRawBytes(req.RequestContext),
-		Status:         oauth.CIBAPending,
-		Interval:       req.Interval,
-		CreatedAt:      req.CreatedAt,
-		ExpiresAt:      req.ExpiresAt,
+		AuthReqID:               id,
+		ClientID:                req.ClientID,
+		SubjectID:               req.SubjectID,
+		Provider:                req.Provider,
+		Scopes:                  append([]string(nil), req.Scopes...),
+		ACRValues:               req.ACRValues,
+		BindingMessage:          req.BindingMessage,
+		Resources:               append([]string(nil), req.Resources...),
+		Nonce:                   req.Nonce,
+		ClientNotificationToken: req.ClientNotificationToken,
+		RequestContext:          cloneRawBytes(req.RequestContext),
+		Status:                  oauth.CIBAPending,
+		Interval:                req.Interval,
+		CreatedAt:               req.CreatedAt,
+		ExpiresAt:               req.ExpiresAt,
 	}
 	m.mu.Lock()
 	m.entries[id] = stored

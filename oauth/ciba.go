@@ -81,6 +81,12 @@ type CIBARequest struct {
 	// Nonce is the OIDC nonce threaded onto the id_token when openid
 	// scope is granted.
 	Nonce string
+	// ClientNotificationToken is the CIBA Core §7.1 token the client
+	// sends in the backchannel-authentication request in ping/push
+	// delivery mode. Captured here and replayed as the bearer credential
+	// when the request resolves and the AS pings the client's
+	// notification endpoint. Empty in poll mode (no ping fires).
+	ClientNotificationToken string
 	// RequestContext is the opaque serialized authorization params an
 	// operator may want to round-trip (extension members beyond the
 	// typed fields above). Stored verbatim; empty for the common case.
@@ -145,6 +151,30 @@ type CIBAStore interface {
 // opaque metadata map (binding_message under "binding_message").
 type CIBATransport interface {
 	Send(ctx context.Context, authReqID, subjectID string, metadata map[string]string) error
+}
+
+// CIBAPingNotifier is the CIBA Core §10.2 ping-delivery seam: when a
+// backchannel request resolves, the AS POSTs to the client's registered
+// notification endpoint to tell it to come collect its tokens (vs. the
+// client polling blindly). Like CIBATransport it is operator-wired — the
+// implementation knows the client's notification endpoint and POSTs
+// {auth_req_id} authenticated with the client_notification_token captured
+// at request time. Best-effort by contract: a failed ping degrades to
+// poll (the client can still poll /token), never blocks resolution.
+//
+// nil leaves CIBA in poll-only mode; discovery then advertises only
+// "poll" in backchannel_token_delivery_modes_supported.
+type CIBAPingNotifier interface {
+	Notify(ctx context.Context, authReqID, clientNotificationToken string) error
+}
+
+// CIBAPingNotifierFunc adapts a function to CIBAPingNotifier, mirroring
+// CIBATransportFunc.
+type CIBAPingNotifierFunc func(ctx context.Context, authReqID, clientNotificationToken string) error
+
+// Notify calls f.
+func (f CIBAPingNotifierFunc) Notify(ctx context.Context, authReqID, clientNotificationToken string) error {
+	return f(ctx, authReqID, clientNotificationToken)
 }
 
 // CIBATransportFunc is a function adapter for CIBATransport. An

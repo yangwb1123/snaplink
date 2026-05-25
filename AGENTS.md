@@ -217,7 +217,7 @@ One row per spec; owner file (root delegators point into oauth/ + oidc/).
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; default `RSAJWEDecrypter` (RSA-OAEP-256 + A256GCM); enc key auto-published in JWKS `use:enc` | `security/jwe.go` |
 | OIDC Core §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg`/`_Enc`; RP enc key from `Client.JWKS` `use:enc` | `oidc/userinfo_signing.go` + `server_extensions.go` |
 | OIDC Core §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg`/`_Enc` | `oidc/userinfo_signing.go` |
-| OIDC CIBA Core 1.0 (poll) | `/backchannel-authentication`, `/token` (`grant=urn:openid:params:grant-type:ciba`) | `WithCIBA` (store + transport) | `oauth/ciba.go` + `oauth/handle_ciba.go` |
+| OIDC CIBA Core 1.0 (poll + ping) | `/backchannel-authentication`, `/token` (`grant=urn:openid:params:grant-type:ciba`) | `WithCIBA` (store + transport); ping via `WithCIBAPingNotifier` + `ResolveBackchannelAuthRequest` | `oauth/ciba.go` + `oauth/handle_ciba.go` |
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by Risk `RequireMFA`) | `mfa.go` + `handle_mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
 

@@ -1821,6 +1821,55 @@ func (s *Server) StartInvalidationBus(ctx context.Context) (<-chan struct{}, err
 	return done, nil
 }
 
+// ErrCIBANotEnabled is returned by ResolveBackchannelAuthRequest when no
+// CIBA store is wired (WithCIBA not configured). It is an SDK-level
+// sentinel, not a wire error code.
+var ErrCIBANotEnabled = errors.New("sso: CIBA is not enabled")
+
+// ResolveBackchannelAuthRequest transitions a pending CIBA request to
+// approved or denied and, in ping delivery mode, notifies the client.
+// Operators call this from their device-confirmation callback instead of
+// poking CIBAStore.SetStatus directly, so the ping fires automatically on
+// resolution.
+//
+// The status transition is authoritative (the client's /token poll mints
+// or refuses tokens off it). The ping is best-effort: when a
+// CIBAPingNotifier is wired (WithCIBAPingNotifier) and the request
+// carries a client_notification_token (ping mode), it fires asynchronously
+// — a failed ping is logged, not returned, since the client can still
+// poll. Poll-only requests (no notifier or no token) just transition.
+//
+// Returns ErrCIBANotEnabled if CIBA isn't wired, or the store's error for
+// an unknown/expired (oauth.ErrCIBARequestNotFound) or already-resolved
+// (oauth.ErrCIBARequestResolved) request.
+func (s *Server) ResolveBackchannelAuthRequest(ctx context.Context, authReqID string, approved bool) error {
+	if s.cibaStore == nil {
+		return ErrCIBANotEnabled
+	}
+	// Read before transition so a racing /token poll that consumes +
+	// deletes the entry can't strip the notification token from under us.
+	req, err := s.cibaStore.Get(ctx, authReqID)
+	if err != nil {
+		return err
+	}
+	status := oauth.CIBADenied
+	if approved {
+		status = oauth.CIBAApproved
+	}
+	if err := s.cibaStore.SetStatus(ctx, authReqID, status); err != nil {
+		return err
+	}
+	if s.cibaPingNotifier != nil && req.ClientNotificationToken != "" {
+		token := req.ClientNotificationToken
+		go func() {
+			if err := s.cibaPingNotifier.Notify(context.Background(), authReqID, token); err != nil {
+				s.logger.Error("ciba ping notification failed", "auth_req_id", authReqID, "error", err)
+			}
+		}()
+	}
+	return nil
+}
+
 // applyInvalidation clears the local cache a received Event targets. It
 // MUST NOT re-publish — only the originating admin mutation publishes,
 // so receivers clearing their cache here can't trigger a fan-out loop.

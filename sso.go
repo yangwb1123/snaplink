@@ -86,6 +86,7 @@ type Server struct {
 	parTTL                         time.Duration
 	cibaStore                      oauth.CIBAStore
 	cibaTransport                  oauth.CIBATransport
+	cibaPingNotifier               oauth.CIBAPingNotifier
 	cibaRequestTTL                 time.Duration
 	cibaPollInterval               time.Duration
 	dcrPolicy                      *oauth.DCRPolicy
@@ -463,6 +464,18 @@ func WithCIBA(store oauth.CIBAStore, transport oauth.CIBATransport, reqTTL, inte
 			s.cibaPollInterval = interval
 		}
 	}
+}
+
+// WithCIBAPingNotifier upgrades CIBA from poll-only to ping delivery
+// (CIBA Core §10.2). Requires WithCIBA. When wired, discovery advertises
+// "ping" alongside "poll" in backchannel_token_delivery_modes_supported,
+// a client may send client_notification_token on
+// /backchannel-authentication, and ResolveBackchannelAuthRequest fires
+// the notifier when a request resolves so the client knows to collect
+// its tokens. The notifier is best-effort — a failed ping degrades to
+// poll, never blocks resolution. nil (the default) keeps poll-only mode.
+func WithCIBAPingNotifier(notifier oauth.CIBAPingNotifier) Option {
+	return func(s *Server) { s.cibaPingNotifier = notifier }
 }
 
 // WithJTIReplayStore enables jti-based replay protection on every JWT

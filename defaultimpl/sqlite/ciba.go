@@ -50,6 +50,11 @@ CREATE INDEX IF NOT EXISTS idx_ciba_requests_expires_at
 // or index changes per the §4 migrate framework.
 var cibaMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: cibaSchema},
+	// v2 adds the CIBA Core §7.1 client_notification_token (ping/push
+	// delivery). Existing rows default to '' (poll mode, no ping).
+	{Version: 2, Name: "client_notification_token", SQL: `
+ALTER TABLE ciba_requests ADD COLUMN client_notification_token TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // CIBAStore is the SQLite-backed [oauth.CIBAStore]. Suitable for
@@ -118,14 +123,14 @@ func (s *CIBAStore) Issue(ctx context.Context, req *oauth.CIBARequest) (string, 
         INSERT INTO ciba_requests (
             auth_req_id, client_id, subject_id, provider, scopes,
             acr_values, binding_message, resources, nonce,
-            request_context, status, interval_ns, last_poll,
-            created_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            client_notification_token, request_context, status,
+            interval_ns, last_poll, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, req.ClientID, req.SubjectID, req.Provider,
 		strings.Join(req.Scopes, " "), req.ACRValues, req.BindingMessage,
-		strings.Join(req.Resources, " "), req.Nonce, req.RequestContext,
-		string(oauth.CIBAPending), int64(req.Interval), int64(0),
-		req.CreatedAt.UnixNano(), req.ExpiresAt.UnixNano(),
+		strings.Join(req.Resources, " "), req.Nonce, req.ClientNotificationToken,
+		req.RequestContext, string(oauth.CIBAPending), int64(req.Interval),
+		int64(0), req.CreatedAt.UnixNano(), req.ExpiresAt.UnixNano(),
 	)
 	if err != nil {
 		return "", fmt.Errorf("sqlite: insert ciba_request: %w", err)
@@ -141,16 +146,17 @@ func (s *CIBAStore) Get(ctx context.Context, authReqID string) (*oauth.CIBAReque
 	}
 	row := s.db.QueryRowContext(ctx, `
         SELECT client_id, subject_id, provider, scopes, acr_values,
-               binding_message, resources, nonce, request_context,
-               status, interval_ns, last_poll, created_at, expires_at
+               binding_message, resources, nonce, client_notification_token,
+               request_context, status, interval_ns, last_poll,
+               created_at, expires_at
         FROM ciba_requests WHERE auth_req_id = ?`, authReqID)
 	var (
-		clientID, subjectID, provider, scopes, acr, binding, resources, nonce, status string
-		reqCtx                                                                        []byte
-		intervalNs, lastPoll, createdNs, expiresNs                                    int64
+		clientID, subjectID, provider, scopes, acr, binding, resources, nonce, notifToken, status string
+		reqCtx                                                                                    []byte
+		intervalNs, lastPoll, createdNs, expiresNs                                                int64
 	)
 	if err := row.Scan(&clientID, &subjectID, &provider, &scopes, &acr,
-		&binding, &resources, &nonce, &reqCtx, &status,
+		&binding, &resources, &nonce, &notifToken, &reqCtx, &status,
 		&intervalNs, &lastPoll, &createdNs, &expiresNs); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oauth.ErrCIBARequestNotFound
@@ -167,21 +173,22 @@ func (s *CIBAStore) Get(ctx context.Context, authReqID string) (*oauth.CIBAReque
 		lp = time.Unix(0, lastPoll).UTC()
 	}
 	return &oauth.CIBARequest{
-		AuthReqID:      authReqID,
-		ClientID:       clientID,
-		SubjectID:      subjectID,
-		Provider:       provider,
-		Scopes:         splitNonEmpty(scopes),
-		ACRValues:      acr,
-		BindingMessage: binding,
-		Resources:      splitNonEmpty(resources),
-		Nonce:          nonce,
-		RequestContext: reqCtx,
-		Status:         oauth.CIBAStatus(status),
-		Interval:       time.Duration(intervalNs),
-		LastPoll:       lp,
-		CreatedAt:      time.Unix(0, createdNs).UTC(),
-		ExpiresAt:      expiresAt,
+		AuthReqID:               authReqID,
+		ClientID:                clientID,
+		SubjectID:               subjectID,
+		Provider:                provider,
+		Scopes:                  splitNonEmpty(scopes),
+		ACRValues:               acr,
+		BindingMessage:          binding,
+		Resources:               splitNonEmpty(resources),
+		Nonce:                   nonce,
+		ClientNotificationToken: notifToken,
+		RequestContext:          reqCtx,
+		Status:                  oauth.CIBAStatus(status),
+		Interval:                time.Duration(intervalNs),
+		LastPoll:                lp,
+		CreatedAt:               time.Unix(0, createdNs).UTC(),
+		ExpiresAt:               expiresAt,
 	}, nil
 }
 

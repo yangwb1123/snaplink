@@ -2014,12 +2014,17 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	}
 	if s.cibaStore != nil {
 		// OIDC CIBA Core 1.0 §4: advertise the backchannel endpoint +
-		// poll delivery mode only when CIBA is wired (opt-in). We never
-		// implement ping/push delivery and poll mode resolves the user
-		// from login_hint/id_token_hint rather than a user_code, so the
-		// user_code parameter is unsupported.
+		// delivery modes only when CIBA is wired (opt-in). Poll is always
+		// available; ping is added when a CIBAPingNotifier is wired
+		// (WithCIBAPingNotifier). Push delivery is not implemented. Poll
+		// mode resolves the user from login_hint/id_token_hint rather than
+		// a user_code, so the user_code parameter is unsupported.
 		cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth
-		cfg.BackchannelTokenDeliveryModesSupported = []string{"poll"}
+		modes := []string{"poll"}
+		if s.cibaPingNotifier != nil {
+			modes = append(modes, "ping")
+		}
+		cfg.BackchannelTokenDeliveryModesSupported = modes
 		cfg.BackchannelUserCodeParameterSupported = false
 		cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantCIBA)
 	}
