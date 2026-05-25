@@ -4723,6 +4723,26 @@ components:
           type: array
           items:
             type: string
+        id_token_encryption_alg_values_supported:
+          type: array
+          description: Present only when a JWE response encrypter is wired (WithJWEResponseEncrypter).
+          items:
+            type: string
+        id_token_encryption_enc_values_supported:
+          type: array
+          description: Present only when a JWE response encrypter is wired.
+          items:
+            type: string
+        userinfo_encryption_alg_values_supported:
+          type: array
+          description: Present only when a JWE response encrypter is wired.
+          items:
+            type: string
+        userinfo_encryption_enc_values_supported:
+          type: array
+          description: Present only when a JWE response encrypter is wired.
+          items:
+            type: string
         token_endpoint_auth_methods_supported:
           type: array
           items:

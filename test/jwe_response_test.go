@@ -123,6 +123,49 @@ func decryptJWE(t *testing.T, compact string, priv *rsa.PrivateKey) []byte {
 	return pt
 }
 
+func TestJWEResponse_DiscoveryAdvertisesWhenWired(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := jweRespHarness(t, priv, true)
+	doc := jweDiscovery(t, srv)
+	for _, field := range []string{
+		"id_token_encryption_alg_values_supported",
+		"id_token_encryption_enc_values_supported",
+		"userinfo_encryption_alg_values_supported",
+		"userinfo_encryption_enc_values_supported",
+	} {
+		vals, _ := doc[field].([]any)
+		if len(vals) == 0 {
+			t.Errorf("discovery missing %s: %v", field, doc[field])
+		}
+	}
+}
+
+func TestJWEResponse_DiscoveryOmittedWhenUnwired(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
+	srv := jweRespHarness(t, priv, false)
+	doc := jweDiscovery(t, srv)
+	for _, field := range []string{
+		"id_token_encryption_alg_values_supported",
+		"userinfo_encryption_alg_values_supported",
+	} {
+		if _, present := doc[field]; present {
+			t.Errorf("%s must be omitted when no encrypter is wired", field)
+		}
+	}
+}
+
+func jweDiscovery(t *testing.T, srv *httptest.Server) map[string]any {
+	t.Helper()
+	resp, err := http.Get(srv.URL + "/.well-known/openid-configuration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var doc map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&doc)
+	return doc
+}
+
 func TestJWEResponse_IDTokenEncrypted(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	srv := jweRespHarness(t, priv, true)
