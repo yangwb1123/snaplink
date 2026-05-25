@@ -623,6 +623,17 @@ oauth:
     enabled: false
     timeout: 5s
     max_bytes: 16384    # 16 KB ceiling for a signed JAR body
+  # FAPI 2.0 Security Profile. profile="fapi_2" enables the baseline
+  # rule checks (PAR-only, signed request object, S256 PKCE, code-only
+  # response type, DPoP/mTLS sender-constrained tokens) at /auth/login
+  # and /token. inspection_only=true audits violations
+  # (fapi_compliance_violation event + sso_fapi_violations_total metric)
+  # without rejecting — the ramp-up path; flip to false to enforce.
+  # The underlying capabilities (par/jar above, DPoP header or mTLS)
+  # must be wired/sent for a client to pass enforcement.
+  compliance:
+    profile: ""            # "" | fapi_2
+    inspection_only: false # true: audit-only ramp-up; false: enforce
 
 # OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
 # POST a signed logout_token to every affected RP's backchannel_logout_uri

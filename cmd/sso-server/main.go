@@ -2594,6 +2594,20 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithOAuth21StrictMode(true))
 		logger.Info("oauth2.1 strict mode: implicit grant disabled, S256-only PKCE, PKCE required for every login")
 	}
+	if prof := strings.ToLower(strings.TrimSpace(cfg.OAuth.Compliance.Profile)); prof != "" {
+		switch prof {
+		case "fapi_2", "fapi2", "fapi-2":
+			mode := sso.FAPIModeEnforce
+			if cfg.OAuth.Compliance.InspectionOnly {
+				mode = sso.FAPIModeInspection
+			}
+			opts = append(opts, sso.WithFAPIProfile(mode))
+			logger.Info("oauth compliance profile: fapi_2", "mode", mode.String(),
+				"note", "PAR/JAR/DPoP-or-mTLS must be wired for clients to pass enforcement")
+		default:
+			return nil, fmt.Errorf("oauth.compliance.profile %q unsupported (supported: fapi_2)", prof)
+		}
+	}
 	if cfg.Server.PairwiseSubjects.Enabled {
 		salt, err := resolvePairwiseSalt(cfg.Server.PairwiseSubjects)
 		if err != nil {

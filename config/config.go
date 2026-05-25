@@ -581,6 +581,22 @@ type OAuthConfig struct {
 	DeviceCode   OAuthDeviceCodeConfig `yaml:"device_code"`
 	PAR          OAuthStoreConfig      `yaml:"par"`
 	JAR          OAuthJARConfig        `yaml:"jar"`
+	Compliance   OAuthComplianceConfig `yaml:"compliance"`
+}
+
+// OAuthComplianceConfig opts into a named OAuth/OIDC security profile.
+// Today only the FAPI 2.0 Security Profile is supported. The underlying
+// capabilities (PAR / JAR / DPoP or mTLS) must be independently wired
+// for clients to actually pass enforcement — the profile only checks.
+type OAuthComplianceConfig struct {
+	// Profile selects the compliance profile: "" (off) | "fapi_2".
+	Profile string `yaml:"profile"`
+	// InspectionOnly, when a profile is set, runs audit-only:
+	// violations emit fapi_compliance_violation events (+ the
+	// sso_fapi_violations_total metric) but requests proceed — the
+	// ramp-up path to collect the per-RP compliance-gap list before
+	// flipping to enforce. Default false = enforce (reject violations).
+	InspectionOnly bool `yaml:"inspection_only"`
 }
 
 // OAuthSQLiteConfig groups the SQLite-only knobs. DSN follows
