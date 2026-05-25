@@ -2123,7 +2123,10 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 			oidc.ResponseModeJWT, oidc.ResponseModeQueryJWT,
 			oidc.ResponseModeFragmentJWT, oidc.ResponseModeFormPostJWT,
 		)
-		cfg.AuthorizationSigningAlgValuesSupported = []string{"EdDSA"}
+		// JARM responses are signed with the server's signing key, so
+		// advertise the actual signing alg(s) (EdDSA / ES256 / RS256 /
+		// PS256), not a hardcoded EdDSA.
+		cfg.AuthorizationSigningAlgValuesSupported = s.SigningAlgValues(ctx.Request().Context())
 	}
 
 	// FAPI 2.0 enforce mode: the profile makes these constraints
