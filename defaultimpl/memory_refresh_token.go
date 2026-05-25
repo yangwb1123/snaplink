@@ -201,6 +201,28 @@ func (m *MemoryRefreshTokenStore) DeleteAllForSubject(_ context.Context, userID,
 	return n, nil
 }
 
+// CountForSubject implements [oauth.RefreshTokenSubjectCounter] — counts
+// the subject's tokens for clientID (or every client when clientID is
+// empty) without deleting them, for erasure dry-run previews.
+func (m *MemoryRefreshTokenStore) CountForSubject(_ context.Context, userID, clientID string) (int, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int
+	for _, entry := range m.entries {
+		if entry.UserID != userID {
+			continue
+		}
+		if clientID != "" && entry.ClientID != clientID {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
 // GenerateRefreshToken mints a cryptographically random base64url-encoded
 // token suitable for the OAuth 2.0 refresh_token grant. Exposed so
 // custom oauth.RefreshTokenStore implementations can reuse it.

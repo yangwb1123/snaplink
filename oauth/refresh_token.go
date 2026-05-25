@@ -145,6 +145,16 @@ type RefreshTokenSubjectIndex interface {
 	DeleteAllForSubject(ctx context.Context, userID, clientID string) (int, error)
 }
 
+// RefreshTokenSubjectCounter is an OPTIONAL companion to
+// RefreshTokenSubjectIndex that counts a subject's tokens for a client
+// WITHOUT deleting them. It lets callers preview the blast radius of a
+// bulk revocation — e.g. a GDPR erasure dry-run — since DeleteAllForSubject
+// is destructive and gives no count without acting. Empty clientID counts
+// across every client, mirroring DeleteAllForSubject's semantics.
+type RefreshTokenSubjectCounter interface {
+	CountForSubject(ctx context.Context, userID, clientID string) (int, error)
+}
+
 // RefreshTokenFamilyTracker is an OPTIONAL extension that turns on
 // OAuth Security BCP §4.13/§4.14 family-wide reuse detection. Stores
 // that implement it MUST:

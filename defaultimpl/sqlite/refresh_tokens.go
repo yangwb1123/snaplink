@@ -340,6 +340,29 @@ func (s *RefreshTokenStore) DeleteAllForSubject(ctx context.Context, userID, cli
 	return int(n), nil
 }
 
+// CountForSubject implements [oauth.RefreshTokenSubjectCounter] — counts
+// the subject's tokens for clientID (or every client when clientID is
+// empty) without deleting them, for erasure dry-run previews.
+func (s *RefreshTokenStore) CountForSubject(ctx context.Context, userID, clientID string) (int, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	var n int
+	var err error
+	if clientID == "" {
+		err = s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM refresh_tokens WHERE user_id = ?`, userID).Scan(&n)
+	} else {
+		err = s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM refresh_tokens WHERE user_id = ? AND client_id = ?`,
+			userID, clientID).Scan(&n)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: count by subject: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteFamily implements [oauth.RefreshTokenFamilyTracker] — kills
 // every active refresh token sharing the FamilyID and wipes the
 // matching reuse-detection ledger rows. Returns the count of active

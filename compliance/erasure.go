@@ -42,11 +42,11 @@ type Eraser struct {
 
 // EraseOptions tunes an erasure run.
 type EraseOptions struct {
-	// DryRun previews the erasure without mutating anything. Note:
-	// refresh-token revocation cannot be previewed — RefreshTokenSubjectIndex
-	// exposes only a destructive DeleteAllForSubject (no count), so a
-	// dry run reports RefreshTokensDeleted=0 and notes the limitation in
-	// Skipped. Sessions and the user-delete intent ARE previewed.
+	// DryRun previews the erasure without mutating anything. Refresh-token
+	// counts are previewed when the store also implements
+	// oauth.RefreshTokenSubjectCounter; otherwise that step is noted in
+	// Skipped (the index-only SPI exposes no non-destructive count).
+	// Sessions and the user-delete intent are always previewed.
 	DryRun bool
 }
 
@@ -87,7 +87,26 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 	case e.Refresh == nil || e.Clients == nil:
 		rep.Skipped = append(rep.Skipped, "refresh_tokens(not wired)")
 	case opts.DryRun:
-		rep.Skipped = append(rep.Skipped, "refresh_tokens(dry-run: not previewable)")
+		// Preview the count when the store supports a non-destructive
+		// count; otherwise note the limitation.
+		counter, ok := e.Refresh.(oauth.RefreshTokenSubjectCounter)
+		if !ok {
+			rep.Skipped = append(rep.Skipped, "refresh_tokens(dry-run: store has no CountForSubject)")
+			break
+		}
+		clients, err := e.Clients.List(ctx)
+		if err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("list clients: %w", err))
+			break
+		}
+		for _, c := range clients {
+			n, err := counter.CountForSubject(ctx, userID, c.ID)
+			if err != nil {
+				rep.Errors = append(rep.Errors, fmt.Errorf("count refresh tokens (client=%s): %w", c.ID, err))
+				continue
+			}
+			rep.RefreshTokensDeleted += n // projected count under DryRun
+		}
 	default:
 		clients, err := e.Clients.List(ctx)
 		if err != nil {

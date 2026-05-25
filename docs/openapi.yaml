@@ -1560,6 +1560,110 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/compliance/users/{id}/export:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: The data subject's user id.
+    get:
+      tags: [admin]
+      summary: Export a subject's data (GDPR Art. 15 / 20).
+      description: |
+        Assembles a portable JSON bundle of the subject's data across
+        the wired stores (profile + active sessions + any registered
+        SubjectExporter domains). Admin-gated — leaks the subject's PII;
+        the admin middleware enforces `admin:read`. Refresh tokens are
+        intentionally excluded (opaque credentials are never exported).
+        Best-effort: a partial store failure still returns 200 with the
+        data that was gathered (the failure is recorded in the audit log).
+      operationId: exportSubject
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Export bundle (possibly partial).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subject: { type: string }
+                  generated_at: { type: string, format: date-time }
+                  data:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: Malformed path.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/compliance/users/{id}/erase:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: The data subject's user id.
+    post:
+      tags: [admin]
+      summary: Erase a subject's data (GDPR Art. 17).
+      description: |
+        Revokes the subject's refresh tokens across every client,
+        destroys their active sessions, and deletes the account —
+        credentials first, so a mid-way failure leaves the subject
+        locked out rather than half-erased-but-usable. Idempotent.
+        Admin-gated — destructive; the admin middleware enforces
+        `admin:write`. Returns 207 when a step partially failed (some
+        data was still erased).
+      operationId: eraseSubject
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  description: Preview without mutating. Refresh-token counts are previewed only when the store supports a non-destructive count.
+      responses:
+        "200":
+          description: Erasure (or dry-run preview) completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErasureReport"
+        "207":
+          description: Partial erasure — a step failed; see errors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErasureReport"
+        "400":
+          description: Malformed path.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/audit/events:
     get:
       tags: [admin]
@@ -4604,6 +4708,29 @@ components:
         error_description:
           type: string
           description: Optional human-readable detail.
+
+    ErasureReport:
+      type: object
+      properties:
+        user_id:
+          type: string
+        dry_run:
+          type: boolean
+        refresh_tokens_deleted:
+          type: integer
+          description: Tokens revoked (or, under dry_run, the projected count when previewable).
+        sessions_destroyed:
+          type: integer
+        user_deleted:
+          type: boolean
+        skipped:
+          type: array
+          items: { type: string }
+          description: Steps skipped because their store wasn't wired (or isn't previewable under dry_run).
+        errors:
+          type: array
+          items: { type: string }
+          description: Per-step failures; present on a 207 partial erasure.
 
     LivenessResponse:
       type: object

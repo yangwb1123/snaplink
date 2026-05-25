@@ -136,6 +136,32 @@ func TestSQLiteRefresh_RoundTripAndRotation(t *testing.T) {
 	}
 }
 
+func TestSQLiteRefresh_CountForSubject(t *testing.T) {
+	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour)
+	_ = st.Issue(ctx, "t1", &oauth.RefreshToken{UserID: "u", ClientID: "c1", ExpiresAt: exp})
+	_ = st.Issue(ctx, "t2", &oauth.RefreshToken{UserID: "u", ClientID: "c1", ExpiresAt: exp})
+	_ = st.Issue(ctx, "t3", &oauth.RefreshToken{UserID: "u", ClientID: "c2", ExpiresAt: exp})
+	_ = st.Issue(ctx, "t4", &oauth.RefreshToken{UserID: "other", ClientID: "c1", ExpiresAt: exp})
+
+	if n, _ := st.CountForSubject(ctx, "u", "c1"); n != 2 {
+		t.Errorf("count(u,c1) = %d, want 2", n)
+	}
+	if n, _ := st.CountForSubject(ctx, "u", ""); n != 3 {
+		t.Errorf("count(u, all) = %d, want 3", n)
+	}
+	// Non-destructive: a delete still finds the tokens afterwards.
+	if n, _ := st.DeleteAllForSubject(ctx, "u", "c1"); n != 2 {
+		t.Errorf("delete(u,c1) = %d, want 2 (count must not have removed them)", n)
+	}
+}
+
 func TestSQLiteRefresh_InspectAndDelete(t *testing.T) {
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {

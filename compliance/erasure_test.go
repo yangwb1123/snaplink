@@ -145,6 +145,24 @@ func TestEraseSubject_DryRunMutatesNothing(t *testing.T) {
 	}
 }
 
+func TestEraseSubject_DryRunPreviewsRefreshCount(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	// MemoryRefreshTokenStore implements RefreshTokenSubjectCounter, so a
+	// dry run projects the token count without deleting (u1 has 2: c1+c2).
+	rep, err := f.eraser.EraseSubject(ctx, "u1", compliance.EraseOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if rep.RefreshTokensDeleted != 2 {
+		t.Errorf("dry-run projected RefreshTokensDeleted = %d, want 2", rep.RefreshTokensDeleted)
+	}
+	// Still non-destructive.
+	if n, _ := f.refresh.DeleteAllForSubject(ctx, "u1", ""); n != 2 {
+		t.Errorf("dry-run revoked tokens: real delete found %d, want 2", n)
+	}
+}
+
 func TestEraseSubject_SkipsUnwiredStores(t *testing.T) {
 	ctx := context.Background()
 	// Only a user provider wired; refresh + sessions absent.
