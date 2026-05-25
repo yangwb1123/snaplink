@@ -12,7 +12,40 @@
 
 ---
 
-## v3.0（2026-05-25）—— post-v2.9 复扫：重排后的 3–5 个方向【当前生效】
+## v3.1（2026-05-25）—— 第七个 10 轮：方向 ①②⑤ 落地（KMS 接线 + GDPR + EC JWE）
+
+v3.0 复扫后的 10 轮开发,沿三个方向交付。每轮严格走"分析→编码→自测→
+建议"SOP,各自独立 commit、`go test`/`make ci` 绿:
+
+- **方向 ①(签名密钥治理)R1–3**:`defaultimpl/cryptosigner` 把任意
+  stdlib `crypto.Signer`(KMS/HSM/PKCS#11 通用面)桥接进三种 issuer 接缝
+  (含 ECDSA 的 DER→R‖S 转换),重 SDK 留在 operator cmd fork(go.mod 零
+  增);cmd `keys.signing.external` 注册接缝 + 与进程内轮换互斥守卫;
+  `sso_signing_operations_total{alg,outcome}` + `_duration_seconds` 观测
+  KMS round-trip(roadmap ① 的 p99 边界)。**剩**:`awskms`/`gcpkms`/
+  `pkcs11` 具体 peer(operator 侧)、ActiveKID 多副本强一致、per-tenant 签名。
+- **方向 ②(GDPR 闭环)R4–7**:新 `compliance` 包 —— `Eraser`(Art.17 跨
+  store 删除:撤 refresh→销 session→删 user,凭据先行、best-effort、幂等)
+  + `Exporter`(Art.15/20,`SubjectExporter` 可扩展,排除凭据);admin HTTP
+  端点 `GET/POST /api/v1/compliance/users/{id}/{export,erase}`(scope 自动
+  read/write,审计落账,openapi + `ErasureReport` schema);
+  `RefreshTokenSubjectCounter` 让 dry-run 非破坏性预览 token 数。**剩**:
+  软删除/PII 假名化(需富化 User 模型)、Admin Console SPA、SCIM/SAML。
+- **方向 ⑤(协议收尾)R8–10**:id_token/userinfo + JAR 双向 JWE 多算法 ——
+  `ECDHJWEResponseEncrypter`/`ECDHJWEDecrypter`(ECDH-ES[+A256KW]+A256GCM,
+  crypto/ecdh on-curve 校验)补齐 EC 侧;`MultiJWE{ResponseEncrypter,
+  Decrypter}` 按 alg 路由 RSA+EC、JWKS 聚合、discovery 自动广告;cmd
+  `oidc.response_encryption.backend: rsa|ecdh|multi`。**剩**:CIBA ping/push
+  delivery(需完成钩子,低优)。
+
+**本轮刻意不做**:方向 ③(SCIM/SAML)—— 当前 `core.User` 模型精简(无
+username/name/active 字段),忠实 SCIM 映射需先富化 User 模型,非单轮可
+净交付;方向 ④(Redis)—— 引入有状态新依赖,等 >1k QPS 客户再做。二者
+仍是下一阶段最高 ROI。
+
+---
+
+## v3.0（2026-05-25）—— post-v2.9 复扫：重排后的 3–5 个方向【已被 v3.1 部分落地】
 
 > 这是 v2.7–v2.9 三轮交付（FAPI 2.0 profile + 四算法签名矩阵 + JARM）
 > 之后做的一次全局复扫。**下方 v2.6 节的 ①②已落地、结论已过期**，本
