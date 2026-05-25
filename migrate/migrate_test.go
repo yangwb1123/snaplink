@@ -167,6 +167,49 @@ func TestCurrentVersion_MissingTableIsZero(t *testing.T) {
 	}
 }
 
+func TestStatus_ReportsPerNamespace(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	// Two namespaces at different versions.
+	if err := migrate.Run(ctx, db, "alpha", []migrate.Migration{
+		{Version: 1, Name: "a1", SQL: `CREATE TABLE IF NOT EXISTS a (x TEXT)`},
+		{Version: 2, Name: "a2", SQL: `CREATE TABLE IF NOT EXISTS a2 (x TEXT)`},
+	}); err != nil {
+		t.Fatalf("alpha: %v", err)
+	}
+	if err := migrate.Run(ctx, db, "beta", base); err != nil {
+		t.Fatalf("beta: %v", err)
+	}
+
+	st, err := migrate.Status(ctx, db)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(st) != 2 {
+		t.Fatalf("got %d namespaces, want 2: %+v", len(st), st)
+	}
+	// Sorted by namespace: alpha, beta.
+	if st[0].Namespace != "alpha" || st[0].Version != 2 || st[0].Name != "a2" {
+		t.Errorf("alpha status = %+v, want {alpha 2 a2}", st[0])
+	}
+	if st[1].Namespace != "beta" || st[1].Version != 1 {
+		t.Errorf("beta status = %+v, want {beta 1}", st[1])
+	}
+	if st[0].AppliedAt.IsZero() {
+		t.Error("applied_at not populated")
+	}
+}
+
+func TestStatus_EmptyDBNoNamespaces(t *testing.T) {
+	st, err := migrate.Status(context.Background(), openDB(t))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(st) != 0 {
+		t.Errorf("got %d namespaces on empty DB, want 0", len(st))
+	}
+}
+
 // TestRun_ConcurrentRunnersSerialize simulates replicas booting together
 // against one database: every Run must succeed and the version must be
 // recorded exactly once (BEGIN IMMEDIATE serialization, no double-apply).

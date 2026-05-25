@@ -8,8 +8,15 @@ import (
 	"math"
 	"time"
 
+	"github.com/snaplink/sso/migrate"
+
 	_ "modernc.org/sqlite"
 )
+
+// rateLimitMigrations is the ordered schema history; v1 = baseline.
+var rateLimitMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline_rate_limit_buckets", SQL: rateLimitBucketSchema},
+}
 
 // rateLimitBucketSchema persists per-key token-bucket state.
 //
@@ -75,7 +82,7 @@ func NewSQLiteLimiter(dsn string, perSecond float64, burst int, bucketName strin
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), rateLimitBucketSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "rate_limit", rateLimitMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate rate_limit_buckets: %w", err)
 	}
@@ -95,7 +102,7 @@ func NewSQLiteLimiterWithDB(db *sql.DB, perSecond float64, burst int, bucketName
 	if burst < 1 {
 		burst = 1
 	}
-	if _, err := db.ExecContext(context.Background(), rateLimitBucketSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "rate_limit", rateLimitMigrations); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate rate_limit_buckets: %w", err)
 	}
 	return &SQLiteLimiter{

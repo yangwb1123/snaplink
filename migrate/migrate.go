@@ -171,6 +171,65 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 	return nil
 }
 
+// NamespaceStatus is one backend's recorded schema state — the latest
+// applied migration for that namespace.
+type NamespaceStatus struct {
+	Namespace string
+	Version   int
+	Name      string
+	AppliedAt time.Time
+}
+
+// Status discovers every schema_migrations_<ns> table in the database
+// and returns the latest-applied migration per namespace, sorted by
+// namespace. It reads only what's recorded in the DB — no migration
+// definitions needed — so an offline tool can report a database's
+// schema state without importing the backend packages.
+func Status(ctx context.Context, db *sql.DB) ([]NamespaceStatus, error) {
+	const prefix = "schema_migrations_"
+	rows, err := db.QueryContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ? ORDER BY name`,
+		prefix+"%")
+	if err != nil {
+		return nil, fmt.Errorf("migrate: list version tables: %w", err)
+	}
+	var tables []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("migrate: scan version table name: %w", err)
+		}
+		tables = append(tables, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	out := make([]NamespaceStatus, 0, len(tables))
+	for _, table := range tables {
+		st := NamespaceStatus{Namespace: table[len(prefix):]}
+		var appliedNs int64
+		// The latest migration is the max-version row.
+		err := db.QueryRowContext(ctx, fmt.Sprintf(
+			`SELECT version, name, applied_at FROM %s ORDER BY version DESC LIMIT 1`, table),
+		).Scan(&st.Version, &st.Name, &appliedNs)
+		if err == sql.ErrNoRows {
+			// Empty version table (created but nothing recorded) — report
+			// version 0 so the namespace still surfaces.
+			out = append(out, st)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("migrate: read status for %s: %w", st.Namespace, err)
+		}
+		st.AppliedAt = time.Unix(0, appliedNs)
+		out = append(out, st)
+	}
+	return out, nil
+}
+
 // CurrentVersion returns the highest applied migration version for the
 // namespace, or 0 when no migrations have been recorded (including when
 // the version table doesn't exist yet). Useful for a readiness gate
