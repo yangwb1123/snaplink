@@ -21,9 +21,17 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/snaplink/sso/authenticators/webauthn"
+	"github.com/snaplink/sso/migrate"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 )
+
+// userMigrations is the ordered schema history for the WebAuthn user
+// store; v1 = baseline. Separate namespace from the session store so
+// the two evolve independently even when sharing a DSN.
+var userMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline_webauthn_users", SQL: userSchema},
+}
 
 // userSchema stores one row per enrolled username; credentials live
 // in a JSON array column. Memory backend forks per replica — a
@@ -66,7 +74,7 @@ func NewUserStore(dsn string) (*UserStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), userSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "webauthn_users", userMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate webauthn_users: %w", err)
 	}
@@ -76,7 +84,7 @@ func NewUserStore(dsn string) (*UserStore, error) {
 // NewUserStoreWithDB wraps an existing *sql.DB (shared-pool
 // deployments). Caller owns the connection lifecycle.
 func NewUserStoreWithDB(db *sql.DB) (*UserStore, error) {
-	if _, err := db.ExecContext(context.Background(), userSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "webauthn_users", userMigrations); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate webauthn_users: %w", err)
 	}
 	return &UserStore{db: db}, nil

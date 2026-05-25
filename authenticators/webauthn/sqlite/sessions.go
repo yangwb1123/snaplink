@@ -9,9 +9,17 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/authenticators/webauthn"
+	"github.com/snaplink/sso/migrate"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 )
+
+// sessionMigrations is the ordered schema history for the WebAuthn
+// session store; v1 = baseline. Own namespace, independent of the user
+// store's version table.
+var sessionMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline_webauthn_sessions", SQL: sessionSchema},
+}
 
 // sessionSchema holds the challenge + SessionData between Begin*
 // and Finish* calls. The session ID is the opaque token the client
@@ -45,7 +53,7 @@ func NewSessionStore(dsn string) (*SessionStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), sessionSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "webauthn_sessions", sessionMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate webauthn_sessions: %w", err)
 	}
@@ -55,7 +63,7 @@ func NewSessionStore(dsn string) (*SessionStore, error) {
 // NewSessionStoreWithDB wraps an existing *sql.DB (shared-pool
 // deployments).
 func NewSessionStoreWithDB(db *sql.DB) (*SessionStore, error) {
-	if _, err := db.ExecContext(context.Background(), sessionSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "webauthn_sessions", sessionMigrations); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate webauthn_sessions: %w", err)
 	}
 	return &SessionStore{db: db}, nil
