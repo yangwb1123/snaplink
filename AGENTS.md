@@ -62,6 +62,8 @@ oidc/          ID Token SPIs (IDTokenIssuer/UserinfoSigner/MetadataSigner). Hexa
 security/      Lockout, JTI replay, JAR/JWE, step-up, mTLS header extractor,
                subject-client index, ConstantTimeStringEq
 spi/           Standalone SPIs: Logger, CodeSender, RiskScorer, MFAProvider+Challenge
+fapi/          FAPI 2.0 Security Profile: pure-logic Validator (Inspection|Enforce)
+               + baseline rules; Server checks at /auth/login + /token
 anomaly/       Async behavioral-detection SPIs
 cluster/       Cross-replica coordination Bus (Publish/Subscribe) for cache
                invalidation; memory + etcd peers. Server.{InvalidateTenantSuspensionCache,
@@ -220,6 +222,7 @@ where Hexagonal handlers moved). §2 gotchas apply across grants.
 | RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider` | `dpop.go` + `dpop_nonce.go` |
 | RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` (Ed25519JWTIssuer satisfies) | `oidc_discovery.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
+| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)`; rules: PAR-only, signed request, S256 PKCE, code-only, sender-constrained (DPoP/mTLS) | `fapi/` + `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `rar.go` |
 | RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch via `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `security/jar*.go` |
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; default `RSAJWEDecrypter` (RSA-OAEP-256 + A256GCM); enc key auto-published in JWKS `use:enc` | `security/jwe.go` |
@@ -586,6 +589,7 @@ labels; per-endpoint breakdowns come from traces):
 | `sso_anomaly_dispatch_drops_total` | Counter | reason |
 | `sso_anomaly_inspect_errors_total` | Counter | detector |
 | `sso_signing_key_rotations_total` | Counter | — |
+| `sso_fapi_violations_total` | Counter | rule, mode |
 
 MFA labels are restricted to the provider's `SupportedMethods()`
 (`totp`/`webauthn`/`push`) — user-controlled values dropped before the

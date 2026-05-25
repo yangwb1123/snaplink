@@ -89,6 +89,8 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `invalid_authorization_details` | 400  | RFC 9396 RAR — `authorization_details` parameter is malformed (not a JSON array, element missing `type`, or element `type` not in the client's `allowed_authorization_details_types`)  | Drop the offending element or get its type allowlisted on the client                            |
 | `insufficient_user_authentication` | 401 (RS) / 400 (AS exchange) | RFC 9470 — caller demanded `acr_values` the subject_token's existing ACR doesn't satisfy. On `/token` grant=token-exchange and on resource-server `WWW-Authenticate` challenges. | Route user through `/auth/login` with the same `acr_values` to step up    |
 
+**FAPI 2.0 profile** (`oauth.compliance.profile: fapi_2`, enforce mode): a baseline violation (no PAR, unsigned request object, non-S256 PKCE, non-code response type, or bearer/non-sender-constrained token) is rejected with the standard `invalid_request` (`error_description` carries the failed `fapi:<rule>` id; SPAs branch on `error`, operators on the audit event). No new wire code is introduced — every violation maps onto the existing OAuth vocabulary. In inspection mode (`inspection_only: true`) nothing is rejected; each violation only emits the `fapi_compliance_violation` audit event (`fapi_rule` / `fapi_detail` / `fapi_mode` metadata) and increments `sso_fapi_violations_total{rule,mode}`.
+
 ### Token endpoint (`/token`)
 
 | Code                          | HTTP | Emitted when                                                                            | Client should                                 |
