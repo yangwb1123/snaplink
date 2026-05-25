@@ -93,6 +93,40 @@ func RecordDeviceCodeDecision(rec *Recorder, ctx core.HandlerContext, userID, de
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordCIBAAuthRequest emits a ciba_auth_request event when
+// /backchannel-authentication issues an auth_req_id.
+func RecordCIBAAuthRequest(rec *Recorder, ctx core.HandlerContext, clientID, subjectID, authReqID string) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	e.Type = EventCIBAAuthRequest
+	e.Outcome = OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	SetMeta(e, "auth_req_id", authReqID)
+	rec.Record(ctx.Request().Context(), e)
+}
+
+// RecordCIBADecision emits a ciba_approved / ciba_denied event when the
+// CIBA token poll resolves a request.
+func RecordCIBADecision(rec *Recorder, ctx core.HandlerContext, clientID, subjectID string, approved bool) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	if approved {
+		e.Type = EventCIBAApproved
+		e.Outcome = OutcomeSuccess
+	} else {
+		e.Type = EventCIBADenied
+		e.Outcome = OutcomeFailure
+	}
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	rec.Record(ctx.Request().Context(), e)
+}
+
 // RecordRefreshTokenReuse emits a refresh_token_reuse_detected event
 // after a refresh-token-reuse attack invalidates a whole family.
 func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, familyID string, killed int) {

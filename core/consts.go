@@ -4,27 +4,28 @@ import "time"
 
 // Endpoint paths registered by Server.Mount.
 const (
-	PathHealth         = "/health"
-	PathLivez          = "/livez"
-	PathReadyz         = "/readyz"
-	PathLogin          = "/auth/login"
-	PathMFAComplete    = "/auth/mfa"
-	PathSendCode       = "/auth/send-code"
-	PathCallback       = "/auth/callback"
-	PathToken          = "/token"
-	PathIntrospect     = "/token/introspect"
-	PathRevoke         = "/token/revoke"
-	PathRevokeAll      = "/token/revoke-all"
-	PathDeviceCode     = "/device/code"
-	PathDeviceVerify   = "/device/verify"
-	PathUserInfo       = "/userinfo"
-	PathLogout         = "/logout"
-	PathEndSession     = "/end_session"
-	PathPAR            = "/par" // RFC 9126 Pushed Authorization Requests
-	PathAPIPrefix      = "/api/v1"
-	PathClientByID     = "/clients/:id"
-	PathAuditEvents    = "/audit/events"
-	PathAuditEventByID = "/audit/events/:id"
+	PathHealth          = "/health"
+	PathLivez           = "/livez"
+	PathReadyz          = "/readyz"
+	PathLogin           = "/auth/login"
+	PathMFAComplete     = "/auth/mfa"
+	PathSendCode        = "/auth/send-code"
+	PathCallback        = "/auth/callback"
+	PathToken           = "/token"
+	PathIntrospect      = "/token/introspect"
+	PathRevoke          = "/token/revoke"
+	PathRevokeAll       = "/token/revoke-all"
+	PathDeviceCode      = "/device/code"
+	PathDeviceVerify    = "/device/verify"
+	PathUserInfo        = "/userinfo"
+	PathLogout          = "/logout"
+	PathEndSession      = "/end_session"
+	PathPAR             = "/par"                        // RFC 9126 Pushed Authorization Requests
+	PathBackchannelAuth = "/backchannel-authentication" // OIDC CIBA Core 1.0 §7
+	PathAPIPrefix       = "/api/v1"
+	PathClientByID      = "/clients/:id"
+	PathAuditEvents     = "/audit/events"
+	PathAuditEventByID  = "/audit/events/:id"
 
 	PathMyPermissions = "/permissions/me"
 	PathMyMenus       = "/menus/me"
@@ -190,6 +191,17 @@ const (
 	ErrAccessDenied            = "access_denied"
 	ErrExpiredToken            = "expired_token"
 
+	// OIDC CIBA Core 1.0 backchannel authentication errors.
+	// ErrCIBANotConfigured is returned by /backchannel-authentication
+	// and grant_type=ciba when the CIBA store / transport are not
+	// wired (opt-in via WithCIBA). ErrUnknownUserID is the §13
+	// response when no hint resolves to a known user (collapsed for
+	// anti-enumeration — see docs/error-codes.md). ErrMissingUserCode
+	// is reserved for user-code mode (not implemented; poll mode only).
+	ErrCIBANotConfigured = "ciba_not_configured"
+	ErrUnknownUserID     = "unknown_user_id"
+	ErrMissingUserCode   = "missing_user_code"
+
 	// OIDC Core §3.1.2.6 authentication error responses returned
 	// when a prompt parameter constrains the AS's ability to
 	// surface the necessary interaction.
@@ -235,6 +247,7 @@ const (
 	GrantClientCredentials = "client_credentials"
 	GrantDeviceCode        = "urn:ietf:params:oauth:grant-type:device_code"
 	GrantTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange" // RFC 8693
+	GrantCIBA              = "urn:openid:params:grant-type:ciba"               // OIDC CIBA Core 1.0 §10.1
 )
 
 // RFC 8693 token type URIs used by the token-exchange grant.

@@ -98,14 +98,23 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `authorization_code_not_configured` | 501 | `grant_type=authorization_code` hit but no `WithAuthCodeStore` wired               | Operator wires the store                      |
 | `refresh_token_not_configured` | 501 | `grant_type=refresh_token` hit but no `WithRefreshTokenStore` wired                    | Operator wires the store                      |
 | `device_code_not_configured`  | 501  | `grant_type=urn:ietf:params:oauth:grant-type:device_code` hit but no `WithDeviceCodeStore` wired | Operator wires the store              |
+| `ciba_not_configured`         | 501  | `/backchannel-authentication` or `grant_type=urn:openid:params:grant-type:ciba` hit but no `WithCIBA` wired | Operator wires the store              |
 
-### Device flow (`/device/code`, `/device/verify`, `/token`)
+### Device flow + CIBA poll (`/device/code`, `/device/verify`, `/backchannel-authentication`, `/token`)
 
 | Code                    | HTTP | Emitted when                                                              | Client should                                            |
 |-------------------------|------|---------------------------------------------------------------------------|----------------------------------------------------------|
-| `authorization_pending` | 400  | RFC 8628 §3.5 — user hasn't approved the device yet; poll again at `interval` | Keep polling, respect the AS-supplied interval         |
-| `slow_down`             | 400  | RFC 8628 §3.5 — caller polled faster than the AS-supplied interval         | Add 5 seconds to the interval, then keep polling         |
-| `expired_token`         | 400  | RFC 8628 §3.5 — `user_code` / `device_code` TTL elapsed before approval    | Restart the device flow with a fresh `/device/code` request |
+| `authorization_pending` | 400  | RFC 8628 §3.5 / CIBA Core §11 — user hasn't confirmed yet; poll again at `interval` | Keep polling, respect the AS-supplied interval         |
+| `slow_down`             | 400  | RFC 8628 §3.5 / CIBA Core §11 — caller polled faster than the AS-supplied interval | Add 5 seconds to the interval, then keep polling         |
+| `expired_token`         | 400  | RFC 8628 §3.5 / CIBA Core §11 — `device_code` / `auth_req_id` TTL elapsed (also unknown/consumed id — collapsed for anti-enumeration) | Restart the flow with a fresh request |
+| `access_denied`         | 400  | RFC 8628 §3.5 / CIBA Core §11 — the user explicitly denied the request    | Surface to the user; do not auto-retry                   |
+
+### CIBA backchannel authentication (`/backchannel-authentication`)
+
+| Code                    | HTTP | Emitted when                                                              | Client should                                            |
+|-------------------------|------|---------------------------------------------------------------------------|----------------------------------------------------------|
+| `unknown_user_id`       | 400  | OIDC CIBA Core §13 — no hint supplied, or no `login_hint` / `id_token_hint` / `login_hint_token` resolved to a known user (collapsed for anti-enumeration) | Verify the hint identifies an enrolled user              |
+| `missing_user_code`     | 400  | Reserved — user-code delivery mode is not implemented (poll mode only)    | Use a hint instead of `user_code`                        |
 
 ### Client lookup
 

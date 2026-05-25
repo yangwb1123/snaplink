@@ -82,6 +82,10 @@ type Server struct {
 	deviceVerifyBaseURL            string
 	parStore                       oauth.PARStore
 	parTTL                         time.Duration
+	cibaStore                      oauth.CIBAStore
+	cibaTransport                  oauth.CIBATransport
+	cibaRequestTTL                 time.Duration
+	cibaPollInterval               time.Duration
 	dcrPolicy                      *oauth.DCRPolicy
 	oauth21Strict                  bool
 	logoutTokenIssuer              LogoutTokenIssuer
@@ -340,6 +344,39 @@ func WithPARStore(store oauth.PARStore, ttl time.Duration) Option {
 		s.parStore = store
 		if ttl > 0 {
 			s.parTTL = ttl
+		}
+	}
+}
+
+// WithCIBA enables OpenID Connect CIBA Core 1.0 backchannel
+// authentication in POLL delivery mode on POST
+// /backchannel-authentication + grant_type=ciba on /token. Without it,
+// /backchannel-authentication returns 501 and the CIBA grant is
+// rejected as unsupported_grant_type.
+//
+// The flow mirrors Push MFA: the AS resolves the request's hint to a
+// known user, persists a pending CIBARequest in store, and delivers
+// the auth_req_id out of band via transport (typically an adapter over
+// a defaultimpl.PushTransport — wrap one with
+// oauth.CIBATransportFunc(pt.Send)). An operator-supplied device
+// callback resolves the request via store.SetStatus(approved/denied);
+// the client polls /token until it resolves.
+//
+// reqTTL is the auth_req_id lifetime (<=0 → oauth.DefaultCIBARequestTTL,
+// 120s). interval is the minimum poll cadence enforced for slow_down
+// (<=0 → oauth.DefaultCIBAPollInterval, 5s).
+//
+// store + transport are required; passing either nil leaves CIBA
+// disabled (the handler's nil-store guard returns 501).
+func WithCIBA(store oauth.CIBAStore, transport oauth.CIBATransport, reqTTL, interval time.Duration) Option {
+	return func(s *Server) {
+		s.cibaStore = store
+		s.cibaTransport = transport
+		if reqTTL > 0 {
+			s.cibaRequestTTL = reqTTL
+		}
+		if interval > 0 {
+			s.cibaPollInterval = interval
 		}
 	}
 }
@@ -970,6 +1007,7 @@ func (s *Server) Mount() {
 	s.router.POST(PathDeviceCode, s.handleDeviceCode)
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.POST(PathPAR, s.handlePAR)
+	s.router.POST(PathBackchannelAuth, s.handleBackchannelAuth)
 	s.router.POST(oauth.PathRegister, s.handleRegister)
 	s.router.GET(oauth.PathRegisterByID, s.handleRegistrationGet)
 	s.router.PUT(oauth.PathRegisterByID, s.handleRegistrationPut)
