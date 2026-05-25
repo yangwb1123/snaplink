@@ -104,6 +104,17 @@ type Metrics struct {
 	// rate(...) by rule to see which RPs / requests fail which rule
 	// before flipping to enforce. Zero when the FAPI profile is off.
 	FAPIViolationsTotal *prometheus.CounterVec
+
+	// SigningOperationsTotal + SigningDuration instrument the JWT
+	// signing seam when backed by an EXTERNAL signer (KMS/HSM). Labels:
+	// alg (bounded: eddsa/es256/rs256/ps256), outcome (success/error).
+	// In-process signing is microsecond-scale and not instrumented; the
+	// point of these is the KMS/HSM network round-trip — operators
+	// alert on a rising error rate (KMS outage / throttling) or a p99
+	// duration that threatens token-issuance latency. Zero when no
+	// external signer is wired.
+	SigningOperationsTotal *prometheus.CounterVec   // labels: alg, outcome
+	SigningDuration        *prometheus.HistogramVec // labels: alg
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -281,6 +292,23 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "FAPI 2.0 baseline rule violations. Labels: rule (fapi:par_required/signed_request/pkce_s256/no_implicit/sender_constrained), mode (inspection/enforce). In inspection mode, graph rate() by rule to find non-compliant RPs before flipping to enforce.",
 			},
 			[]string{LabelFAPIRule, LabelFAPIMode},
+		),
+
+		SigningOperationsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameSigningOperationsTotal,
+				Help: "External (KMS/HSM) signing operations. Labels: alg (eddsa/es256/rs256/ps256), outcome (success/error). A rising error rate signals KMS outage or throttling; token issuance fails closed when signing errors. Zero when no external signer is wired.",
+			},
+			[]string{LabelAlg, LabelOutcome},
+		),
+
+		SigningDuration: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    NameSigningDuration,
+				Help:    "External (KMS/HSM) signing round-trip latency in seconds, labeled by alg. DefBuckets (.005s-10s) cover the typical 5-50ms KMS RTT plus tail; alert on a p99 that threatens token-issuance latency.",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{LabelAlg},
 		),
 	}
 }

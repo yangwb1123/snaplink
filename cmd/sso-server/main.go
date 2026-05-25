@@ -2107,7 +2107,7 @@ type signingIssuer interface {
 // name (for logging + rotation gating), and any wiring error. An external
 // signer is bridged into the issuer's seam via defaultimpl/cryptosigner;
 // a mismatched key shape fails closed here at startup.
-func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, logger spi.Logger) (signingIssuer, string, error) {
+func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *metrics.Metrics, logger spi.Logger) (signingIssuer, string, error) {
 	// Resolve an optional external signer (KMS/HSM) up front; its kid
 	// names the key in JWKS and token headers.
 	var extSigner crypto.Signer
@@ -2124,7 +2124,9 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, logger
 		if s == nil {
 			return nil, "", fmt.Errorf("keys.signing.external %q returned a nil signer", name)
 		}
-		extSigner, extKID = s, kid
+		// Instrument the KMS/HSM round-trip (no-op when metrics disabled).
+		extSigner = instrumentSigner(s, normalizeAlgLabel(sc.Alg), m)
+		extKID = kid
 		logger.Info("signing key: external signer", "name", name, "kid", kid)
 	}
 
@@ -2243,7 +2245,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
 	// EdDSA-specific (type-asserted there).
-	jwtIssuer, signingAlg, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, logger)
+	jwtIssuer, signingAlg, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, metricsRegistry, logger)
 	if err != nil {
 		return nil, err
 	}

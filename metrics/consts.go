@@ -23,6 +23,8 @@ const (
 	NameAnomalyInspectErrorsTotal  = "sso_anomaly_inspect_errors_total"
 	NameSigningKeyRotationsTotal   = "sso_signing_key_rotations_total"
 	NameFAPIViolationsTotal        = "sso_fapi_violations_total"
+	NameSigningOperationsTotal     = "sso_signing_operations_total"
+	NameSigningDuration            = "sso_signing_operation_duration_seconds"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -42,6 +44,7 @@ const (
 	LabelDetector    = "detector"
 	LabelFAPIRule    = "rule" // bounded: the 5 fapi:* baseline rule ids
 	LabelFAPIMode    = "mode" // inspection | enforce
+	LabelAlg         = "alg"  // bounded: eddsa | es256 | rs256 | ps256
 )
 
 // Status class label values, bucketed into the four standard HTTP

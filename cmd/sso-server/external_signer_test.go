@@ -8,9 +8,16 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/spi"
 )
 
@@ -53,6 +60,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 			iss, _, err := buildSigningIssuer(
 				config.SigningConfig{Alg: tc.alg, External: name},
 				config.ServerConfig{Issuer: "https://sso.test"},
+				nil,
 				spi.NopLogger{},
 			)
 			if err != nil {
@@ -69,6 +77,7 @@ func TestBuildSigningIssuer_UnregisteredExternal(t *testing.T) {
 	_, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa", External: "does-not-exist"},
 		config.ServerConfig{Issuer: "https://sso.test"},
+		nil,
 		spi.NopLogger{},
 	)
 	if err == nil {
@@ -84,6 +93,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 	_, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-mismatch"},
 		config.ServerConfig{Issuer: "https://sso.test"},
+		nil,
 		spi.NopLogger{},
 	)
 	if err == nil {
@@ -96,6 +106,7 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 	iss, alg, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa"},
 		config.ServerConfig{Issuer: "https://sso.test"},
+		nil,
 		spi.NopLogger{},
 	)
 	if err != nil {
@@ -107,6 +118,48 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 	if kid := keyIDOf(t, iss); kid == "kms-test-kid" {
 		t.Error("in-process path unexpectedly used the external kid")
 	}
+}
+
+// TestExternalSignerMetrics proves the external-signer round-trip is
+// counted: issuing a token through an externally-signed issuer increments
+// sso_signing_operations_total{alg,outcome="success"}.
+func TestExternalSignerMetrics(t *testing.T) {
+	m := metrics.New()
+	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	RegisterExternalSigner("ext-metrics", staticSigner(ecPriv))
+
+	iss, _, err := buildSigningIssuer(
+		config.SigningConfig{Alg: "es256", External: "ext-metrics"},
+		config.ServerConfig{Issuer: "https://sso.test"},
+		m,
+		spi.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("buildSigningIssuer: %v", err)
+	}
+	if _, err := iss.Issue(context.Background(), &sso.Subject{ID: "u1", ClientID: "c1"}, []string{"read"}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	scrape := scrapeMetrics(t, m)
+	if !strings.Contains(scrape, `sso_signing_operations_total{alg="es256",outcome="success"} 1`) {
+		t.Errorf("expected es256/success signing counter in scrape:\n%s", scrape)
+	}
+}
+
+// scrapeMetrics renders m's registry in the prometheus text exposition
+// format, the same view /metrics serves.
+func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {
+	t.Helper()
+	srv := httptest.NewServer(promhttp.HandlerFor(m.Registry, promhttp.HandlerOpts{}))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return string(body)
 }
 
 func TestRegisterExternalSigner_RejectsBadInput(t *testing.T) {

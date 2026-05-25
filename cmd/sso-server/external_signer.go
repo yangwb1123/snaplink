@@ -4,8 +4,13 @@ import (
 	"context"
 	"crypto"
 	"fmt"
+	"io"
 	"sort"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/snaplink/sso/metrics"
 )
 
 // ExternalSignerFactory builds a KMS/HSM-backed crypto.Signer for the JWT
@@ -47,6 +52,57 @@ func RegisterExternalSigner(name string, f ExternalSignerFactory) {
 		panic(fmt.Sprintf("RegisterExternalSigner: %q already registered", name))
 	}
 	externalSignerRegistry.factories[name] = f
+}
+
+// instrumentedSigner wraps a crypto.Signer to record signing latency +
+// outcome at the KMS/HSM round-trip boundary. It is the same crypto.Signer
+// interface, so it slots transparently between the operator's factory and
+// the cryptosigner bridge.
+type instrumentedSigner struct {
+	inner crypto.Signer
+	alg   string
+	m     *metrics.Metrics
+}
+
+func (s instrumentedSigner) Public() crypto.PublicKey { return s.inner.Public() }
+
+func (s instrumentedSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	start := time.Now()
+	sig, err := s.inner.Sign(rand, digest, opts)
+	outcome := "success"
+	if err != nil {
+		outcome = "error"
+	}
+	s.m.SigningOperationsTotal.WithLabelValues(s.alg, outcome).Inc()
+	s.m.SigningDuration.WithLabelValues(s.alg).Observe(time.Since(start).Seconds())
+	return sig, err
+}
+
+// instrumentSigner wraps s to record signing metrics under the given alg
+// label. Returns s unchanged when metrics are disabled or s is nil, so
+// callers can wrap unconditionally.
+func instrumentSigner(s crypto.Signer, alg string, m *metrics.Metrics) crypto.Signer {
+	if m == nil || s == nil {
+		return s
+	}
+	return instrumentedSigner{inner: s, alg: alg, m: m}
+}
+
+// normalizeAlgLabel maps the configured keys.signing.alg to the bounded
+// metric label set (eddsa/es256/rs256/ps256).
+func normalizeAlgLabel(alg string) string {
+	switch strings.ToLower(strings.TrimSpace(alg)) {
+	case "", "eddsa", "ed25519":
+		return "eddsa"
+	case "es256", "ecdsa":
+		return "es256"
+	case "ps256":
+		return "ps256"
+	case "rs256", "rsa":
+		return "rs256"
+	default:
+		return "unknown"
+	}
 }
 
 // lookupExternalSigner returns the factory registered under name.
