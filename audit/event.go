@@ -190,6 +190,15 @@ const (
 	// Outcome is OutcomeFailure — a reuse event is always a security
 	// signal, never a happy-path operation.
 	EventRefreshTokenReuse EventType = "refresh_token_reuse_detected"
+
+	// EventFAPIComplianceViolation fires when the FAPI 2.0 profile
+	// (inspection or enforce mode) detects a baseline rule violation.
+	// Reason carries the rule id (e.g. "fapi:par_required"); Metadata
+	// carries "fapi_rule" + "fapi_detail" + "fapi_mode". Outcome is
+	// OutcomeFailure — a violation is always a compliance signal. In
+	// inspection mode the request still proceeds; the event is the
+	// operator's per-RP compliance-gap signal.
+	EventFAPIComplianceViolation EventType = "fapi_compliance_violation"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.

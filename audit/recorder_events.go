@@ -357,6 +357,26 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
+// RecordFAPIViolation emits a fapi_compliance_violation event for one
+// failed FAPI 2.0 baseline rule. mode is the active profile mode
+// ("inspection" | "enforce") so an operator reading the audit log can
+// tell whether the request was rejected or only flagged. Plain-string
+// args keep audit decoupled from the fapi package.
+func RecordFAPIViolation(rec *Recorder, ctx core.HandlerContext, clientID, ruleID, detail, mode string) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	e.Type = EventFAPIComplianceViolation
+	e.Outcome = OutcomeFailure
+	e.ClientID = clientID
+	e.Reason = ruleID
+	SetMeta(e, "fapi_rule", ruleID)
+	SetMeta(e, "fapi_detail", detail)
+	SetMeta(e, "fapi_mode", mode)
+	rec.Record(ctx.Request().Context(), e)
+}
+
 func joinComma(s []string) string {
 	if len(s) == 0 {
 		return ""

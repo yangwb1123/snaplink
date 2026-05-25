@@ -22,6 +22,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/cors"
+	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
@@ -88,6 +89,7 @@ type Server struct {
 	cibaPollInterval               time.Duration
 	dcrPolicy                      *oauth.DCRPolicy
 	oauth21Strict                  bool
+	fapiValidator                  *fapi.Validator
 	logoutTokenIssuer              LogoutTokenIssuer
 	logoutNotifier                 LogoutNotifier
 	backchannelLogoutMaxConcurrent int
@@ -228,6 +230,30 @@ func WithBackchannelLogoutMaxConcurrent(n int) Option {
 // breaking change.
 func WithOAuth21StrictMode(enabled bool) Option {
 	return func(s *Server) { s.oauth21Strict = enabled }
+}
+
+// WithFAPIProfile enables the FAPI 2.0 Security Profile compliance
+// layer in the given mode (fapi.ModeInspection or fapi.ModeEnforce;
+// ModeOff / a nil validator is the default no-op).
+//
+// Inspection mode records every baseline violation as a
+// fapi_compliance_violation audit event but lets requests proceed —
+// the ramp-up path that hands operators a per-RP compliance-gap list
+// without breaking traffic. Enforce mode rejects violating requests.
+//
+// The baseline rules (PAR-only, signed request object, S256 PKCE,
+// code-only response type, sender-constrained tokens) are checked at
+// /auth/login and /token against signals the server already computes;
+// the underlying capabilities (PAR / JAR / DPoP / mTLS) must be wired
+// for a client to actually pass enforcement.
+func WithFAPIProfile(mode fapi.Mode) Option {
+	return func(s *Server) {
+		if mode == fapi.ModeOff {
+			s.fapiValidator = nil
+			return
+		}
+		s.fapiValidator = fapi.New(mode)
+	}
 }
 
 // WithDefaultTokenStrategy names the strategy used when a Client does not

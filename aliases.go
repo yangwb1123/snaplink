@@ -4,9 +4,20 @@ package sso
 import (
 	"github.com/snaplink/sso/admin"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/tenant"
+)
+
+// FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
+// without importing the fapi package directly.
+type FAPIMode = fapi.Mode
+
+const (
+	FAPIModeOff        = fapi.ModeOff
+	FAPIModeInspection = fapi.ModeInspection
+	FAPIModeEnforce    = fapi.ModeEnforce
 )
 
 // --- General middleware re-exports (functions moved to middleware/) ---
