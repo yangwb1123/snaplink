@@ -85,8 +85,11 @@ type OIDCConfig struct {
 
 // ResponseEncryptionConfig selects the JWE response-encryption backend.
 type ResponseEncryptionConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Backend string `yaml:"backend"` // "" | "rsa" (RSA-OAEP-256 + A256GCM)
+	Enabled bool `yaml:"enabled"`
+	// Backend: "" | "rsa" (RSA-OAEP-256) | "ecdh" (ECDH-ES[+A256KW]) |
+	// "multi" (both, routed per-client by registered key type). All use
+	// A256GCM content encryption.
+	Backend string `yaml:"backend"`
 }
 
 // KeysConfig governs signing-key lifecycle.

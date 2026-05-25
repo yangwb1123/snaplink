@@ -2692,8 +2692,17 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		case "rsa":
 			opts = append(opts, sso.WithJWEResponseEncrypter(defaultimpl.NewRSAJWEResponseEncrypter()))
 			logger.Info("oidc response encryption: enabled (RSA-OAEP-256 + A256GCM); per-client via id_token/userinfo_encrypted_response_alg")
+		case "ecdh":
+			opts = append(opts, sso.WithJWEResponseEncrypter(defaultimpl.NewECDHJWEResponseEncrypter()))
+			logger.Info("oidc response encryption: enabled (ECDH-ES[+A256KW] + A256GCM); per-client via id_token/userinfo_encrypted_response_alg")
+		case "multi":
+			opts = append(opts, sso.WithJWEResponseEncrypter(defaultimpl.NewMultiJWEResponseEncrypter(
+				defaultimpl.NewRSAJWEResponseEncrypter(),
+				defaultimpl.NewECDHJWEResponseEncrypter(),
+			)))
+			logger.Info("oidc response encryption: enabled (RSA-OAEP-256 + ECDH-ES, A256GCM); routed per-client by registered key type")
 		default:
-			return nil, fmt.Errorf("oidc.response_encryption.backend %q unsupported (supported: rsa)", backend)
+			return nil, fmt.Errorf("oidc.response_encryption.backend %q unsupported (supported: rsa, ecdh, multi)", backend)
 		}
 	}
 	if cr := cfg.ClientRegistration; cr.Enabled {
