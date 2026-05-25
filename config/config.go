@@ -104,6 +104,17 @@ type SigningConfig struct {
 	// es256 + rotation enabled, cmd logs a warning and skips the
 	// scheduled loop (manual RotateKey/RetireKey still work).
 	Alg string `yaml:"alg"`
+
+	// External names a KMS/HSM signer factory registered via the cmd
+	// RegisterExternalSigner hook (in an operator's forked binary).
+	// When set, the signing key lives outside this process — the
+	// factory's crypto.Signer is bridged into the issuer's signing seam
+	// (see defaultimpl/cryptosigner) and the factory's kid names it in
+	// JWKS. Empty (default) = an in-process generated/loaded key. Must
+	// match Alg's algorithm family. Scheduled key rotation is disabled
+	// with an external signer (the key's lifecycle is managed in the
+	// KMS/HSM, not by this process).
+	External string `yaml:"external"`
 }
 
 // KeyRotationConfig drives the automatic signing-key rotation loop.

@@ -14,6 +14,7 @@ import "github.com/snaplink/sso/oauth"
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
@@ -52,6 +53,7 @@ import (
 	configetcd "github.com/snaplink/sso/config/etcd"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/defaultimpl/cryptosigner"
 	sqlitestores "github.com/snaplink/sso/defaultimpl/sqlite"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
@@ -2099,6 +2101,86 @@ type signingIssuer interface {
 	sso.LogoutTokenIssuer
 }
 
+// buildSigningIssuer constructs the JWT signing issuer for the configured
+// algorithm, optionally backed by an external KMS/HSM signer registered
+// via RegisterExternalSigner. It returns the issuer, its canonical alg
+// name (for logging + rotation gating), and any wiring error. An external
+// signer is bridged into the issuer's seam via defaultimpl/cryptosigner;
+// a mismatched key shape fails closed here at startup.
+func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, logger spi.Logger) (signingIssuer, string, error) {
+	// Resolve an optional external signer (KMS/HSM) up front; its kid
+	// names the key in JWKS and token headers.
+	var extSigner crypto.Signer
+	var extKID string
+	if name := strings.TrimSpace(sc.External); name != "" {
+		f, ok := lookupExternalSigner(name)
+		if !ok {
+			return nil, "", fmt.Errorf("keys.signing.external %q is not registered (registered: %v; call RegisterExternalSigner in your cmd binary)", name, registeredExternalSigners())
+		}
+		s, kid, err := f(context.Background())
+		if err != nil {
+			return nil, "", fmt.Errorf("keys.signing.external %q: %w", name, err)
+		}
+		if s == nil {
+			return nil, "", fmt.Errorf("keys.signing.external %q returned a nil signer", name)
+		}
+		extSigner, extKID = s, kid
+		logger.Info("signing key: external signer", "name", name, "kid", kid)
+	}
+
+	switch alg := strings.ToLower(strings.TrimSpace(sc.Alg)); alg {
+	case "", "eddsa", "ed25519":
+		opts := []defaultimpl.Ed25519Option{
+			defaultimpl.WithEd25519Issuer(srv.Issuer),
+			defaultimpl.WithEd25519TokenTTL(srv.TokenTTL),
+			defaultimpl.WithEd25519MaxClockSkew(srv.MaxClockSkew),
+		}
+		if extSigner != nil {
+			sgn, pub, err := cryptosigner.Ed25519(extSigner)
+			if err != nil {
+				return nil, "", fmt.Errorf("keys.signing.external: %w", err)
+			}
+			opts = append(opts, defaultimpl.WithEd25519ExternalSigner(sgn, pub, extKID))
+		}
+		return defaultimpl.NewEd25519JWTIssuer(opts...), "EdDSA", nil
+	case "es256", "ecdsa":
+		opts := []defaultimpl.ECDSAOption{
+			defaultimpl.WithECDSAIssuer(srv.Issuer),
+			defaultimpl.WithECDSATokenTTL(srv.TokenTTL),
+			defaultimpl.WithECDSAMaxClockSkew(srv.MaxClockSkew),
+		}
+		if extSigner != nil {
+			sgn, pub, err := cryptosigner.ECDSA(extSigner)
+			if err != nil {
+				return nil, "", fmt.Errorf("keys.signing.external: %w", err)
+			}
+			opts = append(opts, defaultimpl.WithECDSAExternalSigner(sgn, pub, extKID))
+		}
+		return defaultimpl.NewECDSAJWTIssuer(opts...), "ES256", nil
+	case "rs256", "ps256", "rsa":
+		signingAlg := "RS256"
+		if alg == "ps256" {
+			signingAlg = "PS256"
+		}
+		opts := []defaultimpl.RSAOption{
+			defaultimpl.WithRSAIssuer(srv.Issuer),
+			defaultimpl.WithRSAAlg(signingAlg),
+			defaultimpl.WithRSATokenTTL(srv.TokenTTL),
+			defaultimpl.WithRSAMaxClockSkew(srv.MaxClockSkew),
+		}
+		if extSigner != nil {
+			sgn, pub, err := cryptosigner.RSA(extSigner, signingAlg)
+			if err != nil {
+				return nil, "", fmt.Errorf("keys.signing.external: %w", err)
+			}
+			opts = append(opts, defaultimpl.WithRSAExternalSigner(sgn, pub, extKID))
+		}
+		return defaultimpl.NewRSAJWTIssuer(opts...), signingAlg, nil
+	default:
+		return nil, "", fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
+	}
+}
+
 func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// Metrics constructed early so the retention schedulers can emit
 	// counters when they fire. The asyncSink collector + WithMetrics
@@ -2157,39 +2239,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity session_manager: %w", err)
 	}
-	// Signing issuer: EdDSA (default) or ES256 (ECDSA P-256). Both
-	// concrete types satisfy the same interface set; only the scheduled
-	// rotation loop below is EdDSA-specific (type-asserted there).
-	var jwtIssuer signingIssuer
-	var signingAlg string
-	switch alg := strings.ToLower(strings.TrimSpace(cfg.Keys.Signing.Alg)); alg {
-	case "", "eddsa", "ed25519":
-		signingAlg = "EdDSA"
-		jwtIssuer = defaultimpl.NewEd25519JWTIssuer(
-			defaultimpl.WithEd25519Issuer(cfg.Server.Issuer),
-			defaultimpl.WithEd25519TokenTTL(cfg.Server.TokenTTL),
-			defaultimpl.WithEd25519MaxClockSkew(cfg.Server.MaxClockSkew),
-		)
-	case "es256", "ecdsa":
-		signingAlg = "ES256"
-		jwtIssuer = defaultimpl.NewECDSAJWTIssuer(
-			defaultimpl.WithECDSAIssuer(cfg.Server.Issuer),
-			defaultimpl.WithECDSATokenTTL(cfg.Server.TokenTTL),
-			defaultimpl.WithECDSAMaxClockSkew(cfg.Server.MaxClockSkew),
-		)
-	case "rs256", "ps256", "rsa":
-		signingAlg = "RS256"
-		if alg == "ps256" {
-			signingAlg = "PS256"
-		}
-		jwtIssuer = defaultimpl.NewRSAJWTIssuer(
-			defaultimpl.WithRSAIssuer(cfg.Server.Issuer),
-			defaultimpl.WithRSAAlg(signingAlg),
-			defaultimpl.WithRSATokenTTL(cfg.Server.TokenTTL),
-			defaultimpl.WithRSAMaxClockSkew(cfg.Server.MaxClockSkew),
-		)
-	default:
-		return nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
+	// Signing issuer: EdDSA (default) / ES256 / RS256|PS256, optionally
+	// backed by an external KMS/HSM signer. Both concrete types satisfy
+	// the same interface set; only the scheduled rotation loop below is
+	// EdDSA-specific (type-asserted there).
+	jwtIssuer, signingAlg, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, logger)
+	if err != nil {
+		return nil, err
 	}
 	sessionIssuer := defaultimpl.NewSessionTokenIssuer(
 		defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
@@ -2813,7 +2869,11 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// is computed live, so /jwks.json reflects the new key immediately.
 	var keyRotationStop <-chan struct{}
 	var keyRotationCancel context.CancelFunc
-	if rc, ok := signingKeyRotationConfig(cfg.Keys.Rotation); ok {
+	if rc, ok := signingKeyRotationConfig(cfg.Keys.Rotation); ok && strings.TrimSpace(cfg.Keys.Signing.External) != "" {
+		// An external signer owns its key lifecycle in the KMS/HSM;
+		// in-process RotateKey would mint a key the backend never sees.
+		logger.Info("keys.rotation enabled but ignored: an external signer (keys.signing.external) manages its own key lifecycle; in-process scheduled rotation disabled")
+	} else if ok {
 		rec := recorder
 		rc.OnRotate = func(oldKID, newKID string) {
 			if rec != nil {
