@@ -45,7 +45,7 @@ func NewJTIReplayStore(dsn string) (*JTIReplayStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), jtiReplaySchema); err != nil {
+	if err := ensureSchema(db, "jti_replay", jtiReplaySchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate jti_replays: %w", err)
 	}
@@ -55,7 +55,7 @@ func NewJTIReplayStore(dsn string) (*JTIReplayStore, error) {
 // NewJTIReplayStoreWithDB wraps an existing *sql.DB (shared-pool
 // deployments).
 func NewJTIReplayStoreWithDB(db *sql.DB) (*JTIReplayStore, error) {
-	if _, err := db.ExecContext(context.Background(), jtiReplaySchema); err != nil {
+	if err := ensureSchema(db, "jti_replay", jtiReplaySchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate jti_replays: %w", err)
 	}
 	return &JTIReplayStore{db: db}, nil

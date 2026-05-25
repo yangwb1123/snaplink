@@ -66,7 +66,7 @@ func NewPARStore(dsn string) (*PARStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), parSchema); err != nil {
+	if err := ensureSchema(db, "par", parSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate par_requests: %w", err)
 	}
@@ -77,7 +77,7 @@ func NewPARStore(dsn string) (*PARStore, error) {
 // connection lifecycle (matches the oauth.AuthCodeStore pattern for
 // shared-pool deployments).
 func NewPARStoreWithDB(db *sql.DB) (*PARStore, error) {
-	if _, err := db.ExecContext(context.Background(), parSchema); err != nil {
+	if err := ensureSchema(db, "par", parSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate par_requests: %w", err)
 	}
 	return &PARStore{db: db}, nil

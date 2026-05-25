@@ -47,7 +47,7 @@ func NewSubjectClientIndex(dsn string) (*SubjectClientIndex, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), subjectClientIndexSchema); err != nil {
+	if err := ensureSchema(db, "subject_client_index", subjectClientIndexSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate subject_client_index: %w", err)
 	}
@@ -57,7 +57,7 @@ func NewSubjectClientIndex(dsn string) (*SubjectClientIndex, error) {
 // NewSubjectClientIndexWithDB wraps an existing *sql.DB
 // (shared-pool deployments).
 func NewSubjectClientIndexWithDB(db *sql.DB) (*SubjectClientIndex, error) {
-	if _, err := db.ExecContext(context.Background(), subjectClientIndexSchema); err != nil {
+	if err := ensureSchema(db, "subject_client_index", subjectClientIndexSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate subject_client_index: %w", err)
 	}
 	return &SubjectClientIndex{db: db}, nil

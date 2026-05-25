@@ -54,7 +54,7 @@ func NewAuthCodeStore(dsn string) (*AuthCodeStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), authCodeSchema); err != nil {
+	if err := ensureSchema(db, "auth_codes", authCodeSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate auth_codes: %w", err)
 	}

@@ -55,7 +55,7 @@ func NewMFAChallengeStore(dsn string) (*MFAChallengeStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), mfaChallengesSchema); err != nil {
+	if err := ensureSchema(db, "mfa_challenges", mfaChallengesSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate mfa_challenges: %w", err)
 	}
@@ -66,7 +66,7 @@ func NewMFAChallengeStore(dsn string) (*MFAChallengeStore, error) {
 // the connection lifecycle (matches the oauth.AuthCodeStore pattern for
 // shared-pool deployments).
 func NewMFAChallengeStoreWithDB(db *sql.DB) (*MFAChallengeStore, error) {
-	if _, err := db.ExecContext(context.Background(), mfaChallengesSchema); err != nil {
+	if err := ensureSchema(db, "mfa_challenges", mfaChallengesSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate mfa_challenges: %w", err)
 	}
 	return &MFAChallengeStore{db: db}, nil

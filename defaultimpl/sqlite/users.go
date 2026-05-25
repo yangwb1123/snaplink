@@ -79,7 +79,7 @@ func NewUserProvider(dsn string) (*UserProvider, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), userSchema); err != nil {
+	if err := ensureSchema(db, "users", userSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate: %w", err)
 	}

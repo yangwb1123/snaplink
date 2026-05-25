@@ -58,7 +58,7 @@ func NewRecentLoginStore(dsn string) (*RecentLoginStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), recentLoginSchema); err != nil {
+	if err := ensureSchema(db, "recent_login", recentLoginSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate recent_logins: %w", err)
 	}
@@ -68,7 +68,7 @@ func NewRecentLoginStore(dsn string) (*RecentLoginStore, error) {
 // NewRecentLoginStoreWithDB wraps an existing *sql.DB. Caller owns
 // the connection lifecycle.
 func NewRecentLoginStoreWithDB(db *sql.DB) (*RecentLoginStore, error) {
-	if _, err := db.ExecContext(context.Background(), recentLoginSchema); err != nil {
+	if err := ensureSchema(db, "recent_login", recentLoginSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate recent_logins: %w", err)
 	}
 	return &RecentLoginStore{db: db}, nil

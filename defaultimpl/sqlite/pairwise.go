@@ -40,7 +40,7 @@ func NewPairwiseSubjectStore(dsn string) (*PairwiseSubjectStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), pairwiseSubjectSchema); err != nil {
+	if err := ensureSchema(db, "pairwise", pairwiseSubjectSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate pairwise_subjects: %w", err)
 	}
@@ -50,7 +50,7 @@ func NewPairwiseSubjectStore(dsn string) (*PairwiseSubjectStore, error) {
 // NewPairwiseSubjectStoreWithDB wraps an existing *sql.DB
 // (shared-pool deployments).
 func NewPairwiseSubjectStoreWithDB(db *sql.DB) (*PairwiseSubjectStore, error) {
-	if _, err := db.ExecContext(context.Background(), pairwiseSubjectSchema); err != nil {
+	if err := ensureSchema(db, "pairwise", pairwiseSubjectSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate pairwise_subjects: %w", err)
 	}
 	return &PairwiseSubjectStore{db: db}, nil

@@ -54,7 +54,7 @@ func NewSessionManager(dsn string, ttl time.Duration) (*SessionManager, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), sessionSchema); err != nil {
+	if err := ensureSchema(db, "sessions", sessionSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate sessions: %w", err)
 	}
@@ -67,7 +67,7 @@ func NewSessionManager(dsn string, ttl time.Duration) (*SessionManager, error) {
 // NewSessionManagerWithDB wraps an existing *sql.DB. Caller owns
 // the connection lifecycle (shared-pool deployments).
 func NewSessionManagerWithDB(db *sql.DB, ttl time.Duration) (*SessionManager, error) {
-	if _, err := db.ExecContext(context.Background(), sessionSchema); err != nil {
+	if err := ensureSchema(db, "sessions", sessionSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate sessions: %w", err)
 	}
 	if ttl <= 0 {

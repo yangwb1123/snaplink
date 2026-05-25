@@ -54,7 +54,7 @@ func NewPushApprovalStore(dsn string) (*PushApprovalStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), pushApprovalsSchema); err != nil {
+	if err := ensureSchema(db, "push_approvals", pushApprovalsSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate push_approvals: %w", err)
 	}
@@ -64,7 +64,7 @@ func NewPushApprovalStore(dsn string) (*PushApprovalStore, error) {
 // NewPushApprovalStoreWithDB wraps an existing *sql.DB. Caller owns
 // the connection lifecycle.
 func NewPushApprovalStoreWithDB(db *sql.DB) (*PushApprovalStore, error) {
-	if _, err := db.ExecContext(context.Background(), pushApprovalsSchema); err != nil {
+	if err := ensureSchema(db, "push_approvals", pushApprovalsSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate push_approvals: %w", err)
 	}
 	return &PushApprovalStore{db: db}, nil

@@ -47,7 +47,7 @@ func NewIPFailureCounter(dsn string) (*IPFailureCounter, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), ipFailureCounterSchema); err != nil {
+	if err := ensureSchema(db, "ip_failure_counter", ipFailureCounterSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate ip_failures: %w", err)
 	}
@@ -56,7 +56,7 @@ func NewIPFailureCounter(dsn string) (*IPFailureCounter, error) {
 
 // NewIPFailureCounterWithDB wraps an existing *sql.DB.
 func NewIPFailureCounterWithDB(db *sql.DB) (*IPFailureCounter, error) {
-	if _, err := db.ExecContext(context.Background(), ipFailureCounterSchema); err != nil {
+	if err := ensureSchema(db, "ip_failure_counter", ipFailureCounterSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate ip_failures: %w", err)
 	}
 	return &IPFailureCounter{db: db}, nil

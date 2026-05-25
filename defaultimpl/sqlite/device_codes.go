@@ -52,7 +52,7 @@ func NewDeviceCodeStore(dsn string) (*DeviceCodeStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if _, err := db.ExecContext(context.Background(), deviceCodeSchema); err != nil {
+	if err := ensureSchema(db, "device_codes", deviceCodeSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate device_codes: %w", err)
 	}
