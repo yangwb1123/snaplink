@@ -66,6 +66,11 @@ func (s *Server) JARFetcher() security.JARFetcher { return s.jarFetcher }
 // JARDecrypter returns the wired JWE decrypter (nil when not configured).
 func (s *Server) JARDecrypter() security.JWEDecrypter { return s.jarDecrypter }
 
+// JWEResponseEncrypter returns the wired response-direction JWE
+// encrypter (nil when not configured), backing the id_token + userinfo
+// encryption paths.
+func (s *Server) JWEResponseEncrypter() security.JWEEncrypter { return s.jweResponseEncrypter }
+
 // AccountLockout returns the wired account lockout (nil when not configured).
 func (s *Server) AccountLockout() security.AccountLockout { return s.accountLockout }
 
