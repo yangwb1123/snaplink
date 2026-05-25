@@ -102,6 +102,8 @@ const (
 	EventAdminDomainCreated       EventType = "admin_domain_created"
 	EventAdminDomainUpdated       EventType = "admin_domain_updated"
 	EventAdminDomainDeleted       EventType = "admin_domain_deleted"
+	EventAdminSubjectExported     EventType = "admin_subject_exported"
+	EventAdminSubjectErased       EventType = "admin_subject_erased"
 
 	// Bootstrap framework events — one per Step run/skip on first boot
 	// (or whenever a new Step is added later).

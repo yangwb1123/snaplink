@@ -236,6 +236,10 @@ func IsProtectedPath(path string) bool {
 	switch {
 	case strings.HasPrefix(path, "/api/v1/admin/"):
 		return true
+	case strings.HasPrefix(path, "/api/v1/compliance/"):
+		// GDPR subject export/erase: leaks (export) and destroys (erase)
+		// a subject's data across stores — admin-only, never open.
+		return true
 	case strings.HasPrefix(path, "/api/v1/audit/"):
 		return true
 	case path == "/api/v1/netpolicy/classify",

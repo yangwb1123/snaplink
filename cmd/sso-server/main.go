@@ -587,6 +587,27 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	} else if cfg.MFA.Provider.Push.Callback.Enabled {
 		logger.Info("push callback.enabled=true but push backend not configured — callback mount skipped")
 	}
+	// GDPR subject export/erase routes. Destructive (erase) + PII-
+	// leaking (export), so only mounted when admin auth is enabled —
+	// IsProtectedPath gates /api/v1/compliance/ the same as /admin/.
+	if a.adminMW != nil {
+		var refreshIdx oauth.RefreshTokenSubjectIndex
+		if idx, ok := a.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
+			refreshIdx = idx
+		}
+		if err := mountComplianceRoutes(a.server, &complianceDeps{
+			Users:    a.userProvider,
+			Sessions: a.sessionMgr,
+			Refresh:  refreshIdx,
+			Clients:  a.clientStore,
+			Recorder: a.recorder,
+		}); err != nil {
+			return nil, fmt.Errorf("mount compliance: %w", err)
+		}
+		logger.Info("compliance routes mounted",
+			"export", complianceUsersPrefix+"{id}"+complianceExportSuffix,
+			"erase", complianceUsersPrefix+"{id}"+complianceEraseSuffix)
+	}
 	// Wrap base with the admin middleware so /api/v1/audit/* and
 	// /api/v1/netpolicy/policies* + /classify get the same Bearer +
 	// scope gate as /api/v1/admin/*. isAdminProtectedPath inside
