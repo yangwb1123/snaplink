@@ -108,6 +108,69 @@ func basicClientCreds(r *http.Request) (id, secret string, ok bool) {
 // RFC 9126 pre-redirect client authentication + validation flow.
 func (s *Server) handlePAR(ctx HandlerContext) { oauth.HandlePAR(s, ctx) }
 
+// handleBackchannelAuth delegates to oauth.HandleBackchannelAuth —
+// see that file for the OIDC CIBA Core 1.0 poll-mode flow.
+func (s *Server) handleBackchannelAuth(ctx HandlerContext) { oauth.HandleBackchannelAuth(s, ctx) }
+
+// ResolveCIBAHint maps a CIBA request's hints to a known user's subject
+// id. Poll mode: at least one hint must resolve. login_hint is matched
+// against UserProvider.GetByID (the canonical identifier); id_token_hint
+// is validated and its sub trusted; login_hint_token is treated as an
+// opaque GetByID lookup. Returns ("", nil) when nothing resolves — the
+// handler collapses that to unknown_user_id (anti-enumeration). The
+// provider name is recorded for the AMR claim ("ciba" — out-of-band
+// confirmation).
+func (s *Server) ResolveCIBAHint(ctx context.Context, loginHint, idTokenHint, loginHintToken string) (string, string, error) {
+	// id_token_hint: validate the token and trust its subject. The
+	// validator rejects expired / wrong-alg / bad-signature tokens.
+	if idTokenHint != "" {
+		if claims, err := s.ValidateToken(ctx, idTokenHint); err == nil && claims != nil && claims.Subject != "" {
+			return claims.Subject, CIBAAMR, nil
+		}
+	}
+	if s.userProvider == nil {
+		return "", "", nil
+	}
+	for _, hint := range []string{loginHint, loginHintToken} {
+		if hint == "" {
+			continue
+		}
+		if u, err := s.userProvider.GetByID(ctx, hint); err == nil && u != nil {
+			return u.ID, CIBAAMR, nil
+		}
+	}
+	return "", "", nil
+}
+
+// CIBAAMR is the AMR / provider value recorded for a token minted via
+// the CIBA grant — the user confirmed out of band on a separate
+// authentication device.
+const CIBAAMR = "ciba"
+
+// DeliverCIBAChallenge pushes the auth_req_id out of band via the wired
+// CIBA transport. binding_message is forwarded under the metadata key
+// so the device app can render it for the user to correlate.
+func (s *Server) DeliverCIBAChallenge(ctx context.Context, authReqID, subjectID, bindingMessage string) error {
+	if s.cibaTransport == nil {
+		return oauth.ErrCIBARequestInvalid
+	}
+	var meta map[string]string
+	if bindingMessage != "" {
+		meta = map[string]string{"binding_message": bindingMessage}
+	}
+	return s.cibaTransport.Send(ctx, authReqID, subjectID, meta)
+}
+
+// RecordCIBAAuthRequest emits the ciba_auth_request audit event.
+func (s *Server) RecordCIBAAuthRequest(ctx HandlerContext, clientID, subjectID, authReqID string) {
+	audit.RecordCIBAAuthRequest(s.auditor, ctx, clientID, subjectID, authReqID)
+}
+
+// recordCIBADecision emits a ciba_approved / ciba_denied audit event.
+func (s *Server) recordCIBADecision(ctx HandlerContext, clientID, subjectID string, approved bool) {
+	audit.RecordCIBADecision(s.auditor, ctx, clientID, subjectID, approved)
+}
+
 // handleRevoke implements RFC 7009 token revocation. Per-token
 // revocation that's complementary to /logout (which is session-scoped).
 //
@@ -1105,6 +1168,131 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 	ctx.JSON(http.StatusOK, resp)
 }
 
+// handleCIBATokenGrant is the client's poll path on /token for
+// grant_type=urn:openid:params:grant-type:ciba. Called from the
+// GrantCIBA case in handleToken. Mirrors handleDeviceTokenGrant:
+//
+//   - authorization_pending: user hasn't confirmed out of band yet
+//   - slow_down: client polled faster than the issued interval
+//   - access_denied: user explicitly denied
+//   - expired_token: unknown / expired auth_req_id (oracle-leak
+//     collapse — RFC parity with the device flow)
+//   - invalid_grant: auth_req_id issued for a different client
+//
+// or a standard token response on success. AMR/AuthTime are set from
+// the approval event per the RFC 9068 access-token claim rules.
+func (s *Server) handleCIBATokenGrant(ctx HandlerContext, client *Client, authReqID, dpopJKT, mtlsX5T string) {
+	if s.cibaStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrCIBANotConfigured))
+		return
+	}
+	if authReqID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	r, err := s.cibaStore.Get(ctx.Request().Context(), authReqID)
+	if err != nil {
+		// Unknown / expired / consumed all collapse to expired_token
+		// (anti-enumeration — mirrors the device flow's ErrExpiredToken).
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrExpiredToken))
+		return
+	}
+	// Bind: an auth_req_id issued for client A can't be polled by client B.
+	if r.ClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return
+	}
+
+	// slow_down: poll arrived within the issued interval of the previous
+	// poll. Reuses the device-flow anti-thrash logic.
+	now := time.Now()
+	if !r.LastPoll.IsZero() && r.Interval > 0 && now.Sub(r.LastPoll) < r.Interval {
+		_ = s.cibaStore.UpdateLastPoll(ctx.Request().Context(), authReqID, now)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrSlowDown))
+		return
+	}
+	_ = s.cibaStore.UpdateLastPoll(ctx.Request().Context(), authReqID, now)
+
+	switch r.Status {
+	case oauth.CIBADenied:
+		_ = s.cibaStore.Delete(ctx.Request().Context(), authReqID)
+		s.recordCIBADecision(ctx, client.ID, r.SubjectID, false)
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrAccessDenied))
+		return
+	case oauth.CIBAApproved:
+		// fall through to issuance below
+	default:
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrAuthorizationPending))
+		return
+	}
+
+	strategy, ti, err := s.issuerForClient(client)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+		return
+	}
+	provider := r.Provider
+	if provider == "" {
+		provider = CIBAAMR
+	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, r.SubjectID)
+	token, err := ti.Issue(ctx.Request().Context(), &Subject{
+		ID:                  issuedSub,
+		Provider:            provider,
+		Resources:           r.Resources,
+		ClientID:            client.ID,
+		AuthTime:            now,
+		AMR:                 []string{provider},
+		ACR:                 r.ACRValues,
+		TTL:                 client.AccessTokenTTL,
+		ConfirmationJKT:     dpopJKT,
+		ConfirmationX5TS256: mtlsX5T,
+	}, r.Scopes)
+	if err != nil {
+		s.logger.Error("ciba token issuance failed", "strategy", strategy, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	resp := map[string]any{
+		KeyAccessToken:   token.AccessToken,
+		KeyTokenType:     token.TokenType,
+		KeyExpiresIn:     token.ExpiresIn,
+		KeyScope:         token.Scope,
+		KeyTokenStrategy: strategy,
+	}
+	if s.refreshTokenStore != nil {
+		rt, err := s.issueRefreshToken(ctx.Request().Context(),
+			r.SubjectID, client.ID, provider, r.Scopes, nil, r.Nonce, r.Resources, nil, "", client.RefreshTokenTTL)
+		if err != nil {
+			s.logger.Error("refresh token issue failed", "error", err)
+		} else {
+			resp[KeyRefreshToken] = rt
+			s.recordRefreshTokenIssued(ctx, client.ID, r.SubjectID, false)
+		}
+	}
+	if slices.Contains(r.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
+		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+			Subject:  issuedSub,
+			Audience: client.ID,
+			Nonce:    r.Nonce,
+			AuthTime: now,
+			AMR:      []string{provider},
+		})
+		if err != nil {
+			s.logger.Error("id token issue failed", "error", err)
+		} else {
+			resp[KeyIDToken] = idToken
+			s.recordIDTokenIssued(ctx, client.ID, r.SubjectID)
+		}
+	}
+	s.recordTokenIssued(ctx, client.ID, strategy, r.SubjectID)
+	s.recordSubjectClientAccess(ctx.Request().Context(), r.SubjectID, client.ID)
+	s.recordCIBADecision(ctx, client.ID, r.SubjectID, true)
+	// Single-use: delete after minting so a replay hits expired_token.
+	_ = s.cibaStore.Delete(ctx.Request().Context(), authReqID)
+	ctx.JSON(http.StatusOK, resp)
+}
+
 // normalizeUserCode delegates to oauth.NormalizeUserCode.
 func normalizeUserCode(s string) string { return oauth.NormalizeUserCode(s) }
 
@@ -1603,6 +1791,17 @@ type oidcConfiguration struct {
 	// discovery for callers that don't speak the extension).
 	MFAEndpoint         string   `json:"mfa_endpoint,omitempty"`
 	MFAMethodsSupported []string `json:"mfa_methods_supported,omitempty"`
+
+	// OIDC CIBA Core 1.0 discovery metadata. Advertised only when
+	// WithCIBA is wired (opt-in). BackchannelAuthenticationEndpoint
+	// points at /backchannel-authentication;
+	// BackchannelTokenDeliveryModesSupported is ["poll"] (poll mode
+	// only — we don't implement ping/push delivery).
+	// BackchannelUserCodeParameterSupported is false (poll mode here
+	// resolves the user via login_hint/id_token_hint, not a user_code).
+	BackchannelAuthenticationEndpoint      string   `json:"backchannel_authentication_endpoint,omitempty"`
+	BackchannelTokenDeliveryModesSupported []string `json:"backchannel_token_delivery_modes_supported,omitempty"`
+	BackchannelUserCodeParameterSupported  bool     `json:"backchannel_user_code_parameter_supported,omitempty"`
 }
 
 // MTLSEndpointAliases is the RFC 8705 §5 alias map. Only endpoints
@@ -1779,6 +1978,17 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		if _, ok := s.idTokenIssuer.(oidc.UserinfoSigner); ok {
 			cfg.UserinfoSigningAlgValuesSupported = []string{"EdDSA"}
 		}
+	}
+	if s.cibaStore != nil {
+		// OIDC CIBA Core 1.0 §4: advertise the backchannel endpoint +
+		// poll delivery mode only when CIBA is wired (opt-in). We never
+		// implement ping/push delivery and poll mode resolves the user
+		// from login_hint/id_token_hint rather than a user_code, so the
+		// user_code parameter is unsupported.
+		cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth
+		cfg.BackchannelTokenDeliveryModesSupported = []string{"poll"}
+		cfg.BackchannelUserCodeParameterSupported = false
+		cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantCIBA)
 	}
 	if s.parStore != nil {
 		// RFC 9126 §5: advertise the PAR endpoint so RPs that prefer

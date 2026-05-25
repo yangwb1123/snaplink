@@ -51,6 +51,15 @@ func (s *Server) PARStore() oauth.PARStore { return s.parStore }
 // PARTTL returns the configured PAR TTL.
 func (s *Server) PARTTL() time.Duration { return s.parTTL }
 
+// CIBAStore returns the wired CIBAStore (nil when not configured).
+func (s *Server) CIBAStore() oauth.CIBAStore { return s.cibaStore }
+
+// CIBARequestTTL returns the configured CIBA auth_req_id lifetime.
+func (s *Server) CIBARequestTTL() time.Duration { return s.cibaRequestTTL }
+
+// CIBAPollInterval returns the configured CIBA poll interval.
+func (s *Server) CIBAPollInterval() time.Duration { return s.cibaPollInterval }
+
 // DCRPolicy returns the configured DCR policy (nil when not configured).
 func (s *Server) DCRPolicy() *oauth.DCRPolicy { return s.dcrPolicy }
 

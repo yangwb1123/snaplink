@@ -168,6 +168,20 @@ const (
 	// metadata as Approved.
 	EventDeviceCodeDenied EventType = "device_code_denied"
 
+	// EventCIBAAuthRequest fires when POST /backchannel-authentication
+	// accepts a poll-mode CIBA request and issues an auth_req_id.
+	// Outcome=success; ActorID = resolved subject; Metadata carries
+	// client_id + auth_req_id so SIEMs can correlate the followup poll.
+	EventCIBAAuthRequest EventType = "ciba_auth_request"
+	// EventCIBAApproved fires when the CIBA token poll mints tokens
+	// against an approved request. ActorID = subject; Metadata carries
+	// client_id.
+	EventCIBAApproved EventType = "ciba_approved"
+	// EventCIBADenied fires when the CIBA token poll observes a denied
+	// request (or the request expired before approval). Outcome=failure;
+	// ActorID = subject; Metadata carries client_id.
+	EventCIBADenied EventType = "ciba_denied"
+
 	// EventRefreshTokenReuse fires when the rotation grant detects a
 	// presented-after-rotation refresh token (OAuth Security BCP §4.13)
 	// AND the store implements oauth.RefreshTokenFamilyTracker. Reason

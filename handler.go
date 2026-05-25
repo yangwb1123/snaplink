@@ -1122,6 +1122,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		RedirectURI  string   `json:"redirect_uri"`
 		CodeVerifier string   `json:"code_verifier"` // PKCE RFC 7636 §4.5
 		DeviceCode   string   `json:"device_code"`   // RFC 8628 §3.4 device grant
+		AuthReqID    string   `json:"auth_req_id"`   // OIDC CIBA Core §10.1 grant
 		Resource     []string `json:"resource"`      // RFC 8707 resource indicators
 
 		// RFC 8693 token-exchange parameters.
@@ -1490,6 +1491,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		})
 	case GrantDeviceCode:
 		s.handleDeviceTokenGrant(ctx, client, req.DeviceCode)
+	case GrantCIBA:
+		s.handleCIBATokenGrant(ctx, client, req.AuthReqID, dpopJKT, mtlsX5T)
 	case GrantTokenExchange:
 		s.handleTokenExchangeGrant(ctx, client, tokenExchangeRequest{
 			SubjectToken:       req.SubjectToken,
