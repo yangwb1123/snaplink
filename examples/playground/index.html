@@ -12,26 +12,25 @@
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
-  a{color:var(--accent)}
-  code{font:12px var(--mono)}
-  header{padding:18px 24px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  a{color:var(--accent)} code{font:12px var(--mono)}
+  header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
   header h1{font-size:18px;margin:0}
-  header .sub{color:var(--muted);font-size:13px}
-  .layout{display:flex;min-height:calc(100vh - 61px)}
-  nav{width:230px;border-right:1px solid var(--border);padding:14px 0;position:sticky;top:0;height:calc(100vh - 61px);overflow:auto;flex-shrink:0}
-  nav .grp{padding:6px 20px;color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.06em;margin-top:8px}
-  nav a{display:block;padding:6px 20px;color:var(--fg);text-decoration:none;font-size:13px;border-left:2px solid transparent}
+  header .sub{color:var(--muted);font-size:13px;max-width:760px}
+  .layout{display:flex;min-height:calc(100vh - 58px)}
+  nav{width:236px;border-right:1px solid var(--border);padding:14px 0;position:sticky;top:0;height:calc(100vh - 58px);overflow:auto;flex-shrink:0}
+  nav .grp{padding:6px 20px;color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.06em;margin-top:10px}
+  nav a{display:block;padding:5px 20px;color:var(--fg);text-decoration:none;font-size:13px;border-left:2px solid transparent}
   nav a:hover{background:var(--panel);border-left-color:var(--accent)}
-  main{flex:1;padding:22px 28px;max-width:920px}
-  section{margin-bottom:30px;scroll-margin-top:14px}
+  main{flex:1;padding:20px 28px;max-width:960px}
+  section{margin-bottom:28px;scroll-margin-top:14px}
   h2{font-size:15px;border-bottom:1px solid var(--border);padding-bottom:6px;margin:0 0 12px}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px}
   .card h3{margin:0 0 4px;font-size:14px}
   .card .desc{color:var(--muted);font-size:13px;margin-bottom:10px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
   label{font-size:12px;color:var(--muted)}
-  input,select{background:var(--panel2);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 9px;font:13px var(--mono);min-width:160px}
-  button{background:var(--accent);color:#06203f;border:0;border-radius:6px;padding:7px 14px;font-weight:600;cursor:pointer;font-size:13px;margin:2px 0}
+  input,select{background:var(--panel2);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 9px;font:13px var(--mono);min-width:150px}
+  button{background:var(--accent);color:#06203f;border:0;border-radius:6px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:13px;margin:2px 0}
   button.ghost{background:var(--panel2);color:var(--fg);border:1px solid var(--border);font-weight:500}
   button:active{transform:translateY(1px)}
   .meth{font:11px var(--mono);padding:2px 6px;border-radius:4px;background:#1f2937;color:var(--accent);border:1px solid var(--border)}
@@ -39,17 +38,24 @@
   .status{font:11px var(--mono);padding:2px 7px;border-radius:10px;margin-right:8px}
   .s2{background:#10301a;color:var(--ok)} .s4{background:#3a2a09;color:var(--warn)} .s5{background:#3a1313;color:var(--err)}
   .tokbar{position:sticky;top:0;z-index:5;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:18px;font:12px var(--mono)}
-  .tokbar b{color:var(--muted);font-weight:600}
-  .tokbar code{color:var(--ok);word-break:break-all}
+  .tokbar b{color:var(--muted);font-weight:600} .tokbar code{color:var(--ok);word-break:break-all}
+  .hint{color:var(--warn);font-size:12px;margin-top:6px}
+  table{border-collapse:collapse;width:100%;font-size:12px;margin-top:8px}
+  th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
+  td.mono,th.mono{font:12px var(--mono)}
+  .tag{font:11px var(--mono);padding:1px 6px;border-radius:8px;border:1px solid var(--border)}
+  .t-ok{color:var(--ok)} .t-fail{color:var(--err)} .t-viol{color:var(--warn)}
   .feat{display:grid;grid-template-columns:200px 1fr;gap:6px 14px;font-size:13px;padding:6px 0;border-top:1px solid var(--border)}
   .feat b{color:var(--fg)} .feat span{color:var(--muted)}
-  .hint{color:var(--warn);font-size:12px;margin-top:6px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
   <h1>SSO&nbsp;Playground</h1>
-  <span class="sub">github.com/snaplink/sso — try every endpoint against a live in-memory server. Demo user <code>alice / secret</code>, client <code>playground-client / playground-secret</code>.</span>
+  <span class="sub">github.com/snaplink/sso — fire real requests against a live in-memory server. Demo user <code>alice/secret</code>, client <code>playground-client/playground-secret</code>, MFA client <code>mfa-client/mfa-secret</code>. FAPI runs in <b>inspection mode</b>, so logins are allowed but logged as violations (see Audit Log).</span>
 </header>
 <div class="layout">
 <nav id="nav"></nav>
@@ -58,265 +64,246 @@
     <div><b>access_token:</b> <code id="tb-at">—</code></div>
     <div><b>refresh_token:</b> <code id="tb-rt">—</code></div>
     <div><b>id_token:</b> <code id="tb-it">—</code></div>
-    <div style="margin-top:6px"><button class="ghost" onclick="clearTokens()">clear</button> <span class="hint" style="margin:0">tokens captured by Login are auto-used below</span></div>
+    <div style="margin-top:6px"><button class="ghost" onclick="clearTokens()">clear</button> <span class="hint" style="margin:0">tokens captured by Login auto-fill the calls below</span></div>
   </div>
-
-  <section id="discovery"><h2>Discovery &amp; Keys</h2>
-    <div class="card">
-      <h3>OIDC Discovery <span class="meth">GET</span></h3>
-      <div class="desc">Derived metadata — endpoints, supported scopes/grants/algs, opt-in feature flags.</div>
-      <button onclick="run('disc','GET','/.well-known/openid-configuration')">GET /.well-known/openid-configuration</button>
-      <pre id="out-disc"></pre>
-    </div>
-    <div class="card">
-      <h3>JWKS <span class="meth">GET</span></h3>
-      <div class="desc">Public signing keys (gateways verify JWTs locally). Rotation serves outgoing + incoming keys.</div>
-      <button onclick="run('jwks','GET','/.well-known/jwks.json')">GET /.well-known/jwks.json</button>
-      <pre id="out-jwks"></pre>
-    </div>
-    <div class="card">
-      <h3>Health <span class="meth">GET</span></h3>
-      <div class="desc">Build info (version + VCS revision + commit time).</div>
-      <button onclick="run('health','GET','/health')">GET /health</button>
-      <pre id="out-health"></pre>
-    </div>
-  </section>
-
-  <section id="login"><h2>Login &amp; Tokens</h2>
-    <div class="card">
-      <h3>Password Login <span class="meth">POST</span></h3>
-      <div class="desc">Direct-mint flow: validates credentials and returns access_token + id_token (captured above for reuse).</div>
-      <div class="row">
-        <label>user</label><input id="lg-u" value="alice">
-        <label>pass</label><input id="lg-p" value="secret">
-        <label>scope</label><input id="lg-s" value="openid profile email offline_access" style="min-width:300px">
-      </div>
-      <button onclick="login()">POST /auth/login</button>
-      <pre id="out-login"></pre>
-    </div>
-    <div class="card">
-      <h3>UserInfo <span class="meth">GET</span></h3>
-      <div class="desc">OIDC UserInfo — uses the captured access_token as Bearer.</div>
-      <button onclick="userinfo()">GET /userinfo</button>
-      <pre id="out-userinfo"></pre>
-    </div>
-    <div class="card">
-      <h3>Introspect <span class="meth">POST</span></h3>
-      <div class="desc">RFC 7662 — client (Basic auth) asks whether the captured token is active.</div>
-      <button onclick="introspect()">POST /token/introspect</button>
-      <pre id="out-introspect"></pre>
-    </div>
-    <div class="card">
-      <h3>Refresh <span class="meth">POST</span></h3>
-      <div class="desc">RFC 6749 §6 — single-use rotation; returns a new access_token + rotated refresh_token.</div>
-      <button onclick="refresh()">POST /token (grant=refresh_token)</button>
-      <pre id="out-refresh"></pre>
-    </div>
-    <div class="card">
-      <h3>Revoke <span class="meth">POST</span></h3>
-      <div class="desc">RFC 7009 — 200 on valid client creds regardless of token existence (anti-enumeration).</div>
-      <button onclick="revoke()">POST /token/revoke</button>
-      <pre id="out-revoke"></pre>
-    </div>
-  </section>
-
-  <section id="codeflow"><h2>Authorization Code + PKCE</h2>
-    <div class="card">
-      <h3>Code flow (S256) <span class="meth">POST×2</span></h3>
-      <div class="desc">Generates a PKCE verifier/challenge, requests an authorization code at /auth/login (response_type=code), then exchanges it at /token.</div>
-      <button onclick="codeFlow()">Run full code+PKCE exchange</button>
-      <pre id="out-code"></pre>
-    </div>
-  </section>
-
-  <section id="device"><h2>Device Flow</h2>
-    <div class="card">
-      <h3>Device Authorization <span class="meth">POST</span></h3>
-      <div class="desc">RFC 8628 — request device_code + user_code, then poll /token.</div>
-      <button onclick="deviceStart()">1. POST /device/code</button>
-      <button class="ghost" onclick="devicePoll()">2. POST /token (poll)</button>
-      <pre id="out-device"></pre>
-      <div class="hint" id="device-hint"></div>
-    </div>
-  </section>
-
-  <section id="par"><h2>Pushed Authorization Request</h2>
-    <div class="card">
-      <h3>PAR <span class="meth">POST</span></h3>
-      <div class="desc">RFC 9126 — push the authorization params server-side, get a request_uri back (Basic client auth).</div>
-      <button onclick="par()">POST /par</button>
-      <pre id="out-par"></pre>
-    </div>
-  </section>
-
-  <section id="catalog"><h2>Full Feature Catalog</h2>
-    <div class="card catalog" id="catalog-body"></div>
-  </section>
+  <div id="sections"></div>
 </main>
 </div>
 
 <script>
-const S = {accessToken:"",refreshToken:"",idToken:"",deviceCode:""};
+const S={accessToken:"",refreshToken:"",idToken:"",deviceCode:"",mfaChallenge:"",newClient:null};
 
-// show renders a response into <pre id="out-<id>"> using safe DOM only
-// (no innerHTML): a colored HTTP-status badge + the body as a text node.
-function show(id,code,text){
-  const el=document.getElementById('out-'+id);
-  el.textContent='';
-  const badge=document.createElement('span');
-  badge.className='status '+(code>=500?'s5':code>=400?'s4':'s2');
-  badge.textContent='HTTP '+code;
-  el.appendChild(badge);
-  el.appendChild(document.createTextNode('\n'+text));
-}
+// ---------- safe DOM helpers (no innerHTML anywhere) ----------
+function el(tag,props,kids){const n=document.createElement(tag);if(props)for(const k in props){if(k==='class')n.className=props[k];else if(k==='text')n.textContent=props[k];else if(k.startsWith('on'))n.addEventListener(k.slice(2),props[k]);else n.setAttribute(k,props[k]);}(kids||[]).forEach(c=>n.appendChild(typeof c==='string'?document.createTextNode(c):c));return n;}
+function out(id){return document.getElementById('out-'+id);}
+function show(id,code,text){const e=out(id);e.textContent='';const b=el('span',{class:'status '+(code>=500?'s5':code>=400?'s4':code===0?'s5':'s2'),text:'HTTP '+code});e.appendChild(b);e.appendChild(document.createTextNode('\n'+text));}
 function pretty(t){try{return JSON.stringify(JSON.parse(t),null,2)}catch(e){return t}}
 function safeJSON(t){try{return JSON.parse(t)}catch(e){return null}}
+async function req(method,path,opts={}){const res=await fetch(path,{method,headers:opts.headers,body:opts.body});const txt=await res.text();return{status:res.status,text:txt,json:safeJSON(txt)};}
+async function run(id,method,path,opts={}){try{const r=await req(method,path,opts);show(id,r.status,pretty(r.text));return r;}catch(e){show(id,0,'fetch error: '+e);return{status:0}}}
 
-async function run(id,method,path,opts={}){
-  try{
-    const res=await fetch(path,{method,headers:opts.headers,body:opts.body});
-    const txt=await res.text();
-    show(id,res.status,pretty(txt));
-    return {status:res.status,text:txt,json:safeJSON(txt)};
-  }catch(e){show(id,0,'fetch error: '+e);return{status:0}}
-}
+function setTokens(j){if(!j)return;if(j.access_token)S.accessToken=j.access_token;if(j.refresh_token)S.refreshToken=j.refresh_token;if(j.id_token)S.idToken=j.id_token;renderTokens();}
+function renderTokens(){document.getElementById('tb-at').textContent=trunc(S.accessToken);document.getElementById('tb-rt').textContent=trunc(S.refreshToken);document.getElementById('tb-it').textContent=trunc(S.idToken);}
+function trunc(s){return s?(s.length>56?s.slice(0,56)+'…':s):'—'}
+function clearTokens(){S.accessToken=S.refreshToken=S.idToken="";renderTokens();}
+function basic(id,sec){return 'Basic '+btoa((id||'playground-client')+':'+(sec||'playground-secret'));}
+const FORM={'content-type':'application/x-www-form-urlencoded'};
+const JSONH={'content-type':'application/json'};
 
-function setTokens(j){
-  if(!j)return;
-  if(j.access_token)S.accessToken=j.access_token;
-  if(j.refresh_token)S.refreshToken=j.refresh_token;
-  if(j.id_token)S.idToken=j.id_token;
-  renderTokens();
-}
-function renderTokens(){
-  document.getElementById('tb-at').textContent=trunc(S.accessToken);
-  document.getElementById('tb-rt').textContent=trunc(S.refreshToken);
-  document.getElementById('tb-it').textContent=trunc(S.idToken);
-}
-function trunc(s){return s?(s.length>54?s.slice(0,54)+'…':s):'—'}
-function clearTokens(){S.accessToken=S.refreshToken=S.idToken="";renderTokens()}
-function basic(){return 'Basic '+btoa('playground-client:playground-secret')}
+// ---------- JWT / base64url ----------
+function b64urlToStr(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return atob(s);}
+function decodeJwt(t){const p=(t||'').split('.');if(p.length<2)return null;try{return{segments:p.length,header:JSON.parse(b64urlToStr(p[0])),payload:JSON.parse(b64urlToStr(p[1]))}}catch(e){return null}}
 
-async function login(){
-  const body=JSON.stringify({
-    provider:"password",client_id:"playground-client",
-    credential:{username:document.getElementById('lg-u').value,password:document.getElementById('lg-p').value},
-    scope:document.getElementById('lg-s').value.split(/\s+/).filter(Boolean)
-  });
-  const r=await run('login','POST','/auth/login',{headers:{'content-type':'application/json'},body});
-  setTokens(r.json);
-}
-async function userinfo(){
-  if(!S.accessToken)return show('userinfo',0,'Login first.');
-  await run('userinfo','GET','/userinfo',{headers:{authorization:'Bearer '+S.accessToken}});
-}
-async function introspect(){
-  if(!S.accessToken)return show('introspect',0,'Login first.');
-  await run('introspect','POST','/token/introspect',{headers:{'content-type':'application/x-www-form-urlencoded',authorization:basic()},body:'token='+encodeURIComponent(S.accessToken)});
-}
-async function refresh(){
-  if(!S.refreshToken)return show('refresh',0,'Login with offline_access scope first.');
-  const r=await run('refresh','POST','/token',{headers:{'content-type':'application/x-www-form-urlencoded',authorization:basic()},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(S.refreshToken)});
-  setTokens(r.json);
-}
-async function revoke(){
-  if(!S.accessToken)return show('revoke',0,'Login first.');
-  await run('revoke','POST','/token/revoke',{headers:{'content-type':'application/x-www-form-urlencoded',authorization:basic()},body:'token='+encodeURIComponent(S.accessToken)});
-}
-
-async function sha256b64url(s){
-  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));
-  return b64url(new Uint8Array(buf));
+// ---------- TOTP (RFC 6238, SHA-1, 6 digits, 30s) ----------
+async function totpNow(){
+  const key=new TextEncoder().encode("12345678901234567890"); // RFC test secret, matches the server enrollment
+  let counter=Math.floor(Date.now()/1000/30);
+  const ctr=new Uint8Array(8);for(let i=7;i>=0;i--){ctr[i]=counter&0xff;counter=Math.floor(counter/256);}
+  const k=await crypto.subtle.importKey('raw',key,{name:'HMAC',hash:'SHA-1'},false,['sign']);
+  const sig=new Uint8Array(await crypto.subtle.sign('HMAC',k,ctr));
+  const off=sig[19]&0xf;
+  const bin=((sig[off]&0x7f)<<24)|((sig[off+1]&0xff)<<16)|((sig[off+2]&0xff)<<8)|(sig[off+3]&0xff);
+  return String(bin%1000000).padStart(6,'0');
 }
 function b64url(bytes){let s=btoa(String.fromCharCode(...bytes));return s.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+async function sha256b64url(s){return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))))}
 function randVerifier(){const a=new Uint8Array(32);crypto.getRandomValues(a);return b64url(a)}
 
-async function codeFlow(){
-  const verifier=randVerifier();
-  const challenge=await sha256b64url(verifier);
-  const redirectURI=location.origin+"/callback";
-  const body=JSON.stringify({
-    provider:"password",client_id:"playground-client",response_type:"code",
-    redirect_uri:redirectURI,credential:{username:"alice",password:"secret"},
-    scope:["openid","profile"],code_challenge:challenge,code_challenge_method:"S256",state:"xyz"
-  });
-  const r1=await fetch('/auth/login',{method:'POST',headers:{'content-type':'application/json'},body});
-  const t1=await r1.text();const j1=safeJSON(t1);
-  let out="STEP 1 — /auth/login (response_type=code)  HTTP "+r1.status+"\n"+pretty(t1)+"\n\n";
-  const code=j1&&(j1.code||j1.authorization_code);
-  if(!code){
-    out+="(no `code` field in body — see the raw response above)";
-    document.getElementById('out-code').textContent=out;return;
-  }
-  const r2=await fetch('/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',authorization:basic()},
-    body:'grant_type=authorization_code&code='+encodeURIComponent(code)+'&redirect_uri='+encodeURIComponent(redirectURI)+'&code_verifier='+encodeURIComponent(verifier)+'&client_id=playground-client'});
-  const t2=await r2.text();
-  out+="STEP 2 — /token (grant=authorization_code + PKCE)  HTTP "+r2.status+"\n"+pretty(t2);
-  document.getElementById('out-code').textContent=out;
-  setTokens(safeJSON(t2));
-}
-
-async function deviceStart(){
-  const r=await run('device','POST','/device/code',{headers:{'content-type':'application/x-www-form-urlencoded'},body:'client_id=playground-client&scope=openid'});
-  if(r.json){
-    S.deviceCode=r.json.device_code||"";
-    document.getElementById('device-hint').textContent=
-      "user_code="+(r.json.user_code||"?")+" — in a real flow the user approves at the verification URI, then the client polls (button 2); before approval you'll see authorization_pending.";
-  }
-}
-async function devicePoll(){
-  if(!S.deviceCode)return show('device',0,'Run step 1 first.');
-  const r=await run('device','POST','/token',{headers:{'content-type':'application/x-www-form-urlencoded'},body:'grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code='+encodeURIComponent(S.deviceCode)+'&client_id=playground-client'});
+// ---------- actions ----------
+async function login(){
+  const r=await run('login','POST','/auth/login',{headers:JSONH,body:JSON.stringify({
+    provider:"password",client_id:"playground-client",
+    credential:{username:document.getElementById('lg-u').value,password:document.getElementById('lg-p').value},
+    scope:document.getElementById('lg-s').value.split(/\s+/).filter(Boolean)})});
   setTokens(r.json);
 }
-async function par(){
-  await run('par','POST','/par',{headers:{'content-type':'application/x-www-form-urlencoded',authorization:basic()},
-    body:'client_id=playground-client&response_type=code&redirect_uri='+encodeURIComponent(location.origin+'/callback')+'&scope=openid'});
+function decodeTokens(){
+  const e=out('decode');e.textContent='';
+  for(const [name,tok] of [['access_token',S.accessToken],['id_token',S.idToken]]){
+    const d=decodeJwt(tok);
+    e.appendChild(el('div',{class:'hint',text:name+(d?' — alg='+d.header.alg+' kid='+(d.header.kid||'—')+' ('+d.segments+' segments'+(d.segments===5?' = JWE encrypted':'')+')':' — (none / not a JWT)')}));
+    if(d){e.appendChild(el('pre',{text:'header  '+JSON.stringify(d.header)+'\npayload '+JSON.stringify(d.payload,null,2)}));}
+  }
+  if(!S.accessToken&&!S.idToken)e.appendChild(el('div',{text:'Login first.'}));
+}
+async function userinfo(){if(!S.accessToken)return show('userinfo',0,'Login first.');await run('userinfo','GET','/userinfo',{headers:{authorization:'Bearer '+S.accessToken}});}
+async function introspect(){if(!S.accessToken)return show('introspect',0,'Login first.');await run('introspect','POST','/token/introspect',{headers:{...FORM,authorization:basic()},body:'token='+encodeURIComponent(S.accessToken)});}
+async function refresh(){if(!S.refreshToken)return show('refresh',0,'Login with offline_access first.');const r=await run('refresh','POST','/token',{headers:{...FORM,authorization:basic()},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(S.refreshToken)});setTokens(r.json);}
+async function revoke(){if(!S.accessToken)return show('revoke',0,'Login first.');await run('revoke','POST','/token/revoke',{headers:{...FORM,authorization:basic()},body:'token='+encodeURIComponent(S.accessToken)});}
+async function clientCreds(){const r=await run('cc','POST','/token',{headers:{...FORM,authorization:basic()},body:'grant_type=client_credentials&scope=openid'});}
+async function tokenExchange(){if(!S.accessToken)return show('exch',0,'Login first (need a subject_token).');await run('exch','POST','/token',{headers:{...FORM,authorization:basic()},body:'grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token='+encodeURIComponent(S.accessToken)+'&subject_token_type=urn:ietf:params:oauth:token-type:access_token'});}
+async function endSession(){if(!S.idToken)return show('logout',0,'Login first (need id_token_hint).');await run('logout','GET','/end_session?id_token_hint='+encodeURIComponent(S.idToken)+'&post_logout_redirect_uri='+encodeURIComponent(location.origin+'/callback'));}
+
+async function codeFlow(){
+  const verifier=randVerifier(),challenge=await sha256b64url(verifier),redirectURI=location.origin+"/callback";
+  const r1=await req('POST','/auth/login',{headers:JSONH,body:JSON.stringify({provider:"password",client_id:"playground-client",response_type:"code",redirect_uri:redirectURI,credential:{username:"alice",password:"secret"},scope:["openid","profile"],code_challenge:challenge,code_challenge_method:"S256",state:"xyz"})});
+  let o="STEP 1 — /auth/login (response_type=code)  HTTP "+r1.status+"\n"+pretty(r1.text)+"\n\n";
+  const code=r1.json&&(r1.json.code||r1.json.authorization_code);
+  if(!code){o+="(no `code` field — see raw above)";out('code').textContent=o;return;}
+  const r2=await req('POST','/token',{headers:{...FORM,authorization:basic()},body:'grant_type=authorization_code&code='+encodeURIComponent(code)+'&redirect_uri='+encodeURIComponent(redirectURI)+'&code_verifier='+encodeURIComponent(verifier)+'&client_id=playground-client'});
+  o+="STEP 2 — /token (authorization_code + PKCE)  HTTP "+r2.status+"\n"+pretty(r2.text);
+  out('code').textContent=o;setTokens(r2.json);
+}
+async function deviceStart(){const r=await run('device','POST','/device/code',{headers:FORM,body:'client_id=playground-client&scope=openid'});if(r.json){S.deviceCode=r.json.device_code||"";document.getElementById('device-hint').textContent="user_code="+(r.json.user_code||"?")+" — a real user approves at the verification URI; polling before approval returns authorization_pending.";}}
+async function devicePoll(){if(!S.deviceCode)return show('device',0,'Run step 1 first.');const r=await run('device','POST','/token',{headers:FORM,body:'grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code='+encodeURIComponent(S.deviceCode)+'&client_id=playground-client'});setTokens(r.json);}
+async function par(){await run('par','POST','/par',{headers:{...FORM,authorization:basic()},body:'client_id=playground-client&response_type=code&redirect_uri='+encodeURIComponent(location.origin+'/callback')+'&scope=openid'});}
+
+async function mfaStart(){
+  const r=await req('POST','/auth/login',{headers:JSONH,body:JSON.stringify({provider:"password",client_id:"mfa-client",credential:{username:"alice",password:"secret"},scope:["openid"]})});
+  let o="STEP 1 — /auth/login (mfa-client, risk=require_mfa)  HTTP "+r.status+"\n"+pretty(r.text)+"\n\n";
+  S.mfaChallenge=r.json&&r.json.mfa_challenge_id||"";
+  if(!S.mfaChallenge){o+="(no mfa_challenge_id — see above)";out('mfa').textContent=o;return;}
+  const code=await totpNow();
+  o+="Computed TOTP (RFC test secret): "+code+"\n\nSTEP 2 — /auth/mfa\n";
+  const r2=await req('POST','/auth/mfa',{headers:JSONH,body:JSON.stringify({mfa_challenge_id:S.mfaChallenge,mfa_method:"totp",code:code})});
+  o+="HTTP "+r2.status+"\n"+pretty(r2.text);
+  out('mfa').textContent=o;setTokens(r2.json);
 }
 
-// ---- Navigation + feature catalog (lists ALL features) ----
-const NAV=[
-  ["Try it",[["discovery","Discovery & Keys"],["login","Login & Tokens"],["codeflow","Auth Code + PKCE"],["device","Device Flow"],["par","PAR"]]],
-  ["Reference",[["catalog","Full Feature Catalog"]]],
+async function dcrRegister(){
+  const body={client_name:"dynamically-registered-app",redirect_uris:[location.origin+"/cb"],token_endpoint_auth_method:"client_secret_basic",grant_types:["authorization_code","refresh_token"]};
+  const r=await run('dcr','POST','/register',{headers:JSONH,body:JSON.stringify(body)});
+  if(r.json&&r.json.client_id)S.newClient=r.json;
+}
+async function permsCall(kind){
+  if(!S.accessToken)return show('perms',0,'Login first.');
+  const path={permissions:'/permissions/me',roles:'/roles/me',menus:'/menus/me'}[kind]+'?client_id=playground-client';
+  await run('perms','GET',path,{headers:{authorization:'Bearer '+S.accessToken}});
+}
+async function jarm(){
+  // Use form_post.jwt: the response is a 200 HTML auto-POST form whose
+  // hidden `response` field carries the signed JWT (readable here),
+  // whereas response_mode=jwt 302-redirects with the JWT in Location
+  // which a browser fetch cannot read (opaqueredirect).
+  const redirectURI=location.origin+"/callback";
+  const r=await req('POST','/auth/login',{headers:JSONH,body:JSON.stringify({provider:"password",client_id:"playground-client",response_type:"code",response_mode:"form_post.jwt",redirect_uri:redirectURI,credential:{username:"alice",password:"secret"},scope:["openid"],code_challenge:await sha256b64url(randVerifier()),code_challenge_method:"S256",state:"st-123"})});
+  let o="/auth/login (response_mode=form_post.jwt)  HTTP "+r.status+"\n";
+  const m=r.text.match(/eyJ[\w-]+\.[\w-]+\.[\w-]+/);
+  const d=m&&decodeJwt(m[0]);
+  if(d)o+="\nDecoded JARM response JWT (alg="+d.header.alg+"):\n"+JSON.stringify(d.payload,null,2)+"\n\ncompact: "+m[0];
+  else o+="\n(no JARM JWT found)\n"+r.text.slice(0,400);
+  out('jarm').textContent=o;
+}
+async function showAlgs(){
+  const r=await req('GET','/playground/algs');const e=out('algs');e.textContent='';
+  if(!r.json){show('algs',r.status,r.text);return;}
+  for(const alg of ['EdDSA','ES256','RS256','PS256']){
+    const keys=r.json[alg]||[];const k=keys[0]||{};
+    e.appendChild(el('div',{class:'hint',text:alg+'  →  kty='+(k.kty||'?')+(k.crv?' crv='+k.crv:'')+' kid='+(k.kid||'?')}));
+  }
+  e.appendChild(el('pre',{text:JSON.stringify(r.json,null,2)}));
+}
+async function loadAudit(){
+  const r=await req('GET','/playground/audit');const host=out('audit');host.textContent='';
+  if(!r.json||!r.json.length){host.appendChild(el('div',{text:'No events yet — run a login or two.'}));return;}
+  const tbl=el('table');tbl.appendChild(el('tr',null,[el('th',{text:'time'}),el('th',{text:'type'}),el('th',{text:'outcome'}),el('th',{text:'actor'}),el('th',{text:'client'}),el('th',{text:'reason'})]));
+  r.json.forEach(ev=>{
+    const oc=ev.outcome==='success'?'t-ok':ev.outcome==='failure'?'t-fail':'';
+    const isViol=ev.type==='fapi_compliance_violation';
+    tbl.appendChild(el('tr',null,[
+      el('td',{class:'mono',text:(ev.time||'').replace('T',' ').replace(/(\+.*|Z)$/,'')}),
+      el('td',null,[el('span',{class:'tag '+(isViol?'t-viol':''),text:ev.type})]),
+      el('td',{class:oc,text:ev.outcome||''}),
+      el('td',{class:'mono',text:ev.actor||''}),
+      el('td',{class:'mono',text:ev.client||''}),
+      el('td',{class:'mono',text:ev.reason||''}),
+    ]));
+  });
+  host.appendChild(tbl);
+}
+
+// ---------- page build (sections + nav + catalog) ----------
+function card(title,meth,desc,controls,preId){
+  const c=el('div',{class:'card'});
+  c.appendChild(el('h3',null,[document.createTextNode(title+' '),el('span',{class:'meth',text:meth})]));
+  c.appendChild(el('div',{class:'desc',text:desc}));
+  (controls||[]).forEach(x=>c.appendChild(x));
+  if(preId)c.appendChild(el('pre',{id:'out-'+preId}));
+  return c;
+}
+function btn(text,fn,ghost){return el('button',ghost?{class:'ghost',onclick:fn}:{onclick:fn},[text]);}
+function input(id,val,w){return el('input',{id:id,value:val,style:w?('min-width:'+w):''});}
+
+const SECTIONS=[
+ ['discovery','Discovery & Keys',[
+   ()=>card('OIDC Discovery','GET','Derived metadata: endpoints, supported scopes/grants/algs, opt-in feature flags.',[btn('GET /.well-known/openid-configuration',()=>run('disc','GET','/.well-known/openid-configuration'))],'disc'),
+   ()=>card('JWKS','GET','Public signing keys; gateways verify JWTs locally. Rotation serves outgoing+incoming keys.',[btn('GET /.well-known/jwks.json',()=>run('jwks','GET','/.well-known/jwks.json'))],'jwks'),
+   ()=>card('Multi-algorithm signing','demo','SDK can publish EdDSA / ES256 / RS256 / PS256 keys — one issuer per alg, all with rotation + KMS seam.',[btn('Show all 4 algs’ JWKS',showAlgs)],'algs'),
+   ()=>card('Health','GET','Build info (version + VCS revision + commit time).',[btn('GET /health',()=>run('health','GET','/health'))],'health'),
+ ]],
+ ['login','Login & Tokens',[
+   ()=>card('Password Login','POST','Direct-mint: validates credentials, returns access_token + id_token (+ refresh with offline_access). Permissions are embedded in the response.',[el('div',{class:'row'},[el('label',{text:'user'}),input('lg-u','alice'),el('label',{text:'pass'}),input('lg-p','secret'),el('label',{text:'scope'}),input('lg-s','openid profile email offline_access','300px')]),btn('POST /auth/login',login)],'login'),
+   ()=>card('Decode JWTs','client-side','Base64url-decode the captured access_token + id_token header/payload (also flags 5-segment JWE).',[btn('Decode captured tokens',decodeTokens)],'decode'),
+   ()=>card('UserInfo','GET','OIDC UserInfo with the captured access_token as Bearer.',[btn('GET /userinfo',userinfo)],'userinfo'),
+   ()=>card('Introspect','POST','RFC 7662 — client (Basic) asks whether the captured token is active.',[btn('POST /token/introspect',introspect)],'introspect'),
+   ()=>card('Refresh','POST','RFC 6749 §6 — single-use rotation; new access_token + rotated refresh_token.',[btn('POST /token (refresh_token)',refresh)],'refresh'),
+   ()=>card('Revoke','POST','RFC 7009 — 200 on valid client creds regardless of token existence (anti-enumeration).',[btn('POST /token/revoke',revoke)],'revoke'),
+   ()=>card('Client Credentials','POST','RFC 6749 §4.4 — machine-to-machine token, no user.',[btn('POST /token (client_credentials)',clientCreds)],'cc'),
+   ()=>card('Token Exchange','POST','RFC 8693 — exchange the captured access_token for a new one (act chain).',[btn('POST /token (token-exchange)',tokenExchange)],'exch'),
+   ()=>card('RP-Initiated Logout','GET','OIDC — end_session with id_token_hint + post_logout_redirect_uri.',[btn('GET /end_session',endSession)],'logout'),
+ ]],
+ ['codeflow','Authorization Code + PKCE',[
+   ()=>card('Code flow (S256)','POST×2','Generates a PKCE verifier/challenge, gets an auth code at /auth/login, exchanges it at /token.',[btn('Run full code+PKCE exchange',codeFlow)],'code'),
+ ]],
+ ['mfa','MFA Step-up (TOTP)',[
+   ()=>card('Risk-gated TOTP','POST×2','Login as mfa-client → RiskScorer returns require_mfa → server returns mfa_challenge_id. The browser computes the TOTP code (RFC test secret) and completes /auth/mfa.',[btn('Run MFA step-up',mfaStart)],'mfa'),
+ ]],
+ ['device','Device Flow',[
+   ()=>card('Device Authorization','POST','RFC 8628 — request device_code + user_code, then poll /token.',[btn('1. POST /device/code',deviceStart),btn('2. POST /token (poll)',devicePoll,true),el('div',{class:'hint',id:'device-hint'})],'device'),
+ ]],
+ ['par','Pushed Authorization Request',[
+   ()=>card('PAR','POST','RFC 9126 — push authorization params server-side, get a request_uri (Basic client auth).',[btn('POST /par',par)],'par'),
+ ]],
+ ['jarm','JARM (signed responses)',[
+   ()=>card('response_mode=form_post.jwt','POST','Authorization response returned as a signed JWT (JARM); the playground extracts and decodes it client-side.',[btn('Login with JARM (form_post.jwt)',jarm)],'jarm'),
+ ]],
+ ['dcr','Dynamic Client Registration',[
+   ()=>card('Register a client','POST','RFC 7591 — register a brand-new client at runtime; returns its client_id + secret.',[btn('POST /register',dcrRegister)],'dcr'),
+ ]],
+ ['perms','Permissions / Roles / Menus',[
+   ()=>card('Authorization data','GET','alice has the editor role; menus are filtered to her permissions (the admin menu is hidden). Uses the captured access_token.',[btn('/permissions/me',()=>permsCall('permissions')),btn('/roles/me',()=>permsCall('roles'),true),btn('/menus/me',()=>permsCall('menus'),true)],'perms'),
+ ]],
+ ['audit','Audit Log (live)',[
+   ()=>card('Recent events','GET','Hash-chained audit events from the in-memory sink (newest first). FAPI inspection mode logs every non-compliant login as fapi_compliance_violation here without blocking it.',[btn('Refresh audit log',loadAudit)],'audit'),
+ ]],
 ];
 const CATALOG=[
   ["Grants","authorization_code, client_credentials, refresh_token (family rotation), device_code, token-exchange (8693), PAR (9126), DCR (7591/7592)"],
-  ["Introspect / revoke","RFC 7662 introspect, RFC 7009 revoke + revoke-all (bulk via subject index)"],
-  ["OIDC core","ID Token, Discovery, UserInfo, RP-initiated logout, prompt=none silent renewal, login_hint, Form Post response mode"],
+  ["Introspect / revoke","RFC 7662 introspect, RFC 7009 revoke + revoke-all"],
+  ["OIDC core","ID Token, Discovery, UserInfo, RP-initiated logout, prompt=none silent renewal, Form Post response mode, JARM"],
   ["Auth factors","password, phone, email, temp_token, keypair, apikey, certificate, totp, oidc_federation (Google/MS/GitHub/Auth0/Keycloak)"],
-  ["WebAuthn / Passkey","Full CTAP/FIDO2 ceremony (register/login begin+finish); primary auth or MFA step-up"],
+  ["WebAuthn / Passkey","Full CTAP/FIDO2 ceremony; primary auth or MFA step-up"],
   ["MFA orchestration","TOTP / WebAuthn / Push / multi-composer; risk-gated step-up at /auth/mfa"],
   ["Token signing","EdDSA, ES256, RS256, PS256 — runtime rotation + scheduler + KMS signer seam + strict alg-confusion gate"],
-  ["Sender-constraining","DPoP (9449, + nonce), mTLS-bound tokens (8705)"],
-  ["Request/response JOSE","JAR signed + JWE request objects (9101), JWE response encryption (id_token/userinfo), JARM signed auth responses, signed_metadata (8414)"],
+  ["Sender-constraining","DPoP (9449, +nonce), mTLS-bound tokens (8705)"],
+  ["JOSE","JAR signed + JWE request objects (9101), JWE response encryption (id_token/userinfo), JARM, signed_metadata (8414)"],
   ["FAPI 2.0","Profile (inspection | enforce): PAR-only, signed request, S256 PKCE, code-only, sender-constrained, asymmetric client-auth"],
   ["Risk & anomaly","Sync RiskScorer (allow/deny/require-MFA) + async detectors (impossible-travel, velocity, new-device/country, brute-force shadow)"],
-  ["Pairwise / subjects","Pairwise subject identifiers (per-sector), subject-client index"],
   ["Audit","Hash-chained events, PII redactor, async/retry/multi sinks, webhook, SQLite queryable sink, offline verify CLI"],
   ["Permissions","Per-app roles, wildcard matcher, menu filtering, login embedding"],
   ["Multi-tenant","Tenant↑Client, hostname→tenant domains, active suspension w/ cross-replica invalidation"],
   ["Clustering","cluster.Bus (memory/etcd) cache invalidation; SQLite/etcd backends for 15+ stores; schema migration runner"],
   ["Admin (gRPC + REST)","Client/User/Token/Permission/Snapshot/Release/Tenant admin services behind admin auth"],
-  ["Operations","Snapshot export/restore (sealed), release pin/rollback, bootstrap, retention schedulers, Prometheus metrics + OTel traces"],
+  ["Operations","Snapshot export/restore (sealed), release pin/rollback, bootstrap, retention schedulers, Prometheus + OTel"],
 ];
-function buildNav(){
-  const nav=document.getElementById('nav');
-  NAV.forEach(([grp,items])=>{
-    const g=document.createElement('div');g.className='grp';g.textContent=grp;nav.appendChild(g);
-    items.forEach(([id,label])=>{const a=document.createElement('a');a.href='#'+id;a.textContent=label;nav.appendChild(a)});
+function build(){
+  const root=document.getElementById('sections'),nav=document.getElementById('nav');
+  nav.appendChild(el('div',{class:'grp',text:'Try it'}));
+  SECTIONS.forEach(([id,title,cards])=>{
+    nav.appendChild(el('a',{href:'#'+id,text:title}));
+    const sec=el('section',{id:id});sec.appendChild(el('h2',{text:title}));
+    cards.forEach(mk=>sec.appendChild(mk()));root.appendChild(sec);
   });
-  const body=document.getElementById('catalog-body');
-  const desc=document.createElement('div');desc.className='desc';
-  desc.textContent='Everything this server implements. The “Try it” sections above exercise the live HTTP endpoints; the rest are wired via SDK options / config.yaml.';
-  body.appendChild(desc);
-  CATALOG.forEach(([k,v])=>{
-    const d=document.createElement('div');d.className='feat';
-    const b=document.createElement('b');b.textContent=k;
-    const s=document.createElement('span');s.textContent=v;
-    d.appendChild(b);d.appendChild(s);body.appendChild(d);
-  });
+  nav.appendChild(el('div',{class:'grp',text:'Reference'}));
+  nav.appendChild(el('a',{href:'#catalog',text:'Full Feature Catalog'}));
+  const cat=el('section',{id:'catalog'});cat.appendChild(el('h2',{text:'Full Feature Catalog'}));
+  const body=el('div',{class:'card'});
+  body.appendChild(el('div',{class:'desc',text:'Everything this server implements. The sections above exercise the live HTTP endpoints; the rest are wired via SDK options / config.yaml.'}));
+  CATALOG.forEach(([k,v])=>{const d=el('div',{class:'feat'});d.appendChild(el('b',{text:k}));d.appendChild(el('span',{text:v}));body.appendChild(d);});
+  cat.appendChild(body);root.appendChild(cat);
+  renderTokens();
 }
-buildNav();renderTokens();
+build();
 </script>
 </body>
 </html>
