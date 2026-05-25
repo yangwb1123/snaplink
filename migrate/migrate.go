@@ -46,13 +46,31 @@ import (
 // past this surfaces as a clear migration error rather than a hang.
 const busyTimeoutMS = 10000
 
-// Migration is one forward schema change. SQL may contain multiple
-// statements separated by ';' (modernc.org/sqlite executes them in a
-// single Exec, as every backend's baseline schema already relies on).
+// Migration is one forward schema change. Exactly one of SQL or Func
+// must be set:
+//
+//   - SQL: forward DDL, possibly multiple ';'-separated statements
+//     (modernc.org/sqlite executes them in a single Exec, as every
+//     backend's baseline schema already relies on).
+//   - Func: a Go step for conditional or data migrations that plain DDL
+//     can't express — e.g. "add this column only if it's missing"
+//     (SQLite has no ADD COLUMN IF NOT EXISTS) or backfilling a new
+//     column from old rows. It runs inside the same transaction as SQL
+//     migrations, against the migration connection.
 type Migration struct {
 	Version int    // 1-based, strictly increasing across the slice
 	Name    string // human label, recorded for auditability
-	SQL     string // forward DDL; idempotent constructs (IF NOT EXISTS) recommended for the baseline
+	SQL     string // forward DDL (mutually exclusive with Func)
+	Func    func(ctx context.Context, x Execer) error
+}
+
+// Execer is the subset of *sql.DB / *sql.Conn a Func migration needs.
+// The runner passes the pinned migration connection, so a Func's
+// statements run inside the migration's transaction.
+type Execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // namespacePattern bounds what may be interpolated into the version
@@ -81,6 +99,11 @@ func validate(migrations []Migration) error {
 		}
 		if m.Version <= prev {
 			return fmt.Errorf("migrate: migration[%d] %q version %d not strictly greater than previous %d", i, m.Name, m.Version, prev)
+		}
+		hasSQL := m.SQL != ""
+		hasFunc := m.Func != nil
+		if hasSQL == hasFunc { // both set, or neither
+			return fmt.Errorf("migrate: migration[%d] %q must set exactly one of SQL or Func", i, m.Name)
 		}
 		prev = m.Version
 	}
@@ -154,7 +177,11 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 		if m.Version <= current {
 			continue
 		}
-		if _, err := conn.ExecContext(ctx, m.SQL); err != nil {
+		if m.Func != nil {
+			if err := m.Func(ctx, conn); err != nil {
+				return fmt.Errorf("migrate(%s): apply v%d %q (func): %w", namespace, m.Version, m.Name, err)
+			}
+		} else if _, err := conn.ExecContext(ctx, m.SQL); err != nil {
 			return fmt.Errorf("migrate(%s): apply v%d %q: %w", namespace, m.Version, m.Name, err)
 		}
 		if _, err := conn.ExecContext(ctx,

@@ -12,6 +12,49 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestMigration_RefreshTokensBackfillsLegacyColumns proves the
+// refresh_tokens Func migration upgrades a pre-family-tracker database:
+// an old table missing family_id/resources/authorization_details/sid
+// gets them added (preserving existing rows), and is stamped v1.
+func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "rt.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// Legacy schema: the 8 original columns, none of the 4 later ones.
+	if _, err := db.Exec(`CREATE TABLE refresh_tokens (
+		token TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL,
+		provider TEXT NOT NULL DEFAULT '', scopes TEXT NOT NULL DEFAULT '[]',
+		attributes TEXT NOT NULL DEFAULT '{}', issued_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("legacy table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO refresh_tokens (token,user_id,client_id,issued_at,expires_at)
+		VALUES ('old','u','c',1,2)`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	// NewRefreshTokenStoreWithDB returns only the store (no error) — the
+	// migration runs best-effort inside it.
+	_ = sqlite.NewRefreshTokenStoreWithDB(db)
+
+	// The 4 columns must now exist (a SELECT referencing them succeeds).
+	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid FROM refresh_tokens`); err != nil {
+		t.Errorf("legacy columns not backfilled: %v", err)
+	}
+	// Existing row preserved.
+	var token string
+	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
+		t.Errorf("legacy row lost: %v", err)
+	}
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 1 {
+		t.Errorf("version = %d, want 1", v)
+	}
+}
+
 // TestMigration_PerStoreNamespacesShareOneDB is the production
 // single-DSN case: several stores constructed against the SAME sso.db
 // each track their schema version under an independent namespace, so

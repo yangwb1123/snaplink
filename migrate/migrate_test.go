@@ -167,6 +167,70 @@ func TestCurrentVersion_MissingTableIsZero(t *testing.T) {
 	}
 }
 
+func TestRun_FuncMigration(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	ran := false
+	ms := []migrate.Migration{
+		{Version: 1, Name: "func_step", Func: func(ctx context.Context, x migrate.Execer) error {
+			ran = true
+			_, err := x.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS fromfunc (id TEXT)`)
+			return err
+		}},
+	}
+	if err := migrate.Run(ctx, db, "demo", ms); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !ran {
+		t.Fatal("func migration not invoked")
+	}
+	if _, err := db.Exec(`INSERT INTO fromfunc (id) VALUES ('a')`); err != nil {
+		t.Errorf("func-created table not usable: %v", err)
+	}
+	// Idempotent: second run skips the already-applied func.
+	ran = false
+	if err := migrate.Run(ctx, db, "demo", ms); err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if ran {
+		t.Error("func migration re-ran after being recorded")
+	}
+}
+
+func TestRun_FuncErrorRollsBack(t *testing.T) {
+	db := openDB(t)
+	ms := []migrate.Migration{
+		{Version: 1, Name: "boom", Func: func(_ context.Context, _ migrate.Execer) error {
+			return errInTest
+		}},
+	}
+	if err := migrate.Run(context.Background(), db, "demo", ms); err == nil {
+		t.Fatal("expected func error to propagate")
+	}
+	if v := current(t, db, "demo"); v != 0 {
+		t.Errorf("version = %d, want 0 after func failure", v)
+	}
+}
+
+func TestRun_RejectsBothOrNeitherSQLAndFunc(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	both := []migrate.Migration{{Version: 1, Name: "both", SQL: "SELECT 1", Func: func(context.Context, migrate.Execer) error { return nil }}}
+	if err := migrate.Run(ctx, db, "demo", both); err == nil {
+		t.Error("expected error when both SQL and Func set")
+	}
+	neither := []migrate.Migration{{Version: 1, Name: "neither"}}
+	if err := migrate.Run(ctx, db, "demo2", neither); err == nil {
+		t.Error("expected error when neither SQL nor Func set")
+	}
+}
+
+var errInTest = errTest("boom")
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }
+
 func TestStatus_ReportsPerNamespace(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()
