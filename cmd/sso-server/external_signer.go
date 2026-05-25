@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/metrics"
+	"github.com/snaplink/sso/spi"
 )
 
 // ExternalSignerFactory builds a KMS/HSM-backed crypto.Signer for the JWT
@@ -62,26 +63,52 @@ func RegisterExternalSigner(name string, f ExternalSignerFactory) {
 // deployment (no config surface).
 const externalSignerHealthWindow = 30 * time.Second
 
+// healthTransition reports whether a recorded outcome flipped the
+// backend's health relative to the previous one — the rare edge an
+// operator wants logged/alerted, vs. the steady-state every-call result.
+type healthTransition int
+
+const (
+	transitionNone healthTransition = iota
+	transitionDown                  // healthy -> failing
+	transitionUp                    // failing -> healthy
+)
+
 // signerHealth tracks the most recent external-signing outcome so a
 // passive /readyz probe can report KMS/HSM reachability WITHOUT spending
 // a KMS round-trip per poll — production signing traffic is the probe.
 type signerHealth struct {
-	mu        sync.Mutex
-	lastErr   error
-	lastErrAt time.Time
-	lastOKAt  time.Time
+	mu          sync.Mutex
+	lastErr     error
+	lastErrAt   time.Time
+	lastOKAt    time.Time
+	up          bool
+	initialized bool
 }
 
-func (h *signerHealth) record(err error) {
+// record stores the outcome and reports any health transition. The first
+// recorded outcome is never a transition (no prior state to flip from).
+func (h *signerHealth) record(err error) healthTransition {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := time.Now()
-	if err != nil {
+	nowUp := err == nil
+	if nowUp {
+		h.lastOKAt = now
+	} else {
 		h.lastErr = err
 		h.lastErrAt = now
-		return
 	}
-	h.lastOKAt = now
+	prevKnown, prevUp := h.initialized, h.up
+	h.initialized, h.up = true, nowUp
+	switch {
+	case !prevKnown || prevUp == nowUp:
+		return transitionNone
+	case nowUp:
+		return transitionUp
+	default:
+		return transitionDown
+	}
 }
 
 // check reports unhealthy only when the most recent attempt FAILED and
@@ -108,6 +135,7 @@ type instrumentedSigner struct {
 	inner  crypto.Signer
 	alg    string
 	m      *metrics.Metrics // nil when metrics are disabled
+	logger spi.Logger       // nil-safe via logSigner
 	health signerHealth
 }
 
@@ -116,7 +144,7 @@ func (s *instrumentedSigner) Public() crypto.PublicKey { return s.inner.Public()
 func (s *instrumentedSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	start := time.Now()
 	sig, err := s.inner.Sign(rand, digest, opts)
-	s.health.record(err)
+	transition := s.health.record(err)
 	if s.m != nil {
 		outcome := "success"
 		up := 1.0
@@ -128,7 +156,23 @@ func (s *instrumentedSigner) Sign(rand io.Reader, digest []byte, opts crypto.Sig
 		s.m.SigningDuration.WithLabelValues(s.alg).Observe(time.Since(start).Seconds())
 		s.m.SigningBackendUp.WithLabelValues(s.alg).Set(up)
 	}
+	// Log only the rare health flip, not every call — Error on down so it
+	// surfaces in alerting before /readyz drains; Info on recovery.
+	switch transition {
+	case transitionDown:
+		s.logSigner().Error("external signing backend down", "alg", s.alg, "err", err)
+	case transitionUp:
+		s.logSigner().Info("external signing backend recovered", "alg", s.alg)
+	}
 	return sig, err
+}
+
+// logSigner returns a non-nil logger so the Sign path never nil-checks.
+func (s *instrumentedSigner) logSigner() spi.Logger {
+	if s.logger == nil {
+		return spi.NopLogger{}
+	}
+	return s.logger
 }
 
 // Ping satisfies the readycheck contract appendReadyCheck looks for. It
@@ -141,11 +185,11 @@ func (s *instrumentedSigner) Ping(context.Context) error { return s.health.check
 // unconditionally. The wrap happens even when metrics are disabled —
 // readiness must not depend on metrics being on; the metric writes alone
 // are gated on m != nil.
-func instrumentSigner(s crypto.Signer, alg string, m *metrics.Metrics) crypto.Signer {
+func instrumentSigner(s crypto.Signer, alg string, m *metrics.Metrics, logger spi.Logger) crypto.Signer {
 	if s == nil {
 		return nil
 	}
-	return &instrumentedSigner{inner: s, alg: alg, m: m}
+	return &instrumentedSigner{inner: s, alg: alg, m: m, logger: logger}
 }
 
 // normalizeAlgLabel maps the configured keys.signing.alg to the bounded

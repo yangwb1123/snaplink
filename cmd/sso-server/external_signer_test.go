@@ -158,7 +158,7 @@ func TestSigningBackendUpGauge(t *testing.T) {
 	m := metrics.New()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	flaky := &flakySigner{inner: ecPriv}
-	wrapped := instrumentSigner(flaky, "es256", m)
+	wrapped := instrumentSigner(flaky, "es256", m, spi.NopLogger{})
 	digest := make([]byte, 32)
 
 	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err != nil {
@@ -231,7 +231,7 @@ func TestInstrumentSigner_ReadinessProbe(t *testing.T) {
 	flaky := &flakySigner{inner: ecPriv}
 
 	// Wrap WITHOUT metrics — readiness must not depend on metrics.
-	wrapped := instrumentSigner(flaky, "es256", nil)
+	wrapped := instrumentSigner(flaky, "es256", nil, spi.NopLogger{})
 	probe, ok := wrapped.(interface{ Ping(context.Context) error })
 	if !ok {
 		t.Fatal("instrumented signer does not expose Ping; appendReadyCheck would skip it")
@@ -268,6 +268,54 @@ func TestInstrumentSigner_ReadinessProbe(t *testing.T) {
 	}
 	if err := probe.Ping(context.Background()); err != nil {
 		t.Errorf("after recovery probe = %v, want healthy", err)
+	}
+}
+
+// captureLogger records Error/Info messages for assertions.
+type captureLogger struct {
+	mu    sync.Mutex
+	errs  []string
+	infos []string
+}
+
+func (l *captureLogger) Info(msg string, _ ...any) {
+	l.mu.Lock()
+	l.infos = append(l.infos, msg)
+	l.mu.Unlock()
+}
+func (l *captureLogger) Error(msg string, _ ...any) {
+	l.mu.Lock()
+	l.errs = append(l.errs, msg)
+	l.mu.Unlock()
+}
+func (l *captureLogger) Debug(msg string, _ ...any) {}
+
+// TestInstrumentSigner_LogsOnlyTransitions proves the down/up edges are
+// logged once each — not every steady-state call.
+func TestInstrumentSigner_LogsOnlyTransitions(t *testing.T) {
+	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	flaky := &flakySigner{inner: ecPriv}
+	lg := &captureLogger{}
+	wrapped := instrumentSigner(flaky, "es256", nil, lg)
+	digest := make([]byte, 32)
+
+	sign := func() { _, _ = wrapped.Sign(rand.Reader, digest, crypto.SHA256) }
+
+	sign() // first success: no transition (no prior state)
+	sign() // steady success
+	flaky.setErr(errKMSDown)
+	sign() // -> down
+	sign() // steady down: no new log
+	flaky.setErr(nil)
+	sign() // -> up
+
+	lg.mu.Lock()
+	defer lg.mu.Unlock()
+	if len(lg.errs) != 1 {
+		t.Errorf("down logs = %d (%v), want exactly 1", len(lg.errs), lg.errs)
+	}
+	if len(lg.infos) != 1 {
+		t.Errorf("recovery logs = %d (%v), want exactly 1", len(lg.infos), lg.infos)
 	}
 }
 

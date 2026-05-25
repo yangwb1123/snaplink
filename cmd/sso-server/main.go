@@ -2150,7 +2150,7 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 			return nil, "", nil, fmt.Errorf("keys.signing.external %q returned a nil signer", name)
 		}
 		// Instrument the KMS/HSM round-trip (no-op when metrics disabled).
-		extSigner = instrumentSigner(s, normalizeAlgLabel(sc.Alg), m)
+		extSigner = instrumentSigner(s, normalizeAlgLabel(sc.Alg), m, logger)
 		extKID = kid
 		logger.Info("signing key: external signer", "name", name, "kid", kid)
 	}
