@@ -37,7 +37,7 @@ func newCIBAPingServer(t *testing.T, notifyErr error) (*sso.Server, *httptest.Se
 
 	var mu sync.Mutex
 	var pings [][2]string
-	notifier := oauth.CIBAPingNotifierFunc(func(_ context.Context, authReqID, token string) error {
+	notifier := oauth.CIBAPingNotifierFunc(func(_ context.Context, clientID, authReqID, token string) error {
 		mu.Lock()
 		pings = append(pings, [2]string{authReqID, token})
 		mu.Unlock()

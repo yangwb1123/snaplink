@@ -787,6 +787,10 @@ ciba:
     bearer_token: ""
     timeout: 0s
   prune_interval: 0s         # sqlite-only background PruneExpired cadence; 0 disables
+  ping:                      # CIBA ping delivery (poll stays available); discovery advertises "ping" when enabled
+    enabled: false
+    timeout: 0s              # per-ping HTTP timeout; 0 -> 5s default
+    endpoints: {}            # client_id -> notification endpoint URL; a client absent here degrades to poll
 
 # OIDC response encryption (JWE). When enabled, clients that register
 # id_token_encrypted_response_alg / userinfo_encrypted_response_alg

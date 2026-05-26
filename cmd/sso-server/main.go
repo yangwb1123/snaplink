@@ -2679,7 +2679,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 				logger.Info("ciba: prune scheduler enabled", "interval", pi)
 			}
 		}
-		logger.Info("ciba: enabled (poll mode)",
+		mode := "poll"
+		if cfg.CIBA.Ping.Enabled {
+			opts = append(opts, sso.WithCIBAPingNotifier(newHTTPCIBAPingNotifier(cfg.CIBA.Ping, logger)))
+			mode = "poll+ping"
+		}
+		logger.Info("ciba: enabled",
+			"mode", mode,
 			"backend", strings.ToLower(strings.TrimSpace(cfg.CIBA.Backend)),
 			"transport", strings.ToLower(strings.TrimSpace(cfg.CIBA.Transport)))
 	}

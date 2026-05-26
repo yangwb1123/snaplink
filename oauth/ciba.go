@@ -164,17 +164,21 @@ type CIBATransport interface {
 //
 // nil leaves CIBA in poll-only mode; discovery then advertises only
 // "poll" in backchannel_token_delivery_modes_supported.
+//
+// clientID is supplied so the implementation can route to the client's
+// registered notification endpoint (the endpoint is per-client
+// registration, the token is per-request).
 type CIBAPingNotifier interface {
-	Notify(ctx context.Context, authReqID, clientNotificationToken string) error
+	Notify(ctx context.Context, clientID, authReqID, clientNotificationToken string) error
 }
 
 // CIBAPingNotifierFunc adapts a function to CIBAPingNotifier, mirroring
 // CIBATransportFunc.
-type CIBAPingNotifierFunc func(ctx context.Context, authReqID, clientNotificationToken string) error
+type CIBAPingNotifierFunc func(ctx context.Context, clientID, authReqID, clientNotificationToken string) error
 
 // Notify calls f.
-func (f CIBAPingNotifierFunc) Notify(ctx context.Context, authReqID, clientNotificationToken string) error {
-	return f(ctx, authReqID, clientNotificationToken)
+func (f CIBAPingNotifierFunc) Notify(ctx context.Context, clientID, authReqID, clientNotificationToken string) error {
+	return f(ctx, clientID, authReqID, clientNotificationToken)
 }
 
 // CIBATransportFunc is a function adapter for CIBATransport. An

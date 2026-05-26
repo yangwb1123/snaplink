@@ -69,6 +69,19 @@ type CIBAConfig struct {
 	Transport     string               `yaml:"transport"`      // log | webhook
 	Webhook       MFAPushWebhookConfig `yaml:"webhook"`        // used when transport=webhook
 	PruneInterval time.Duration        `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
+	Ping          CIBAPingConfig       `yaml:"ping"`           // ping delivery mode (poll stays available)
+}
+
+// CIBAPingConfig opts into CIBA ping delivery (CIBA Core §10.2). When
+// enabled, discovery advertises "ping" and the server POSTs to a client's
+// notification endpoint when its backchannel request resolves. Endpoints
+// maps client_id → notification URL; a client absent from the map (or an
+// empty URL) silently degrades to poll. The endpoint lives in cmd config
+// rather than the SDK Client model to keep core.Client minimal.
+type CIBAPingConfig struct {
+	Enabled   bool              `yaml:"enabled"`
+	Endpoints map[string]string `yaml:"endpoints"` // client_id → notification endpoint URL
+	Timeout   time.Duration     `yaml:"timeout"`   // per-ping HTTP timeout; 0 → default
 }
 
 // OIDCConfig holds OIDC-specific server toggles that don't belong to

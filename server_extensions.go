@@ -1860,9 +1860,9 @@ func (s *Server) ResolveBackchannelAuthRequest(ctx context.Context, authReqID st
 		return err
 	}
 	if s.cibaPingNotifier != nil && req.ClientNotificationToken != "" {
-		token := req.ClientNotificationToken
+		clientID, token := req.ClientID, req.ClientNotificationToken
 		go func() {
-			if err := s.cibaPingNotifier.Notify(context.Background(), authReqID, token); err != nil {
+			if err := s.cibaPingNotifier.Notify(context.Background(), clientID, authReqID, token); err != nil {
 				s.logger.Error("ciba ping notification failed", "auth_req_id", authReqID, "error", err)
 			}
 		}()
