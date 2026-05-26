@@ -222,6 +222,15 @@ func (s *Server) JWKSCacheTTL() time.Duration { return s.jwksCacheTTL }
 // JWKSCacheMaxAge returns the JWKS cache max-age (alias for JWKSCacheTTL).
 func (s *Server) JWKSCacheMaxAge() time.Duration { return s.jwksCacheTTL }
 
+// ComputeJWKSDocument runs compute behind a process-local single-flight so
+// a burst of concurrent /jwks.json polls (the unknown-kid stampede that
+// follows a key rotation) collapses to one issuer-walk + marshal instead
+// of one per request. No TTL: the first poll after the in-flight compute
+// finishes recomputes, so a rotation shows up immediately.
+func (s *Server) ComputeJWKSDocument(compute func() ([]byte, error)) ([]byte, error) {
+	return s.jwksFlight.Do(compute)
+}
+
 // DiscoveryCacheTTL returns the discovery snapshot cache TTL.
 func (s *Server) DiscoveryCacheTTL() time.Duration { return s.discoveryCacheTTL }
 
