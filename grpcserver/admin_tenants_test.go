@@ -22,10 +22,16 @@ import (
 // TenantAdminService registered. The invalidateCount tracker is the test
 // hook that lets us verify SetStatus + Delete fire the cache callback.
 func startTenantAdminGRPC(t *testing.T, store tenant.Store, recorder *audit.Recorder, invalidate func(string)) *grpc.ClientConn {
+	return startTenantAdminGRPCFull(t, store, recorder, invalidate, nil)
+}
+
+// startTenantAdminGRPCFull additionally injects the active-revocation hook
+// fired when a tenant is suspended (nil = no-op).
+func startTenantAdminGRPCFull(t *testing.T, store tenant.Store, recorder *audit.Recorder, invalidate func(string), revoke func(context.Context, string)) *grpc.ClientConn {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
-	adminv1.RegisterTenantAdminServiceServer(srv, grpcserver.NewTenantAdminService(store, recorder, invalidate))
+	adminv1.RegisterTenantAdminServiceServer(srv, grpcserver.NewTenantAdminService(store, recorder, invalidate, revoke))
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough://bufnet",
@@ -185,6 +191,47 @@ func TestTenantAdmin_SetStatusNoOpStillInvalidates(t *testing.T) {
 	}
 	if invalidated.Load() < 1 {
 		t.Fatal("noop SetStatus must still invalidate cache")
+	}
+}
+
+func TestTenantAdmin_SuspendFiresTokenRevocation(t *testing.T) {
+	// A real flip to Suspended must fire active refresh-token revocation;
+	// a subsequent flip back to Active must NOT (only suspension purges).
+	store := tenantmemory.New()
+	var revoked atomic.Int32
+	var lastID atomic.Value
+	conn := startTenantAdminGRPCFull(t, store, audit.New(audit.NewMemorySink(10)),
+		func(string) {},
+		func(_ context.Context, id string) {
+			revoked.Add(1)
+			lastID.Store(id)
+		})
+	c := adminv1.NewTenantAdminServiceClient(conn)
+	ctx := context.Background()
+
+	_, _ = c.CreateTenant(ctx, &adminv1.CreateTenantRequest{
+		Tenant: &adminv1.Tenant{Id: "t1", Slug: "t1"},
+	})
+	if _, err := c.SetTenantStatus(ctx, &adminv1.SetTenantStatusRequest{
+		Id: "t1", Status: string(tenant.StatusSuspended),
+	}); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	if revoked.Load() != 1 {
+		t.Fatalf("revoke count = %d want 1 after suspend", revoked.Load())
+	}
+	if got, _ := lastID.Load().(string); got != "t1" {
+		t.Fatalf("revoked tenant = %q want t1", got)
+	}
+
+	// Reactivation must not trigger another purge.
+	if _, err := c.SetTenantStatus(ctx, &adminv1.SetTenantStatusRequest{
+		Id: "t1", Status: string(tenant.StatusActive),
+	}); err != nil {
+		t.Fatalf("reactivate: %v", err)
+	}
+	if revoked.Load() != 1 {
+		t.Fatalf("revoke count = %d want 1 (reactivate must not revoke)", revoked.Load())
 	}
 }
 

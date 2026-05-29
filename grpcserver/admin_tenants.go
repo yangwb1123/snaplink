@@ -25,20 +25,28 @@ type TenantAdminService struct {
 	store                     tenant.Store
 	recorder                  *audit.Recorder
 	invalidateSuspensionCache func(tenantID string)
+	// revokeTenantTokens proactively purges the tenant's refresh tokens
+	// when it is suspended (wired to (*sso.Server).RevokeTenantRefreshTokens).
+	// Optional — nil is a no-op.
+	revokeTenantTokens func(ctx context.Context, tenantID string)
 }
 
-// NewTenantAdminService wires the store, audit recorder, and the
-// suspension-cache invalidation callback. Pass nil for the callback
-// when the SSO server doesn't have suspension caching enabled
-// (the call is a no-op then).
-func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalidateCache func(string)) *TenantAdminService {
+// NewTenantAdminService wires the store, audit recorder, the suspension-cache
+// invalidation callback, and the active token-revocation hook fired on
+// suspend. Pass nil for either callback when the SSO server doesn't have the
+// corresponding feature enabled (the call is a no-op then).
+func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalidateCache func(string), revokeTokens func(context.Context, string)) *TenantAdminService {
 	if invalidateCache == nil {
 		invalidateCache = func(string) {}
+	}
+	if revokeTokens == nil {
+		revokeTokens = func(context.Context, string) {}
 	}
 	return &TenantAdminService{
 		store:                     store,
 		recorder:                  recorder,
 		invalidateSuspensionCache: invalidateCache,
+		revokeTenantTokens:        revokeTokens,
 	}
 }
 
@@ -189,6 +197,15 @@ func (s *TenantAdminService) SetTenantStatus(ctx context.Context, in *adminv1.Se
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminTenantStatusChanged, in.Id+":"+string(newStatus))
 	s.invalidateSuspensionCache(in.Id)
+	// Active revocation on suspend: the suspension check only lazily rejects
+	// access tokens on their next validate (and never touches refresh
+	// tokens), so without this a suspended tenant's session survives via a
+	// still-valid refresh token. Best-effort — the hook logs + audits
+	// internally; fires only on a real flip to Suspended (the no-op path
+	// returned above, and a flip to Active must not purge).
+	if newStatus == tenant.StatusSuspended {
+		s.revokeTenantTokens(ctx, in.Id)
+	}
 	fresh, _ := s.store.GetTenant(ctx, in.Id)
 	if fresh == nil {
 		fresh = existing
