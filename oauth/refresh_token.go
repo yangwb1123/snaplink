@@ -155,6 +155,26 @@ type RefreshTokenSubjectCounter interface {
 	CountForSubject(ctx context.Context, userID, clientID string) (int, error)
 }
 
+// RefreshTokenClientPurger is an OPTIONAL extension for backends that can
+// enumerate tokens by client. It powers tenant-level active revocation: when
+// an admin suspends a tenant, the server purges the refresh tokens of every
+// client in that tenant so already-issued tokens can't be silently re-used
+// after suspension. The suspension check (WithTenantSuspensionCheck) only
+// lazily rejects a token on its next validate — and only when wired — and
+// never touches refresh tokens; this is the proactive companion.
+//
+// Returns the count of deleted entries (for audit). Backends that can't
+// enumerate by client should NOT implement this — the fallback is the
+// existing per-subject (RefreshTokenSubjectIndex) and per-token
+// (RefreshTokenInspector.Delete) revocation paths.
+type RefreshTokenClientPurger interface {
+	// DeleteAllForClient removes every refresh token bound to clientID
+	// across all subjects. Returns the count deleted. Empty clientID MUST
+	// be a no-op, not a wildcard — wiping the whole store on a blank
+	// argument would be a footgun.
+	DeleteAllForClient(ctx context.Context, clientID string) (int, error)
+}
+
 // RefreshTokenFamilyTracker is an OPTIONAL extension that turns on
 // OAuth Security BCP §4.13/§4.14 family-wide reuse detection. Stores
 // that implement it MUST:

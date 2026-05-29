@@ -38,6 +38,14 @@ const (
 	// names) so operators can scope the manual remediation.
 	EventPartialRevokeFailure EventType = "partial_revoke_failure"
 
+	// EventTenantTokensRevoked — a tenant suspension actively purged the
+	// refresh tokens of every client in the tenant (the proactive
+	// companion to the lazy WithTenantSuspensionCheck, which only rejects
+	// on the next validate). Outcome=success; ActorID is the tenant ID;
+	// Metadata "refresh_tokens_revoked" carries the count killed. Emitted
+	// even on a zero count so a SIEM sees the suspension was enforced.
+	EventTenantTokensRevoked EventType = "tenant_tokens_revoked"
+
 	// EventAccountLocked — per-account lockout engaged or
 	// attempted-against-when-locked. Outcome=failure. ActorID
 	// is the lockout key (clientID:identifier so SIEMs can pivot

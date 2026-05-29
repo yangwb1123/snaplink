@@ -340,6 +340,33 @@ func (s *RefreshTokenStore) DeleteAllForSubject(ctx context.Context, userID, cli
 	return int(n), nil
 }
 
+// DeleteAllForClient implements [oauth.RefreshTokenClientPurger] — removes
+// every refresh token bound to clientID across all subjects, so a tenant
+// suspension can purge the refresh tokens of every client in the tenant.
+// Returns the count of deleted rows.
+//
+// Wipes the families ledger for every removed entry so future presentations
+// of those tokens look like vanilla invalid_grant rather than stale
+// reuse-detection events. Empty clientID is a no-op — a blank client is not
+// a wildcard, and wiping the whole table on an empty argument would be a
+// footgun (use DeleteAllForSubject with an empty client for per-user wipes).
+func (s *RefreshTokenStore) DeleteAllForClient(ctx context.Context, clientID string) (int, error) {
+	if clientID == "" {
+		return 0, nil
+	}
+	_, _ = s.db.ExecContext(ctx, `
+        DELETE FROM refresh_token_families
+        WHERE token IN (SELECT token FROM refresh_tokens WHERE client_id = ?)`,
+		clientID)
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM refresh_tokens WHERE client_id = ?`, clientID)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete by client: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // CountForSubject implements [oauth.RefreshTokenSubjectCounter] — counts
 // the subject's tokens for clientID (or every client when clientID is
 // empty) without deleting them, for erasure dry-run previews.
@@ -432,4 +459,5 @@ var (
 	_ oauth.RefreshTokenInspector     = (*RefreshTokenStore)(nil)
 	_ oauth.RefreshTokenSubjectIndex  = (*RefreshTokenStore)(nil)
 	_ oauth.RefreshTokenFamilyTracker = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenClientPurger  = (*RefreshTokenStore)(nil)
 )

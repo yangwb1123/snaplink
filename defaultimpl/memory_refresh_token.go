@@ -201,6 +201,34 @@ func (m *MemoryRefreshTokenStore) DeleteAllForSubject(_ context.Context, userID,
 	return n, nil
 }
 
+// DeleteAllForClient removes every refresh token bound to clientID,
+// regardless of subject. Implements [oauth.RefreshTokenClientPurger] so a
+// tenant suspension can purge every token issued to the tenant's clients in
+// one pass. Returns the count of deletions.
+//
+// Wipes the families bookkeeping for every removed entry so a future
+// presentation of any of those tokens looks like a vanilla invalid_grant
+// rather than a stale reuse-detection event. Empty clientID is a no-op: a
+// blank client is not a wildcard here (wiping every token in the store on an
+// empty argument would be a footgun).
+func (m *MemoryRefreshTokenStore) DeleteAllForClient(_ context.Context, clientID string) (int, error) {
+	if clientID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int
+	for tok, entry := range m.entries {
+		if entry.ClientID != clientID {
+			continue
+		}
+		delete(m.entries, tok)
+		delete(m.families, tok)
+		n++
+	}
+	return n, nil
+}
+
 // CountForSubject implements [oauth.RefreshTokenSubjectCounter] — counts
 // the subject's tokens for clientID (or every client when clientID is
 // empty) without deleting them, for erasure dry-run previews.
@@ -240,4 +268,5 @@ var (
 	_ oauth.RefreshTokenInspector     = (*MemoryRefreshTokenStore)(nil)
 	_ oauth.RefreshTokenSubjectIndex  = (*MemoryRefreshTokenStore)(nil)
 	_ oauth.RefreshTokenFamilyTracker = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenClientPurger  = (*MemoryRefreshTokenStore)(nil)
 )
