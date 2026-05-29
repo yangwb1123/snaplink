@@ -61,6 +61,37 @@ type MenuLister interface {
 	GetMenus(ctx context.Context, clientID string) (MenuTree, error)
 }
 
+// GroupMembershipWriter is an optional extension to Provider for callers
+// that need to add/remove a SINGLE role from a user's assignment list
+// without clobbering the user's other roles. The base Provider only
+// offers AssignRoles (which SETS the whole list, so it can't grant one
+// role without first reading the rest) and UnassignRoles (which removes
+// specific codes); a delta over a plain AssignRoles is a read-modify-write
+// race when two callers touch the same user concurrently.
+//
+// SCIM Group membership (RFC 7644 §3.5.2 PATCH add/remove member) maps
+// onto exactly these two operations: a SCIM group IS a role, its members
+// are the users assigned that role, and an IdP pushes membership deltas
+// one member at a time. Both methods are idempotent — AddRoleToUser is a
+// no-op when the role is already held, RemoveRoleFromUser a no-op when it
+// isn't — so a connector that re-sends a delta doesn't corrupt state.
+//
+// Implementations are encouraged to satisfy this interface atomically (the
+// in-memory MemoryProvider and the SQLite peer both do) — it is not
+// required of every Provider. The SCIM Group handler falls back to a
+// Roles + AssignRoles read-modify-write when a Provider doesn't implement
+// it, so Groups work against any Provider (just without the atomicity
+// guarantee on concurrent single-member writes).
+type GroupMembershipWriter interface {
+	// AddRoleToUser grants roleCode to userID under clientID, preserving
+	// any roles already assigned. Idempotent: a no-op when already held.
+	AddRoleToUser(ctx context.Context, userID, clientID, roleCode string) error
+	// RemoveRoleFromUser revokes roleCode from userID under clientID,
+	// leaving the user's other roles intact. Idempotent: a no-op when the
+	// role isn't currently assigned.
+	RemoveRoleFromUser(ctx context.Context, userID, clientID, roleCode string) error
+}
+
 // Sentinel errors returned by Provider implementations. Admin RPCs translate
 // these into gRPC status codes.
 var (

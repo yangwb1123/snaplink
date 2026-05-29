@@ -1,10 +1,11 @@
 package scim
 
 // Discovery documents (RFC 7643 §5 ServiceProviderConfig + §7 Schemas).
-// These advertise EXACTLY what this slice implements — no PATCH, no bulk,
-// no filter, no sort, no ETag, no change-password — so a provisioning
-// client negotiates correctly instead of attempting unsupported
-// operations. New capabilities flip the relevant "supported" flag.
+// These advertise EXACTLY what this slice implements — PATCH (RFC 7644
+// §3.5.2), but no bulk, no filter, no sort, no ETag, no change-password —
+// so a provisioning client negotiates correctly instead of attempting
+// unsupported operations. New capabilities flip the relevant "supported"
+// flag.
 
 // supportedFeature is the {supported:bool} shape ServiceProviderConfig
 // uses for several capability blocks (RFC 7643 §5).
@@ -52,8 +53,11 @@ type ServiceProviderConfig struct {
 // is mounted behind the server's admin Bearer middleware.
 func serviceProviderConfig() ServiceProviderConfig {
 	return ServiceProviderConfig{
-		Schemas:        []string{SchemaServiceProviderConfig},
-		Patch:          supportedFeature{Supported: false},
+		Schemas: []string{SchemaServiceProviderConfig},
+		// PATCH is implemented for Users + Groups (RFC 7644 §3.5.2): the
+		// add/replace/remove op model, including the active=false
+		// deprovision path Azure AD / Okta drive.
+		Patch:          supportedFeature{Supported: true},
 		Bulk:           bulkFeature{Supported: false},
 		Filter:         filterFeature{Supported: false},
 		ChangePassword: supportedFeature{Supported: false},
@@ -132,6 +136,38 @@ func userSchema() SchemaResource {
 			},
 			{Name: "active", Type: "boolean", Mutability: "readWrite", Returned: "default"},
 			{Name: "externalId", Type: "string", Mutability: "readWrite", Returned: "default", CaseExact: true},
+		},
+		Meta: &Meta{ResourceType: "Schema"},
+	}
+}
+
+// groupSchema returns the description of the subset of the core Group
+// schema this slice implements (RFC 7643 §4.2) — displayName plus the
+// multi-valued members attribute. Advertised by GET /Schemas only when
+// WithGroups is wired, so a connector won't push group attributes a
+// deployment without a permissions provider would drop.
+func groupSchema() SchemaResource {
+	return SchemaResource{
+		Schemas:     []string{SchemaSchema},
+		ID:          SchemaGroup,
+		Name:        resourceTypeGroup,
+		Description: "Group",
+		Attributes: []schemaAttribute{
+			{
+				Name: "displayName", Type: "string", Required: true,
+				Mutability: "readWrite", Returned: "default",
+			},
+			{
+				Name: "members", Type: "complex", MultiValued: true,
+				Mutability: "readWrite", Returned: "default",
+				SubAttributes: []schemaAttribute{
+					// value is immutable per RFC 7643 §4.2 (a member ref is
+					// added/removed, never mutated in place).
+					{Name: "value", Type: "string", Mutability: "immutable", Returned: "default"},
+					{Name: "$ref", Type: "reference", Mutability: "immutable", Returned: "default"},
+					{Name: "type", Type: "string", Mutability: "immutable", Returned: "default"},
+				},
+			},
 		},
 		Meta: &Meta{ResourceType: "Schema"},
 	}

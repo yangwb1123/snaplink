@@ -8,10 +8,14 @@ package scim
 const (
 	// SchemaUser is the core User resource schema URN (RFC 7643 §4.1).
 	SchemaUser = "urn:ietf:params:scim:schemas:core:2.0:User"
+	// SchemaGroup is the core Group resource schema URN (RFC 7643 §4.2).
+	SchemaGroup = "urn:ietf:params:scim:schemas:core:2.0:Group"
 	// SchemaListResponse wraps any multi-valued GET (RFC 7644 §3.4.2).
 	SchemaListResponse = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 	// SchemaError is the error envelope schema URN (RFC 7644 §3.12).
 	SchemaError = "urn:ietf:params:scim:api:messages:2.0:Error"
+	// SchemaPatchOp is the PATCH request body schema URN (RFC 7644 §3.5.2).
+	SchemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 	// SchemaServiceProviderConfig advertises supported features
 	// (RFC 7643 §5).
 	SchemaServiceProviderConfig = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
@@ -24,6 +28,10 @@ const (
 // User resource (RFC 7643 §3.1).
 const resourceTypeUser = "User"
 
+// resourceTypeGroup is the "meta.resourceType" value stamped on every
+// Group resource (RFC 7643 §3.1 / §4.2).
+const resourceTypeGroup = "Group"
+
 // contentTypeSCIM is the media type for SCIM payloads (RFC 7644 §3.1).
 // Responses set it; requests are accepted regardless of Content-Type so
 // off-the-shelf provisioning clients that send application/json work.
@@ -34,8 +42,45 @@ const contentTypeSCIM = "application/scim+json"
 // under e.g. /api/v1/scim/v2 (see cmd wiring) so admin auth applies.
 const (
 	pathUsers                 = "/Users"
+	pathGroups                = "/Groups"
 	pathServiceProviderConfig = "/ServiceProviderConfig"
 	pathSchemas               = "/Schemas"
+)
+
+// PATCH operation verbs (RFC 7644 §3.5.2). "op" is case-insensitive per
+// the spec; the parser lower-cases the inbound value before comparing.
+const (
+	patchOpAdd     = "add"
+	patchOpReplace = "replace"
+	patchOpRemove  = "remove"
+)
+
+// SCIM PATCH path attribute names the minimal path parser understands
+// (RFC 7644 §3.5.2). A "path" naming any other attribute is rejected with
+// scimTypeInvalidPath rather than silently ignored, so a connector learns
+// the attribute is unsupported instead of believing a no-op succeeded.
+const (
+	pathAttrID          = "id"
+	pathAttrActive      = "active"
+	pathAttrUserName    = "userName"
+	pathAttrDisplayName = "displayName"
+	pathAttrExternalID  = "externalId"
+	pathAttrEmails      = "emails"
+	pathAttrName        = "name"
+	pathAttrMembers     = "members"
+)
+
+// SCIM "name" sub-attribute names addressable by a "name.<sub>" PATCH
+// path (RFC 7643 §4.1.1). Lower-cased here because the path parser
+// lower-cases the inbound sub-attribute (names are case-insensitive,
+// RFC 7643 §2.1) and these consts are compared against it directly.
+const (
+	subNameFormatted = "formatted"
+	subNameFamily    = "familyname"
+	subNameGiven     = "givenname"
+	subNameMiddle    = "middlename"
+	subNamePrefix    = "honorificprefix"
+	subNameSuffix    = "honorificsuffix"
 )
 
 // SCIM error "scimType" detail codes (RFC 7644 §3.12, Table 9). These
@@ -51,6 +96,14 @@ const (
 	// scimTypeMutability: an immutable/read-only attribute was altered
 	// (e.g. PUT tried to change id). Pairs with HTTP 400.
 	scimTypeMutability = "mutability"
+	// scimTypeInvalidPath: a PATCH "path" was unparseable or named an
+	// attribute this slice doesn't support (RFC 7644 §3.5.2). Pairs with
+	// HTTP 400.
+	scimTypeInvalidPath = "invalidPath"
+	// scimTypeNoTarget: a PATCH op specified a path that yields no
+	// addressable attribute to act on (RFC 7644 §3.5.2 / Table 9). Pairs
+	// with HTTP 400.
+	scimTypeNoTarget = "noTarget"
 )
 
 // core.User.Attributes keys backing SCIM fields that core.User has no

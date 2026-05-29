@@ -385,6 +385,65 @@ func (p *Provider) UnassignRoles(ctx context.Context, userID, clientID string, r
 	return tx.Commit()
 }
 
+// AddRoleToUser grants roleCode to userID under clientID without
+// disturbing the user's other roles. Idempotent: re-adding an already-
+// held role is a no-op. Implements [permissions.GroupMembershipWriter]
+// (SCIM Group add-member). The load-append-store runs inside one
+// transaction so a concurrent membership write can't lose this grant —
+// the memory peer holds its mutex for the same window.
+func (p *Provider) AddRoleToUser(ctx context.Context, userID, clientID, roleCode string) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("permissions/sqlite: begin add role to user: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current string
+	row := tx.QueryRowContext(ctx, `
+        SELECT roles_json FROM permissions_assignments
+        WHERE user_id = ? AND client_id = ?`,
+		userID, clientID,
+	)
+	if err := row.Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("permissions/sqlite: load assignment: %w", err)
+	}
+	var have []string
+	if current != "" {
+		if err := json.Unmarshal([]byte(current), &have); err != nil {
+			return fmt.Errorf("permissions/sqlite: unmarshal assignment: %w", err)
+		}
+	}
+	for _, r := range have {
+		if r == roleCode {
+			// Already a member — no write, just close the txn cleanly.
+			return tx.Commit()
+		}
+	}
+	have = append(have, roleCode)
+	raw, err := json.Marshal(have)
+	if err != nil {
+		return fmt.Errorf("permissions/sqlite: marshal assignment: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO permissions_assignments (user_id, client_id, roles_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id, client_id) DO UPDATE SET roles_json = excluded.roles_json`,
+		userID, clientID, string(raw),
+	); err != nil {
+		return fmt.Errorf("permissions/sqlite: store assignment: %w", err)
+	}
+	return tx.Commit()
+}
+
+// RemoveRoleFromUser revokes roleCode from userID under clientID, leaving
+// the user's other roles intact. Idempotent: removing a role the user
+// doesn't hold is a no-op. Implements
+// [permissions.GroupMembershipWriter] (SCIM Group remove-member). This is
+// the single-code peer of UnassignRoles, kept distinct so the extension
+// interface reads symmetrically with AddRoleToUser.
+func (p *Provider) RemoveRoleFromUser(ctx context.Context, userID, clientID, roleCode string) error {
+	return p.UnassignRoles(ctx, userID, clientID, []string{roleCode})
+}
+
 // ListAssignments returns every (user, []roleCodes) tuple under
 // clientID with at least one role.
 func (p *Provider) ListAssignments(ctx context.Context, clientID string) ([]permissions.Assignment, error) {
@@ -562,6 +621,7 @@ func (p *Provider) Menus(ctx context.Context, userID, clientID string) (permissi
 
 // Compile-time interface assertions.
 var (
-	_ permissions.Provider   = (*Provider)(nil)
-	_ permissions.MenuLister = (*Provider)(nil)
+	_ permissions.Provider              = (*Provider)(nil)
+	_ permissions.MenuLister            = (*Provider)(nil)
+	_ permissions.GroupMembershipWriter = (*Provider)(nil)
 )

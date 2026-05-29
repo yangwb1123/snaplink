@@ -56,6 +56,8 @@ func (s ConformanceSuite) Run(t *testing.T) {
 		{"Roles_UnknownUserSentinel", testRolesUnknownUserSentinel},
 		{"Menus_SetGetRoundtrip", testMenusSetGetRoundtrip},
 		{"Menus_FiltersByUserPermissions", testMenusFiltersByUserPermissions},
+		{"GroupMembership_AddPreservesOthers", testGroupMembershipAddPreservesOthers},
+		{"GroupMembership_RemoveIsScoped", testGroupMembershipRemoveIsScoped},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,4 +238,74 @@ func testMenusFiltersByUserPermissions(t *testing.T, p permissions.Provider) {
 	if len(filtered) != 1 || filtered[0].ID != "users" {
 		t.Errorf("filtered tree: %+v, want only [users]", filtered)
 	}
+}
+
+// testGroupMembershipAddPreservesOthers locks the optional
+// GroupMembershipWriter add semantics SCIM Group membership relies on:
+// adding a role leaves the user's other roles intact, and a repeat add is
+// idempotent (no duplicate). Skips when the backend doesn't implement the
+// extension.
+func testGroupMembershipAddPreservesOthers(t *testing.T, p permissions.Provider) {
+	w, ok := p.(permissions.GroupMembershipWriter)
+	if !ok {
+		t.Skip("provider doesn't implement GroupMembershipWriter")
+	}
+	ctx := context.Background()
+	_ = p.AddRole(ctx, "web", permissions.Role{Code: "a"})
+	_ = p.AddRole(ctx, "web", permissions.Role{Code: "b"})
+	if err := p.AssignRoles(ctx, "u", "web", []string{"a"}); err != nil {
+		t.Fatalf("AssignRoles: %v", err)
+	}
+	if err := w.AddRoleToUser(ctx, "u", "web", "b"); err != nil {
+		t.Fatalf("AddRoleToUser: %v", err)
+	}
+	// Idempotent: a second add must not duplicate.
+	if err := w.AddRoleToUser(ctx, "u", "web", "b"); err != nil {
+		t.Fatalf("AddRoleToUser (repeat): %v", err)
+	}
+	codes := assignedCodes(t, p, "u", "web")
+	if len(codes) != 2 || !codes["a"] || !codes["b"] {
+		t.Fatalf("after add, assigned = %v, want {a,b}", codes)
+	}
+}
+
+// testGroupMembershipRemoveIsScoped locks the remove semantics: removing
+// one role leaves the rest, and removing an unheld role is a no-op.
+func testGroupMembershipRemoveIsScoped(t *testing.T, p permissions.Provider) {
+	w, ok := p.(permissions.GroupMembershipWriter)
+	if !ok {
+		t.Skip("provider doesn't implement GroupMembershipWriter")
+	}
+	ctx := context.Background()
+	_ = p.AddRole(ctx, "web", permissions.Role{Code: "a"})
+	_ = p.AddRole(ctx, "web", permissions.Role{Code: "b"})
+	if err := p.AssignRoles(ctx, "u", "web", []string{"a", "b"}); err != nil {
+		t.Fatalf("AssignRoles: %v", err)
+	}
+	if err := w.RemoveRoleFromUser(ctx, "u", "web", "a"); err != nil {
+		t.Fatalf("RemoveRoleFromUser: %v", err)
+	}
+	// Idempotent: removing an unheld role is a no-op, not an error.
+	if err := w.RemoveRoleFromUser(ctx, "u", "web", "a"); err != nil {
+		t.Fatalf("RemoveRoleFromUser (repeat): %v", err)
+	}
+	codes := assignedCodes(t, p, "u", "web")
+	if len(codes) != 1 || !codes["b"] {
+		t.Fatalf("after remove, assigned = %v, want {b}", codes)
+	}
+}
+
+// assignedCodes returns the set of role codes assigned to userID under
+// clientID. Treats ErrUserNotFound (no roles) as the empty set.
+func assignedCodes(t *testing.T, p permissions.Provider, userID, clientID string) map[string]bool {
+	t.Helper()
+	roles, err := p.Roles(context.Background(), userID, clientID)
+	if err != nil && !errors.Is(err, permissions.ErrUserNotFound) {
+		t.Fatalf("Roles: %v", err)
+	}
+	out := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		out[r.Code] = true
+	}
+	return out
 }

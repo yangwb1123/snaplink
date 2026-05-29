@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/scim"
 )
 
@@ -24,7 +25,7 @@ func scimTestServer(t *testing.T) (http.Handler, *defaultimpl.MemoryUserProvider
 	sink := audit.NewMemorySink(64)
 	srv := sso.NewServer()
 	base := srv.Handler() // calls Mount() once, creating the router
-	if err := mountSCIMRoutes(srv, users, audit.New(sink)); err != nil {
+	if err := mountSCIMRoutes(srv, users, audit.New(sink), nil); err != nil {
 		t.Fatalf("mountSCIMRoutes: %v", err)
 	}
 	return base, users, sink
@@ -93,7 +94,57 @@ func TestSCIMDiscoveryRoutesMounted(t *testing.T) {
 func TestSCIMRoutesNoUserProvider(t *testing.T) {
 	srv := sso.NewServer()
 	_ = srv.Handler()
-	if err := mountSCIMRoutes(srv, nil, nil); err != nil {
+	if err := mountSCIMRoutes(srv, nil, nil, nil); err != nil {
 		t.Fatalf("mountSCIMRoutes(nil users) = %v, want nil (no-op)", err)
+	}
+}
+
+// TestSCIMGroupRoutesMounted drives create -> get -> delete on /Groups
+// through the real router so the :id param route is proven wired and the
+// SCIM group -> permissions role mapping runs end-to-end.
+func TestSCIMGroupRoutesMounted(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	perms := permissions.NewMemoryProvider()
+	srv := sso.NewServer()
+	base := srv.Handler()
+	deps := &scimGroupDeps{provider: perms, clientID: "app"}
+	if err := mountSCIMRoutes(srv, users, audit.New(audit.NewMemorySink(8)), deps); err != nil {
+		t.Fatalf("mountSCIMRoutes(groups): %v", err)
+	}
+
+	rec := scimReq(t, base, http.MethodPost, "/Groups", `{"displayName":"Ops","members":[{"value":"u1"}]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create group status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var g scim.GroupResource
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if g.ID == "" {
+		t.Fatal("group has no id")
+	}
+	// Mapping ran: u1 holds the role under "app".
+	roles, err := perms.Roles(context.Background(), "u1", "app")
+	if err != nil || len(roles) != 1 || roles[0].Code != g.ID {
+		t.Fatalf("membership did not map to role: roles=%+v err=%v", roles, err)
+	}
+
+	rec = scimReq(t, base, http.MethodGet, "/Groups/"+g.ID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get group status = %d, want 200", rec.Code)
+	}
+	rec = scimReq(t, base, http.MethodDelete, "/Groups/"+g.ID, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete group status = %d, want 204", rec.Code)
+	}
+}
+
+// TestSCIMGroupsNotMountedWithoutDeps confirms /Groups 404s when groups
+// aren't wired (the User surface stays independent of permissions).
+func TestSCIMGroupsNotMountedWithoutDeps(t *testing.T) {
+	h, _, _ := scimTestServer(t) // mounted with nil group deps
+	rec := scimReq(t, h, http.MethodGet, "/Groups", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /Groups (groups unmounted) = %d, want 404", rec.Code)
 	}
 }

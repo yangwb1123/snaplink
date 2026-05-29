@@ -619,11 +619,20 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 		// SCIM 2.0 User provisioning (RFC 7643/7644). Lists/replaces/
 		// deletes the whole user directory, so — like compliance — only
 		// mounted when admin auth is enabled; IsProtectedPath gates
-		// /api/v1/scim/ the same as /api/v1/admin/.
-		if err := mountSCIMRoutes(a.server, a.userProvider, a.recorder); err != nil {
+		// /api/v1/scim/ the same as /api/v1/admin/. /Groups additionally
+		// requires a permissions.Provider (a SCIM group maps onto a role),
+		// opted into via scim.groups.enabled.
+		var scimGroups *scimGroupDeps
+		if cfg.SCIM.Groups.Enabled {
+			if a.provider == nil {
+				return nil, fmt.Errorf("scim.groups.enabled requires permissions.enabled (a SCIM group maps onto a permissions role)")
+			}
+			scimGroups = &scimGroupDeps{provider: a.provider, clientID: cfg.SCIM.Groups.GroupClientID}
+		}
+		if err := mountSCIMRoutes(a.server, a.userProvider, a.recorder, scimGroups); err != nil {
 			return nil, fmt.Errorf("mount scim: %w", err)
 		}
-		logger.Info("scim routes mounted", "base", scimBasePath)
+		logger.Info("scim routes mounted", "base", scimBasePath, "groups", scimGroups != nil)
 	}
 	// Wrap base with the admin middleware so /api/v1/audit/* and
 	// /api/v1/netpolicy/policies* + /classify get the same Bearer +

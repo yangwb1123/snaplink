@@ -35,6 +35,10 @@ func (g *GinRouter) PUT(path string, handler sso.HandlerFunc) {
 	g.group.PUT(path, g.wrapHandler(handler))
 }
 
+func (g *GinRouter) PATCH(path string, handler sso.HandlerFunc) {
+	g.group.PATCH(path, g.wrapHandler(handler))
+}
+
 func (g *GinRouter) DELETE(path string, handler sso.HandlerFunc) {
 	g.group.DELETE(path, g.wrapHandler(handler))
 }

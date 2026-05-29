@@ -35,6 +35,10 @@ func (e *EchoRouter) PUT(path string, handler sso.HandlerFunc) {
 	e.group.PUT(path, e.wrapHandler(handler))
 }
 
+func (e *EchoRouter) PATCH(path string, handler sso.HandlerFunc) {
+	e.group.PATCH(path, e.wrapHandler(handler))
+}
+
 func (e *EchoRouter) DELETE(path string, handler sso.HandlerFunc) {
 	e.group.DELETE(path, e.wrapHandler(handler))
 }

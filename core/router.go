@@ -25,6 +25,7 @@ type Router interface {
 	GET(path string, handler HandlerFunc)
 	POST(path string, handler HandlerFunc)
 	PUT(path string, handler HandlerFunc)
+	PATCH(path string, handler HandlerFunc)
 	DELETE(path string, handler HandlerFunc)
 	Group(prefix string, middlewares ...MiddlewareFunc) Router
 	Use(middlewares ...MiddlewareFunc)
@@ -116,6 +117,10 @@ func (r *StdRouter) POST(path string, handler HandlerFunc) {
 
 func (r *StdRouter) PUT(path string, handler HandlerFunc) {
 	r.register(http.MethodPut, path, handler)
+}
+
+func (r *StdRouter) PATCH(path string, handler HandlerFunc) {
+	r.register(http.MethodPatch, path, handler)
 }
 
 func (r *StdRouter) DELETE(path string, handler HandlerFunc) {

@@ -30,6 +30,7 @@ import (
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/permissions"
 )
 
 // IDGenerator mints the storage id for a newly created resource. The
@@ -51,6 +52,10 @@ type Handler struct {
 	recorder *audit.Recorder
 	newID    IDGenerator
 	now      func() time.Time
+	// groups is nil unless WithGroups wired a permissions.Provider. When
+	// nil the /Groups routes 404 (groups aren't provisioned) — the User
+	// surface keeps working independently.
+	groups *groupRole
 }
 
 // Option configures a Handler.
@@ -84,6 +89,21 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// WithGroups enables the SCIM /Groups resource, mapping each group onto a
+// permissions.Role under clientID: the group's server-minted id is the
+// Role.Code, displayName is the Role.Name, and members are the users
+// assigned that role. An IdP group push therefore drives the same RBAC
+// model the rest of the server reads. clientID is the app the IdP
+// provisions for (""— the demo/default bucket — is valid). Omit this
+// option to leave /Groups unmounted (User provisioning still works).
+func WithGroups(perms permissions.Provider, clientID string) Option {
+	return func(h *Handler) {
+		if perms != nil {
+			h.groups = &groupRole{perms: perms, clientID: clientID}
+		}
+	}
+}
+
 // NewHandler builds a SCIM Handler over users. basePath is the absolute
 // URL prefix the handler is mounted under (used to strip the route prefix
 // and to render meta.location); pass "" if mounting at the root.
@@ -111,8 +131,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusOK, serviceProviderConfig())
 	case rel == pathSchemas && r.Method == http.MethodGet:
 		// GET /Schemas returns the implemented schemas as a ListResponse
-		// (RFC 7643 §7 / RFC 7644 §4): connectors enumerate here.
+		// (RFC 7643 §7 / RFC 7644 §4): connectors enumerate here. Group is
+		// advertised only when WithGroups wired it, so a connector doesn't
+		// push groups to a deployment that drops them.
 		schemas := []SchemaResource{userSchema()}
+		if h.groups != nil {
+			schemas = append(schemas, groupSchema())
+		}
 		h.writeJSON(w, http.StatusOK, schemasListResponse(schemas))
 	case rel == pathUsers || rel == pathUsers+"/":
 		switch r.Method {
@@ -135,10 +160,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.getUser(w, r, id)
 		case http.MethodPut:
 			h.replaceUser(w, r, id)
+		case http.MethodPatch:
+			h.patchUser(w, r, id)
 		case http.MethodDelete:
 			h.deleteUser(w, r, id)
 		default:
 			h.writeError(w, newError(http.StatusMethodNotAllowed, "", "method not allowed on /Users/{id}"))
+		}
+	case h.groups != nil && (rel == pathGroups || rel == pathGroups+"/"):
+		switch r.Method {
+		case http.MethodPost:
+			h.createGroup(w, r)
+		case http.MethodGet:
+			h.listGroups(w, r)
+		default:
+			h.writeError(w, newError(http.StatusMethodNotAllowed, "", "method not allowed on /Groups"))
+		}
+	case h.groups != nil && strings.HasPrefix(rel, pathGroups+"/"):
+		id := strings.TrimPrefix(rel, pathGroups+"/")
+		if id == "" || strings.Contains(id, "/") {
+			h.writeError(w, newError(http.StatusNotFound, "", "resource not found"))
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			h.getGroup(w, r, id)
+		case http.MethodPut:
+			h.replaceGroup(w, r, id)
+		case http.MethodPatch:
+			h.patchGroup(w, r, id)
+		case http.MethodDelete:
+			h.deleteGroup(w, r, id)
+		default:
+			h.writeError(w, newError(http.StatusMethodNotAllowed, "", "method not allowed on /Groups/{id}"))
 		}
 	default:
 		h.writeError(w, newError(http.StatusNotFound, "", "unknown SCIM endpoint"))
@@ -261,6 +315,57 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 	h.writeJSON(w, http.StatusOK, userToResource(u, h.location(id)))
 }
 
+// patchUser applies a SCIM PATCH (RFC 7644 §3.5.2) to a stored user. WHY
+// load -> userToResource -> apply ops -> toUser: PATCH mutates the SAME
+// Resource view that create/replace produce, so the attribute<->core.User
+// mapping stays single-source. The deprovision case Azure AD / Okta send
+// (replace active=false) flows straight through to scim:active. PATCH is
+// all-or-nothing: a failing op aborts before any write.
+func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
+	existing, err := h.users.GetByID(r.Context(), id)
+	if errors.Is(err, core.ErrNoSuchUser) {
+		h.writeError(w, newError(http.StatusNotFound, "", "user not found"))
+		return
+	}
+	if err != nil {
+		h.writeError(w, h.storageError(err))
+		return
+	}
+	ops, ok := h.decodePatch(w, r)
+	if !ok {
+		return
+	}
+
+	res := userToResource(existing, "")
+	if e, ok := applyUserPatch(&res, ops); !ok {
+		h.writeError(w, e)
+		return
+	}
+	// userName is REQUIRED (RFC 7643 §4.1.1): a PATCH must not leave it
+	// blank (e.g. replace userName="").
+	if strings.TrimSpace(res.UserName) == "" {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
+		return
+	}
+	if dup, err := h.userNameExists(r.Context(), res.UserName, id); err != nil {
+		h.writeError(w, h.storageError(err))
+		return
+	} else if dup {
+		h.writeError(w, newError(http.StatusConflict, scimTypeUniqueness, "userName already exists"))
+		return
+	}
+
+	u := res.toUser(id)
+	u.CreatedAt = existing.CreatedAt
+	u.UpdatedAt = h.now()
+	if err := h.users.CreateOrUpdate(r.Context(), u); err != nil {
+		h.writeError(w, h.storageError(err))
+		return
+	}
+	h.audit(r, audit.EventAdminUserUpdated, id)
+	h.writeJSON(w, http.StatusOK, userToResource(u, h.location(id)))
+}
+
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request, id string) {
 	// Probe existence first: core.UserProvider.Delete is idempotent
 	// (missing id -> nil), but SCIM DELETE on an unknown resource MUST
@@ -359,13 +464,42 @@ func (h *Handler) decode(w http.ResponseWriter, r *http.Request) (Resource, bool
 	return res, true
 }
 
-// location builds the absolute resource URL for meta.location. Returns ""
-// when no base path is configured (a relative mount).
+// decodePatch reads and validates a SCIM PATCH body (RFC 7644 §3.5.2).
+// An empty Operations array is rejected: a PATCH with no operations is a
+// malformed request, not a no-op (the spec requires at least one op).
+func (h *Handler) decodePatch(w http.ResponseWriter, r *http.Request) ([]PatchOperation, bool) {
+	var req PatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidSyntax, "request body is not valid SCIM PATCH JSON"))
+		return nil, false
+	}
+	if len(req.Operations) == 0 {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "PATCH requires at least one operation"))
+		return nil, false
+	}
+	return req.Operations, true
+}
+
+// location builds the absolute User resource URL for meta.location.
+// Returns "" when no base path is configured (a relative mount).
 func (h *Handler) location(id string) string {
+	return h.locationFor(pathUsers, id)
+}
+
+// groupLocation builds the absolute Group resource URL for meta.location.
+func (h *Handler) groupLocation(id string) string {
+	return h.locationFor(pathGroups, id)
+}
+
+// locationFor builds an absolute resource URL under a collection path.
+// Returns "" when no base path is configured (a relative mount), matching
+// the User behavior so meta.location is omitted rather than rendered
+// relative.
+func (h *Handler) locationFor(collection, id string) string {
 	if h.basePath == "" {
 		return ""
 	}
-	return h.basePath + pathUsers + "/" + id
+	return h.basePath + collection + "/" + id
 }
 
 // storageError maps an unexpected store error to a SCIM 500. core.User

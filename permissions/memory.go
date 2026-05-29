@@ -143,6 +143,47 @@ func (m *MemoryProvider) UnassignRoles(_ context.Context, userID, clientID strin
 	return nil
 }
 
+// AddRoleToUser grants roleCode to userID under clientID without
+// disturbing the user's other roles (RFC 7644 §3.5.2 add-member maps
+// here). Idempotent under the lock: re-adding an already-held role is a
+// no-op. Implements [GroupMembershipWriter]. WHY a dedicated method
+// rather than AssignRoles: AssignRoles replaces the whole set, so a SCIM
+// "add one member" would have to read-modify-write and could race a
+// concurrent membership change; doing the read+append under m.mu keeps
+// the grant atomic.
+func (m *MemoryProvider) AddRoleToUser(_ context.Context, userID, clientID, roleCode string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.assignmentsByUser[userID] == nil {
+		m.assignmentsByUser[userID] = make(map[string][]string)
+	}
+	cur := m.assignmentsByUser[userID][clientID]
+	if slices.Contains(cur, roleCode) {
+		return nil
+	}
+	m.assignmentsByUser[userID][clientID] = append(append([]string{}, cur...), roleCode)
+	return nil
+}
+
+// RemoveRoleFromUser revokes roleCode from userID under clientID, leaving
+// the user's other roles intact (RFC 7644 §3.5.2 remove-member maps
+// here). Idempotent: removing a role the user doesn't hold is a no-op.
+// Implements [GroupMembershipWriter].
+func (m *MemoryProvider) RemoveRoleFromUser(_ context.Context, userID, clientID, roleCode string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byClient := m.assignmentsByUser[userID]
+	if byClient == nil {
+		return nil
+	}
+	cur := byClient[clientID]
+	if len(cur) == 0 {
+		return nil
+	}
+	byClient[clientID] = slices.DeleteFunc(cur, func(r string) bool { return r == roleCode })
+	return nil
+}
+
 // ListAllRoles returns every role defined under clientID.
 func (m *MemoryProvider) ListAllRoles(_ context.Context, clientID string) ([]Role, error) {
 	m.mu.RLock()
@@ -227,3 +268,7 @@ func (m *MemoryProvider) Menus(ctx context.Context, userID, clientID string) (Me
 func filterMenus(in MenuTree, perms []Permission) MenuTree {
 	return FilterMenuTree(in, perms)
 }
+
+// Compile-time check that MemoryProvider satisfies the optional
+// GroupMembershipWriter extension (drives SCIM Group membership).
+var _ GroupMembershipWriter = (*MemoryProvider)(nil)

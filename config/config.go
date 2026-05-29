@@ -53,6 +53,25 @@ type Config struct {
 	Keys               KeysConfig               `yaml:"keys"`
 	CIBA               CIBAConfig               `yaml:"ciba"`
 	OIDC               OIDCConfig               `yaml:"oidc"`
+	SCIM               SCIMConfig               `yaml:"scim"`
+}
+
+// SCIMConfig opts into the SCIM 2.0 /Groups resource (RFC 7643 §4.2).
+// SCIM Users are always mounted when admin auth + a UserProvider are
+// present; Groups additionally require a permissions.Provider, because a
+// SCIM group is mapped onto a permissions.Role (its members become role
+// assignments). GroupClientID names the app whose roles an IdP group push
+// drives — "" is the valid demo/default bucket. Leave Groups.Enabled
+// false to mount Users only.
+type SCIMConfig struct {
+	Groups SCIMGroupsConfig `yaml:"groups"`
+}
+
+// SCIMGroupsConfig configures the SCIM /Groups <-> permissions.Role
+// mapping.
+type SCIMGroupsConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	GroupClientID string `yaml:"group_client_id"`
 }
 
 // CIBAConfig opts into OIDC CIBA (Client-Initiated Backchannel

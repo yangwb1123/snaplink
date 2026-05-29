@@ -83,6 +83,20 @@ func TestGinRouter_DELETE(t *testing.T) {
 	}
 }
 
+func TestGinRouter_PATCH(t *testing.T) {
+	r := NewGinRouter()
+	r.PATCH("/things/:id", func(c sso.HandlerContext) {
+		c.JSON(http.StatusOK, map[string]string{"patched": c.Param("id")})
+	})
+	rec := do(t, r, http.MethodPatch, "/things/abc", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"patched":"abc"`) {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
 func TestGinRouter_Query(t *testing.T) {
 	r := NewGinRouter()
 	r.GET("/search", func(c sso.HandlerContext) {

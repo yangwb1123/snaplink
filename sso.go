@@ -1152,8 +1152,9 @@ func (s *Server) RegisterAuthenticator(a Authenticator) {
 // middleware stack the built-in SSO endpoints use. Must be called
 // after Mount or Handler — the router has to exist.
 //
-// method is one of GET/POST/PUT/DELETE (case-insensitive). Unknown
-// methods return an error rather than silently routing.
+// method is one of GET/POST/PUT/PATCH/DELETE (case-insensitive). Unknown
+// methods return an error rather than silently routing. PATCH is included
+// for partial-update surfaces such as SCIM 2.0 (RFC 7644 §3.5.2).
 func (s *Server) Handle(method, path string, handler http.HandlerFunc) error {
 	if s.router == nil {
 		return fmt.Errorf("sso: Mount() must be called before Handle()")
@@ -1166,6 +1167,8 @@ func (s *Server) Handle(method, path string, handler http.HandlerFunc) error {
 		s.router.POST(path, wrap)
 	case http.MethodPut:
 		s.router.PUT(path, wrap)
+	case http.MethodPatch:
+		s.router.PATCH(path, wrap)
 	case http.MethodDelete:
 		s.router.DELETE(path, wrap)
 	default:
