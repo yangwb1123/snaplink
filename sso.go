@@ -39,6 +39,7 @@ type Server struct {
 	authenticators                 map[string]Authenticator
 	tokenIssuers                   map[string]TokenIssuer // strategy name -> issuer
 	defaultTokenStrategy           string
+	tenantTokenStrategies          map[string]string // tenant id -> strategy (issuer) name
 	userProvider                   UserProvider
 	clientStore                    ClientStore
 	sessionMgr                     SessionManager
@@ -210,12 +211,13 @@ type Option func(*Server)
 // NewServer creates a new SSO server.
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		authenticators:       make(map[string]Authenticator),
-		tokenIssuers:         make(map[string]TokenIssuer),
-		issuer:               DefaultIssuer,
-		logger:               spi.NopLogger{},
-		discoveryCacheTTL:    defaultDiscoveryCacheTTL,
-		discoveryDocCacheTTL: DefaultDiscoveryDocCacheTTL,
+		authenticators:        make(map[string]Authenticator),
+		tokenIssuers:          make(map[string]TokenIssuer),
+		tenantTokenStrategies: make(map[string]string),
+		issuer:                DefaultIssuer,
+		logger:                spi.NopLogger{},
+		discoveryCacheTTL:     defaultDiscoveryCacheTTL,
+		discoveryDocCacheTTL:  DefaultDiscoveryDocCacheTTL,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -238,6 +240,35 @@ func WithAuthenticator(a Authenticator) Option {
 // If no client-level strategy is set, the Server's default strategy is used.
 func WithTokenIssuer(name string, ti TokenIssuer) Option {
 	return func(s *Server) { s.tokenIssuers[name] = ti }
+}
+
+// WithTenantTokenIssuer binds every client whose Client.TenantID equals
+// tenantID to the already-registered issuer named issuerName, giving that
+// tenant cryptographic isolation: its tokens are signed by that tenant's
+// own signing key while sharing the one multi-issuer validation +
+// aggregated-JWKS machinery.
+//
+// issuerName MUST also be registered via WithTokenIssuer — this option
+// only routes selection at issuance; it does not register the issuer (so
+// the issuer's public keys land in the aggregated JWKS exactly once, and
+// validateAnyToken already tries it like any other). A token signed by a
+// tenant issuer therefore validates with no further wiring: its header
+// kid resolves to that issuer's verify key, and the per-issuer alg/typ
+// allowlist + kid->alg gate keep alg-confusion structurally impossible
+// across tenants (AGENTS.md §2).
+//
+// Resolution precedence at issuance (see issuerForClient): a tenant
+// mapping wins over Client.TokenStrategy and the Server default. A client
+// with an empty TenantID, or a TenantID without a mapping here, falls
+// back to the existing strategy resolution unchanged — so the feature is
+// pure backward-compat when unused.
+func WithTenantTokenIssuer(tenantID, issuerName string) Option {
+	return func(s *Server) {
+		if s.tenantTokenStrategies == nil {
+			s.tenantTokenStrategies = make(map[string]string)
+		}
+		s.tenantTokenStrategies[tenantID] = issuerName
+	}
 }
 
 // WithSupportedSigningAlgs sets the Server-level Validate-time JWS `alg`
@@ -1397,17 +1428,32 @@ func (s *Server) getAuthenticator(name string) (Authenticator, error) {
 }
 
 // issuerForClient returns the TokenIssuer that should mint tokens for the
-// given client. Resolution order: client.TokenStrategy → server default →
-// (if exactly one issuer is registered) that one.
+// given client. Resolution order: per-tenant issuer (WithTenantTokenIssuer)
+// → client.TokenStrategy → server default → (if exactly one issuer is
+// registered) that one.
+//
+// A per-tenant mapping takes precedence over the client/server strategy so
+// that crypto isolation is not silently defeatable by a client setting its
+// own TokenStrategy. When a tenant mapping names an issuer that was never
+// registered via WithTokenIssuer we fail closed (error) rather than fall
+// back to a shared default key — a misconfiguration must not leak one
+// tenant's clients onto another key.
 func (s *Server) issuerForClient(c *Client) (string, TokenIssuer, error) {
 	name := ""
-	if c != nil && c.TokenStrategy != "" {
-		name = c.TokenStrategy
-	} else if s.defaultTokenStrategy != "" {
-		name = s.defaultTokenStrategy
-	} else if len(s.tokenIssuers) == 1 {
-		for n := range s.tokenIssuers {
-			name = n
+	if c != nil && c.TenantID != "" {
+		if tn, ok := s.tenantTokenStrategies[c.TenantID]; ok {
+			name = tn
+		}
+	}
+	if name == "" {
+		if c != nil && c.TokenStrategy != "" {
+			name = c.TokenStrategy
+		} else if s.defaultTokenStrategy != "" {
+			name = s.defaultTokenStrategy
+		} else if len(s.tokenIssuers) == 1 {
+			for n := range s.tokenIssuers {
+				name = n
+			}
 		}
 	}
 	if name == "" {
