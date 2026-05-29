@@ -398,7 +398,22 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total := len(all)
+	// Project to SCIM resources, then apply ?filter= over that view BEFORE
+	// pagination (RFC 7644 §3.4.2.2): filtering narrows the result set, and
+	// totalResults/itemsPerPage must reflect the FILTERED set, not the raw
+	// store size. Filtering over the Resource shape (not core.User) keeps
+	// the attribute semantics identical to what a GET returns.
+	resources := make([]Resource, 0, len(all))
+	for _, u := range all {
+		resources = append(resources, userToResource(u, h.location(u.ID)))
+	}
+	resources, ferr := h.filterUsers(r, resources)
+	if ferr != nil {
+		h.writeError(w, *ferr)
+		return
+	}
+
+	total := len(resources)
 	// startIndex is 1-based (RFC 7644 §3.4.2.4). Translate to a 0-based
 	// slice offset, clamped to the bounds.
 	lo := startIndex - 1
@@ -409,19 +424,40 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if hi > total {
 		hi = total
 	}
-	page := all[lo:hi]
+	page := resources[lo:hi]
 
-	resources := make([]Resource, 0, len(page))
-	for _, u := range page {
-		resources = append(resources, userToResource(u, h.location(u.ID)))
-	}
 	h.writeJSON(w, http.StatusOK, ListResponse{
 		Schemas:      []string{SchemaListResponse},
 		TotalResults: total,
 		StartIndex:   startIndex,
 		ItemsPerPage: len(page),
-		Resources:    resources,
+		Resources:    page,
 	})
+}
+
+// filterUsers applies the optional ?filter= query parameter to a User
+// resource slice (RFC 7644 §3.4.2.2). An absent/blank filter returns the
+// slice unchanged. A malformed filter returns a SCIM 400 invalidFilter
+// pointer so the caller writes the error and stops (rather than silently
+// returning everything, which would mislead a connector reconciling on the
+// filter result).
+func (h *Handler) filterUsers(r *http.Request, in []Resource) ([]Resource, *ErrorResponse) {
+	raw := trimFilter(r.URL.Query().Get(queryFilter))
+	if raw == "" {
+		return in, nil
+	}
+	expr, err := parseFilter(raw)
+	if err != nil {
+		e := newError(http.StatusBadRequest, scimTypeInvalidFilter, "malformed filter expression")
+		return nil, &e
+	}
+	out := make([]Resource, 0, len(in))
+	for _, res := range in {
+		if matchesUser(res, expr) {
+			out = append(out, res)
+		}
+	}
+	return out, nil
 }
 
 // userNameExists reports whether some user OTHER than excludeID carries

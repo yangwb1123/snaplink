@@ -392,15 +392,20 @@ func TestServiceProviderConfig(t *testing.T) {
 	if len(cfg.Schemas) != 1 || cfg.Schemas[0] != SchemaServiceProviderConfig {
 		t.Errorf("schemas = %v", cfg.Schemas)
 	}
-	// PATCH is now implemented (RFC 7644 §3.5.2) so it MUST advertise true;
-	// bulk/filter remain unimplemented and MUST advertise false so
-	// connectors don't attempt them.
+	// PATCH (RFC 7644 §3.5.2) and filtering (RFC 7644 §3.4.2.2) are
+	// implemented so both MUST advertise true; bulk remains unimplemented
+	// and MUST advertise false so connectors don't attempt it.
 	if !cfg.Patch.Supported {
 		t.Error("patch advertised unsupported, want supported (RFC 7644 §3.5.2 implemented)")
 	}
-	if cfg.Bulk.Supported || cfg.Filter.Supported {
-		t.Errorf("advertised unsupported feature: bulk=%v filter=%v",
-			cfg.Bulk.Supported, cfg.Filter.Supported)
+	if !cfg.Filter.Supported {
+		t.Error("filter advertised unsupported, want supported (RFC 7644 §3.4.2.2 implemented)")
+	}
+	if cfg.Filter.MaxResults != filterMaxResults {
+		t.Errorf("filter.maxResults = %d, want %d", cfg.Filter.MaxResults, filterMaxResults)
+	}
+	if cfg.Bulk.Supported {
+		t.Errorf("advertised unsupported feature: bulk=%v", cfg.Bulk.Supported)
 	}
 	if len(cfg.AuthenticationSchemes) == 0 {
 		t.Error("no authentication schemes advertised")

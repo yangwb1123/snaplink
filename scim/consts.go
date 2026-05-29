@@ -47,6 +47,10 @@ const (
 	pathSchemas               = "/Schemas"
 )
 
+// queryFilter is the ?filter= query-parameter name carrying a SCIM filter
+// expression on a list GET (RFC 7644 §3.4.2.2).
+const queryFilter = "filter"
+
 // PATCH operation verbs (RFC 7644 §3.5.2). "op" is case-insensitive per
 // the spec; the parser lower-cases the inbound value before comparing.
 const (
@@ -104,7 +108,18 @@ const (
 	// addressable attribute to act on (RFC 7644 §3.5.2 / Table 9). Pairs
 	// with HTTP 400.
 	scimTypeNoTarget = "noTarget"
+	// scimTypeInvalidFilter: a ?filter= expression was unparseable or used
+	// a construct this slice doesn't support (RFC 7644 §3.4.2.2 / §3.12,
+	// Table 9). Pairs with HTTP 400 so a connector can fall back to an
+	// unfiltered scan rather than trust a partial page.
+	scimTypeInvalidFilter = "invalidFilter"
 )
+
+// filterMaxResults is the advertised filter.maxResults cap (RFC 7643 §5):
+// the largest number of resources a filtered query returns in one page. It
+// equals maxPageSize so the filter cap and the pagination cap agree (a
+// filtered list still pages through paginationParams after filtering).
+const filterMaxResults = maxPageSize
 
 // core.User.Attributes keys backing SCIM fields that core.User has no
 // dedicated column for. Namespaced under "scim:" so they never collide

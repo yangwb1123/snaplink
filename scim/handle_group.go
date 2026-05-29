@@ -83,7 +83,31 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, perr.Error()))
 		return
 	}
-	total := len(roles)
+
+	// Materialize every group (with members) BEFORE filtering + pagination:
+	// a ?filter= over members[/displayName] must see the full set, and
+	// totalResults must reflect the FILTERED set (RFC 7644 §3.4.2.2). WHY
+	// resolve members for all groups, not just the page: a `members eq`
+	// filter needs each group's membership; resolving per group is the same
+	// per-role members() call the unfiltered path already made, just over
+	// the whole role list (acceptable at operator-defined group scale — see
+	// filter.go performance note).
+	resources := make([]GroupResource, 0, len(roles))
+	for _, role := range roles {
+		members, err := h.groups.members(r.Context(), role.Code)
+		if err != nil {
+			h.writeError(w, h.storageError(err))
+			return
+		}
+		resources = append(resources, roleToGroup(role, members, h.groupLocation(role.Code)))
+	}
+	resources, ferr := h.filterGroups(r, resources)
+	if ferr != nil {
+		h.writeError(w, *ferr)
+		return
+	}
+
+	total := len(resources)
 	lo := startIndex - 1
 	if lo > total {
 		lo = total
@@ -92,24 +116,38 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	if hi > total {
 		hi = total
 	}
-	page := roles[lo:hi]
+	page := resources[lo:hi]
 
-	resources := make([]GroupResource, 0, len(page))
-	for _, role := range page {
-		members, err := h.groups.members(r.Context(), role.Code)
-		if err != nil {
-			h.writeError(w, h.storageError(err))
-			return
-		}
-		resources = append(resources, roleToGroup(role, members, h.groupLocation(role.Code)))
-	}
 	h.writeJSON(w, http.StatusOK, GroupListResponse{
 		Schemas:      []string{SchemaListResponse},
 		TotalResults: total,
 		StartIndex:   startIndex,
 		ItemsPerPage: len(page),
-		Resources:    resources,
+		Resources:    page,
 	})
+}
+
+// filterGroups applies the optional ?filter= query parameter to a Group
+// resource slice (RFC 7644 §3.4.2.2). An absent/blank filter returns the
+// slice unchanged; a malformed filter returns a SCIM 400 invalidFilter
+// pointer for the caller to write.
+func (h *Handler) filterGroups(r *http.Request, in []GroupResource) ([]GroupResource, *ErrorResponse) {
+	raw := trimFilter(r.URL.Query().Get(queryFilter))
+	if raw == "" {
+		return in, nil
+	}
+	expr, err := parseFilter(raw)
+	if err != nil {
+		e := newError(http.StatusBadRequest, scimTypeInvalidFilter, "malformed filter expression")
+		return nil, &e
+	}
+	out := make([]GroupResource, 0, len(in))
+	for _, g := range in {
+		if matchesGroup(g, expr) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 
 // replaceGroup is SCIM PUT (RFC 7644 §3.5.1): a full overwrite. It sets
