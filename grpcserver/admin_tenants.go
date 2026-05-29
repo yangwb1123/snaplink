@@ -163,6 +163,10 @@ func (s *TenantAdminService) DeleteTenant(ctx context.Context, in *adminv1.Delet
 	// re-resolve as "no tenant" on the next request, not stay cached
 	// as Active until TTL expiry.
 	s.invalidateSuspensionCache(in.Id)
+	// A deleted tenant must not leave usable refresh tokens behind for its
+	// (now-orphaned) clients — purge them too, symmetric with the suspend
+	// path. Best-effort; the hook logs + audits internally.
+	s.revokeTenantTokens(ctx, in.Id)
 	return &adminv1.DeleteTenantResponse{}, nil
 }
 

@@ -235,6 +235,35 @@ func TestTenantAdmin_SuspendFiresTokenRevocation(t *testing.T) {
 	}
 }
 
+func TestTenantAdmin_DeleteFiresTokenRevocation(t *testing.T) {
+	// Deleting a tenant must also purge its (now-orphaned) refresh tokens,
+	// symmetric with the suspend path.
+	store := tenantmemory.New()
+	var revoked atomic.Int32
+	var lastID atomic.Value
+	conn := startTenantAdminGRPCFull(t, store, audit.New(audit.NewMemorySink(10)),
+		func(string) {},
+		func(_ context.Context, id string) {
+			revoked.Add(1)
+			lastID.Store(id)
+		})
+	c := adminv1.NewTenantAdminServiceClient(conn)
+	ctx := context.Background()
+
+	_, _ = c.CreateTenant(ctx, &adminv1.CreateTenantRequest{
+		Tenant: &adminv1.Tenant{Id: "t1", Slug: "t1"},
+	})
+	if _, err := c.DeleteTenant(ctx, &adminv1.DeleteTenantRequest{Id: "t1"}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if revoked.Load() != 1 {
+		t.Fatalf("revoke count = %d want 1 after delete", revoked.Load())
+	}
+	if got, _ := lastID.Load().(string); got != "t1" {
+		t.Fatalf("revoked tenant = %q want t1", got)
+	}
+}
+
 func TestTenantAdmin_SetStatusValidates(t *testing.T) {
 	store := tenantmemory.New()
 	conn := startTenantAdminGRPC(t, store, audit.New(audit.NewMemorySink(10)), nil)
