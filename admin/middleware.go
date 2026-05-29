@@ -222,6 +222,10 @@ func bearerFromHTTP(r *http.Request) string {
 // IsProtectedPath returns true when path requires an admin-scope
 // bearer. Covers:
 //   - /api/v1/admin/*       — admin CRUD + audit-RPC gateway
+//   - /api/v1/compliance/*  — GDPR subject export/erase (PII leak + data
+//     destruction across stores)
+//   - /api/v1/scim/*        — SCIM 2.0 provisioning over the whole user
+//     directory (RFC 7644)
 //   - /api/v1/audit/*       — event query API exposes subject IDs,
 //     IPs, geo, outcomes for every login attempt; PII-grade leak if open
 //   - /api/v1/netpolicy/policies* — list / get / apply / delete
@@ -239,6 +243,11 @@ func IsProtectedPath(path string) bool {
 	case strings.HasPrefix(path, "/api/v1/compliance/"):
 		// GDPR subject export/erase: leaks (export) and destroys (erase)
 		// a subject's data across stores — admin-only, never open.
+		return true
+	case strings.HasPrefix(path, "/api/v1/scim/"):
+		// SCIM 2.0 provisioning (RFC 7644): lists, replaces, and deletes
+		// the entire user directory — same admin-only threat model as the
+		// compliance + admin CRUD surfaces, never open.
 		return true
 	case strings.HasPrefix(path, "/api/v1/audit/"):
 		return true

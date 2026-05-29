@@ -615,6 +615,15 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 		logger.Info("compliance routes mounted",
 			"export", complianceUsersPrefix+"{id}"+complianceExportSuffix,
 			"erase", complianceUsersPrefix+"{id}"+complianceEraseSuffix)
+
+		// SCIM 2.0 User provisioning (RFC 7643/7644). Lists/replaces/
+		// deletes the whole user directory, so — like compliance — only
+		// mounted when admin auth is enabled; IsProtectedPath gates
+		// /api/v1/scim/ the same as /api/v1/admin/.
+		if err := mountSCIMRoutes(a.server, a.userProvider, a.recorder); err != nil {
+			return nil, fmt.Errorf("mount scim: %w", err)
+		}
+		logger.Info("scim routes mounted", "base", scimBasePath)
 	}
 	// Wrap base with the admin middleware so /api/v1/audit/* and
 	// /api/v1/netpolicy/policies* + /classify get the same Bearer +
