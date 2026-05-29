@@ -198,9 +198,11 @@ func TestWebAuthnIDToken_OpaqueTenantOmits(t *testing.T) {
 	}
 }
 
-// A tenant mapping that names an unregistered issuer must fail closed:
-// issueWebAuthnToken returns errWebAuthnIDToken (→ 500), NOT a silent
-// fallback to the shared key.
+// A tenant mapping that names an unregistered issuer must fail closed. Now
+// that the ACCESS token also routes through the per-tenant selector
+// (IssuerForClient), the misconfiguration is caught at the access-token mint
+// (errWebAuthnNoIssuer → 500) — even earlier than the id_token step — never
+// falling back to a shared key for any token type.
 func TestWebAuthnIDToken_UnregisteredTenantFailsClosed(t *testing.T) {
 	def := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	tenantA := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
@@ -213,8 +215,8 @@ func TestWebAuthnIDToken_UnregisteredTenantFailsClosed(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodPost, "http://x/", nil)
 	_, err := issueWebAuthnToken(req, deps, "cx", "dave")
-	if !errors.Is(err, errWebAuthnIDToken) {
-		t.Fatalf("unregistered tenant issuer: got %v, want errWebAuthnIDToken (fail closed)", err)
+	if !errors.Is(err, errWebAuthnNoIssuer) {
+		t.Fatalf("unregistered tenant issuer: got %v, want errWebAuthnNoIssuer (fail closed at access-token mint)", err)
 	}
 	status, code := webauthnIssueErrorStatus(err)
 	if status != http.StatusInternalServerError || code != "server_error" {

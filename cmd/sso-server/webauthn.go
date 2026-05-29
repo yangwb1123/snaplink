@@ -148,6 +148,18 @@ type webauthnDeps struct {
 	// Set in mountWebAuthnRoutes from *sso.Server.
 	IDTokenIssuerForClient func(c *sso.Client) (oidc.IDTokenIssuer, bool, error)
 
+	// IssuerForClient selects the per-tenant ACCESS-token issuer so a
+	// WebAuthn-minted access token is signed with the same key as that
+	// tenant's tokens from /auth/login + /token + its WebAuthn id_token —
+	// the symmetric finish to IDTokenIssuerForClient (without it a tenant
+	// client's WebAuthn access token could land on a different key than its
+	// id_token). Mirrors the server's resolution order (tenant → client
+	// strategy → default) and fail-closed error. Nil-safe: when unset
+	// (embedders constructing webauthnDeps directly) the handler falls back
+	// to the TokenStrategy lookup below for byte-identical legacy behavior.
+	// Set in mountWebAuthnRoutes from *sso.Server.
+	IssuerForClient func(c *sso.Client) (string, sso.TokenIssuer, error)
+
 	// EncryptIDToken routes a freshly-signed id_token through the
 	// server's JWE response-encryption path (fail-closed: returns
 	// ("", false) when the client opted into encryption but it
@@ -175,6 +187,7 @@ func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
 	// /auth/login + /token use), then route the signed token through the
 	// server's response encryption (fail-closed for encryption-opted-in
 	// clients) — so /webauthn/login/finish matches /auth/login's contract.
+	deps.IssuerForClient = srv.IssuerForClient
 	deps.IDTokenIssuerForClient = srv.IDTokenIssuerForClient
 	deps.EncryptIDToken = srv.EncryptIDTokenForClient
 	routes := []struct {
@@ -463,16 +476,29 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 	if !client.Active {
 		return nil, errWebAuthnClientInactive
 	}
-	strategy := client.TokenStrategy
-	if strategy == "" {
-		strategy = deps.DefaultStrat
-	}
-	if strategy == "" {
-		strategy = "jwt"
-	}
-	issuer, ok := deps.TokenIssuers[strategy]
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
+	// Prefer the server's tenant-aware selector (tenant → client strategy →
+	// default) so a tenant client's WebAuthn access token is signed with the
+	// same key as its id_token + its tokens from /auth/login + /token. When
+	// the hook is unset (embedders constructing webauthnDeps directly) fall
+	// back to the per-client strategy lookup for byte-identical legacy behavior.
+	var issuer sso.TokenIssuer
+	if deps.IssuerForClient != nil {
+		var ierr error
+		if _, issuer, ierr = deps.IssuerForClient(client); ierr != nil {
+			return nil, fmt.Errorf("%w: %v", errWebAuthnNoIssuer, ierr)
+		}
+	} else {
+		strategy := client.TokenStrategy
+		if strategy == "" {
+			strategy = deps.DefaultStrat
+		}
+		if strategy == "" {
+			strategy = "jwt"
+		}
+		var ok bool
+		if issuer, ok = deps.TokenIssuers[strategy]; !ok {
+			return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
+		}
 	}
 	scopes := client.AllowedScopes
 	authTime := time.Now()
