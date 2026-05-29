@@ -186,3 +186,80 @@ func TestSQLiteClients_ListByTenant(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLiteStats_OrderIndependentHash(t *testing.T) {
+	ctx := context.Background()
+	// Same logical set inserted in different orders across two fresh
+	// DBs must fingerprint identically — row order must not leak.
+	a := newClientStore(t)
+	_ = a.Add(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"read", "write"}, Active: true})
+	_ = a.Add(ctx, &sso.Client{ID: "c-2", Secret: "s", AllowedScopes: []string{"profile"}, Active: true})
+
+	b := newClientStore(t)
+	_ = b.Add(ctx, &sso.Client{ID: "c-2", Secret: "different-secret", AllowedScopes: []string{"profile"}, Active: false})
+	// Reversed scope order + differing secret/active must NOT change the
+	// digest (only discovery-relevant set membership feeds it).
+	_ = b.Add(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"write", "read"}, Active: true})
+
+	ca, ha, err := a.Stats(ctx)
+	if err != nil {
+		t.Fatalf("a.Stats: %v", err)
+	}
+	cb, hb, err := b.Stats(ctx)
+	if err != nil {
+		t.Fatalf("b.Stats: %v", err)
+	}
+	if ca != 2 || cb != 2 {
+		t.Errorf("count: a=%d b=%d want 2", ca, cb)
+	}
+	if ha != hb {
+		t.Errorf("hash differs across row order: a=%s b=%s", ha, hb)
+	}
+}
+
+func TestSQLiteStats_ScopeChangeFlipsHash(t *testing.T) {
+	ctx := context.Background()
+	st := newClientStore(t)
+	_ = st.Add(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"read"}, Active: true})
+	_, before, _ := st.Stats(ctx)
+
+	if err := st.Update(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"read", "admin"}, Active: true}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	_, after, _ := st.Stats(ctx)
+	if before == after {
+		t.Errorf("scope change did not flip hash: %s", after)
+	}
+
+	// Secret rotation is not a discovery-relevant field -> stable hash.
+	stable := after
+	if _, err := st.RotateSecret(ctx, "c-1"); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+	_, afterRotate, _ := st.Stats(ctx)
+	if afterRotate != stable {
+		t.Errorf("secret rotation flipped discovery hash: %s -> %s", stable, afterRotate)
+	}
+}
+
+func TestSQLiteStats_AddDeleteRestoresHash(t *testing.T) {
+	ctx := context.Background()
+	st := newClientStore(t)
+	_ = st.Add(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"read"}, Active: true})
+	c1, h1, _ := st.Stats(ctx)
+
+	_ = st.Add(ctx, &sso.Client{ID: "c-2", Secret: "s", AllowedScopes: []string{"read"}, Active: true})
+	c2, h2, _ := st.Stats(ctx)
+	if c1 != 1 || c2 != 2 {
+		t.Errorf("count: c1=%d c2=%d want 1,2", c1, c2)
+	}
+	if h1 == h2 {
+		t.Errorf("adding a client did not flip hash: %s", h2)
+	}
+
+	_ = st.Delete(ctx, "c-2")
+	c3, h3, _ := st.Stats(ctx)
+	if c3 != 1 || h3 != h1 {
+		t.Errorf("delete did not restore fingerprint: count=%d hash=%s want 1,%s", c3, h3, h1)
+	}
+}

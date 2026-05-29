@@ -76,6 +76,39 @@ type TenantScopedClientStore interface {
 	ListByTenant(ctx context.Context, tenantID string) ([]*Client, error)
 }
 
+// ClientStoreStats is an optional extension a ClientStore MAY
+// implement to expose a CHEAP fingerprint of the client set without
+// materializing every client. The OIDC discovery document is derived
+// from the client store (scope union, RequirePAR-any, etc.) and is
+// TTL-cached; on cache expiry the server can call Stats() to decide
+// whether anything that affects the document actually changed before
+// paying for a full List() + re-projection.
+//
+// hash is a stable digest over the discovery-relevant fields of every
+// client (client IDs + AllowedScopes at minimum). It MUST be
+// deterministic regardless of storage iteration order: the same
+// logical client set always yields the same hash, and any change that
+// would alter the discovery document flips it. count is returned
+// alongside as a cheap secondary signal so a caller never has to act
+// on a hash whose client cardinality disagrees with the cached one.
+//
+// The pattern mirrors TenantScopedClientStore: callers type-assert
+// before using, so adding this interface never breaks an existing
+// ClientStore implementation. Backends that cannot compute a
+// fingerprint more cheaply than a full List() simply don't implement
+// it — the caller falls back to List() + recompute (pure
+// backward-compat).
+//
+// hash values are comparable ONLY within a single backend instance:
+// two backends that persist different columns may digest the same
+// logical client to different values, which is correct (their
+// discovery documents genuinely differ). Implementations SHOULD use
+// ClientSetFingerprint so every backend shares one canonical encoding
+// and the digest stays insensitive to iteration order.
+type ClientStoreStats interface {
+	Stats(ctx context.Context) (count int, hash string, err error)
+}
+
 // SessionManager handles user session lifecycle. ListByUser + ListAll back
 // the TokenAdminService.ListSessions RPC and are the only safe way to get a
 // "list active sessions" view (JWT issuers are stateless and cannot answer).

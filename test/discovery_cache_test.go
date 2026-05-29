@@ -15,16 +15,27 @@ import (
 	"github.com/snaplink/sso/defaultimpl"
 )
 
-// countingClientStore wraps a real store and counts List() calls so
-// tests can assert the cache amortizes per-request work.
+// countingClientStore wraps a real store and counts List() + Stats()
+// calls so tests can assert the cache amortizes per-request work and
+// that the fingerprint fast-path actually fires.
 type countingClientStore struct {
 	*defaultimpl.MemoryClientStore
-	calls atomic.Int32
+	calls      atomic.Int32
+	statsCalls atomic.Int32
 }
 
 func (c *countingClientStore) List(ctx context.Context) ([]*sso.Client, error) {
 	c.calls.Add(1)
 	return c.MemoryClientStore.List(ctx)
+}
+
+// Stats forwards to the embedded store but counts the call so tests can
+// prove the discovery refresh consulted the cheap fingerprint instead
+// of re-Listing. (Method promotion alone would satisfy the interface,
+// but then we couldn't observe the call.)
+func (c *countingClientStore) Stats(ctx context.Context) (int, string, error) {
+	c.statsCalls.Add(1)
+	return c.MemoryClientStore.Stats(ctx)
 }
 
 func newDiscoveryCacheHarness(t *testing.T, ttl time.Duration) (*httptest.Server, *countingClientStore) {
@@ -106,6 +117,87 @@ func TestDiscoveryCache_ProjectionMatchesUncached(t *testing.T) {
 			t.Errorf("field %q diverges: cached=%v uncached=%v", k, cachedDoc[k], uncachedDoc[k])
 		}
 	}
+}
+
+func TestDiscoveryCache_StatsSkipsRecomputeWhenUnchanged(t *testing.T) {
+	// Tiny TTL so both the snapshot and doc caches expire between the
+	// two requests, forcing the refresh path. The client set never
+	// changes, so the second refresh must consult the cheap fingerprint
+	// (Stats) and reuse the prior derived fields WITHOUT a second List.
+	srv, counter := newDiscoveryCacheHarness(t, time.Millisecond)
+
+	first := fetchDoc(t, srv)
+	if counter.calls.Load() != 1 {
+		t.Fatalf("warm-up List calls = %d, want 1", counter.calls.Load())
+	}
+
+	// Wait well past the TTL so the cached snapshot is stale.
+	time.Sleep(25 * time.Millisecond)
+
+	second := fetchDoc(t, srv)
+
+	if got := counter.calls.Load(); got != 1 {
+		t.Errorf("List called %d times across a stale refresh, want 1 (fingerprint should skip the recompute)", got)
+	}
+	if got := counter.statsCalls.Load(); got < 1 {
+		t.Errorf("Stats called %d times, want >=1 (cheap fingerprint path must run)", got)
+	}
+	// The served document must be unchanged — skipping the recompute
+	// must not weaken correctness.
+	if !equalJSON(first["scopes_supported"], second["scopes_supported"]) {
+		t.Errorf("scopes_supported drifted across fingerprint-skip: %v vs %v",
+			first["scopes_supported"], second["scopes_supported"])
+	}
+}
+
+func TestDiscoveryCache_StatsRecomputesWhenScopeChanges(t *testing.T) {
+	// When a discovery-relevant field changes (a client's scope), the
+	// fingerprint must differ, forcing a fresh List + re-projection so
+	// the document reflects the new scope.
+	srv, counter := newDiscoveryCacheHarness(t, time.Millisecond)
+
+	first := fetchDoc(t, srv)
+	if !containsString(toStringSlice(first["scopes_supported"]), "read") {
+		t.Fatalf("seed scope missing from first doc: %v", first["scopes_supported"])
+	}
+	listsAfterWarmup := counter.calls.Load()
+
+	// Mutate the client set out-of-band (no cache invalidation call) so
+	// the ONLY thing that can detect the change is the fingerprint.
+	if err := counter.Update(context.Background(),
+		&sso.Client{ID: "cc-c", Active: true, AllowedScopes: []string{"read", "newscope"}, RequirePAR: true}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+
+	second := fetchDoc(t, srv)
+	if got := counter.calls.Load(); got <= listsAfterWarmup {
+		t.Errorf("List calls = %d, want > %d (changed fingerprint must trigger recompute)", got, listsAfterWarmup)
+	}
+	if !containsString(toStringSlice(second["scopes_supported"]), "newscope") {
+		t.Errorf("new scope not reflected after fingerprint change: %v", second["scopes_supported"])
+	}
+}
+
+func toStringSlice(v any) []string {
+	raw, _ := v.([]any)
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func containsString(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func fetchDoc(t *testing.T, srv *httptest.Server) map[string]any {

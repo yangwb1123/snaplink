@@ -1,9 +1,16 @@
 package core
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"hash"
 	"net/url"
 	"slices"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -292,6 +299,95 @@ func (c *Client) IsAuthenticatorAllowed(name string) bool {
 		return true
 	}
 	return slices.Contains(c.AllowedAuthenticators, name)
+}
+
+// ClientSetFingerprint returns a stable, order-independent digest over
+// the fields of every client that can change the OIDC discovery
+// document (client ID, AllowedScopes union, RequirePAR-any,
+// RequireSignedRequestObject-all, FrontchannelLogoutURI presence,
+// AllowedAuthorizationDetailsTypes union). It backs ClientStoreStats so
+// every backend shares one canonical encoding: the same logical client
+// set always yields the same hash, and any change that would alter the
+// discovery document flips it.
+//
+// Determinism is achieved by canonically encoding each client, sorting
+// those per-client encodings, then hashing the concatenation — so map
+// iteration order (memory) and row order (sqlite) are irrelevant.
+// Every variable-length token is length-prefixed so no value can be
+// crafted to collide with a different field layout (delimiter
+// injection). nil clients are skipped: they contribute nothing to the
+// document beyond forcing RequireSignedRequestObject-all to false,
+// which the count return value already disambiguates.
+func ClientSetFingerprint(clients []*Client) string {
+	encs := make([]string, 0, len(clients))
+	for _, c := range clients {
+		if c == nil {
+			continue
+		}
+		encs = append(encs, clientFingerprintEncoding(c))
+	}
+	// Sort the per-client encodings so the digest is insensitive to the
+	// order the store happened to return rows/entries in.
+	sort.Strings(encs)
+	h := sha256.New()
+	for _, e := range encs {
+		// Length-prefix each client encoding too, so two adjacent
+		// encodings can't be confused with one longer encoding.
+		writeLenPrefixed(h, e)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// clientFingerprintEncoding builds the canonical per-client byte string
+// fed into ClientSetFingerprint. Scope + authorization-detail-type
+// slices are sorted so reordering them in config doesn't churn the
+// digest; only set membership matters to the discovery document.
+func clientFingerprintEncoding(c *Client) string {
+	var b strings.Builder
+	writeLenPrefixedSB(&b, c.ID)
+	b.WriteByte(boolToByte(c.RequirePAR))
+	b.WriteByte(boolToByte(c.RequireSignedRequestObject))
+	// Only presence of the front-channel logout URI matters to the
+	// document (frontchannel_logout_supported is a bool), so collapse
+	// the URI to a single bit to keep the digest stable across cosmetic
+	// URI edits that don't change the flag.
+	b.WriteByte(boolToByte(c.FrontchannelLogoutURI != ""))
+
+	scopes := append([]string(nil), c.AllowedScopes...)
+	sort.Strings(scopes)
+	writeLenPrefixedSB(&b, strconv.Itoa(len(scopes)))
+	for _, s := range scopes {
+		writeLenPrefixedSB(&b, s)
+	}
+
+	adTypes := append([]string(nil), c.AllowedAuthorizationDetailsTypes...)
+	sort.Strings(adTypes)
+	writeLenPrefixedSB(&b, strconv.Itoa(len(adTypes)))
+	for _, t := range adTypes {
+		writeLenPrefixedSB(&b, t)
+	}
+	return b.String()
+}
+
+func writeLenPrefixed(h hash.Hash, s string) {
+	var n [8]byte
+	binary.LittleEndian.PutUint64(n[:], uint64(len(s)))
+	_, _ = h.Write(n[:])
+	_, _ = h.Write([]byte(s))
+}
+
+func writeLenPrefixedSB(b *strings.Builder, s string) {
+	var n [8]byte
+	binary.LittleEndian.PutUint64(n[:], uint64(len(s)))
+	b.Write(n[:])
+	b.WriteString(s)
+}
+
+func boolToByte(v bool) byte {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // Token represents an issued access token.

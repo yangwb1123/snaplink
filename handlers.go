@@ -16,6 +16,7 @@ import (
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/oauth"
@@ -2230,6 +2231,15 @@ const defaultDiscoveryCacheTTL = 5 * time.Second
 // after the snapshot is published via atomic.Pointer. We copy slices
 // at compute-time so downstream readers can't mutate the snapshot
 // in place.
+//
+// fpValid/fpCount/fpHash carry the cheap client-set fingerprint
+// (core.ClientStoreStats) captured when this snapshot's derived fields
+// were last computed from a full List. On a would-be cache miss the
+// refresh path re-reads the fingerprint and, when it still matches,
+// reuses the derived fields verbatim instead of re-Listing every
+// client — see discoverySnapshot. fpValid is false when the store
+// doesn't implement ClientStoreStats or the Stats call failed, which
+// forces the legacy full-List recompute.
 type clientDiscoverySnapshot struct {
 	requirePAR                 bool
 	requireSignedRequestObject bool
@@ -2237,6 +2247,10 @@ type clientDiscoverySnapshot struct {
 	scopes                     []string
 	authorizationDetailTypes   []string
 	expiresAt                  time.Time
+
+	fpValid bool
+	fpCount int
+	fpHash  string
 }
 
 // WithDiscoveryCacheTTL overrides the freshness window for the
@@ -2272,15 +2286,61 @@ func (s *Server) discoverySnapshot(ctx context.Context) *clientDiscoverySnapshot
 	if snap := s.discoveryCache.Load(); snap != nil && time.Now().Before(snap.expiresAt) {
 		return snap
 	}
+	// Stale-but-present snapshot: before paying for a full List +
+	// re-projection, ask the store for a cheap fingerprint. If the
+	// client set hasn't changed in any discovery-relevant way, reuse
+	// the prior snapshot's derived fields and just extend the TTL.
+	if prev := s.discoveryCache.Load(); prev != nil && prev.fpValid {
+		if snap := s.refreshIfUnchanged(ctx, prev); snap != nil {
+			s.discoveryCache.Store(snap)
+			return snap
+		}
+	}
 	snap := s.computeDiscoverySnapshot(ctx)
 	s.discoveryCache.Store(snap)
 	return snap
+}
+
+// refreshIfUnchanged returns a TTL-extended copy of prev when the
+// client store exposes a cheap fingerprint (core.ClientStoreStats) that
+// still matches prev's. The returned snapshot shares prev's derived
+// fields verbatim — they were computed from the same client set and the
+// slices are immutable after publication, so sharing is race-free. It
+// returns nil to signal "fingerprint changed, unavailable, or
+// unsupported — fall back to a full recompute".
+func (s *Server) refreshIfUnchanged(ctx context.Context, prev *clientDiscoverySnapshot) *clientDiscoverySnapshot {
+	stats, ok := s.clientStore.(core.ClientStoreStats)
+	if !ok {
+		return nil
+	}
+	count, hash, err := stats.Stats(ctx)
+	if err != nil {
+		// Treat a Stats outage like the degraded-discovery path: don't
+		// trust a possibly-partial fingerprint, force a recompute (which
+		// itself degrades gracefully when List fails).
+		return nil
+	}
+	if count != prev.fpCount || hash != prev.fpHash {
+		return nil
+	}
+	refreshed := *prev
+	refreshed.expiresAt = time.Now().Add(s.discoveryCacheTTL)
+	return &refreshed
 }
 
 // computeDiscoverySnapshot does the expensive client-store iteration
 // once and projects all four derived fields. Splitting compute from
 // the cache wrapper lets tests assert the projection directly
 // without poking the cache.
+//
+// When the store exposes a cheap fingerprint (core.ClientStoreStats),
+// the snapshot is stamped with that fingerprint computed from the SAME
+// clients we just Listed (no second store round-trip). The stamp must
+// match what Stats() would independently return for this set, so the
+// next miss can compare cheaply and skip the recompute — see
+// refreshIfUnchanged. core.ClientSetFingerprint reads only the
+// discovery-relevant fields, so a backend whose schema omits some of
+// them (sqlite) digests List() and Stats() identically (both zero).
 func (s *Server) computeDiscoverySnapshot(ctx context.Context) *clientDiscoverySnapshot {
 	snap := &clientDiscoverySnapshot{expiresAt: time.Now().Add(s.discoveryCacheTTL)}
 	if s.idTokenIssuer != nil {
@@ -2292,6 +2352,16 @@ func (s *Server) computeDiscoverySnapshot(ctx context.Context) *clientDiscoveryS
 	clients, err := s.clientStore.List(ctx)
 	if err != nil {
 		return snap
+	}
+	// Stamp the fingerprint only when the cache is live (ttl > 0): with
+	// caching disabled the snapshot is discarded immediately, so the
+	// digest would be pure waste on every request.
+	if s.discoveryCacheTTL > 0 {
+		if _, ok := s.clientStore.(core.ClientStoreStats); ok {
+			snap.fpValid = true
+			snap.fpCount = len(clients)
+			snap.fpHash = core.ClientSetFingerprint(clients)
+		}
 	}
 	scopesSeen := map[string]struct{}{}
 	if s.idTokenIssuer != nil {

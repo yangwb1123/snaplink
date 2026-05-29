@@ -79,3 +79,102 @@ func TestListByTenant_UnknownTenantReturnsEmpty(t *testing.T) {
 		t.Errorf("got %+v, want empty", out)
 	}
 }
+
+func TestMemoryStats_OrderIndependentHash(t *testing.T) {
+	ctx := context.Background()
+	// Two stores with the SAME logical client set added in DIFFERENT
+	// orders must produce the same fingerprint — map iteration order
+	// must not leak into the digest.
+	a := defaultimpl.NewMemoryClientStore()
+	_ = a.Add(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"read", "write"}})
+	_ = a.Add(ctx, &sso.Client{ID: "c-2", AllowedScopes: []string{"profile"}})
+	_ = a.Add(ctx, &sso.Client{ID: "c-3", RequirePAR: true})
+
+	b := defaultimpl.NewMemoryClientStore()
+	_ = b.Add(ctx, &sso.Client{ID: "c-3", RequirePAR: true})
+	_ = b.Add(ctx, &sso.Client{ID: "c-2", AllowedScopes: []string{"profile"}})
+	// Scope order within a client must also be irrelevant (set membership).
+	_ = b.Add(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"write", "read"}})
+
+	countA, hashA, err := a.Stats(ctx)
+	if err != nil {
+		t.Fatalf("a.Stats: %v", err)
+	}
+	countB, hashB, err := b.Stats(ctx)
+	if err != nil {
+		t.Fatalf("b.Stats: %v", err)
+	}
+	if countA != 3 || countB != 3 {
+		t.Errorf("count: a=%d b=%d want 3", countA, countB)
+	}
+	if hashA != hashB {
+		t.Errorf("hash differs across insert order: a=%s b=%s", hashA, hashB)
+	}
+}
+
+func TestMemoryStats_ScopeChangeFlipsHash(t *testing.T) {
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"read"}})
+	_, before, _ := store.Stats(ctx)
+
+	// Adding a scope changes the discovery doc -> must flip the hash.
+	_ = store.Update(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"read", "admin"}})
+	_, after, _ := store.Stats(ctx)
+	if before == after {
+		t.Errorf("scope change did not flip hash: %s", after)
+	}
+
+	// A change that does NOT affect the discovery doc (secret rotation)
+	// must NOT flip the hash.
+	stable := after
+	if _, err := store.RotateSecret(ctx, "c-1"); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+	_, afterRotate, _ := store.Stats(ctx)
+	if afterRotate != stable {
+		t.Errorf("secret rotation flipped discovery hash: %s -> %s", stable, afterRotate)
+	}
+}
+
+func TestMemoryStats_NewClientFlipsHash(t *testing.T) {
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryClientStore()
+	_ = store.Add(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"read"}})
+	c1, h1, _ := store.Stats(ctx)
+
+	_ = store.Add(ctx, &sso.Client{ID: "c-2", AllowedScopes: []string{"read"}})
+	c2, h2, _ := store.Stats(ctx)
+
+	if c1 != 1 || c2 != 2 {
+		t.Errorf("count: c1=%d c2=%d want 1,2", c1, c2)
+	}
+	if h1 == h2 {
+		t.Errorf("adding a client did not flip hash: %s", h2)
+	}
+
+	// Deleting back to the original set restores the original hash —
+	// the digest is a pure function of the discovery-relevant content.
+	_ = store.Delete(ctx, "c-2")
+	c3, h3, _ := store.Stats(ctx)
+	if c3 != 1 || h3 != h1 {
+		t.Errorf("delete did not restore original fingerprint: count=%d hash=%s want 1,%s", c3, h3, h1)
+	}
+}
+
+func TestMemoryStats_EmptyStoreStable(t *testing.T) {
+	ctx := context.Background()
+	a := defaultimpl.NewMemoryClientStore()
+	b := defaultimpl.NewMemoryClientStore()
+	ca, ha, err := a.Stats(ctx)
+	if err != nil {
+		t.Fatalf("a.Stats: %v", err)
+	}
+	cb, hb, _ := b.Stats(ctx)
+	if ca != 0 || cb != 0 {
+		t.Errorf("empty count: a=%d b=%d want 0", ca, cb)
+	}
+	if ha != hb {
+		t.Errorf("empty-store hash unstable: a=%s b=%s", ha, hb)
+	}
+}

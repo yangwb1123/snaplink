@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/core"
 
 	_ "modernc.org/sqlite"
 )
@@ -120,6 +121,48 @@ func (s *ClientStore) List(ctx context.Context) ([]*sso.Client, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// Stats satisfies [sso.ClientStoreStats]: a cheap, order-independent
+// fingerprint of the client set so the discovery-doc cache can skip its
+// full List() + re-projection when nothing discovery-relevant changed.
+//
+// Only id + allowed_scopes are projected — the other discovery-relevant
+// client fields (RequirePAR, RequireSignedRequestObject,
+// FrontchannelLogoutURI, AllowedAuthorizationDetailsTypes) have no
+// column in this backend's schema, so they round-trip as zero values
+// and contribute a constant to the digest. Decoding minimal clients
+// (no secret, no JSON blobs beyond scopes) keeps Stats strictly cheaper
+// than List, and feeding them through the shared
+// core.ClientSetFingerprint guarantees the same logical set yields the
+// same hash regardless of row order.
+func (s *ClientStore) Stats(ctx context.Context) (int, string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, allowed_scopes FROM clients`)
+	if err != nil {
+		return 0, "", fmt.Errorf("sqlite: stats clients: %w", err)
+	}
+	defer rows.Close()
+	var clients []*sso.Client
+	for rows.Next() {
+		var (
+			id     string
+			scopes string
+		)
+		if err := rows.Scan(&id, &scopes); err != nil {
+			return 0, "", fmt.Errorf("sqlite: stats scan: %w", err)
+		}
+		c := &sso.Client{ID: id}
+		if scopes != "" && scopes != "[]" {
+			if err := json.Unmarshal([]byte(scopes), &c.AllowedScopes); err != nil {
+				return 0, "", fmt.Errorf("sqlite: stats unmarshal allowed_scopes: %w", err)
+			}
+		}
+		clients = append(clients, c)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, "", fmt.Errorf("sqlite: stats rows: %w", err)
+	}
+	return len(clients), core.ClientSetFingerprint(clients), nil
 }
 
 // ListByTenant implements [sso.TenantScopedClientStore] using the
@@ -297,4 +340,5 @@ func isUniqueViolation(err error) bool {
 var (
 	_ sso.ClientStore             = (*ClientStore)(nil)
 	_ sso.TenantScopedClientStore = (*ClientStore)(nil)
+	_ core.ClientStoreStats       = (*ClientStore)(nil)
 )

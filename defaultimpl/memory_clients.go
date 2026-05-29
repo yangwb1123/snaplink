@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/core"
 )
 
 // MemoryClientStore stores client applications in memory. Implements the full
@@ -83,6 +84,23 @@ func (m *MemoryClientStore) ListByTenant(_ context.Context, tenantID string) ([]
 	return out, nil
 }
 
+// Stats satisfies sso.ClientStoreStats: a cheap, order-independent
+// fingerprint of the client set so the discovery-doc cache can skip its
+// full List() + re-projection when nothing discovery-relevant changed.
+// The map snapshot under RLock is the only allocation; the digest is
+// pure CPU. The hash covers exactly the fields the discovery document
+// derives from a client (see core.ClientSetFingerprint), so a scope
+// edit or a new client flips it while a secret rotation does not.
+func (m *MemoryClientStore) Stats(_ context.Context) (int, string, error) {
+	m.mu.RLock()
+	clients := make([]*sso.Client, 0, len(m.clients))
+	for _, c := range m.clients {
+		clients = append(clients, c)
+	}
+	m.mu.RUnlock()
+	return len(clients), core.ClientSetFingerprint(clients), nil
+}
+
 func (m *MemoryClientStore) Add(_ context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return fmt.Errorf("defaultimpl: client.ID required")
@@ -135,6 +153,7 @@ func (m *MemoryClientStore) RotateSecret(_ context.Context, clientID string) (st
 var (
 	_ sso.ClientStore             = (*MemoryClientStore)(nil)
 	_ sso.TenantScopedClientStore = (*MemoryClientStore)(nil)
+	_ core.ClientStoreStats       = (*MemoryClientStore)(nil)
 )
 
 // generateSecret returns a base64url-encoded random string. 32 bytes ≈ 256
