@@ -706,10 +706,15 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		// the single `response` parameter (query / fragment / form_post
 		// per the sub-mode; the bare `jwt` alias resolves to query). A
 		// JARM mode only reaches here when a signer is wired (gated in
-		// isValidResponseMode); a signing failure fails closed with
-		// invalid_request rather than leaking the bare code.
+		// isValidResponseMode). The signer is resolved per-tenant so a
+		// tenant's authorization response is signed by the same key as
+		// its access + id tokens. A signing failure — or a tenant whose
+		// issuer can't sign JARM (jarmSignerForClient → ok=false) —
+		// fails closed with invalid_request rather than leaking the bare
+		// code under the shared key.
 		if oidc.IsJARMResponseMode(req.ResponseMode) {
-			if !oidc.RenderJARMResponse(ctx, s.jarmSigner, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
+			signer, ok := s.jarmSignerForClient(client)
+			if !ok || !oidc.RenderJARMResponse(ctx, signer, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
 				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
 			}
 			return
@@ -821,21 +826,28 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	// fail open — a misconfigured ID-token issuer shouldn't block the
 	// underlying authentication, the relying party just won't get
 	// id_token in the response.
-	if slices.Contains(req.Scope, ScopeOpenID) && s.idTokenIssuer != nil {
-		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-			Subject:  issuedSub,
-			Audience: client.ID,
-			Nonce:    req.Nonce,
-			AuthTime: time.Now(),
-			AMR:      []string{result.Provider},
-			Claims:   result.Attributes,
-			SID:      session.ID,
-		})
-		if err != nil {
-			s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
-		} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-			resp[KeyIDToken] = enc
-			s.recordIDTokenIssued(ctx, client.ID, result.UserID)
+	if slices.Contains(req.Scope, ScopeOpenID) {
+		idIssuer, emit, idErr := s.idTokenIssuerForClient(client)
+		if idErr != nil {
+			// Tenant mapping named an unregistered issuer — fail closed
+			// (omit id_token) rather than sign with the shared key.
+			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", result.UserID)
+		} else if emit {
+			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+				Subject:  issuedSub,
+				Audience: client.ID,
+				Nonce:    req.Nonce,
+				AuthTime: time.Now(),
+				AMR:      []string{result.Provider},
+				Claims:   result.Attributes,
+				SID:      session.ID,
+			})
+			if err != nil {
+				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
+			} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+				resp[KeyIDToken] = enc
+				s.recordIDTokenIssued(ctx, client.ID, result.UserID)
+			}
 		}
 	}
 	if result.CountryCode != "" {
@@ -1454,20 +1466,25 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		// OIDC ID Token on the authorization_code path: same gate as
 		// the direct-mint login flow, but the scope + nonce come from
 		// what we captured at issue time, not from the exchange body.
-		if slices.Contains(info.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
-			idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:  issuedSub,
-				Audience: client.ID,
-				Nonce:    info.Nonce,
-				AuthTime: time.Now(),
-				AMR:      []string{info.Provider},
-				Claims:   info.Attributes,
-			})
-			if err != nil {
-				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
-			} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-				resp[KeyIDToken] = enc
-				s.recordIDTokenIssued(ctx, client.ID, info.UserID)
+		if slices.Contains(info.Scopes, ScopeOpenID) {
+			idIssuer, emit, idErr := s.idTokenIssuerForClient(client)
+			if idErr != nil {
+				s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", info.UserID)
+			} else if emit {
+				idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+					Subject:  issuedSub,
+					Audience: client.ID,
+					Nonce:    info.Nonce,
+					AuthTime: time.Now(),
+					AMR:      []string{info.Provider},
+					Claims:   info.Attributes,
+				})
+				if err != nil {
+					s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
+				} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+					resp[KeyIDToken] = enc
+					s.recordIDTokenIssued(ctx, client.ID, info.UserID)
+				}
 			}
 		}
 		ctx.JSON(http.StatusOK, resp)

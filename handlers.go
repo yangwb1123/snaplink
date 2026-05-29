@@ -1147,20 +1147,25 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 			s.recordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
 		}
 	}
-	if slices.Contains(dc.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
-		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-			Subject:  issuedSub,
-			Audience: client.ID,
-			Nonce:    dc.Nonce,
-			AuthTime: time.Now(),
-			AMR:      []string{dc.Provider},
-			Claims:   dc.Attributes,
-		})
-		if err != nil {
-			s.logger.Error("id token issue failed", "error", err)
-		} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-			resp[KeyIDToken] = enc
-			s.recordIDTokenIssued(ctx, client.ID, dc.UserID)
+	if slices.Contains(dc.Scopes, ScopeOpenID) {
+		idIssuer, emit, idErr := s.idTokenIssuerForClient(client)
+		if idErr != nil {
+			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
+		} else if emit {
+			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+				Subject:  issuedSub,
+				Audience: client.ID,
+				Nonce:    dc.Nonce,
+				AuthTime: time.Now(),
+				AMR:      []string{dc.Provider},
+				Claims:   dc.Attributes,
+			})
+			if err != nil {
+				s.logger.Error("id token issue failed", "error", err)
+			} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+				resp[KeyIDToken] = enc
+				s.recordIDTokenIssued(ctx, client.ID, dc.UserID)
+			}
 		}
 	}
 	s.recordTokenIssued(ctx, client.ID, strategy, dc.UserID)
@@ -1271,19 +1276,24 @@ func (s *Server) handleCIBATokenGrant(ctx HandlerContext, client *Client, authRe
 			s.recordRefreshTokenIssued(ctx, client.ID, r.SubjectID, false)
 		}
 	}
-	if slices.Contains(r.Scopes, ScopeOpenID) && s.idTokenIssuer != nil {
-		idToken, err := s.idTokenIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-			Subject:  issuedSub,
-			Audience: client.ID,
-			Nonce:    r.Nonce,
-			AuthTime: now,
-			AMR:      []string{provider},
-		})
-		if err != nil {
-			s.logger.Error("id token issue failed", "error", err)
-		} else {
-			resp[KeyIDToken] = idToken
-			s.recordIDTokenIssued(ctx, client.ID, r.SubjectID)
+	if slices.Contains(r.Scopes, ScopeOpenID) {
+		idIssuer, emit, idErr := s.idTokenIssuerForClient(client)
+		if idErr != nil {
+			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
+		} else if emit {
+			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+				Subject:  issuedSub,
+				Audience: client.ID,
+				Nonce:    r.Nonce,
+				AuthTime: now,
+				AMR:      []string{provider},
+			})
+			if err != nil {
+				s.logger.Error("id token issue failed", "error", err)
+			} else {
+				resp[KeyIDToken] = idToken
+				s.recordIDTokenIssued(ctx, client.ID, r.SubjectID)
+			}
 		}
 	}
 	s.recordTokenIssued(ctx, client.ID, strategy, r.SubjectID)

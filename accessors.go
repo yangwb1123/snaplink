@@ -345,6 +345,21 @@ func (s *Server) IssuerForClient(c *Client) (string, TokenIssuer, error) {
 	return s.issuerForClient(c)
 }
 
+// IDTokenIssuerForClient resolves the per-tenant id_token issuer.
+// Backs oidc.SilentRenewalDeps so the prompt=none renewal path signs a
+// tenant's id_token with the tenant's key (fail-closed on a
+// misconfigured tenant issuer — see idTokenIssuerForClient).
+func (s *Server) IDTokenIssuerForClient(c *Client) (oidc.IDTokenIssuer, bool, error) {
+	return s.idTokenIssuerForClient(c)
+}
+
+// JARMSignerForClient resolves the per-tenant JARM signer (ok=false ⇒
+// fail closed: no signer, omit). Exposed for tests/consumers asserting
+// per-tenant JARM isolation — see jarmSignerForClient.
+func (s *Server) JARMSignerForClient(c *Client) (oidc.JARMSigner, bool) {
+	return s.jarmSignerForClient(c)
+}
+
 // RecordLoginSuccess emits a login audit event with the standard
 // shape (provider, strategy, subject, sid).
 func (s *Server) RecordLoginSuccess(ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string) {

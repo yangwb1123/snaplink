@@ -15,6 +15,12 @@ import (
 type SilentRenewalDeps interface {
 	SessionMgr() core.SessionManager
 	IDTokenIssuer() IDTokenIssuer
+	// IDTokenIssuerForClient selects the per-tenant id_token issuer so a
+	// tenant's silent-renewal id_token is signed by its own key (same
+	// fail-closed discipline as IssuerForClient). emit=false means omit
+	// the id_token; err != nil means a misconfigured tenant issuer (also
+	// omit). Returns the shared issuer for non-tenant clients.
+	IDTokenIssuerForClient(c *core.Client) (IDTokenIssuer, bool, error)
 	SrvLogger() spi.Logger
 	ValidateAnyToken(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	ResolveIssuer(ctx core.HandlerContext) string
@@ -191,21 +197,30 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 	// OIDC id_token: when openid scope present + ID token issuer is
 	// wired, mint a fresh id_token alongside. The nonce echoes the
 	// request nonce per §3.1.3.7 (the RP correlates this renewed
-	// token with its current auth round trip).
-	if d.IDTokenIssuer() != nil && ScopeContainsOpenID(scopes) {
-		idTok, idErr := d.IDTokenIssuer().IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
-			Subject:  claims.Subject,
-			Audience: client.ID,
-			Nonce:    req.Nonce,
-			AuthTime: claims.AuthTime,
-			ACR:      claims.ACR,
-			AMR:      append([]string(nil), claims.AMR...),
-			SID:      claims.SID,
-		})
-		if idErr != nil {
-			d.SrvLogger().Error("silent renewal id_token issuance failed", "error", idErr)
-		} else if enc, ok := d.EncryptIDTokenForClient(ctx.Request().Context(), client, idTok); ok {
-			resp[core.KeyIDToken] = enc
+	// token with its current auth round trip). The issuer is resolved
+	// per-tenant so a tenant's silent-renewal id_token is signed by the
+	// same key as its access + login id_tokens (fail closed on a
+	// misconfigured/unregistered tenant issuer: omit rather than fall
+	// back to the shared key).
+	if ScopeContainsOpenID(scopes) {
+		idIssuer, emit, resErr := d.IDTokenIssuerForClient(client)
+		if resErr != nil {
+			d.SrvLogger().Error("silent renewal id_token issuer resolution failed; omitting id_token", "error", resErr, "client", client.ID)
+		} else if emit {
+			idTok, idErr := idIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+				Subject:  claims.Subject,
+				Audience: client.ID,
+				Nonce:    req.Nonce,
+				AuthTime: claims.AuthTime,
+				ACR:      claims.ACR,
+				AMR:      append([]string(nil), claims.AMR...),
+				SID:      claims.SID,
+			})
+			if idErr != nil {
+				d.SrvLogger().Error("silent renewal id_token issuance failed", "error", idErr)
+			} else if enc, ok := d.EncryptIDTokenForClient(ctx.Request().Context(), client, idTok); ok {
+				resp[core.KeyIDToken] = enc
+			}
 		}
 	}
 
