@@ -336,3 +336,211 @@ func TestMemoryPushApprovalStore_DeleteIsIdempotent(t *testing.T) {
 		t.Fatalf("Delete on missing id: %v", err)
 	}
 }
+
+// ---- WithPushChannelNotify fast-path ----
+
+// TestPushMFAProvider_ChannelNotifyWakesFast proves the wakeup fires
+// in well under one poll interval: a 5s poll would otherwise dominate,
+// so a sub-second return can only come from the channel signal.
+func TestPushMFAProvider_ChannelNotifyWakesFast(t *testing.T) {
+	store := defaultimpl.NewMemoryPushApprovalStore()
+	transport := &captureTransport{}
+	p, err := defaultimpl.NewPushMFAProvider(store, transport,
+		defaultimpl.WithPushPollInterval(5*time.Second), // poll must NOT be what wakes us
+		defaultimpl.WithPushMaxWait(10*time.Second),
+		defaultimpl.WithPushChannelNotify(),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	data, err := p.Begin(ctx, "alice", defaultimpl.MethodPush)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	id := data["approval_id"]
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := store.SetStatus(ctx, id, defaultimpl.PushApprovalApproved); err != nil {
+			return
+		}
+		p.Notify(id)
+	}()
+
+	start := time.Now()
+	if err := p.Verify(ctx, "alice", defaultimpl.MethodPush, map[string]string{"approval_id": id}); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	elapsed := time.Since(start)
+	// Generous ceiling (1s) — far below the 5s poll, so this asserts
+	// the channel woke Verify without being flaky on a loaded CI box.
+	if elapsed >= time.Second {
+		t.Fatalf("Verify took %v, want sub-second (channel wakeup, not poll)", elapsed)
+	}
+}
+
+// TestPushMFAProvider_ChannelNotifyCorrectWhenSignalDropped is the
+// correctness half: channel-notify is enabled but the resolver NEVER
+// calls Notify (modeling a coalesced/lost signal or a cross-replica
+// callback). Verify must still resolve via the poll fallback — proving
+// correctness never depends on the wakeup arriving.
+func TestPushMFAProvider_ChannelNotifyCorrectWhenSignalDropped(t *testing.T) {
+	store := defaultimpl.NewMemoryPushApprovalStore()
+	transport := &captureTransport{}
+	p, err := defaultimpl.NewPushMFAProvider(store, transport,
+		defaultimpl.WithPushPollInterval(10*time.Millisecond),
+		defaultimpl.WithPushMaxWait(2*time.Second),
+		defaultimpl.WithPushChannelNotify(),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	data, _ := p.Begin(ctx, "alice", defaultimpl.MethodPush)
+	id := data["approval_id"]
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		// Deliberately NO p.Notify — the store is the source of truth.
+		_ = store.SetStatus(ctx, id, defaultimpl.PushApprovalApproved)
+	}()
+
+	if err := p.Verify(ctx, "alice", defaultimpl.MethodPush, map[string]string{"approval_id": id}); err != nil {
+		t.Fatalf("Verify must succeed via poll fallback even with no Notify; got %v", err)
+	}
+}
+
+// TestPushMFAProvider_ChannelNotifyLostWakeupRace stresses the window
+// the pre-Get waiter registration is meant to close: the resolve
+// (SetStatus + Notify) races Verify's start, with a poll interval long
+// enough that the poll cannot rescue a lost wakeup within the test
+// budget. Run under -race -count to surface ordering bugs + the
+// registry's concurrent access.
+func TestPushMFAProvider_ChannelNotifyLostWakeupRace(t *testing.T) {
+	store := defaultimpl.NewMemoryPushApprovalStore()
+	transport := &captureTransport{}
+	p, err := defaultimpl.NewPushMFAProvider(store, transport,
+		defaultimpl.WithPushPollInterval(2*time.Second), // poll can't mask a lost wakeup in-budget
+		defaultimpl.WithPushMaxWait(10*time.Second),
+		defaultimpl.WithPushChannelNotify(),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	for i := 0; i < 50; i++ {
+		data, err := p.Begin(ctx, "alice", defaultimpl.MethodPush)
+		if err != nil {
+			t.Fatalf("Begin[%d]: %v", i, err)
+		}
+		id := data["approval_id"]
+
+		// Resolve + Notify on another goroutine with NO artificial delay
+		// so it interleaves arbitrarily with Verify's register/Get/park.
+		go func() {
+			_ = store.SetStatus(ctx, id, defaultimpl.PushApprovalApproved)
+			p.Notify(id)
+		}()
+
+		start := time.Now()
+		if err := p.Verify(ctx, "alice", defaultimpl.MethodPush, map[string]string{"approval_id": id}); err != nil {
+			t.Fatalf("Verify[%d]: %v", i, err)
+		}
+		// If the wakeup were lost, the only escape is the 2s poll —
+		// anything below that proves the buffered pre-registered waiter
+		// caught the signal that landed before the park.
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("Verify[%d] took %v — lost-wakeup window not closed", i, elapsed)
+		}
+	}
+}
+
+// TestPushMFAProvider_NotifyNoopWithoutOptIn proves Notify is a safe
+// no-op when WithPushChannelNotify wasn't set: calling it must neither
+// panic nor break the pure-poll resolution path (full backward compat).
+func TestPushMFAProvider_NotifyNoopWithoutOptIn(t *testing.T) {
+	p, store, _ := newPushProviderForTest(t) // no WithPushChannelNotify
+	ctx := context.Background()
+	data, _ := p.Begin(ctx, "alice", defaultimpl.MethodPush)
+	id := data["approval_id"]
+
+	// Must be inert even for an unknown id and the live id.
+	p.Notify("does-not-exist")
+	p.Notify(id)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = store.SetStatus(ctx, id, defaultimpl.PushApprovalApproved)
+		p.Notify(id) // still a no-op; poll resolves
+	}()
+
+	if err := p.Verify(ctx, "alice", defaultimpl.MethodPush, map[string]string{"approval_id": id}); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestPushMFAProvider_ChannelNotifyConcurrentDistinctIDs runs many
+// concurrent Verifies for distinct approval ids, each woken by its own
+// Notify. Asserts each gets the right answer (approve vs deny) — the
+// registry must isolate waiters per id under -race.
+func TestPushMFAProvider_ChannelNotifyConcurrentDistinctIDs(t *testing.T) {
+	store := defaultimpl.NewMemoryPushApprovalStore()
+	transport := &captureTransport{}
+	p, err := defaultimpl.NewPushMFAProvider(store, transport,
+		defaultimpl.WithPushPollInterval(5*time.Second), // force the channel to be the waker
+		defaultimpl.WithPushMaxWait(10*time.Second),
+		defaultimpl.WithPushChannelNotify(),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	const n = 20
+	type job struct {
+		id      string
+		approve bool
+	}
+	jobs := make([]job, n)
+	for i := 0; i < n; i++ {
+		data, err := p.Begin(ctx, "alice", defaultimpl.MethodPush)
+		if err != nil {
+			t.Fatalf("Begin[%d]: %v", i, err)
+		}
+		jobs[i] = job{id: data["approval_id"], approve: i%2 == 0}
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range jobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = p.Verify(ctx, "alice", defaultimpl.MethodPush, map[string]string{"approval_id": jobs[i].id})
+		}(i)
+	}
+	// Resolve each from another goroutine — distinct ids, mixed outcomes.
+	for i := range jobs {
+		go func(i int) {
+			status := defaultimpl.PushApprovalDenied
+			if jobs[i].approve {
+				status = defaultimpl.PushApprovalApproved
+			}
+			_ = store.SetStatus(ctx, jobs[i].id, status)
+			p.Notify(jobs[i].id)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range jobs {
+		if jobs[i].approve {
+			if errs[i] != nil {
+				t.Errorf("job[%d] approve: got %v, want nil", i, errs[i])
+			}
+		} else if !errors.Is(errs[i], defaultimpl.ErrPushApprovalDenied) {
+			t.Errorf("job[%d] deny: got %v, want ErrPushApprovalDenied", i, errs[i])
+		}
+	}
+}

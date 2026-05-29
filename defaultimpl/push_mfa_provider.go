@@ -22,8 +22,9 @@ const MethodPush = "push"
 // the device app POSTs Approve or Deny back to the SSO server's
 // (operator-supplied) callback handler, which calls
 // PushApprovalStore.SetStatus to advance the entry. The MFA Verify
-// then polls — or, in operator-built deployments, the callback
-// publishes via channel and the Verify select-waits.
+// then polls — or, when the callback also calls
+// [PushMFAProvider.Notify] (opt-in via [WithPushChannelNotify]), the
+// blocked Verify wakes immediately on the next channel signal.
 type PushApprovalStatus string
 
 const (
@@ -56,8 +57,11 @@ type PushApproval struct {
 // (operator-built) callback HTTP endpoint that calls SetStatus.
 //
 // Put / Get are sufficient for the polling variant of Verify.
-// Channel-based notification (so Verify doesn't poll) is left to
-// the operator — wire a sync.Cond / chan-of-id in your custom store.
+// Channel-based notification (so Verify wakes immediately instead of
+// waiting out a poll tick) ships built-in + opt-in via
+// [WithPushChannelNotify] — see [PushMFAProvider.Notify]. The store
+// stays the authoritative source of truth either way; the channel is
+// only a latency hint.
 type PushApprovalStore interface {
 	// Put persists a freshly-issued PENDING approval. ID + SubjectID
 	// + ExpiresAt MUST be set; the store rejects ID="" with
@@ -108,19 +112,24 @@ func (f PushTransportFunc) Send(ctx context.Context, approvalID, subjectID strin
 // {approval_id: <id>}; Verify polls the PushApprovalStore until
 // the approval resolves (approved / denied / expires).
 //
-// Polling is the default to keep the Verify SPI synchronous. For
-// production deployments wanting push-without-polling, fork
-// PushMFAProvider and replace the polling loop with a chan-of-id
-// notification from your PushApprovalStore implementation.
-//
-// Reference / demonstration impl: the polling cadence is operator-
-// configurable but the unbounded-blocking shape means high-traffic
-// deployments should adopt the channel variant before shipping.
+// Polling is the default to keep the Verify SPI synchronous and the
+// store the single source of truth. Opt into the channel-based fast
+// path with [WithPushChannelNotify]: the approval callback then calls
+// [PushMFAProvider.Notify] right after SetStatus, waking a blocked
+// Verify in milliseconds instead of after a full poll tick. The
+// channel is a pure latency HINT — Verify always re-reads the store
+// before acting, so a dropped/missed signal degrades to the poll
+// cadence rather than to a wrong answer (see Verify).
 type PushMFAProvider struct {
 	store        PushApprovalStore
 	transport    PushTransport
 	pollInterval time.Duration
 	maxWait      time.Duration
+
+	// waiters is the per-approval-id wakeup registry. nil unless
+	// WithPushChannelNotify opted in — keeping the default path a
+	// pure poll with zero extra allocation or locking.
+	waiters *pushWaiterRegistry
 }
 
 // PushMFAOption tunes the provider. Sane defaults: poll every 1s,
@@ -144,6 +153,26 @@ func WithPushMaxWait(d time.Duration) PushMFAOption {
 	return func(p *PushMFAProvider) {
 		if d > 0 {
 			p.maxWait = d
+		}
+	}
+}
+
+// WithPushChannelNotify enables the built-in channel-based wakeup
+// fast path. With it set, the approval callback (the handler that
+// calls SetStatus) SHOULD also call [PushMFAProvider.Notify] with the
+// resolved approval id — a blocked Verify then returns within
+// milliseconds instead of after a poll tick. Without it, Verify keeps
+// the historical pure-poll behavior (and Notify is a no-op), so this
+// is fully backward-compatible.
+//
+// Correctness never depends on the signal arriving: Verify re-reads
+// the authoritative store on every wakeup AND on the poll fallback,
+// so a coalesced/dropped Notify only costs latency, not a wrong
+// verification result.
+func WithPushChannelNotify() PushMFAOption {
+	return func(p *PushMFAProvider) {
+		if p.waiters == nil {
+			p.waiters = newPushWaiterRegistry()
 		}
 	}
 }
@@ -217,10 +246,23 @@ func (p *PushMFAProvider) Begin(ctx context.Context, subjectID, method string) (
 	return map[string]string{"approval_id": id}, nil
 }
 
-// Verify polls the store until the approval id resolves or maxWait
+// Verify waits for the approval id to resolve, or until maxWait
 // elapses. Approved → nil; Denied → ErrPushApprovalDenied; expiry
 // or missing → ErrPushApprovalNotFound (the SDK collapses both to
 // mfa_invalid). Caller ctx cancellation is honored.
+//
+// Default behavior polls the store every pollInterval. When
+// [WithPushChannelNotify] is set, Verify ALSO parks on a per-id
+// wakeup channel so a [Notify] call from the approval callback
+// short-circuits the next poll tick.
+//
+// Lost-wakeup safety: the waiter is registered BEFORE the first store
+// Get, so a decision (SetStatus + Notify) landing in the window
+// between that Get and the park is retained by the channel's buffer
+// and consumed on the very next park — Verify then re-reads the store
+// and returns. The channel is only ever a hint to re-read sooner; the
+// store read is authoritative, so a coalesced or missed signal costs
+// at most one poll interval of latency.
 func (p *PushMFAProvider) Verify(ctx context.Context, subjectID, method string, params map[string]string) error {
 	if method != MethodPush {
 		return ErrPushUnsupportedMethod
@@ -232,6 +274,18 @@ func (p *PushMFAProvider) Verify(ctx context.Context, subjectID, method string, 
 	if id == "" {
 		return ErrPushMissingApprovalID
 	}
+
+	// Register the waiter BEFORE the first store read so we can't lose
+	// a wakeup that fires between the read and the park. nil registry
+	// (channel-notify not opted in) yields a nil channel, which select
+	// silently ignores — collapsing to the pure-poll path.
+	var wake <-chan struct{}
+	if p.waiters != nil {
+		var unregister func()
+		wake, unregister = p.waiters.register(id)
+		defer unregister()
+	}
+
 	deadline := time.Now().Add(p.maxWait)
 	for {
 		approval, err := p.store.Get(ctx, id)
@@ -257,12 +311,33 @@ func (p *PushMFAProvider) Verify(ctx context.Context, subjectID, method string, 
 			_ = p.store.Delete(ctx, id)
 			return ErrPushApprovalTimeout
 		}
+		// Park until: ctx cancel, a Notify wakeup (channel-notify path),
+		// or the poll tick (always-present fallback). Draining whichever
+		// fires re-runs the loop and re-reads the authoritative store.
+		timer := time.NewTimer(p.pollInterval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-time.After(p.pollInterval):
+		case <-wake:
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
+}
+
+// Notify wakes any Verify currently blocked on approvalID so it
+// re-reads the store immediately. It is the fast-path companion to
+// [WithPushChannelNotify]: the approval callback calls it right after
+// PushApprovalStore.SetStatus succeeds. Safe to call unconditionally —
+// when channel-notify isn't enabled (or no Verify is parked on the
+// id) it is a cheap no-op. Non-blocking: a slow/absent waiter never
+// stalls the caller.
+func (p *PushMFAProvider) Notify(approvalID string) {
+	if p.waiters == nil || approvalID == "" {
+		return
+	}
+	p.waiters.notify(approvalID)
 }
 
 // Sentinel errors. The SDK collapses every Verify failure to
@@ -279,6 +354,73 @@ var (
 	ErrPushApprovalInvalid   = errors.New("push_mfa: invalid approval entry")
 	ErrPushApprovalResolved  = errors.New("push_mfa: approval already resolved")
 )
+
+// pushWaiterRegistry maps an approval id to the set of channels of
+// Verify calls currently parked on it. Each waiter owns a distinct
+// buffered (cap-1) channel so notify is non-blocking AND a signal
+// that arrives before the waiter parks is retained until the next
+// park (this is what closes the lost-wakeup window). Multiple
+// concurrent Verifies for the same id each register their own
+// channel; notify fans out to all of them.
+//
+// The map only ever holds ids with at least one live waiter:
+// register adds, the returned unregister removes (and drops the slice
+// when it empties), so a flood of one-shot notifies for ids nobody is
+// verifying leaves no residue.
+type pushWaiterRegistry struct {
+	mu      sync.Mutex
+	waiters map[string][]chan struct{}
+}
+
+func newPushWaiterRegistry() *pushWaiterRegistry {
+	return &pushWaiterRegistry{waiters: make(map[string][]chan struct{})}
+}
+
+// register adds a fresh waiter for id and returns its receive channel
+// plus an idempotent unregister to call on Verify return (via defer).
+func (r *pushWaiterRegistry) register(id string) (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	r.mu.Lock()
+	r.waiters[id] = append(r.waiters[id], ch)
+	r.mu.Unlock()
+
+	var once sync.Once
+	unregister := func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			chans := r.waiters[id]
+			for i, c := range chans {
+				if c == ch {
+					// Swap-remove: order among waiters is irrelevant.
+					chans[i] = chans[len(chans)-1]
+					r.waiters[id] = chans[:len(chans)-1]
+					break
+				}
+			}
+			if len(r.waiters[id]) == 0 {
+				delete(r.waiters, id)
+			}
+		})
+	}
+	return ch, unregister
+}
+
+// notify wakes every waiter parked on id. The per-waiter send is
+// non-blocking: a cap-1 channel that already holds a pending signal
+// (waiter not yet re-parked) is left as-is — the waiter will observe
+// exactly one wakeup and re-read the store, which is all correctness
+// needs.
+func (r *pushWaiterRegistry) notify(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ch := range r.waiters[id] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
 
 // MemoryPushApprovalStore is a process-local PushApprovalStore.
 // Single-replica dev / tests; cluster deploys should ship a

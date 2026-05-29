@@ -267,6 +267,12 @@ type app struct {
 	// can wire the reference callback handler against it.
 	pushApprovalStore defaultimpl.PushApprovalStore
 
+	// pushNotify is the channel-notify wakeup for the push provider
+	// (nil unless mfa.provider.push.channel_notify=true). buildHTTPHandler
+	// hands it to the reference callback so an approve/deny wakes a
+	// blocked Verify immediately instead of after a poll tick.
+	pushNotify func(approvalID string)
+
 	// anomalyRT is the lifecycle handle for the async anomaly
 	// detection subsystem. Nil when anomaly.enabled=false. Drained
 	// + closed during shutdown.
@@ -575,7 +581,7 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	// custom gateway leave callback.enabled=false and SetStatus
 	// directly from their own handler.
 	if cfg.MFA.Provider.Push.Callback.Enabled && a.pushApprovalStore != nil {
-		callbackDeps, err := buildPushCallbackDeps(cfg.MFA.Provider.Push.Callback, a.pushApprovalStore, logger)
+		callbackDeps, err := buildPushCallbackDeps(cfg.MFA.Provider.Push.Callback, a.pushApprovalStore, a.pushNotify, logger)
 		if err != nil {
 			return nil, fmt.Errorf("push callback: %w", err)
 		}
@@ -584,7 +590,8 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 		}
 		logger.Info("push approval callback mounted at /push/approval/:id/:decision",
 			"bearer_token_required", callbackDeps.BearerToken != "",
-			"ip_allowlist_size", len(callbackDeps.AllowedCIDRs))
+			"ip_allowlist_size", len(callbackDeps.AllowedCIDRs),
+			"channel_notify", callbackDeps.Notify != nil)
 	} else if cfg.MFA.Provider.Push.Callback.Enabled {
 		logger.Info("push callback.enabled=true but push backend not configured — callback mount skipped")
 	}
@@ -1503,9 +1510,9 @@ func buildRiskScorer(cfg *config.RiskConfig, logger spi.Logger) (spi.RiskScorer,
 //
 // The returned mode string is a short backend identifier emitted in
 // the startup log + suitable for /readyz wiring suffixes.
-func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, error) {
+func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, func(string), error) {
 	if !cfg.Enabled {
-		return nil, nil, 0, "", nil, nil
+		return nil, nil, 0, "", nil, nil, nil
 	}
 
 	// Provider: "totp" and "webauthn" carry YAML toggles. "multi"
@@ -1520,7 +1527,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 	capture := &pushStoreCapture{}
 	provider, err := buildMFAProviderByKind(kind, cfg.Provider.Kinds, cfg.Provider.Push, totpAuth, webauthnHelper, logger, capture)
 	if err != nil {
-		return nil, nil, 0, "", nil, err
+		return nil, nil, 0, "", nil, nil, err
 	}
 
 	// Challenge store: memory for single-replica, sqlite for clusters.
@@ -1538,16 +1545,16 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		storeKind = "memory (single-replica only)"
 	case "sqlite":
 		if cfg.Challenge.SQLite.DSN == "" {
-			return nil, nil, 0, "", nil, errors.New("mfa.challenge.sqlite.dsn required when backend=sqlite")
+			return nil, nil, 0, "", nil, nil, errors.New("mfa.challenge.sqlite.dsn required when backend=sqlite")
 		}
 		s, err := sqlitestores.NewMFAChallengeStore(cfg.Challenge.SQLite.DSN)
 		if err != nil {
-			return nil, nil, 0, "", nil, err
+			return nil, nil, 0, "", nil, nil, err
 		}
 		store = s
 		storeKind = "sqlite (cluster-shared)"
 	default:
-		return nil, nil, 0, "", nil, fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite)", backend)
+		return nil, nil, 0, "", nil, nil, fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite)", backend)
 	}
 
 	logger.Info("mfa orchestration enabled",
@@ -1556,7 +1563,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		"store", storeKind,
 		"ttl", cfg.Challenge.TTL)
 
-	return provider, store, cfg.Challenge.TTL, storeKind, capture.store, nil
+	return provider, store, cfg.Challenge.TTL, storeKind, capture.store, capture.notify, nil
 }
 
 // buildMFAProviderByKind constructs the MFA provider tree for the
@@ -1570,13 +1577,14 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 // Kinds when kind=multi → error (a multi with zero or one inner
 // provider is a misconfiguration; use the leaf kind directly).
 // pushStoreCapture is buildMFAProviderByKind's side-channel for
-// surfacing the SQLite PushApprovalStore handle through the
-// recursive multi-build. cmd's buildMFA inspects the capture's
-// handle to register a /readyz check + launch the PruneExpired
-// loop. Memory-backed push or absent push both leave the field
-// nil.
+// surfacing push-factor handles through the recursive multi-build.
+// cmd's buildMFA inspects store to register a /readyz check + launch
+// the PruneExpired loop, and notify to wire the channel-notify wakeup
+// into the reference approval callback. Both stay nil for
+// memory-backed push, absent push, or (notify) channel_notify=false.
 type pushStoreCapture struct {
-	store *sqlitestores.PushApprovalStore
+	store  *sqlitestores.PushApprovalStore
+	notify func(approvalID string)
 }
 
 func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFAPushConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger, capture *pushStoreCapture) (spi.MFAProvider, error) {
@@ -1602,6 +1610,16 @@ func buildMFAProviderByKind(kind string, outerKinds []string, pushCfg config.MFA
 		}
 		if capture != nil {
 			capture.store = sqliteStore
+			// Surface Notify only when channel-notify is opted in — the
+			// reference callback then wakes a blocked Verify directly.
+			// The concrete type is always *PushMFAProvider here (this
+			// case constructs it); the assertion just narrows from the
+			// spi.MFAProvider return.
+			if pushCfg.ChannelNotify {
+				if pp, ok := provider.(*defaultimpl.PushMFAProvider); ok {
+					capture.notify = pp.Notify
+				}
+			}
 		}
 		return provider, nil
 	case "multi":
@@ -1730,6 +1748,9 @@ func buildPushMFAProvider(cfg config.MFAPushConfig, logger spi.Logger) (spi.MFAP
 	}
 	if cfg.MaxWait > 0 {
 		opts = append(opts, defaultimpl.WithPushMaxWait(cfg.MaxWait))
+	}
+	if cfg.ChannelNotify {
+		opts = append(opts, defaultimpl.WithPushChannelNotify())
 	}
 	provider, err := defaultimpl.NewPushMFAProvider(store, pushTransport, opts...)
 	if err != nil {
@@ -2521,7 +2542,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// both Provider + Store opts, RequireMFA decays to Allow — same
 	// back-compat fall-through embedders see when they ship a Risk
 	// scorer ahead of MFA.
-	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, err := buildMFA(cfg.MFA, totpAuth, webauthnHelper, logger)
+	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, pushNotify, err := buildMFA(cfg.MFA, totpAuth, webauthnHelper, logger)
 	if err != nil {
 		return nil, fmt.Errorf("mfa: %w", err)
 	}
@@ -3087,6 +3108,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		cibaPruneCancel:         cibaPruneCancel,
 		cibaPruneDone:           cibaPruneDone,
 		pushApprovalStore:       pushApprovalStoreIface(pushApprovalStore),
+		pushNotify:              pushNotify,
 		metrics:                 metricsRegistry,
 		netStop:                 netStop,
 		invalidationBus:         invalidationBus,

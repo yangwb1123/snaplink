@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -230,12 +231,81 @@ func TestBuildPushCallbackDeps_RejectsBadCIDR(t *testing.T) {
 	store, _ := newCallbackTestStore(t)
 	_, err := buildPushCallbackDeps(config.MFAPushCallbackConfig{
 		AllowedCIDRs: []string{"not-a-cidr"},
-	}, store, quietLogger())
+	}, store, nil, quietLogger())
 	if err == nil {
 		t.Fatal("want error on bad CIDR")
 	}
 	if !strings.Contains(err.Error(), "not-a-cidr") {
 		t.Errorf("error should mention the bad input: %v", err)
+	}
+}
+
+// TestPushCallback_NotifyFiresOnSuccess proves the reference callback
+// wakes the channel-notify fast path with the resolved id ONLY after a
+// successful SetStatus — and never on a not-found error (no spurious
+// wakeup for an id no Verify is parked on).
+func TestPushCallback_NotifyFiresOnSuccess(t *testing.T) {
+	store, _ := newCallbackTestStore(t)
+	seedApproval(t, store, "ch-notify")
+
+	var mu sync.Mutex
+	var notified []string
+	deps := &pushCallbackDeps{
+		Store:  store,
+		Logger: quietLogger(),
+		Notify: func(id string) {
+			mu.Lock()
+			notified = append(notified, id)
+			mu.Unlock()
+		},
+	}
+
+	rec := callCallback(t, deps, "/push/approval/ch-notify/approve", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("approve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Unknown id → 404 and MUST NOT notify.
+	rec = callCallback(t, deps, "/push/approval/ch-unknown/approve", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown-id status = %d, want 404", rec.Code)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(notified) != 1 || notified[0] != "ch-notify" {
+		t.Fatalf("notified = %v, want exactly [ch-notify]", notified)
+	}
+}
+
+// TestBuildMFA_PushChannelNotifySurfacesNotifier proves the channel_notify
+// toggle controls whether buildMFA returns a live wakeup func: present
+// when true, nil when false (so the callback wiring degrades to poll).
+func TestBuildMFA_PushChannelNotifySurfacesNotifier(t *testing.T) {
+	mk := func(channelNotify bool) func(string) {
+		t.Helper()
+		_, _, _, _, _, notify, err := buildMFA(config.MFAConfig{
+			Enabled: true,
+			Provider: config.MFAProviderConfig{
+				Kind: "push",
+				Push: config.MFAPushConfig{
+					Backend:       "memory",
+					Transport:     "log",
+					ChannelNotify: channelNotify,
+				},
+			},
+			Challenge: config.MFAChallengeConfig{Backend: "memory", TTL: time.Minute},
+		}, nil, nil, quietLogger())
+		if err != nil {
+			t.Fatalf("buildMFA(channel_notify=%v): %v", channelNotify, err)
+		}
+		return notify
+	}
+	if mk(true) == nil {
+		t.Error("channel_notify=true should surface a non-nil notifier")
+	}
+	if mk(false) != nil {
+		t.Error("channel_notify=false should surface a nil notifier")
 	}
 }
 

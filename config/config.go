@@ -382,6 +382,16 @@ type MFAPushConfig struct {
 	PruneInterval time.Duration         `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
 	Webhook       MFAPushWebhookConfig  `yaml:"webhook"`        // used when transport=webhook
 	Callback      MFAPushCallbackConfig `yaml:"callback"`
+	// ChannelNotify opts into the built-in channel-based Verify wakeup
+	// ([defaultimpl.WithPushChannelNotify]). When true and the
+	// reference callback is mounted, an approve/deny callback wakes the
+	// blocked /auth/mfa Verify in milliseconds instead of after a
+	// poll_interval tick. Pure latency optimization — the approval
+	// store stays authoritative, so correctness is unchanged if the
+	// signal is missed. Single-process hint: a callback handled on a
+	// different replica than the parked Verify still falls back to
+	// polling.
+	ChannelNotify bool `yaml:"channel_notify"`
 }
 
 // MFAPushWebhookConfig wires the HTTP webhook PushTransport. The

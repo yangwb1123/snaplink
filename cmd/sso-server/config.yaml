@@ -994,6 +994,15 @@ mfa:
       transport: "log"     # log | webhook
       poll_interval: 1s
       max_wait: 60s
+      # channel_notify opts into the built-in channel-based Verify
+      # wakeup. When true AND the reference callback below is mounted,
+      # an approve/deny wakes the blocked /auth/mfa Verify in ms
+      # instead of after a full poll_interval tick. Pure latency win —
+      # the approval store stays authoritative, so a missed signal
+      # only falls back to polling. Single-process hint: a callback
+      # handled on a different replica than the parked Verify still
+      # relies on the poll. false keeps the historical poll-only path.
+      channel_notify: false
       # Background cron-like prune of expired push approvals
       # (PushApprovalStore.PruneExpired). SQLite backend only —
       # the memory store self-prunes on Get via expiry check.

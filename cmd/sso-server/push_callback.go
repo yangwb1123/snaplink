@@ -32,12 +32,20 @@ type pushCallbackDeps struct {
 	BearerToken  string       // empty disables bearer-token check
 	AllowedCIDRs []*net.IPNet // empty disables IP gate
 	Logger       spi.Logger
+	// Notify wakes a Verify blocked on the just-resolved approval id
+	// (the channel-notify fast path). nil when the provider didn't opt
+	// into WithPushChannelNotify — the handler then relies on Verify's
+	// poll fallback. Always safe to call: the SDK's Notify is itself a
+	// no-op when channel-notify is off.
+	Notify func(approvalID string)
 }
 
 // buildPushCallbackDeps assembles pushCallbackDeps from the YAML
 // config — parses the CIDR strings into *net.IPNet (failing loud
-// on bad input rather than silently dropping the entry).
-func buildPushCallbackDeps(cfg config.MFAPushCallbackConfig, store defaultimpl.PushApprovalStore, logger spi.Logger) (*pushCallbackDeps, error) {
+// on bad input rather than silently dropping the entry). notify is
+// the optional channel-notify wakeup (nil when the provider didn't
+// opt in).
+func buildPushCallbackDeps(cfg config.MFAPushCallbackConfig, store defaultimpl.PushApprovalStore, notify func(string), logger spi.Logger) (*pushCallbackDeps, error) {
 	allowed := make([]*net.IPNet, 0, len(cfg.AllowedCIDRs))
 	for _, c := range cfg.AllowedCIDRs {
 		_, ipnet, err := net.ParseCIDR(strings.TrimSpace(c))
@@ -51,6 +59,7 @@ func buildPushCallbackDeps(cfg config.MFAPushCallbackConfig, store defaultimpl.P
 		BearerToken:  cfg.BearerToken,
 		AllowedCIDRs: allowed,
 		Logger:       logger,
+		Notify:       notify,
 	}, nil
 }
 
@@ -136,6 +145,13 @@ func pushCallbackHandler(deps *pushCallbackDeps) http.HandlerFunc {
 		err := deps.Store.SetStatus(r.Context(), id, status)
 		switch {
 		case err == nil:
+			// Store is now the source of truth; nudge any blocked Verify
+			// to re-read it immediately rather than wait out a poll tick.
+			// Wake AFTER the store write so the woken Verify observes the
+			// resolved status (ordering the lost-wakeup contract relies on).
+			if deps.Notify != nil {
+				deps.Notify(id)
+			}
 			w.WriteHeader(http.StatusNoContent)
 		case errors.Is(err, defaultimpl.ErrPushApprovalNotFound):
 			writePushCallbackError(w, http.StatusNotFound, "not_found", "approval id unknown or expired")
