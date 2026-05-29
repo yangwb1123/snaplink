@@ -136,6 +136,18 @@ type webauthnDeps struct {
 	IDTokenIssuer     oidc.IDTokenIssuer
 	Metrics           *metrics.Metrics // nil-safe; emit only when present
 
+	// IDTokenIssuerForClient selects the per-tenant id_token issuer so a
+	// WebAuthn-minted id_token is signed with the same key as that
+	// tenant's access + id tokens elsewhere (closing the last surface
+	// that bypassed WithTenantTokenIssuer). Mirrors the server's
+	// fail-closed selector: err != nil ⇒ a misconfigured/unregistered
+	// tenant issuer; emit=false ⇒ the tenant strategy can't mint
+	// id_tokens (omit, never sign with the shared key). Nil-safe: when
+	// unset (embedders constructing webauthnDeps directly) the handler
+	// falls back to IDTokenIssuer for byte-identical legacy behavior.
+	// Set in mountWebAuthnRoutes from *sso.Server.
+	IDTokenIssuerForClient func(c *sso.Client) (oidc.IDTokenIssuer, bool, error)
+
 	// EncryptIDToken routes a freshly-signed id_token through the
 	// server's JWE response-encryption path (fail-closed: returns
 	// ("", false) when the client opted into encryption but it
@@ -158,9 +170,12 @@ func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
 	if deps == nil || deps.Helper == nil {
 		return nil
 	}
-	// Route WebAuthn-minted id_tokens through the server's response
-	// encryption (fail-closed for encryption-opted-in clients), so the
-	// /webauthn/login/finish path matches /auth/login's contract.
+	// Select the per-tenant id_token issuer so a tenant's WebAuthn
+	// id_token is signed by the tenant's key (same fail-closed selector
+	// /auth/login + /token use), then route the signed token through the
+	// server's response encryption (fail-closed for encryption-opted-in
+	// clients) — so /webauthn/login/finish matches /auth/login's contract.
+	deps.IDTokenIssuerForClient = srv.IDTokenIssuerForClient
 	deps.EncryptIDToken = srv.EncryptIDTokenForClient
 	routes := []struct {
 		path    string
@@ -407,6 +422,25 @@ type webauthnIssueResult struct {
 	IDToken      string
 }
 
+// idTokenIssuerForWebAuthn resolves the id_token issuer that should mint
+// this client's WebAuthn id_token, returning (issuer, emit, err) with the
+// same fail-closed contract the server's selector uses.
+//
+// When mounted via mountWebAuthnRoutes, deps.IDTokenIssuerForClient is the
+// server's per-tenant selector, so a tenant's id_token is signed by the
+// tenant's key (an unregistered tenant issuer errors; an opaque/non-OIDC
+// tenant strategy yields emit=false → the caller omits, never the shared
+// key). When that closure is unset — an embedder constructing webauthnDeps
+// directly without the server seam — fall back to the shared
+// deps.IDTokenIssuer for byte-identical legacy behavior (emit tracks
+// whether one is wired).
+func idTokenIssuerForWebAuthn(deps *webauthnDeps, client *sso.Client) (oidc.IDTokenIssuer, bool, error) {
+	if deps.IDTokenIssuerForClient != nil {
+		return deps.IDTokenIssuerForClient(client)
+	}
+	return deps.IDTokenIssuer, deps.IDTokenIssuer != nil, nil
+}
+
 // issueWebAuthnToken builds a sso.Subject for the WebAuthn-
 // authenticated user + mints an access token via the client's
 // configured TokenIssuer. AMR carries "webauthn" so resource
@@ -416,10 +450,10 @@ type webauthnIssueResult struct {
 //
 // When the client's scopes include `offline_access` AND deps.
 // oauth.RefreshTokenStore is wired, a refresh_token rides along; when
-// `openid` is in scope AND deps.IDTokenIssuer is wired, an
-// id_token does. Either dep missing degrades silently — same
-// shape /auth/login uses when the corresponding backend isn't
-// configured.
+// `openid` is in scope AND an id_token issuer resolves for the client
+// (per-tenant via idTokenIssuerForWebAuthn), an id_token does. Either
+// dep missing degrades silently — same shape /auth/login uses when the
+// corresponding backend isn't configured.
 func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID string) (*webauthnIssueResult, error) {
 	ctx := r.Context()
 	client, err := deps.ClientStore.Get(ctx, clientID)
@@ -459,29 +493,47 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		ExpiresIn:   token.ExpiresIn,
 		Scope:       token.Scope,
 	}
-	// id_token: gated on openid scope AND a wired oidc.IDTokenIssuer.
-	// Mirrors the contract /auth/login implements — clients that
-	// request openid get an id_token; clients that don't, don't.
-	if slices.Contains(scopes, sso.ScopeOpenID) && deps.IDTokenIssuer != nil {
-		idToken, err := deps.IDTokenIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
-			Subject:  userID,
-			Audience: client.ID,
-			AuthTime: authTime,
-			AMR:      []string{"webauthn"},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, err)
+	// id_token: gated on openid scope AND a resolvable id_token issuer.
+	// Mirrors the contract /auth/login implements — clients that request
+	// openid get an id_token; clients that don't, don't. The issuer is
+	// resolved PER-TENANT so a tenant's WebAuthn id_token is signed by
+	// the tenant's key (same key as its access + id tokens elsewhere),
+	// not the shared key.
+	if slices.Contains(scopes, sso.ScopeOpenID) {
+		idIssuer, emit, resErr := idTokenIssuerForWebAuthn(deps, client)
+		if resErr != nil {
+			// Misconfigured/unregistered tenant issuer: fail closed
+			// (errWebAuthnIDToken → 500), exactly as the access-token
+			// path 500s on an unregistered strategy. Never sign this
+			// tenant's id_token with the shared key.
+			return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, resErr)
 		}
-		// Fail-closed encryption: a client that registered
-		// id_token_encrypted_response_alg gets a JWE; if encryption
-		// is requested but fails, omit the id_token (no cleartext
-		// leak) rather than returning the signed form.
-		if deps.EncryptIDToken != nil {
-			if enc, ok := deps.EncryptIDToken(ctx, client, idToken); ok {
-				result.IDToken = enc
+		// emit=false ⇒ no id_token issuer wired, OR the tenant's strategy
+		// can't mint id_tokens (e.g. opaque session tokens). Omit the
+		// id_token rather than sign with the shared key — same silent
+		// degrade /auth/login uses when no issuer is configured. Flow
+		// continues to the refresh-token block below regardless.
+		if emit {
+			idToken, err := idIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
+				Subject:  userID,
+				Audience: client.ID,
+				AuthTime: authTime,
+				AMR:      []string{"webauthn"},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, err)
 			}
-		} else {
-			result.IDToken = idToken
+			// Fail-closed encryption: a client that registered
+			// id_token_encrypted_response_alg gets a JWE; if encryption
+			// is requested but fails, omit the id_token (no cleartext
+			// leak) rather than returning the signed form.
+			if deps.EncryptIDToken != nil {
+				if enc, ok := deps.EncryptIDToken(ctx, client, idToken); ok {
+					result.IDToken = enc
+				}
+			} else {
+				result.IDToken = idToken
+			}
 		}
 	}
 	// refresh_token: gated on a wired oauth.RefreshTokenStore — matches

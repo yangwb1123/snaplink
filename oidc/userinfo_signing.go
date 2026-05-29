@@ -24,6 +24,17 @@ const ErrUserinfoServerError = "server_error"
 // satisfies it via the accessor methods.
 type UserinfoSigningDeps interface {
 	IDTokenIssuer() IDTokenIssuer
+	// IDTokenIssuerForClient selects the per-tenant issuer that should
+	// sign this client's userinfo. UserinfoSigner is an optional
+	// extension of IDTokenIssuer signing on the SAME key (see this
+	// package's types.go), so the id_token selector also governs
+	// userinfo — keeping all of a tenant's signed surfaces on one key.
+	// Same fail-closed contract as IssuerForClient: emit=false ⇒ the
+	// tenant strategy can't sign here (omit, never fall back to the
+	// shared key); err != nil ⇒ a misconfigured/unregistered tenant
+	// issuer (also omit). Returns the shared issuer for non-tenant
+	// clients.
+	IDTokenIssuerForClient(c *core.Client) (IDTokenIssuer, bool, error)
 	ClientStoreAccessor() core.ClientStore
 	SrvLogger() spi.Logger
 	// JWEResponseEncrypter returns the wired response encrypter (nil
@@ -39,7 +50,15 @@ type UserinfoSigningDeps interface {
 // The signed-JWT path fires only when:
 //   - clientID resolves to a registered client AND
 //   - that client's UserinfoSignedResponseAlg is set AND
-//   - the wired IDTokenIssuer implements UserinfoSigner
+//   - the client's per-tenant issuer (IDTokenIssuerForClient) implements
+//     UserinfoSigner
+//
+// The signer is resolved per-tenant so a tenant's userinfo JWT is signed
+// by the SAME key as its access + id tokens. Fail-closed: a tenant whose
+// strategy can't sign userinfo (emit=false, or the resolved issuer isn't
+// a UserinfoSigner) is treated exactly like "no signer" — it OMITS the
+// signature rather than falling back to the shared key (which would sign
+// this tenant's userinfo with another key, the opposite of isolation).
 //
 // Unsupported alg values (anything besides EdDSA) fall through to
 // JSON — the spec says the AS MUST honor the request OR return JSON
@@ -69,7 +88,15 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 	var payload []byte
 	signed := false
 	if wantSign {
-		signer, ok := d.IDTokenIssuer().(UserinfoSigner)
+		// Resolve the signer per-tenant (UserinfoSigner extends the same
+		// issuer that mints id_tokens). emit=false / a resolution error /
+		// an issuer that isn't a UserinfoSigner all collapse to ok=false:
+		// "can't sign here" → omit the signature, never reach for the
+		// shared key. The downstream branch then either falls through to
+		// JSON (sign-only) or encrypts the raw JSON under the RP's key
+		// (encrypt path is unaffected — it keys off Client.JWKS, not the
+		// signer).
+		signer, ok := userinfoSignerForClient(d, client)
 		if ok && client.UserinfoSignedResponseAlg == UserinfoSignedAlgEdDSA {
 			jwt, serr := signer.SignUserInfo(reqCtx, client.ID, body)
 			if serr != nil {
@@ -129,6 +156,37 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 	}
 	writeUserinfoJWT(ctx, jwe)
 	return true
+}
+
+// userinfoSignerForClient resolves the UserinfoSigner that should sign
+// this client's userinfo, routing through the per-tenant id_token issuer
+// selector so a tenant's userinfo rides the SAME key as its access + id
+// tokens. Returns ok=false (the caller omits the signature, NEVER falling
+// back to the shared key) when:
+//   - resolution errors (an unregistered tenant issuer — fail closed), or
+//   - emit=false (the tenant strategy can't mint id_tokens, e.g. opaque
+//     session tokens), or
+//   - the resolved issuer doesn't implement the optional UserinfoSigner
+//     extension.
+//
+// Crucially this does NOT consult d.IDTokenIssuer() (the shared issuer) on
+// any of those paths: for a tenant client the only acceptable signer is
+// that tenant's own key. Non-tenant clients get the shared issuer back
+// from IDTokenIssuerForClient itself, so this is byte-identical to the
+// previous `d.IDTokenIssuer().(UserinfoSigner)` for them.
+func userinfoSignerForClient(d UserinfoSigningDeps, client *core.Client) (UserinfoSigner, bool) {
+	idIssuer, emit, err := d.IDTokenIssuerForClient(client)
+	if err != nil {
+		// Misconfigured/unregistered tenant issuer — fail closed by
+		// omission (the access-token path surfaces the same misconfig).
+		d.SrvLogger().Error("userinfo signer resolution failed; omitting signature", "error", err, "client", client.ID)
+		return nil, false
+	}
+	if !emit || idIssuer == nil {
+		return nil, false
+	}
+	signer, ok := idIssuer.(UserinfoSigner)
+	return signer, ok
 }
 
 // writeUserinfoJWT emits a JWT/JWE userinfo response (application/jwt).
