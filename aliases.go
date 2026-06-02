@@ -249,6 +249,7 @@ const PathAPIPrefix = core.PathAPIPrefix
 const PathAuthzPolicyBundle = core.PathAuthzPolicyBundle
 const PathAuditEventByID = core.PathAuditEventByID
 const PathAuditEvents = core.PathAuditEvents
+const PathAuditFacets = core.PathAuditFacets
 const PathCallback = core.PathCallback
 const PathClientByID = core.PathClientByID
 const PathDeviceCode = core.PathDeviceCode

@@ -16,7 +16,7 @@
 # + Dynamic Client Registration (/register, /register/{client_id};
 # RFC 7591 + 7592).
 # Plus the operator-side surfaces: GET /api/v1/clients/{id} (open),
-# the audit query API (/api/v1/audit/events[/{id}]), the netpolicy
+# the audit query API (/api/v1/audit/events[/{id}], /api/v1/audit/facets), the netpolicy
 # CRUD + classify surface (/api/v1/netpolicy/...), and the full admin
 # gRPC service surface exposed via grpc-gateway under /api/v1/admin/* —
 # Snapshot, Release, Tenant, Domain, Client, User, Token, Permission.
@@ -1819,6 +1819,104 @@ paths:
           description: |
             `audit_not_enabled` when no recorder is wired;
             `server_error` when the Sink's Query call failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/audit/facets:
+    get:
+      tags: [admin]
+      summary: Aggregate audit-event facet counts.
+      description: |
+        Returns per-dimension candidate filter values + counts over the
+        events matching the SAME filter query as `/api/v1/audit/events`
+        (time range + non-dimension filters). Lets a filter UI render
+        "Outcome: success (1.2k) / failure (40)", "Client: ...", etc.
+        without an N+1 round trip per candidate value.
+
+        Dimensions are deliberately bounded — `outcome`, `type`,
+        `client_id`, `provider`. High-cardinality per-user / per-request
+        fields (`actor_id`, `trace_id`, `request_id`) are NOT faceted (the
+        value space grows with traffic; filter on them directly instead).
+
+        `limit` / `offset` are accepted but ignored — facets describe the
+        whole filtered window, not a page of it. Admin-gated identically to
+        `/api/v1/audit/events` (`admin:read`).
+
+        Requires `WithAuditAPI` + a Sink implementing the optional
+        `audit.FacetQuerier` (the built-in `MemorySink` + the SQLite sink
+        do). A write-only Sink (e.g. `WebhookSink`) yields HTTP 501
+        `audit_not_enabled` so the UI can fall back to plain queries.
+      operationId: queryAuditFacets
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string }
+          description: One of the canonical audit event types (login, logout, refresh_token_issued, ...).
+        - name: actor_id
+          in: query
+          schema: { type: string }
+        - name: client_id
+          in: query
+          schema: { type: string }
+        - name: provider
+          in: query
+          schema: { type: string }
+        - name: outcome
+          in: query
+          schema:
+            type: string
+            enum: [success, failure]
+        - name: request_id
+          in: query
+          schema: { type: string }
+        - name: trace_id
+          in: query
+          schema: { type: string }
+          description: W3C trace context — joins audit + APM data.
+        - name: since
+          in: query
+          schema: { type: string }
+          description: RFC 3339 or unix seconds.
+        - name: until
+          in: query
+          schema: { type: string }
+          description: RFC 3339 or unix seconds.
+      responses:
+        "200":
+          description: Facet aggregation succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditFacetsResponse"
+        "400":
+          description: Malformed time parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: |
+            `audit_not_enabled` when no recorder is wired; `server_error`
+            when the Sink's Facets call failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: |
+            `audit_not_enabled` — the configured Sink does not implement
+            facet aggregation (`audit.FacetQuerier`). Fall back to
+            `/api/v1/audit/events`.
           content:
             application/json:
               schema:
@@ -4144,6 +4242,42 @@ components:
             $ref: "#/components/schemas/AuditEvent"
         count:
           type: integer
+
+    AuditFacets:
+      type: object
+      required: [total, outcomes, types, clients, providers]
+      description: |
+        Per-dimension value counts over the events matching the facet
+        query. Dimensions are bounded by design (no high-cardinality
+        actor / trace / request facets). Empty client_id / provider values
+        are skipped (not a filter value the UI offers).
+      properties:
+        total:
+          type: integer
+          description: Number of events matching the query.
+        outcomes:
+          type: object
+          additionalProperties: { type: integer }
+          description: Count keyed by outcome (success / failure).
+        types:
+          type: object
+          additionalProperties: { type: integer }
+          description: Count keyed by canonical event type.
+        clients:
+          type: object
+          additionalProperties: { type: integer }
+          description: Count keyed by client_id.
+        providers:
+          type: object
+          additionalProperties: { type: integer }
+          description: Count keyed by authenticator provider.
+
+    AuditFacetsResponse:
+      type: object
+      required: [facets]
+      properties:
+        facets:
+          $ref: "#/components/schemas/AuditFacets"
 
     NetPolicy:
       type: object

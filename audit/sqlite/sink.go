@@ -201,14 +201,14 @@ func (s *Sink) Get(ctx context.Context, id string) (*audit.Event, error) {
 	return e, nil
 }
 
-// Query matches the [audit.Sink] contract. WHERE clauses are
-// driven by populated [audit.Query] fields; ORDER BY ts DESC mirrors
-// the MemorySink "newest first" guarantee callers expect for
-// stable pagination.
-func (s *Sink) Query(ctx context.Context, q audit.Query) ([]*audit.Event, error) {
-	if s == nil || s.db == nil {
-		return nil, errors.New("audit/sqlite: closed")
-	}
+// buildWhere translates the populated filter fields of q into a
+// "WHERE col = ? AND ..." fragment (empty string when no filters) plus
+// the matching positional args. It is the single source of filter
+// semantics so Query and Facets WHERE-clause behavior stays identical —
+// a divergence would let the facet counts disagree with the rows the
+// filter UI then fetches. Limit/Offset are NOT encoded here (they're
+// pagination, not filters).
+func buildWhere(q audit.Query) (string, []any) {
 	var clauses []string
 	var args []any
 	addEq := func(col, val string) {
@@ -233,11 +233,23 @@ func (s *Sink) Query(ctx context.Context, q audit.Query) ([]*audit.Event, error)
 		clauses = append(clauses, "ts_unix_ns < ?")
 		args = append(args, q.Until.UnixNano())
 	}
-
-	sqlStr := selectColumns + ` FROM audit_events`
-	if len(clauses) > 0 {
-		sqlStr += " WHERE " + strings.Join(clauses, " AND ")
+	if len(clauses) == 0 {
+		return "", nil
 	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// Query matches the [audit.Sink] contract. WHERE clauses are
+// driven by populated [audit.Query] fields; ORDER BY ts DESC mirrors
+// the MemorySink "newest first" guarantee callers expect for
+// stable pagination.
+func (s *Sink) Query(ctx context.Context, q audit.Query) ([]*audit.Event, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("audit/sqlite: closed")
+	}
+	where, args := buildWhere(q)
+
+	sqlStr := selectColumns + ` FROM audit_events` + where
 	sqlStr += " ORDER BY ts_unix_ns DESC LIMIT " + strconv.Itoa(q.NormalizedLimit())
 	if q.Offset > 0 {
 		sqlStr += " OFFSET " + strconv.Itoa(q.Offset)
@@ -260,6 +272,88 @@ func (s *Sink) Query(ctx context.Context, q audit.Query) ([]*audit.Event, error)
 		return nil, fmt.Errorf("audit/sqlite: rows: %w", err)
 	}
 	return out, nil
+}
+
+// Facets aggregates per-dimension counts (outcome / type / client /
+// provider) over every event matching q's time range + non-dimension
+// filters. It reuses buildWhere so the GROUP BY queries honor exactly
+// the same filter semantics as Query — the counts describe the same row
+// set the filter UI would page through. Limit/Offset are ignored: facets
+// summarize the whole filtered window.
+//
+// One grouped SELECT per dimension keeps each result set bounded by that
+// dimension's distinct-value cardinality (small for outcome/type/client/
+// provider) rather than scanning + decoding every Event row in Go. The
+// total comes from the outcome roll-up so the four queries plus the count
+// agree on a single snapshot under SQLite's single-writer model.
+// Implements the optional [audit.FacetQuerier] extension.
+func (s *Sink) Facets(ctx context.Context, q audit.Query) (*audit.Facets, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("audit/sqlite: closed")
+	}
+	where, args := buildWhere(q)
+
+	f := &audit.Facets{
+		Outcomes:  map[audit.Outcome]int{},
+		Types:     map[audit.EventType]int{},
+		Clients:   map[string]int{},
+		Providers: map[string]int{},
+	}
+
+	// Outcome roll-up also yields Total — sum of every matched row.
+	if err := s.groupCount(ctx, "outcome", where, args, func(val string, n int) {
+		f.Outcomes[audit.Outcome(val)] += n
+		f.Total += n
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.groupCount(ctx, "type", where, args, func(val string, n int) {
+		f.Types[audit.EventType(val)] += n
+	}); err != nil {
+		return nil, err
+	}
+	// Empty client_id / provider are skipped: they aren't filter values
+	// the UI offers (mirrors the memory backend's Facets.add).
+	if err := s.groupCount(ctx, "client_id", where, args, func(val string, n int) {
+		if val != "" {
+			f.Clients[val] += n
+		}
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.groupCount(ctx, "provider", where, args, func(val string, n int) {
+		if val != "" {
+			f.Providers[val] += n
+		}
+	}); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// groupCount runs `SELECT <col>, COUNT(*) ... GROUP BY <col>` over the
+// shared WHERE fragment and feeds each (value, count) pair to visit. col
+// is a fixed internal identifier (never user input), so concatenating it
+// into the SQL is injection-safe; all variable data rides on args.
+func (s *Sink) groupCount(ctx context.Context, col, where string, args []any, visit func(val string, n int)) error {
+	sqlStr := "SELECT " + col + ", COUNT(*) FROM audit_events" + where + " GROUP BY " + col
+	rows, err := s.db.QueryContext(ctx, sqlStr, args...)
+	if err != nil {
+		return fmt.Errorf("audit/sqlite: facets %s: %w", col, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var val sql.NullString
+		var n int
+		if err := rows.Scan(&val, &n); err != nil {
+			return fmt.Errorf("audit/sqlite: facets scan %s: %w", col, err)
+		}
+		visit(val.String, n)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("audit/sqlite: facets rows %s: %w", col, err)
+	}
+	return nil
 }
 
 // selectColumns names the SELECT projection. Kept in column order
@@ -384,5 +478,8 @@ func newEventID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Compile-time interface assertion.
-var _ audit.Sink = (*Sink)(nil)
+// Compile-time interface assertions.
+var (
+	_ audit.Sink         = (*Sink)(nil)
+	_ audit.FacetQuerier = (*Sink)(nil)
+)

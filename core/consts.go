@@ -26,6 +26,7 @@ const (
 	PathClientByID      = "/clients/:id"
 	PathAuditEvents     = "/audit/events"
 	PathAuditEventByID  = "/audit/events/:id"
+	PathAuditFacets     = "/audit/facets"
 
 	PathMyPermissions = "/permissions/me"
 	PathMyMenus       = "/menus/me"

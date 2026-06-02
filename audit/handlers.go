@@ -31,6 +31,9 @@ const (
 	KeyCount  = "count"
 )
 
+// Response key for /api/v1/audit/facets.
+const KeyFacets = "facets"
+
 // Error codes for /api/v1/audit/events.
 const (
 	ErrNotEnabled        = "audit_not_enabled"
@@ -67,6 +70,49 @@ func HandleEvents(d HandlerDeps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{
 		KeyEvents: events,
 		KeyCount:  len(events),
+	})
+}
+
+// HandleFacets implements GET /api/v1/audit/facets. It accepts the same
+// filter query-string as HandleEvents (limit/offset are ignored — facets
+// summarize the whole filtered window) and returns per-dimension candidate
+// values + counts so a filter UI can render its options without an N+1
+// round trip. Admin-gated like the rest of /api/v1/audit/*.
+//
+// The Sink must implement the optional FacetQuerier extension. A sink
+// that doesn't (e.g. a write-only WebhookSink) yields HTTP 501 with the
+// existing audit_not_enabled code so the UI falls back to plain queries
+// rather than surfacing a hard error.
+func HandleFacets(d HandlerDeps, ctx core.HandlerContext) {
+	rec := d.Auditor()
+	if rec == nil {
+		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: ErrNotEnabled})
+		return
+	}
+	fq, ok := rec.Sink().(FacetQuerier)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, map[string]string{core.KeyError: ErrNotEnabled})
+		return
+	}
+	q, err := parseQuery(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]string{core.KeyError: core.ErrInvalidRequest, core.KeyErrorDescription: err.Error()})
+		return
+	}
+	facets, err := fq.Facets(ctx.Request().Context(), q)
+	if err != nil {
+		// A wrapped sink that delegates may still report the capability
+		// missing at call time (AsyncSink/MultiSink over a write-only leaf).
+		if errors.Is(err, ErrFacetsUnsupported) {
+			ctx.JSON(http.StatusNotImplemented, map[string]string{core.KeyError: ErrNotEnabled})
+			return
+		}
+		d.SrvLogger().Error("audit facets failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: core.ErrInternal})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyFacets: facets,
 	})
 }
 

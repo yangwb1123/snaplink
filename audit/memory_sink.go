@@ -88,6 +88,24 @@ func (m *MemorySink) Query(_ context.Context, q Query) ([]*Event, error) {
 	return matches[start:end], nil
 }
 
+// Facets aggregates per-dimension counts over every event matching q.
+// It honors q's time range + non-dimension filters via Query.Match
+// (Limit/Offset are ignored — facets describe the whole filtered window).
+// Implements the optional FacetQuerier extension.
+func (m *MemorySink) Facets(_ context.Context, q Query) (*Facets, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	f := newFacets()
+	m.forEachNewestFirst(func(e *Event) bool {
+		if q.Match(e) {
+			f.add(e)
+		}
+		return true
+	})
+	return f, nil
+}
+
 // forEachNewestFirst walks the buffer from newest to oldest. visit returns
 // false to stop early.
 func (m *MemorySink) forEachNewestFirst(visit func(*Event) bool) {

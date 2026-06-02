@@ -2925,6 +2925,7 @@ func (s *Server) AuthenticatedSubject(ctx HandlerContext) (userID, clientID stri
 // Audit handlers (delegators — bodies in audit/handlers.go).
 func (s *Server) handleAuditEvents(ctx HandlerContext)    { audit.HandleEvents(s, ctx) }
 func (s *Server) handleAuditEventByID(ctx HandlerContext) { audit.HandleEventByID(s, ctx) }
+func (s *Server) handleAuditFacets(ctx HandlerContext)    { audit.HandleFacets(s, ctx) }
 
 // JWKS handler (delegator — body in oidc/handlers.go).
 func (s *Server) handleJWKS(ctx HandlerContext) { oidc.HandleJWKS(s, ctx) }

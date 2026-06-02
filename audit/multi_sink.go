@@ -55,3 +55,19 @@ func (m *MultiSink) Query(ctx context.Context, q Query) ([]*Event, error) {
 	}
 	return nil, ErrSinkWriteOnly
 }
+
+// Facets delegates to the first wrapped sink that implements the optional
+// FacetQuerier extension (typically the read-capable MemorySink / SQLite
+// leaf), mirroring how Get / Query pick the first readable sink. A fan-out
+// composed only of write-only sinks (WebhookSink, WriterSink) yields
+// ErrFacetsUnsupported so the capability stays optional end-to-end.
+func (m *MultiSink) Facets(ctx context.Context, q Query) (*Facets, error) {
+	for _, s := range m.sinks {
+		fq, ok := s.(FacetQuerier)
+		if !ok {
+			continue
+		}
+		return fq.Facets(ctx, q)
+	}
+	return nil, ErrFacetsUnsupported
+}

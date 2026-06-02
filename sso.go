@@ -1031,9 +1031,12 @@ func WithCAEPTransmitter(t *caep.Transmitter) Option {
 func (s *Server) CAEPTransmitter() *caep.Transmitter { return s.caepTransmitter }
 
 // WithAuditAPI mounts the audit query endpoints
-// (GET /api/v1/audit/events, GET /api/v1/audit/events/:id). Requires a
-// recorder to also be set. Endpoints are unauthenticated by default — gate
-// them with middleware or a reverse proxy if exposed beyond localhost.
+// (GET /api/v1/audit/events, GET /api/v1/audit/events/:id,
+// GET /api/v1/audit/facets). Requires a recorder to also be set. The
+// facets endpoint needs a Sink implementing the optional
+// audit.FacetQuerier (MemorySink + sqlite do; write-only sinks yield 501).
+// Endpoints are unauthenticated by default — gate them with middleware or
+// a reverse proxy if exposed beyond localhost.
 func WithAuditAPI() Option {
 	return func(s *Server) { s.auditAPI = true }
 }
@@ -1478,6 +1481,7 @@ func (s *Server) Mount() {
 	if s.auditAPI && s.auditor != nil {
 		api.GET(PathAuditEvents, s.handleAuditEvents)
 		api.GET(PathAuditEventByID, s.handleAuditEventByID)
+		api.GET(PathAuditFacets, s.handleAuditFacets)
 	}
 	if s.netAPI && s.netStore != nil {
 		api.GET(PathNetPolicies, s.handleListNetPolicies)

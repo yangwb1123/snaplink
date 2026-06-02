@@ -196,6 +196,24 @@ func (a *AsyncSink) Query(ctx context.Context, q Query) ([]*Event, error) {
 	return a.inner.Query(ctx, q)
 }
 
+// ErrFacetsUnsupported is returned by Facets when the wrapped Sink does
+// not implement the optional FacetQuerier extension. Callers (the HTTP
+// handler) translate this into a not-implemented response rather than a
+// generic 500 so a filter UI can fall back to plain queries.
+var ErrFacetsUnsupported = errors.New("audit: sink does not support facet aggregation")
+
+// Facets delegates to the inner sink when it implements FacetQuerier
+// (the read path is synchronous), mirroring Query. A wrapped sink without
+// facet support yields ErrFacetsUnsupported so the capability stays
+// optional end-to-end.
+func (a *AsyncSink) Facets(ctx context.Context, q Query) (*Facets, error) {
+	fq, ok := a.inner.(FacetQuerier)
+	if !ok {
+		return nil, ErrFacetsUnsupported
+	}
+	return fq.Facets(ctx, q)
+}
+
 // Close stops accepting new events and drains the in-flight queue.
 // Returns nil when the queue empties, or ctx.Err() if the supplied
 // deadline expires first. Idempotent.

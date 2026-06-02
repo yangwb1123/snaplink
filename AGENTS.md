@@ -382,6 +382,14 @@ Audit: `mfa_required`/`mfa_success`/`mfa_failure`.
 `WithHashChain` (`PrevHash`+`Hash`; `VerifyChain` oldest-first;
 `sso-audit-verify` CLI), `WithRedactor` (runs BEFORE the chainer),
 `NewRetryingSink`, `NewAsyncSink` (bounded, never blocks, drops on full).
+Query has an OPTIONAL `FacetQuerier` (`Facets(ctx, Query) → *Facets`,
+type-asserted like the cluster `Ping`/`Stats` seam) backing the
+admin-gated `GET /api/v1/audit/facets` (filter-UI candidate values +
+counts; mirrors `parseQuery`, 501 when the Sink lacks support). Bounded
+dimensions only — outcome/type/client/provider, NEVER high-cardinality
+actor/trace/request (§5 metric rule). Memory + sqlite reuse the same
+`Query.Match`/WHERE builder so semantics match exactly
+(`audit/sqlite/facets_conformance_test.go` locks memory==sqlite).
 
 **Permissions** (`permissions/`). Per-app role registries, wildcard matcher
 (`user:*` ⊇ `user:read`, `*` ⊇ all), menu filtering, login embedding via
