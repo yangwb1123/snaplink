@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race vet fmt build docker ci clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check
+.PHONY: help test race vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -64,7 +64,17 @@ playground: ## Run the interactive Web UI playground on localhost:8090.
 	@echo "SSO playground at http://localhost:8090 (ctrl-c to stop)"
 	@go run ./examples/playground
 
-ci: fmt vet race build proto-lint ## Run the same checks CI runs.
+# ci-modules builds + tests each NESTED module separately. They are
+# excluded from the root `go ... ./...` on purpose (kms/awskms carries the
+# aws-sdk-go-v2 dep that MUST NOT enter the core go.mod), so CI must enter
+# each submodule explicitly. There is deliberately no go.work: a workspace
+# would merge the build lists and surface aws-sdk in the root module graph
+# (`go list -m all`), blurring the core's zero-external-SDK invariant. The
+# submodule resolves the core module via its own `replace => ../../`.
+ci-modules: ## Build + race-test the nested modules (kms/awskms).
+	cd kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
+
+ci: fmt vet race build proto-lint ci-modules ## Run the same checks CI runs.
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)

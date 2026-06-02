@@ -66,6 +66,8 @@ tenant/ geo/   Tenant resolution + Geo enrichment middleware
 authenticators/  9 pluggable + webauthn/ helper
 defaultimpl/   Default issuers (Ed25519/ECDSA/RSA) + Memory* stores + JWE
                (RSA/ECDH/Multi) + cryptosigner KMS bridge; /sqlite (pure-Go); /detectors
+kms/awskms/    SEPARATE nested module — concrete AWS KMS crypto.Signer peer
+               for the cryptosigner bridge (aws-sdk-go-v2 stays OUT of core go.mod) (§3,§4)
 adapters/{echo,gin}/   Router adapters
 audit/         Recorder + Sinks + hash chain
 permissions/   Roles + menus + wildcard matcher
@@ -258,7 +260,10 @@ stateless, signed + JWKS (pass one `Ed25519JWTIssuer` to both
 **Signing-key lifecycle.** All three issuers (`Ed25519`/`ECDSA`/`RSA`)
 route signing through a `{Algo}Signer` seam — default in-process, or
 `With{Algo}ExternalSigner` for a KMS/HSM key that never enters the process
-(`defaultimpl/cryptosigner` bridges any `crypto.Signer`).
+(`defaultimpl/cryptosigner` bridges any `crypto.Signer`; ECDSA DER→R‖S).
+A concrete **AWS KMS** peer ships in the `kms/awskms/` nested module
+(ECDSA ES256/384/512 + RSA RS256/PS256; KMS has **no Ed25519** → clear
+error; KMS sign is 5-50ms, so extend token TTL / cache — §4).
 `RotateKey`/`RetireKey` do overlap-window rotation (demoted key stays
 verify-only in JWKS through its TTL); `StartRotation` runs the scheduled
 loop. cmd wires `keys.rotation.*` → `signing_key_rotated` audit +
@@ -298,6 +303,17 @@ non-aggregating build (no goroutine, metric, or readycheck).
 ## 4. Subsystems
 
 Map only — locator + key trap + file pointer. Code is the source of truth.
+
+**AWS KMS signer** (`kms/awskms/`, SEPARATE nested module). Concrete
+`crypto.Signer` over a KMS asymmetric key — the private key never leaves
+the HSM (FIPS/PCI/SOC2 gate). Wired via `cryptosigner.{ECDSA,RSA}` →
+`With{ECDSA,RSA}ExternalSigner`. ECDSA returns ASN.1 DER (bridge converts
+to JWS R‖S); RSA raw. ES256/384/512 + RS256/PS256; **no Ed25519** (KMS has
+no EdDSA spec → `ErrUnsupportedKey`); KMS errors fail closed. The
+`aws-sdk-go-v2` dep lives ONLY in this module's `go.mod` (core stays
+dep-free) — **no `go.work`** (a workspace would surface aws in the root
+`go list -m all`); `make ci` runs `ci-modules` which `cd`s in to
+build+race-test it.
 
 **SQLite substrate** (`defaultimpl/sqlite/`). Pure-Go
 (`modernc.org/sqlite`). Race-free via `DELETE … RETURNING` (single-use

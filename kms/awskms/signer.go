@@ -1,0 +1,266 @@
+package awskms
+
+import (
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
+)
+
+// ErrUnsupportedKey is returned when the KMS key (or the requested signing
+// scheme) is not one this signer can bridge into the JWS issuers. AWS KMS
+// asymmetric keys are ECC (NIST P-256/384/521) or RSA (2048/3072/4096)
+// only — it has no Ed25519/EdDSA signing key spec, so an EdDSA request is
+// rejected here rather than silently mis-signed.
+var ErrUnsupportedKey = errors.New("awskms: unsupported key spec or signing scheme")
+
+// KMSAPI is the minimal slice of the AWS KMS client this signer needs.
+// Declaring our own interface (rather than depending on *kms.Client
+// directly) keeps the seam test-injectable: the real *kms.Client from
+// aws-sdk-go-v2 satisfies it structurally, and signer_test.go injects a
+// local-key fake. Only the two operations actually used appear here.
+type KMSAPI interface {
+	Sign(ctx context.Context, in *kms.SignInput, optFns ...func(*kms.Options)) (*kms.SignOutput, error)
+	GetPublicKey(ctx context.Context, in *kms.GetPublicKeyInput, optFns ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error)
+}
+
+// Signer is a [crypto.Signer] backed by an AWS KMS asymmetric key. The
+// private key never leaves the KMS HSM — this is the #1 compliance gate
+// (FIPS 140-2/3, PCI-DSS, SOC 2): the process holds only the public half
+// and a key reference, and every Sign is a KMS round-trip.
+//
+// It is wired into the SSO issuers through the cryptosigner bridge, NOT
+// directly:
+//
+//	c := kms.NewFromConfig(awsCfg)
+//	sgn, err := awskms.New(c, keyARN)
+//	bridge, pub, err := cryptosigner.ECDSA(sgn)      // P-256 / ES256
+//	iss := defaultimpl.NewECDSAJWTIssuer(
+//	    defaultimpl.WithECDSAExternalSigner(bridge, pub, keyARN),
+//	)
+//
+// crypto.Signer contract (the seam every cloud-KMS SDK satisfies):
+//
+//   - Public() returns the parsed public key (*ecdsa.PublicKey /
+//     *rsa.PublicKey).
+//   - Sign(rand, digest, opts) signs the ALREADY-HASHED digest. opts
+//     carries the hash (and, for *rsa.PSSOptions, selects PSS). The rand
+//     reader is ignored — KMS owns randomness inside the HSM.
+//   - For ECDSA the returned signature is ASN.1 DER (SEQUENCE{r,s}),
+//     exactly as crypto/ecdsa.SignASN1 and KMS itself produce; the
+//     cryptosigner bridge converts that DER into the fixed-width R||S form
+//     JWS ES256 requires (RFC 7518 §3.4). We deliberately do NOT convert
+//     here — returning DER keeps this type a faithful, reusable
+//     crypto.Signer (it round-trips against x509/tls/ecdsa.VerifyASN1).
+//   - For RSA the returned signature is the raw PKCS#1 v1.5 / PSS bytes,
+//     which is already the JWS form.
+//
+// Fail-closed: any KMS error (throttling, access denied, key disabled) is
+// returned from Sign, so token issuance fails rather than emitting an
+// unsigned or partially-signed token.
+type Signer struct {
+	client KMSAPI
+	keyID  string
+
+	// pubOnce + cached memoize the GetPublicKey round-trip: KMS public
+	// keys are immutable for a key id, so one fetch suffices for the
+	// process lifetime and Public() (called on every wiring + JWKS build)
+	// stays cheap. A failed fetch is not cached, so a transient outage at
+	// startup can be retried.
+	pubOnce sync.Once
+	cached  *publicKey
+	pubErr  error
+}
+
+// publicKey bundles the parsed key with the JWS alg its KMS key spec
+// implies, so Sign can pick the right SigningAlgorithmSpec without a
+// second round-trip.
+type publicKey struct {
+	key crypto.PublicKey
+	// kmsSign* are the KMS SigningAlgorithmSpec values valid for this key
+	// spec, indexed by the crypto.Hash the issuer requests.
+	keySpec kmstypes.KeySpec
+}
+
+// Option configures the Signer.
+type Option func(*Signer)
+
+// New builds a KMS-backed crypto.Signer for the asymmetric key named by
+// keyID (a key ID, ARN, or alias). It does NOT call KMS — the first
+// Public() or Sign() performs the lazy GetPublicKey. client is typically
+// a *kms.Client from kms.NewFromConfig(cfg); tests inject a KMSAPI fake.
+func New(client KMSAPI, keyID string, opts ...Option) (*Signer, error) {
+	if client == nil {
+		return nil, errors.New("awskms: nil KMS client")
+	}
+	if keyID == "" {
+		return nil, errors.New("awskms: empty key id")
+	}
+	s := &Signer{client: client, keyID: keyID}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
+}
+
+// loadPublic fetches + parses the public key once. KMS returns the public
+// key as a DER-encoded SubjectPublicKeyInfo (RFC 5280), which
+// x509.ParsePKIXPublicKey turns into a *ecdsa.PublicKey or *rsa.PublicKey.
+func (s *Signer) loadPublic(ctx context.Context) (*publicKey, error) {
+	s.pubOnce.Do(func() {
+		out, err := s.client.GetPublicKey(ctx, &kms.GetPublicKeyInput{KeyId: &s.keyID})
+		if err != nil {
+			s.pubErr = fmt.Errorf("awskms: get public key: %w", err)
+			s.pubOnce = sync.Once{} // allow retry after a transient failure
+			return
+		}
+		pub, err := x509.ParsePKIXPublicKey(out.PublicKey)
+		if err != nil {
+			s.pubErr = fmt.Errorf("awskms: parse public key DER: %w", err)
+			return
+		}
+		switch pub.(type) {
+		case *ecdsa.PublicKey, *rsa.PublicKey:
+			// supported
+		default:
+			s.pubErr = fmt.Errorf("awskms: %w: public key type %T", ErrUnsupportedKey, pub)
+			return
+		}
+		s.cached = &publicKey{key: pub, keySpec: out.KeySpec}
+	})
+	if s.pubErr != nil {
+		return nil, s.pubErr
+	}
+	return s.cached, nil
+}
+
+// Public implements crypto.Signer. It returns the parsed *ecdsa.PublicKey
+// / *rsa.PublicKey, fetching + caching it from KMS on first call. On a KMS
+// or parse error it returns nil (the crypto.Signer interface has no error
+// return here); the subsequent Sign — or the cryptosigner bridge's
+// wiring-time public-key shape check — surfaces the failure. Wire through
+// PublicKey(ctx) when an explicit error is needed at startup.
+func (s *Signer) Public() crypto.PublicKey {
+	pk, err := s.loadPublic(context.Background())
+	if err != nil {
+		return nil
+	}
+	return pk.key
+}
+
+// PublicKey is the error-returning form of Public, for wiring-time use
+// (operators SHOULD call this once at startup so a misconfigured key id /
+// IAM permission fails loud before the first token issuance).
+func (s *Signer) PublicKey(ctx context.Context) (crypto.PublicKey, error) {
+	pk, err := s.loadPublic(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return pk.key, nil
+}
+
+// Sign implements crypto.Signer over a KMS key. digest is the ALREADY
+// computed message digest (crypto.Signer's contract); opts.HashFunc()
+// names the hash and, when opts is *rsa.PSSOptions, selects RSA-PSS. The
+// rand reader is ignored — the HSM owns signing randomness.
+//
+// We map (key spec, hash, padding) to the KMS SigningAlgorithmSpec, call
+// Sign with MessageType=DIGEST and the precomputed digest, and return the
+// KMS signature verbatim: ASN.1 DER for ECDSA (the stdlib crypto.Signer
+// ECDSA contract — the cryptosigner bridge converts it to JWS R||S), raw
+// bytes for RSA. EdDSA/Ed25519 has no KMS key spec and is rejected.
+func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if opts != nil && opts.HashFunc() == crypto.Hash(0) {
+		// HashFunc()==0 means "no pre-hash" — the Ed25519 contract. KMS
+		// cannot sign EdDSA, so reject clearly rather than mis-mapping it.
+		return nil, fmt.Errorf("awskms: %w: EdDSA / unhashed signing is not supported by AWS KMS (ECDSA + RSA only)", ErrUnsupportedKey)
+	}
+
+	pk, err := s.loadPublic(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	_, pss := opts.(*rsa.PSSOptions)
+	alg, err := signingAlgorithm(pk.keySpec, pk.key, opts.HashFunc(), pss)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := s.client.Sign(context.Background(), &kms.SignInput{
+		KeyId: &s.keyID,
+		// MessageType=DIGEST: the JWS issuer already hashed header.payload,
+		// so we hand KMS the digest, not the raw message (KMS would
+		// otherwise re-hash, producing a signature no verifier accepts).
+		Message:          digest,
+		MessageType:      kmstypes.MessageTypeDigest,
+		SigningAlgorithm: alg,
+	})
+	if err != nil {
+		// Fail closed: a KMS Sign failure must abort issuance, never yield
+		// an unsigned token.
+		return nil, fmt.Errorf("awskms: sign: %w", err)
+	}
+	if len(out.Signature) == 0 {
+		return nil, errors.New("awskms: empty signature from KMS")
+	}
+	return out.Signature, nil
+}
+
+// signingAlgorithm maps the KMS key spec + the requested hash + padding to
+// the matching KMS SigningAlgorithmSpec. Supported:
+//
+//	ECC_NIST_P256 + SHA-256 -> ECDSA_SHA_256  (ES256)
+//	ECC_NIST_P384 + SHA-384 -> ECDSA_SHA_384  (ES384)
+//	ECC_NIST_P521 + SHA-512 -> ECDSA_SHA_512  (ES512)
+//	RSA_*         + SHA-256, !pss -> RSASSA_PKCS1_V1_5_SHA_256 (RS256)
+//	RSA_*         + SHA-256,  pss -> RSASSA_PSS_SHA_256        (PS256)
+//
+// The hash is taken from the issuer's request (crypto.SignerOpts) rather
+// than inferred from the curve, so an ES256 issuer driving a P-256 key and
+// a hypothetical mismatch both resolve correctly or error out.
+func signingAlgorithm(spec kmstypes.KeySpec, pub crypto.PublicKey, hash crypto.Hash, pss bool) (kmstypes.SigningAlgorithmSpec, error) {
+	switch pub.(type) {
+	case *ecdsa.PublicKey:
+		switch spec {
+		case kmstypes.KeySpecEccNistP256:
+			if hash == crypto.SHA256 {
+				return kmstypes.SigningAlgorithmSpecEcdsaSha256, nil
+			}
+		case kmstypes.KeySpecEccNistP384:
+			if hash == crypto.SHA384 {
+				return kmstypes.SigningAlgorithmSpecEcdsaSha384, nil
+			}
+		case kmstypes.KeySpecEccNistP521:
+			if hash == crypto.SHA512 {
+				return kmstypes.SigningAlgorithmSpecEcdsaSha512, nil
+			}
+		}
+		return "", fmt.Errorf("awskms: %w: ECDSA key spec %s with hash %v", ErrUnsupportedKey, spec, hash)
+	case *rsa.PublicKey:
+		// The JWS RSA issuers sign over SHA-256 only (RS256 / PS256). The
+		// KMS RSA key spec (2048/3072/4096) is orthogonal to the hash, so
+		// any RSA spec is acceptable here.
+		if hash != crypto.SHA256 {
+			return "", fmt.Errorf("awskms: %w: RSA with hash %v (only SHA-256 / RS256|PS256 supported)", ErrUnsupportedKey, hash)
+		}
+		if pss {
+			return kmstypes.SigningAlgorithmSpecRsassaPssSha256, nil
+		}
+		return kmstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256, nil
+	default:
+		return "", fmt.Errorf("awskms: %w: public key type %T", ErrUnsupportedKey, pub)
+	}
+}
+
+// Interface guard: Signer is a stdlib crypto.Signer, the exact seam the
+// cryptosigner bridge (and any other crypto.Signer consumer) accepts.
+var _ crypto.Signer = (*Signer)(nil)
