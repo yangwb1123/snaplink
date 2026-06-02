@@ -81,6 +81,7 @@ import (
 	releasememory "github.com/snaplink/sso/releases/store/memory"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/signingkeys"
+	signingkeysetcd "github.com/snaplink/sso/signingkeys/etcd"
 	signingkeysmemory "github.com/snaplink/sso/signingkeys/memory"
 	"github.com/snaplink/sso/snapshot"
 	encryptionaes "github.com/snaplink/sso/snapshot/encryption/aesgcm"
@@ -1397,10 +1398,13 @@ func buildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (clus
 
 // buildSigningKeyRegistry constructs the shared signing-key registry for
 // leaderless multi-replica JWKS aggregation. Returns (nil, "", nil) when
-// disabled. Only the memory backend is functional in this build; etcd
-// returns a clear not-yet-supported error rather than silently no-opping,
-// so an operator who configured it isn't lulled into thinking cross-process
-// aggregation is active.
+// disabled. memory is per-process (single-node / test); etcd is cluster-
+// shared — each replica announces its public keys under a lease and peers
+// Watch + adopt, so a token signed on one replica verifies on every replica.
+// The etcd path is constructed here so the transitive dep stays out of the
+// signingkeys SPI, mirroring buildInvalidationBus. The registry is fail-open
+// (a dropped announcement only narrows a verify-set back toward local keys),
+// so it intentionally gets no /readyz check.
 func buildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Logger) (signingkeys.Registry, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
@@ -1410,7 +1414,26 @@ func buildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Lo
 		logger.Info("signing key registry", "backend", "memory")
 		return signingkeysmemory.New(), "memory", nil
 	case "etcd":
-		return nil, "", errors.New("keys.signing_key_registry.backend=etcd is not yet supported (use memory; etcd lands in a follow-up commit)")
+		if len(cfg.EtcdEndpoints) == 0 {
+			return nil, "", errors.New("keys.signing_key_registry.etcd_endpoints required when backend=etcd")
+		}
+		reg, err := signingkeysetcd.New(signingkeysetcd.Config{
+			Endpoints:   cfg.EtcdEndpoints,
+			Prefix:      cfg.EtcdPrefix,
+			DialTimeout: cfg.EtcdDialTimeout,
+			// LeaseTTL is the backend fallback when an announcement's
+			// LeaseSeconds is 0; the Server derives LeaseSeconds from the same
+			// keys.signing_key_registry.lease_ttl, so the two agree.
+			LeaseTTL: cfg.LeaseTTL,
+			Username: cfg.EtcdUsername,
+			Password: cfg.EtcdPassword,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("signingkeys/etcd: %w", err)
+		}
+		logger.Info("signing key registry", "backend", "etcd",
+			"endpoints", cfg.EtcdEndpoints, "prefix", cfg.EtcdPrefix)
+		return reg, "etcd", nil
 	default:
 		return nil, "", fmt.Errorf("unknown keys.signing_key_registry.backend %q", cfg.Backend)
 	}

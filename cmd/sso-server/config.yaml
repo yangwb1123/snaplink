@@ -803,9 +803,20 @@ keys:
   # keys verify-only, so JWKS + Validate serve the union (each replica still
   # signs only with its own key). Disabled by default = zero behavior change.
   signing_key_registry:
-    backend: ""              # "" (disabled) | memory | etcd (etcd not yet supported)
+    backend: ""              # "" (disabled) | memory (single-process) | etcd (cross-process)
     replica_id: ""           # defaults to the service-registry id; MUST be unique per replica
-    lease_ttl: 0s            # publish lease; 0 -> 5m default
+    lease_ttl: 0s            # publish lease; 0 -> 5m default. A live replica
+                             # keeps its lease alive; on crash the lease expires
+                             # and peers drop its keys after this long.
+    # etcd backend (cross-process aggregation). Each replica announces its
+    # public keys under <etcd_prefix>/<replica_id> with the lease above; peers
+    # Watch the prefix and adopt. Fail-open: an etcd outage degrades to each
+    # replica's own keys, never a 503. Mirrors the cluster.bus etcd surface.
+    etcd_endpoints: []
+    # etcd_prefix: "/snaplink/signingkeys"
+    # etcd_dial_timeout: 5s
+    # etcd_username: ""
+    # etcd_password: ""
 
 # OIDC CIBA (Client-Initiated Backchannel Authentication), poll mode.
 # Server issues an auth_req_id, delivers an out-of-band challenge via

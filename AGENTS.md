@@ -75,7 +75,7 @@ registry/{memory,etcd}/    Service discovery
 bootstrap/{file,memory,builtin,lock}/   First-run init + dist lock
 snapshot/{storage,encryption,loader}/   State export/restore
 releases/{store,pinner,probe}/   Frontend+backend release pinning
-signingkeys/{memory}/   Opt-in leaderless multi-replica JWKS public-key aggregation (publish own signing pubkeys + adopt peers' verify-only)
+signingkeys/{memory,etcd}/   Opt-in leaderless multi-replica JWKS public-key aggregation (publish own signing pubkeys + adopt peers' verify-only)
 ratelimit/ cors/ metrics/ tracing/   Middleware + observability
 config/{etcd}/   YAML + env + etcd + flag loader
 proto/ gen/proto/ grpcserver/   Protobuf + generated Go + gRPC + REST gateway
@@ -269,7 +269,11 @@ map untouched by local `RotateKey`/`RetireKey`. Nil registry = byte-identical to
 a non-aggregating build (zero regression). `WithSigningKeyReplicaID` is REQUIRED
 once a registry is wired — `StartSigningKeyAggregation` errors on an empty id
 rather than start one-directional aggregation (adopt peers but get its own
-announcement rejected). Re-publish on rotation. (etcd registry backend follows.)
+announcement rejected). Re-publish on rotation. Backends: `memory`
+(single-process) + `etcd` (cross-process: announce under `<prefix>/<replicaID>`
+with a KeepAlive'd lease, peers prefix-Watch; lease expiry on a crashed replica
+emits KeysRemoved so its keys drop — pure transport, all validation stays in the
+Server decode gates).
 
 ---
 
@@ -311,7 +315,7 @@ only when the backend exposes `Ping`. YAML toggles:
 | Audit sink / Permissions | `audit.backend` / `permissions.backend` |
 | Tenants + Domains | `tenant.backend` |
 | Recent logins / IP failure counter | `anomaly.{recent_login,ip_failure}.backend` |
-| Signing-key registry (opt-in leaderless aggregation; memory today, etcd to follow) | `keys.signing_key_registry.backend` |
+| Signing-key registry (opt-in leaderless aggregation; memory+etcd) | `keys.signing_key_registry.backend` |
 | Network policy / Service registry (memory+etcd) | `network.store.backend` / `registry.backend` |
 
 **Authenticators** (`authenticators/`). 9 pluggable: `password`, `phone`,
@@ -529,11 +533,14 @@ knob; below is only the non-obvious operator surface.
   (same threat model as XFF, §2).
 - **tenant.suspension_check.cache_ttl** — admin SetStatus invalidates via
   `InvalidateTenantSuspensionCache`.
-- **keys.signing_key_registry.{backend,replica_id,lease_ttl}**
+- **keys.signing_key_registry.{backend,replica_id,lease_ttl,etcd_*}**
   (backend: ``|memory|etcd) — opt-in leaderless multi-replica JWKS
-  aggregation (§3). `memory` is functional today; `etcd` errors as
-  not-yet-supported (follow-up commit). `replica_id` defaults to the
-  service-registry id; MUST be unique per replica.
+  aggregation (§3). `memory` is per-process; `etcd`
+  (`etcd_{endpoints,prefix,dial_timeout,username,password}`, mirroring
+  `cluster.bus`) is cross-process. `replica_id` defaults to the
+  service-registry id; MUST be unique per replica. `lease_ttl` is the
+  announcement lease (kept alive while the replica lives; expiry drops a
+  crashed replica's keys).
 - **oauth.jar** — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect).
 - **mfa** — gated by Risk `RequireMFA`. `provider.kind`:
   `totp`/`webauthn`/`push`/`multi` (`provider.kinds: [...]`); cmd fails

@@ -140,12 +140,20 @@ type KeysConfig struct {
 // VERIFY-ONLY, so JWKS + Validate serve the union while each replica still
 // signs only with its own key. No shared private key, no leader election.
 //
-// Backend: "" (disabled, default) | "memory" | "etcd". In this build only
-// "memory" is functional ("etcd" returns a clear not-yet-supported error).
+// Backend: "" (disabled, default) | "memory" (single-process / test) |
+// "etcd" (cross-process: each replica announces its public keys under a lease
+// and peers Watch + adopt). The etcd_* fields mirror ClusterBusConfig for
+// operator familiarity and are only consulted when backend=etcd.
 type SigningKeyRegistryConfig struct {
 	Backend   string        `yaml:"backend"`
 	ReplicaID string        `yaml:"replica_id"`
 	LeaseTTL  time.Duration `yaml:"lease_ttl"`
+
+	EtcdEndpoints   []string      `yaml:"etcd_endpoints"`
+	EtcdPrefix      string        `yaml:"etcd_prefix"`
+	EtcdDialTimeout time.Duration `yaml:"etcd_dial_timeout"`
+	EtcdUsername    string        `yaml:"etcd_username"`
+	EtcdPassword    string        `yaml:"etcd_password"`
 }
 
 // SigningConfig selects the JWT signing algorithm for the server's own
