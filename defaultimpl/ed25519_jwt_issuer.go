@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/caep"
 )
 
 // Ed25519 JWT constants.
@@ -1029,9 +1028,12 @@ var _ oidc.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
 // Logout tokens.
 var _ sso.LogoutTokenIssuer = (*Ed25519JWTIssuer)(nil)
 
-// Compile-time check: same key signs CAEP/SSF Security Event Tokens
-// (RFC 8417) via the generic-JWT path.
-var _ caep.JWTSigner = (*Ed25519JWTIssuer)(nil)
+// The compile-time check that this issuer satisfies caep.JWTSigner lives
+// in the caep package's test (caep/jwtsigner_guard_test.go), NOT here:
+// defaultimpl is the foundational signing primitive and must not import
+// the peripheral caep subsystem (a backwards edge + future-cycle risk).
+// Go's structural typing means SignJWT below already satisfies
+// caep.JWTSigner without a guard in this package.
 
 // SignJWT signs an arbitrary claims object as a compact JWS using the
 // SAME Ed25519 key (and kid) as access + ID + logout tokens, stamping

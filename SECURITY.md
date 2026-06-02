@@ -84,6 +84,13 @@ When deploying `snaplink/sso`:
 - [ ] Audit log shipping — wire the `audit.WebhookSink` or a custom
       `audit.Sink` to a tamper-evident store rather than relying on
       the in-process `MemorySink`.
+- [ ] CAEP/SSF receiver endpoints (`caep_receiver_endpoint` in a
+      client's `Attributes`) are admin/registration-gated and validated
+      https-only, but they are **not** SSRF-filtered — the transmitter
+      will POST a signed SET to whatever https host is registered. Do
+      **not** delegate writes to client `Attributes` to untrusted tenant
+      admins, or a malicious receiver URL could turn the IdP into an
+      SSRF egress point against internal services.
 - [ ] Keep the wall clock forward/monotonic — slew, never step, it on
       running nodes (use chrony, not periodic `ntpdate`/`hwclock` steps).
       Session + refresh-token expiry compare `expires_at > now` exactly

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/oidc"
 )
 
@@ -894,7 +893,10 @@ func (j *RSAJWTIssuer) AcceptsTokenFormat(token string) bool {
 	return parts == 2
 }
 
-// Compile-time interface guards.
+// Compile-time interface guards. The caep.JWTSigner guard is deliberately
+// NOT here: it lives in caep/jwtsigner_guard_test.go so the foundational
+// defaultimpl package never imports the peripheral caep subsystem. SignJWT
+// satisfies caep.JWTSigner structurally regardless.
 var (
 	_ sso.TokenIssuer       = (*RSAJWTIssuer)(nil)
 	_ oidc.IDTokenIssuer    = (*RSAJWTIssuer)(nil)
@@ -903,5 +905,4 @@ var (
 	_ sso.LogoutTokenIssuer = (*RSAJWTIssuer)(nil)
 	_ sso.TokenFormatHinter = (*RSAJWTIssuer)(nil)
 	_ sso.JWKSProvider      = (*RSAJWTIssuer)(nil)
-	_ caep.JWTSigner        = (*RSAJWTIssuer)(nil)
 )
