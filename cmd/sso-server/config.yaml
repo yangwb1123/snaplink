@@ -567,6 +567,12 @@ security:
     backend: memory       # memory | sqlite
     sqlite:
       dsn: ""             # e.g. file:/var/lib/sso/jti.db?_journal=WAL
+    # fail_closed: when the store can't confirm a jti is unseen (transport
+    # error), reject the request instead of falling through. Default false
+    # (fail-open — keeps availability on a transient store blip). Opt in for
+    # replay-sensitive multi-replica deployments: a store outage then rejects
+    # the JAR/DPoP/client_assertion/actor_token rather than admitting a replay.
+    # fail_closed: false
 
   # Per-account lockout. After max_failures bad login attempts within
   # failure_window, the account is locked for lockout_duration —

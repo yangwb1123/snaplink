@@ -2949,7 +2949,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithJTIReplayStore(store))
 		opts = appendReadyCheck(opts, "sqlite-jti-replay", store)
-		logger.Info("security: jti replay protection enabled", "backend", mode)
+		if cfg.Security.JTIReplay.FailClosed {
+			// Reject when the store can't confirm a jti is unseen,
+			// instead of falling through. Closes the replay window
+			// during a store outage at the cost of availability.
+			opts = append(opts, sso.WithJTIReplayFailClosed())
+		}
+		logger.Info("security: jti replay protection enabled", "backend", mode, "fail_closed", cfg.Security.JTIReplay.FailClosed)
 	}
 	if cfg.Security.MTLS.Enabled {
 		extractor, mode, err := buildClientCertExtractor(cfg.Security.MTLS)

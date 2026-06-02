@@ -351,7 +351,17 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 				expiry = time.Now().Add(security.DefaultJTIReplayWindow)
 			}
 			first, rerr := s.jtiReplayStore.MarkSeen(ctx.Request().Context(), "tokex-act:"+actorClaims.JTI, expiry)
-			if rerr == nil && !first {
+			switch {
+			case rerr != nil:
+				// Store error — default fail-OPEN (continue). Fail-CLOSED
+				// (opt-in) treats store-uncertainty AS a replay and
+				// rejects with the SAME invalid_grant a detected replay
+				// returns, so the wire shape is identical (no oracle).
+				if s.jtiReplayFailClosed {
+					ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+					return
+				}
+			case !first:
 				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
 				return
 			}

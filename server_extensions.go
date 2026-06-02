@@ -167,7 +167,7 @@ func (a *audClaim) UnmarshalJSON(data []byte) error {
 //   - iss SHOULD equal client.ID (when the iss claim is set)
 //   - client_id claim MUST equal client.ID (when the
 //     client_id claim is set)
-func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer string, replay security.JTIReplayStore) (*jarPayload, error) {
+func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer string, replay security.JTIReplayStore, replayFailClosed bool) (*jarPayload, error) {
 	if client == nil {
 		return nil, errors.New("jar: client required")
 	}
@@ -264,10 +264,16 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 		}
 		first, err := replay.MarkSeen(ctx, p.JTI, expiresAt)
 		if err != nil {
-			// Fail-OPEN on store errors: a broken replay store
-			// shouldn't lock out legitimate clients. The caller
-			// logs the failure (handler-side) so operators see
-			// the degradation.
+			// Store error: MarkSeen couldn't confirm the jti is
+			// unseen. Default fail-OPEN — a broken replay store
+			// shouldn't lock out legitimate clients (availability
+			// over replay defense). Fail-CLOSED (opt-in) instead
+			// treats store-uncertainty AS a replay and rejects with
+			// the SAME error a detected replay returns, so the wire
+			// shape is identical (no store-health oracle).
+			if replayFailClosed {
+				return nil, errors.New("jar: jti replay detected")
+			}
 			return &p, nil
 		}
 		if !first {
@@ -572,6 +578,7 @@ func verifyJWTClientAssertion(
 	clientStore ClientStore,
 	asIssuer string,
 	replay security.JTIReplayStore,
+	replayFailClosed bool,
 ) (string, error) {
 	if clientStore == nil {
 		return "", errors.New("jwt_client_assertion: client store required")
@@ -662,7 +669,15 @@ func verifyJWTClientAssertion(
 	// semantics JAR replay protection uses; one knob covers both.
 	if replay != nil && p.JTI != "" {
 		first, err := replay.MarkSeen(ctx, p.JTI, time.Unix(p.Exp, 0))
-		if err == nil && !first {
+		switch {
+		case err != nil:
+			// Store error — default fail-OPEN (continue). Fail-CLOSED
+			// (opt-in) rejects with the detected-replay error so the
+			// wire shape is identical (no store-health oracle).
+			if replayFailClosed {
+				return "", errors.New("jwt_client_assertion: jti replay detected")
+			}
+		case !first:
 			return "", errors.New("jwt_client_assertion: jti replay detected")
 		}
 	}
@@ -741,6 +756,7 @@ func verifyDPoPProof(
 	requestMethod string,
 	requestURL string,
 	replay security.JTIReplayStore,
+	replayFailClosed bool,
 	nonceProvider DPoPNonceProvider,
 ) (*DPoPBinding, error) {
 	parts := strings.Split(proof, ".")
@@ -846,7 +862,15 @@ func verifyDPoPProof(
 	// store).
 	if replay != nil {
 		first, err := replay.MarkSeen(ctx, "dpop:"+p.JTI, time.Now().Add(dpopProofMaxAge))
-		if err == nil && !first {
+		switch {
+		case err != nil:
+			// Store error — default fail-OPEN (continue). Fail-CLOSED
+			// (opt-in) rejects with the detected-replay error so the
+			// wire shape is identical (no store-health oracle).
+			if replayFailClosed {
+				return nil, errors.New("dpop: jti replay detected")
+			}
+		case !first:
 			return nil, errors.New("dpop: jti replay detected")
 		}
 	}
@@ -916,6 +940,7 @@ func (s *Server) verifyDPoPBearer(ctx HandlerContext, claims *TokenClaims) error
 		ctx.Request().Method,
 		requestURLForDPoP(ctx.Request()),
 		s.jtiReplayStore,
+		s.jtiReplayFailClosed,
 		s.dpopNonceProvider,
 	)
 	if err != nil {

@@ -861,6 +861,12 @@ type JTIReplayConfig struct {
 	Enabled bool               `yaml:"enabled"`
 	Backend string             `yaml:"backend"`
 	SQLite  JTIReplaySQLiteCfg `yaml:"sqlite"`
+	// FailClosed rejects a request when the store can't confirm a jti
+	// is unseen (transport error) instead of falling through (default
+	// fail-open). Opt in for replay-sensitive multi-replica
+	// deployments — it trades availability during a store outage for a
+	// closed replay window. Maps to sso.WithJTIReplayFailClosed.
+	FailClosed bool `yaml:"fail_closed"`
 }
 
 // JTIReplaySQLiteCfg configures the SQLite-backed jti replay store.

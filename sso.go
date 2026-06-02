@@ -141,6 +141,7 @@ type Server struct {
 	backchannelLogoutMaxConcurrent int
 	accountLockout                 security.AccountLockout
 	jtiReplayStore                 security.JTIReplayStore
+	jtiReplayFailClosed            bool
 	subjectClientIndex             security.SubjectClientIndex
 	jarFetcher                     security.JARFetcher
 	jarDecrypter                   security.JWEDecrypter
@@ -619,6 +620,30 @@ func WithCIBAPingNotifier(notifier oauth.CIBAPingNotifier) Option {
 // store before the defense holds.
 func WithJTIReplayStore(store security.JTIReplayStore) Option {
 	return func(s *Server) { s.jtiReplayStore = store }
+}
+
+// WithJTIReplayFailClosed makes a TRANSIENT jti-replay STORE ERROR
+// reject the request instead of falling through (fail-open).
+//
+// Default OFF (fail-open): a degraded JTIReplayStore — Redis blip,
+// etcd partition, DB outage — must not lock out legitimate clients,
+// so MarkSeen errors are swallowed and the JWT is treated as
+// first-seen. That trades a replay window for availability: while the
+// store is down, a captured JAR / DPoP proof / client_assertion /
+// actor_token can be replayed because no replica can confirm the jti
+// is unseen, and on a multi-replica shared backend the window spans
+// every replica.
+//
+// ON (fail-closed): when MarkSeen can't confirm the jti is unseen the
+// server REJECTS, treating store-uncertainty as a replay. The
+// rejection is INDISTINGUISHABLE on the wire from a genuinely detected
+// replay (same error code per site) so a probing attacker learns
+// nothing about backend health — at the cost of failing valid requests
+// during a store outage. Replay-sensitive multi-replica deployments
+// SHOULD opt in; the DETECTED-replay and happy paths are unchanged
+// either way.
+func WithJTIReplayFailClosed() Option {
+	return func(s *Server) { s.jtiReplayFailClosed = true }
 }
 
 // WithSubjectClientIndex enables OIDC Back-Channel Logout multi-RP

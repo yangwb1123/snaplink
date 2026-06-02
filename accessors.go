@@ -255,7 +255,7 @@ func (s *Server) ValidateAnyToken(ctx context.Context, token string) (*TokenClai
 // can authenticate clients without re-implementing the JWS parse +
 // JWKS lookup + jti replay-store interaction.
 func (s *Server) VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error) {
-	return verifyJWTClientAssertion(ctx, assertion, formClientID, s.clientStore, asIssuer, s.jtiReplayStore)
+	return verifyJWTClientAssertion(ctx, assertion, formClientID, s.clientStore, asIssuer, s.jtiReplayStore, s.jtiReplayFailClosed)
 }
 
 // AuthenticateClientCreds verifies client_id + secret via the wired

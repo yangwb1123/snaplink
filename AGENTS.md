@@ -119,9 +119,14 @@ test/          Server-level integration suite (package ssotest)
     `mfa_failure` audit event.
 - **Fail-open** (log + continue): refresh issuance during login/auth_code
   exchange, ID Token issuance, geo, risk-scorer error, audit Sink error,
-  tenant-suspension lookup outage. **Fail-closed**: refresh rotation grant
-  (500), signature/validation failure, scope expansion, family-reuse
-  (kills family → 400 `invalid_grant`).
+  tenant-suspension lookup outage, JTI-replay store error (default —
+  availability; the JAR/DPoP/client_assertion/actor_token jti is treated
+  first-seen). **Fail-closed**: refresh rotation grant (500),
+  signature/validation failure, scope expansion, family-reuse (kills family
+  → 400 `invalid_grant`). JTI-replay opts in via `WithJTIReplayFailClosed`
+  for replay-sensitive multi-replica deploys — a store error then rejects
+  with that site's detected-replay code (same wire shape, no store-health
+  oracle); the detected-replay + happy paths stay unchanged either way.
 - **PKCE: first-exchange only.** `code_challenge` captured at
   `/auth/login`, verified at `/token` `grant=authorization_code`. Refresh
   rotations carry no verifier (bound via `client_id`).
@@ -533,6 +538,10 @@ knob; below is only the non-obvious operator surface.
 - **security.mtls.backend** (tls|header) — `header` for reverse-proxy edges
   (`X-SSL-Client-Cert` etc.); **edge MUST strip it from untrusted traffic**
   (same threat model as XFF, §2).
+- **security.jti_replay.fail_closed** (default false) — `WithJTIReplayFailClosed`:
+  on a replay-store transport error, reject (treat-as-replay, same wire code
+  per site) instead of fail-open. For replay-sensitive multi-replica deploys
+  (§2).
 - **tenant.suspension_check.cache_ttl** — admin SetStatus invalidates via
   `InvalidateTenantSuspensionCache`.
 - **keys.signing_key_registry.{backend,replica_id,lease_ttl,etcd_*}**

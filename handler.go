@@ -358,7 +358,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, unwrapErr.Error()))
 			return
 		}
-		jar, jarErr := verifyJAR(ctx.Request().Context(), jarRaw, client, s.resolveIssuer(ctx), s.jtiReplayStore)
+		jar, jarErr := verifyJAR(ctx.Request().Context(), jarRaw, client, s.resolveIssuer(ctx), s.jtiReplayStore, s.jtiReplayFailClosed)
 		if jarErr != nil {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, jarErr.Error()))
@@ -1246,6 +1246,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			s.clientStore,
 			s.resolveIssuer(ctx),
 			s.jtiReplayStore,
+			s.jtiReplayFailClosed,
 		)
 		if err != nil {
 			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
@@ -1292,6 +1293,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ctx.Request().Method,
 			requestURLForDPoP(ctx.Request()),
 			s.jtiReplayStore,
+			s.jtiReplayFailClosed,
 			s.dpopNonceProvider,
 		)
 		if err != nil {
