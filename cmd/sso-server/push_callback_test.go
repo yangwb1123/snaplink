@@ -206,6 +206,25 @@ func TestPushCallback_IPAllowlistAccepts(t *testing.T) {
 	}
 }
 
+func TestPushCallback_IPAllowlistAcceptsV4MappedV6(t *testing.T) {
+	store, _ := newCallbackTestStore(t)
+	seedApproval(t, store, "ch-10")
+	_, cidr, _ := net.ParseCIDR("10.0.0.0/8")
+	deps := &pushCallbackDeps{
+		Store:        store,
+		AllowedCIDRs: []*net.IPNet{cidr},
+		Logger:       quietLogger(),
+	}
+	// IPv4-mapped IPv6 source (::ffff:10.0.0.1) must match the IPv4 CIDR.
+	req := httptest.NewRequest(http.MethodPost, "/push/approval/ch-10/approve", nil)
+	req.RemoteAddr = "[::ffff:10.0.0.1]:5555"
+	rec := httptest.NewRecorder()
+	pushCallbackHandler(deps)(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestParsePushCallbackPath_HappyAndFailure(t *testing.T) {
 	for _, tc := range []struct {
 		path    string

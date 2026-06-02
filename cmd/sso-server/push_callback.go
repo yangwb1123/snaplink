@@ -199,14 +199,29 @@ func callbackClientIP(r *http.Request) net.IP {
 			xff = xff[:idx]
 		}
 		if ip := net.ParseIP(strings.TrimSpace(xff)); ip != nil {
-			return ip
+			return normalizeIP(ip)
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	return net.ParseIP(host)
+	if ip := net.ParseIP(host); ip != nil {
+		return normalizeIP(ip)
+	}
+	return nil
+}
+
+// normalizeIP collapses an IPv4-mapped IPv6 address (::ffff:a.b.c.d)
+// to its 4-byte IPv4 form so it matches IPv4 CIDR allowlists: net's
+// IPNet.Contains is address-family-sensitive, so a v4-mapped v6 from an
+// ingress would otherwise fail to match a plain IPv4 CIDR. Genuine IPv6
+// and plain IPv4 are returned unchanged.
+func normalizeIP(ip net.IP) net.IP {
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return ip
 }
 
 // writePushCallbackError emits a small JSON envelope matching the
