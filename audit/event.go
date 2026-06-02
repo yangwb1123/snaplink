@@ -201,6 +201,19 @@ const (
 	// signal, never a happy-path operation.
 	EventRefreshTokenReuse EventType = "refresh_token_reuse_detected"
 
+	// EventPasswordWeak / EventPasswordCompromised — non-blocking
+	// login-time credential-health signals emitted AFTER a successful
+	// password verify (this server only sees plaintext at login, since
+	// credentials are pre-bcrypted + seeded). Outcome=success: the login
+	// DID succeed and was NOT blocked; these are informational signals for
+	// operators to drive a "rotate your password" nudge out of band.
+	// ActorID = subject; ClientID set; Metadata "reason" carries the
+	// operator-facing detail (e.g. which dictionary matched). Weak fires
+	// on a strength heuristic (dictionary match); Compromised fires when a
+	// checker reports the credential appears in a breach corpus.
+	EventPasswordWeak        EventType = "password_weak"
+	EventPasswordCompromised EventType = "password_compromised"
+
 	// EventFAPIComplianceViolation fires when the FAPI 2.0 profile
 	// (inspection or enforce mode) detects a baseline rule violation.
 	// Reason carries the rule id (e.g. "fapi:par_required"); Metadata

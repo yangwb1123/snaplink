@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/oauth"
@@ -1461,6 +1462,26 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 		return
 	}
 	audit.RecordLoginSuccess(s.auditor, ctx, clientID, provider, strategy, userID, sessionID)
+}
+
+// recordCredentialHealth emits a non-blocking credential-health signal
+// after a successful login (password_weak / password_compromised). It is
+// purely informational — the login already succeeded and was not blocked.
+// nil health short-circuits with zero overhead (no checker wired, or a
+// healthy credential). Counts the signal toward the bounded
+// credential-health metric before auditing.
+func (s *Server) recordCredentialHealth(ctx HandlerContext, clientID, userID string, health *CredentialHealth) {
+	if health == nil {
+		return
+	}
+	if s.metrics != nil {
+		signal := metrics.SignalWeak
+		if health.Compromised {
+			signal = metrics.SignalCompromised
+		}
+		s.metrics.CredentialHealthSignalsTotal.WithLabelValues(signal).Inc()
+	}
+	audit.RecordCredentialHealth(s.auditor, ctx, clientID, userID, health)
 }
 
 // recordLogout emits a logout event with what was actually revoked.

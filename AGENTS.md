@@ -297,7 +297,15 @@ only when the backend exposes `Ping`. YAML toggles:
 password users hit a cost-matched dummy bcrypt hash. **WebAuthn**
 (`authenticators/webauthn/`): the four-call ceremony doesn't fit the SPI,
 so cmd mounts `/webauthn/{registration,login}/{begin,finish}`;
-`login/finish?client_id=` mints tokens (AMR `["webauthn"]`).
+`login/finish?client_id=` mints tokens (AMR `["webauthn"]`). The `password`
+authenticator takes an optional `spi.PasswordHealthChecker`
+(`WithPasswordHealthChecker`, reference `DictionaryPasswordHealthChecker`):
+a fail-open, NON-blocking login-time signal run AFTER bcrypt verify (the
+only plaintext touchpoint — creds are pre-bcrypted/seeded). A hit rides on
+`AuthResult.CredentialHealth` (typed, NEVER serialized into tokens — keep
+it OFF `Attributes`, which flows into id_token claims) and surfaces as a
+`password_weak`/`password_compromised` audit event (Outcome=success);
+adds no wire error.
 
 **Risk scoring** (`spi/risk.go`). `RiskScorer` runs on `/auth/login` AFTER
 creds, BEFORE issuance → `Allow`/`RequireMFA`/`Deny` (403). Fail-open,
@@ -454,6 +462,7 @@ provider's `SupportedMethods()` (user values dropped before the registry).
 | `sso_mfa_challenges_total` | Counter | mfa_method |
 | `sso_mfa_completions_total` / `_duration_seconds` | Counter/Histogram | mfa_method, outcome |
 | `sso_webauthn_{registrations,assertions}_total` | Counter | outcome |
+| `sso_credential_health_signals_total` | Counter | signal |
 | `sso_retention_{pruned,prune_errors}_total` | Counter | subsystem |
 | `sso_anomalies_detected_total` | Counter | anomaly_type, severity |
 | `sso_anomaly_dispatch_drops_total` / `_inspect_errors_total` | Counter | reason / detector |

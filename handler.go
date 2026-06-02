@@ -605,6 +605,14 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		}
 	}
 
+	// Non-blocking credential-health signal. Emitted once here so it
+	// covers every downstream branch (code flow + direct mint) and both
+	// the primary login and the MFA-resumed re-entry, which all funnel
+	// through finishLogin. The signal NEVER blocks login and NEVER rides
+	// on the wire — it lives only on the AuthResult and lands in the audit
+	// log. nil = no signal (healthy credential or no checker wired).
+	s.recordCredentialHealth(ctx, client.ID, result.UserID, result.CredentialHealth)
+
 	// OAuth 2.1 strict mode: response_type=token (implicit) is
 	// retired by OAuth 2.1; empty response_type (which defaulted
 	// to direct-mint in OAuth 2.0) is treated the same way under

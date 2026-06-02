@@ -72,6 +72,14 @@ type Metrics struct {
 	WebAuthnRegistrationsTotal *prometheus.CounterVec // labels: outcome
 	WebAuthnAssertionsTotal    *prometheus.CounterVec // labels: outcome
 
+	// CredentialHealthSignalsTotal counts non-blocking login-time
+	// credential-health signals, by signal ∈ {weak, compromised}
+	// (bounded). Emitted alongside the password_weak / password_compromised
+	// audit events after a successful login. Zero traffic when no
+	// PasswordHealthChecker is wired. Operators graph the rate to size a
+	// "users on weak credentials" remediation campaign.
+	CredentialHealthSignalsTotal *prometheus.CounterVec // labels: signal
+
 	// Login + MFA latency histograms. Distinct from the generic HTTP
 	// duration so operators can graph login-specific latency
 	// (authenticator round-trips, password verification, risk scorer
@@ -242,6 +250,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "WebAuthn login assertion completions at /webauthn/login/finish, by outcome (success/failure). Operators alert on a rising failure rate as a credential-stuffing signal.",
 			},
 			[]string{LabelOutcome},
+		),
+
+		CredentialHealthSignalsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameCredentialHealthSignals,
+				Help: "Non-blocking login-time credential-health signals, by signal (weak/compromised). Emitted after a successful login when a PasswordHealthChecker flags the credential. Zero traffic when no checker is wired.",
+			},
+			[]string{LabelSignal},
 		),
 
 		LoginDuration: factory.NewHistogramVec(

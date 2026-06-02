@@ -13,7 +13,7 @@ import (
 func TestBuildAuthenticators_TOTPDisabledByDefault(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	for _, a := range auths {
 		if a.Name() == "totp" {
 			t.Fatal("totp authenticator registered without enabling it in config")
@@ -27,7 +27,7 @@ func TestBuildAuthenticators_TOTPDisabledByDefault(t *testing.T) {
 func TestBuildAuthenticators_TOTPEnabled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	found := false
 	for _, a := range auths {
 		if a.Name() == "totp" {
@@ -48,7 +48,7 @@ func TestBuildAuthenticators_TOTPEnabled(t *testing.T) {
 func TestBuildAuthenticators_TOTPSkewStepsApplied(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true, SkewSteps: 2}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	if len(auths) == 0 {
 		t.Fatal("no authenticators built with skew_steps override")
 	}

@@ -215,13 +215,45 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	for _, a := range auths {
 		if a.Name() == "password" {
 			return
 		}
 	}
 	t.Fatal("password authenticator not registered with empty users list")
+}
+
+// TestBuildAuthenticators_PasswordHealthEnabled proves the optional
+// credential-health checker wires without error when enabled with no
+// extension file (built-in dictionary only).
+func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Authenticators.Password = &config.PasswordConfig{
+		Enabled: true,
+		Health:  &config.PasswordHealthConfig{Enabled: true},
+	}
+	_, _, _, err := buildAuthenticators(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("unexpected error wiring password health: %v", err)
+	}
+}
+
+// TestBuildAuthenticators_PasswordHealthMissingFileIsLoud proves a
+// missing weak-password extension file fails the boot rather than
+// silently degrading to the built-in set.
+func TestBuildAuthenticators_PasswordHealthMissingFileIsLoud(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Authenticators.Password = &config.PasswordConfig{
+		Enabled: true,
+		Health: &config.PasswordHealthConfig{
+			Enabled:          true,
+			WeakPasswordFile: filepath.Join(t.TempDir(), "missing.txt"),
+		},
+	}
+	if _, _, _, err := buildAuthenticators(cfg, quietLogger()); err == nil {
+		t.Fatal("expected an error for a missing weak-password file, got nil")
+	}
 }
 
 // writeBcryptHashFile hashes the given plaintext with bcrypt.MinCost

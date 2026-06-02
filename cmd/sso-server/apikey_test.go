@@ -71,7 +71,7 @@ func TestBuildAuthenticators_APIKeySeedAuthenticates(t *testing.T) {
 			SubjectID:  "subject-t",
 		}},
 	}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	var apikey sso.Authenticator
 	for _, a := range auths {
 		if a.Name() == "apikey" {
@@ -109,7 +109,7 @@ func TestBuildAuthenticators_APIKeySkipsBadEntries(t *testing.T) {
 			{KeyID: "bad-path", SecretFile: "/no/such/file", SubjectID: "missing-file"},
 		},
 	}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	found := false
 	for _, a := range auths {
 		if a.Name() == "apikey" {
@@ -128,7 +128,7 @@ func TestBuildAuthenticators_APIKeySkipsBadEntries(t *testing.T) {
 func TestBuildAuthenticators_APIKeyEmptyKeysList(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.APIKey = &config.APIKeyConfig{Enabled: true}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	for _, a := range auths {
 		if a.Name() == "apikey" {
 			return

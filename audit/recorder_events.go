@@ -144,6 +144,32 @@ func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, f
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordCredentialHealth emits a non-blocking credential-health signal
+// after a successful login. A Weak signal yields a password_weak event; a
+// Compromised signal yields a password_compromised event (Compromised
+// wins when a checker somehow sets both). Outcome is success — the login
+// was NOT blocked; this is informational. The operator-facing Reason
+// lands in Metadata via SetMeta so geo/tenant enrichment is preserved.
+// nil health short-circuits (no event).
+func RecordCredentialHealth(rec *Recorder, ctx core.HandlerContext, clientID, subjectID string, health *core.CredentialHealth) {
+	if rec == nil || health == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	if health.Compromised {
+		e.Type = EventPasswordCompromised
+	} else {
+		e.Type = EventPasswordWeak
+	}
+	e.Outcome = OutcomeSuccess
+	e.ClientID = clientID
+	e.ActorID = subjectID
+	if health.Reason != "" {
+		SetMeta(e, "reason", health.Reason)
+	}
+	rec.Record(ctx.Request().Context(), e)
+}
+
 // RecordLogout emits a logout event after a /logout / /end_session
 // successfully tears down a session.
 func RecordLogout(rec *Recorder, ctx core.HandlerContext, sessionID string, revoked []string) {

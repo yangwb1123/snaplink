@@ -416,6 +416,19 @@ authenticators:
     # - username: alice
     #   bcrypt_hash_file: /etc/sso/users/alice.bcrypt
     #   subject_id: user-alice
+    # Optional login-time credential-health signal. When enabled, a
+    # successful password login whose plaintext matches a weak-password
+    # dictionary emits a `password_weak` audit event (Outcome=success —
+    # login is NEVER blocked) + the sso_credential_health_signals_total
+    # metric. This server has no register / change-password endpoint, so
+    # login is the only moment it sees plaintext; this is a fail-open
+    # advisory operators use to drive an out-of-band rotation nudge.
+    # weak_password_file optionally extends the built-in set (newline-
+    # delimited; blank lines + '#' comments skipped; a missing file fails
+    # the boot loudly).
+    health:
+      enabled: false
+      weak_password_file: ""
 
   phone:
     enabled: true

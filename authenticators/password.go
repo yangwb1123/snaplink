@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/spi"
 )
 
 // PasswordVerifier looks up a user record by username and checks the supplied
@@ -25,10 +26,28 @@ func (f PasswordVerifierFunc) Verify(ctx context.Context, u, p string) (*sso.Aut
 // PasswordAuthenticator authenticates users with a username + password pair.
 type PasswordAuthenticator struct {
 	verifier PasswordVerifier
+	health   spi.PasswordHealthChecker // optional; nil = no signal, zero overhead
 }
 
-func NewPasswordAuthenticator(v PasswordVerifier) *PasswordAuthenticator {
-	return &PasswordAuthenticator{verifier: v}
+// PasswordOption configures a PasswordAuthenticator at construction.
+type PasswordOption func(*PasswordAuthenticator)
+
+// WithPasswordHealthChecker attaches an optional login-time
+// credential-health signal. The checker runs ONLY after the password
+// verifies, never blocks login, and surfaces purely as an advisory on the
+// returned AuthResult (the login orchestrator audits it). A nil checker —
+// or simply not passing this option — disables the check with zero
+// overhead.
+func WithPasswordHealthChecker(c spi.PasswordHealthChecker) PasswordOption {
+	return func(p *PasswordAuthenticator) { p.health = c }
+}
+
+func NewPasswordAuthenticator(v PasswordVerifier, opts ...PasswordOption) *PasswordAuthenticator {
+	p := &PasswordAuthenticator{verifier: v}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 func (p *PasswordAuthenticator) Name() string { return MethodPassword }
@@ -48,6 +67,17 @@ func (p *PasswordAuthenticator) Authenticate(ctx context.Context, req *sso.AuthR
 	}
 	if len(result.AuthMethods) == 0 {
 		result.AuthMethods = []string{AuthMethodPwd}
+	}
+	// Credential-health signal: runs ONLY on a verified password (login
+	// is the sole plaintext touchpoint in this server). Fail-open — a
+	// checker error must never turn a valid login into a failure, and the
+	// authenticator holds no logger, so the error is swallowed. A non-nil
+	// signal rides back on the AuthResult for the orchestrator to audit;
+	// it is never serialized into a token.
+	if p.health != nil {
+		if signal, hErr := p.health.Check(ctx, password); hErr == nil && signal != nil {
+			result.CredentialHealth = signal
+		}
 	}
 	return result, nil
 }

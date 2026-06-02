@@ -2513,7 +2513,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 	}
 
-	auths, tempStore, totpAuth := buildAuthenticators(cfg, logger)
+	auths, tempStore, totpAuth, err := buildAuthenticators(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("authenticators: %w", err)
+	}
 	for _, ath := range auths {
 		opts = append(opts, sso.WithAuthenticator(ath))
 	}
@@ -3556,7 +3559,11 @@ func loadBcryptHashFile(path string) ([]byte, error) {
 // orchestration wraps the TOTP authenticator with TOTPMFAProvider so
 // step-up and primary auth share one secret store + skew policy.
 // Both return nil when the corresponding authenticator is disabled.
-func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator) {
+//
+// Returns an error when an authenticator's config is invalid (e.g. a
+// missing weak-password extension file) — a misconfigured authenticator
+// should fail the boot loudly, not silently degrade.
+func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
@@ -3564,7 +3571,18 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authentic
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
 		verifier, seeded := buildBcryptPasswordVerifier(a.Users, logger)
-		auths = append(auths, authenticators.NewPasswordAuthenticator(verifier))
+		var pwOpts []authenticators.PasswordOption
+		if h := a.Health; h != nil && h.Enabled {
+			checker, err := defaultimpl.NewDictionaryPasswordHealthChecker(defaultimpl.DictionaryPasswordHealthConfig{
+				WeakPasswordFile: h.WeakPasswordFile,
+			})
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("password health checker: %w", err)
+			}
+			pwOpts = append(pwOpts, authenticators.WithPasswordHealthChecker(checker))
+			logger.Info("password health checker enabled", "weak_password_file", h.WeakPasswordFile)
+		}
+		auths = append(auths, authenticators.NewPasswordAuthenticator(verifier, pwOpts...))
 		logger.Info("password authenticator enabled", "seeded_users", seeded)
 	}
 
@@ -3706,7 +3724,7 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authentic
 		auths = append(auths, auth)
 		logger.Info("oidc_federation enabled", "provider", fed.Name, "authorization_endpoint", fed.AuthorizationEndpoint)
 	}
-	return auths, tempStore, totpAuth
+	return auths, tempStore, totpAuth, nil
 }
 
 func logEndpoints(cfg *config.Config, grpcListen string) {

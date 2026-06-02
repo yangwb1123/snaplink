@@ -1711,8 +1711,26 @@ type OIDCFederationAuthConfig struct {
 // deployment work out of the box without holding plaintext secrets
 // in YAML.
 type PasswordConfig struct {
-	Enabled bool                 `yaml:"enabled"`
-	Users   []PasswordUserConfig `yaml:"users,omitempty"`
+	Enabled bool                  `yaml:"enabled"`
+	Users   []PasswordUserConfig  `yaml:"users,omitempty"`
+	Health  *PasswordHealthConfig `yaml:"health,omitempty"`
+}
+
+// PasswordHealthConfig wires the optional login-time credential-health
+// signal. When Enabled, cmd attaches a DictionaryPasswordHealthChecker to
+// the password authenticator. The check runs only AFTER a password
+// verifies, NEVER blocks login, and surfaces purely as a
+// password_weak / password_compromised audit event (plus the
+// sso_credential_health_signals_total metric). This server has no
+// register / change-password endpoint, so login is the only moment it
+// sees plaintext — this is the only place such a signal can be derived.
+type PasswordHealthConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// WeakPasswordFile optionally extends the built-in weak-password set
+	// with a newline-delimited file (blank lines + '#' comments skipped).
+	// A read error fails the boot loudly rather than silently shrinking
+	// coverage.
+	WeakPasswordFile string `yaml:"weak_password_file"`
 }
 
 // PasswordUserConfig seeds one known user into cmd's bcrypt

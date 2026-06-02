@@ -96,7 +96,7 @@ func TestBuildAuthenticators_CertificateWiresTrustedCAs(t *testing.T) {
 		Enabled:        true,
 		TrustedCAFiles: []string{path},
 	}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	found := false
 	for _, a := range auths {
 		if a.Name() == "certificate" {
@@ -120,7 +120,7 @@ func TestBuildAuthenticators_CertificateBadCAGetsSkipped(t *testing.T) {
 		Enabled:        true,
 		TrustedCAFiles: []string{"/no/such/ca.pem"},
 	}
-	auths, _, _ := buildAuthenticators(cfg, quietLogger())
+	auths, _, _, _ := buildAuthenticators(cfg, quietLogger())
 	for _, a := range auths {
 		if a.Name() == "certificate" {
 			t.Fatal("certificate authenticator registered despite missing CA file")

@@ -26,6 +26,7 @@ const (
 	NameSigningOperationsTotal     = "sso_signing_operations_total"
 	NameSigningDuration            = "sso_signing_operation_duration_seconds"
 	NameSigningBackendUp           = "sso_signing_backend_up"
+	NameCredentialHealthSignals    = "sso_credential_health_signals_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -43,9 +44,16 @@ const (
 	LabelSeverity    = "severity"
 	LabelDropReason  = "reason"
 	LabelDetector    = "detector"
-	LabelFAPIRule    = "rule" // bounded: the 5 fapi:* baseline rule ids
-	LabelFAPIMode    = "mode" // inspection | enforce
-	LabelAlg         = "alg"  // bounded: eddsa | es256 | rs256 | ps256
+	LabelFAPIRule    = "rule"   // bounded: the 5 fapi:* baseline rule ids
+	LabelFAPIMode    = "mode"   // inspection | enforce
+	LabelAlg         = "alg"    // bounded: eddsa | es256 | rs256 | ps256
+	LabelSignal      = "signal" // bounded: weak | compromised
+)
+
+// Credential-health signal label values, bounded to two.
+const (
+	SignalWeak        = "weak"
+	SignalCompromised = "compromised"
 )
 
 // Status class label values, bucketed into the four standard HTTP

@@ -663,6 +663,24 @@ type AuthResult struct {
 	AuthMethods         []string // how the user was authenticated
 	CountryCode         string   // ISO 3166-1 alpha-2, optional
 	RecommendedLanguage string   // BCP-47, optional
+
+	// CredentialHealth carries a non-blocking login-time signal about
+	// the password's strength/breach status. It is deliberately a typed
+	// field rather than an Attributes entry: Attributes flows into the
+	// id_token Claims, so a health signal stashed there would leak onto
+	// the wire. nil = no signal (the credential was healthy or the check
+	// was disabled). Never serialized into tokens — the login
+	// orchestrator only reads it to emit an audit event.
+	CredentialHealth *CredentialHealth
+}
+
+// CredentialHealth carries a non-blocking login-time signal about the
+// password's strength/breach status. nil = no signal (healthy or check
+// disabled). Never serialized into tokens.
+type CredentialHealth struct {
+	Weak        bool
+	Compromised bool
+	Reason      string // operator-facing; audit metadata only, never on the wire
 }
 
 // CallbackState holds the state for a callback (OIDC/OAuth flow).

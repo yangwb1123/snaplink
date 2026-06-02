@@ -80,6 +80,7 @@ type ActorClaim = core.ActorClaim
 type Authenticator = core.Authenticator
 type AuthRequest = core.AuthRequest
 type AuthResult = core.AuthResult
+type CredentialHealth = core.CredentialHealth
 type CallbackState = core.CallbackState
 type Client = core.Client
 type ClientStore = core.ClientStore
