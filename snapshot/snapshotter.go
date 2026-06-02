@@ -24,6 +24,16 @@ type Snapshotter struct {
 	NetPolicy   netpolicy.Store      // optional
 	Tracker     bootstrap.Tracker    // optional, for BootstrapState
 	Namespace   string               // bootstrap namespace; defaults to "sso-server"
+
+	// DefaultExportRedactor is applied to every Export that doesn't
+	// supply ExportOptions.Redactor. Nil (the default) means NO
+	// redaction — the export is byte-identical to the unredacted form,
+	// preserving backward compatibility for existing restorable backups.
+	// cmd wires SnapshotRedactSecrets() here when snapshot.redact_secrets
+	// is set so every export path (gRPC, REST, scheduled) produces a
+	// safe-sharing artifact without per-call plumbing. See Redactor for
+	// the restore caveat.
+	DefaultExportRedactor Redactor
 }
 
 // ExportOptions tunes a single Export call.
@@ -36,6 +46,16 @@ type ExportOptions struct {
 	// the operator wants to ship clients + users to a peer but not the
 	// network policy (which is environment-specific).
 	Exclude []ResourceCategory
+
+	// Redactor, when non-nil, strips secret-bearing fields from the
+	// exported snapshot before it is returned (and therefore before it
+	// is serialized + sealed). It overrides Snapshotter.DefaultExportRedactor
+	// for this one call. Nil falls back to the Snapshotter default.
+	//
+	// Redaction runs on export-local COPIES of the affected resources,
+	// so it NEVER mutates the live store's objects. A redacted snapshot
+	// is for inspection / sharing, NOT restore — see Redactor.
+	Redactor Redactor
 }
 
 // Export builds the Snapshot. Returns an error if any wired backend
@@ -149,7 +169,51 @@ func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot
 		snap.Resources.NetPolicy = ps
 	}
 
+	// Redaction is the LAST export step. The effective redactor is the
+	// per-call override when set, else the Snapshotter default; nil on
+	// both means no redaction and a byte-identical (backward-compatible)
+	// export. Some ClientStore backends (the in-memory one) return live
+	// pointers from List, so we deep-copy every client into export-local
+	// objects BEFORE handing the snapshot to the redactor — that
+	// guarantees redaction never zeros a secret on the running server's
+	// in-memory client.
+	if r := effectiveRedactor(opts.Redactor, s.DefaultExportRedactor); r != nil {
+		copyClientsForRedaction(snap)
+		r.Redact(snap)
+	}
+
 	return snap, nil
+}
+
+// effectiveRedactor resolves the redactor for one Export: the per-call
+// override wins, then the Snapshotter default, else nil (no redaction).
+func effectiveRedactor(perCall, def Redactor) Redactor {
+	if perCall != nil {
+		return perCall
+	}
+	return def
+}
+
+// copyClientsForRedaction replaces snap.Resources.Clients with a slice
+// of shallow client copies so a subsequent in-place redaction mutates
+// only the export's copies, never the source store's objects. A shallow
+// struct copy is sufficient because the redactor only zeros scalar
+// string fields (Secret, RegistrationAccessToken); the shared slice
+// fields (JWKS, RedirectURIs, ...) are read, never written.
+func copyClientsForRedaction(snap *Snapshot) {
+	src := snap.Resources.Clients
+	if len(src) == 0 {
+		return
+	}
+	out := make([]*sso.Client, len(src))
+	for i, c := range src {
+		if c == nil {
+			continue
+		}
+		cp := *c
+		out[i] = &cp
+	}
+	snap.Resources.Clients = out
 }
 
 // newSnapshotID returns a sortable, time-prefixed ID:

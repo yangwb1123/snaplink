@@ -949,6 +949,14 @@ snapshot:
     # key: ""               # inline hex/base64 (discouraged)
     # key_file: "/etc/sso/snapshot-dek"
   restore_from: ""            # file:///abs/path or inline:<base64>
+  # Opt-in defense-in-depth for SAFE SHARING / inspection: strips
+  # client credentials (Secret + RFC 7592 RegistrationAccessToken)
+  # from EVERY export. A plaintext export is then safe to forward for
+  # review without leaking live secrets. NOT a restore path — a
+  # redacted snapshot's clients cannot authenticate after restore;
+  # use encryption (above) for restorable backups. Default false =
+  # byte-identical, backward-compatible export.
+  # redact_secrets: false
   # Background pruning of old snapshot envelopes. Operators take
   # snapshots on a schedule (admin SnapshotService or external
   # cron); without retention the storage dir grows monotonically.

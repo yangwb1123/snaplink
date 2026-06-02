@@ -429,7 +429,13 @@ counts only. Sealers (§6) + storage `file`/`inline`; `Pipeline`
 sha256-verifies (`ErrChecksumMismatch`). First-boot auto-restore via
 `snapshot.restore_from` (builtin v0, before seeds). Retention
 `snapshot.PruneOldest` keeps last N. Offline CLI `sso-snapshotctl
-list|inspect|verify`.
+list|inspect|verify`. **Opt-in `SnapshotRedactSecrets()`** (export-time
+`ExportOptions.Redactor` / `Snapshotter.DefaultExportRedactor`,
+`snapshot.redact_secrets`) zeros `Client.Secret` +
+`RegistrationAccessToken` on export-local COPIES — defense-in-depth for
+SAFE-SHARING/inspection, NOT restore (a redacted snapshot's clients
+can't authenticate; encryption stays the restorable-backup path).
+Default nil ⇒ byte-identical export; never mutates the live store.
 
 **Releases** (`releases/`). Frontend+backend version pin/rollback;
 `Validate` refuses one-sided. `Pinner` encodes asymmetric order
@@ -536,6 +542,9 @@ knob; below is only the non-obvious operator surface.
   `--bootstrap-restore-from` wins).
 - **snapshot.encryption.backend** (none|passphrase|aes-gcm) — passphrase →
   argon2id (human secrets); aes-gcm → direct 32-byte key (KMS DEKs).
+- **snapshot.redact_secrets** (bool, default false) — opt-in: wires
+  `SnapshotRedactSecrets()` so every export strips client credentials for
+  SAFE-SHARING/inspection. NOT restorable (use encryption for that).
 - **security.mtls.backend** (tls|header) — `header` for reverse-proxy edges
   (`X-SSL-Client-Cert` etc.); **edge MUST strip it from untrusted traffic**
   (same threat model as XFF, §2).

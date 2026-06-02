@@ -3142,6 +3142,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			NetPolicy:   netStore,
 			Namespace:   bootstrapNamespace,
 		}
+		// Opt-in defense-in-depth: when set, EVERY export strips client
+		// credentials so a plaintext export is safe to share/inspect.
+		// NOT a restore path (see snapshot.Redactor) — encryption stays
+		// the route for restorable backups. Default off = unchanged.
+		if cfg.Snapshot.RedactSecrets {
+			snapshotter.DefaultExportRedactor = snapshot.SnapshotRedactSecrets()
+		}
 		restorer = &snapshot.Restorer{
 			Clients:     clientStore,
 			Users:       userProvider,

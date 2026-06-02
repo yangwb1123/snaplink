@@ -1043,6 +1043,18 @@ type SnapshotConfig struct {
 	Encryption  SnapshotEncryptionConfig `yaml:"encryption"`
 	RestoreFrom string                   `yaml:"restore_from"`
 	Retention   SnapshotRetentionConfig  `yaml:"retention"`
+
+	// RedactSecrets opts into stripping credential-bearing client
+	// fields (Secret, RFC 7592 RegistrationAccessToken) from EVERY
+	// export via snapshot.SnapshotRedactSecrets. Default false =
+	// byte-identical export (backward-compatible). This is a
+	// defense-in-depth knob for the SAFE-SHARING / inspection use case:
+	// a redacted export can be forwarded for review without leaking live
+	// client credentials. It is NOT a restore path — a redacted
+	// snapshot's clients cannot authenticate after restore. Encryption
+	// (snapshot.encryption.backend) remains the mitigation for
+	// RESTORABLE backups; do not enable RedactSecrets for those.
+	RedactSecrets bool `yaml:"redact_secrets"`
 }
 
 // SnapshotRetentionConfig opts into background pruning of old
