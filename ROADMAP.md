@@ -12,6 +12,227 @@
 
 ---
 
+## v4.0（2026-06-02）—— 全局复扫：交付物收口后的下一阶段【取代 v3.1，以下为 superseded 历史】
+
+> 2026-06-02 对全代码库的一次多维全局复扫（协议 / 安全密钥治理 / 规模性能 /
+> 产品竞争 / 边界与技术债，五路并行 + 逐项 grep 核验）。**v3.1 及以下结论已
+> 大量被落地，本节取而代之，作为当前生效的优先级。** 仍沿用 Why now /
+> Scope / Edge cases / Sequencing 体例。
+
+### 复扫确认的当前边界（grep 核验，非记忆）
+
+**自 v3.1 以来新落地**（本轮在代码中确认 —— v3.1 多列为"仍剩/刻意不做"，已过期）：
+
+- **per-tenant 签名密钥隔离**：`WithTenantTokenIssuer` → 每租户 issuer，覆盖
+  access / id_token / JARM / userinfo / WebAuthn 全部签发面，未注册的租户
+  issuer fail-closed，opaque 策略省略。
+- **SCIM 2.0**（`scim/`）：Users + Groups CRUD + PATCH + RFC 7644 filter
+  语法/求值；SCIM 属性存于 `core.User.Attributes` 的 `scim:` 命名空间，
+  **无需富化核心 User 模型**（v3.1 把"先富化 User"列为前置，证伪）。
+- **租户暂停的主动吊销**：`Server.RevokeTenantRefreshTokens` 经
+  `oauth.RefreshTokenClientPurger` 按租户枚举 client 清 refresh；admin
+  `SetTenantStatus`(→Suspended)/`DeleteTenant` 触发；best-effort + 审计
+  `tenant_tokens_revoked`。（会话本就 user-scoped，按设计不按租户清。）
+- **凭据健康度**：登录后（bcrypt 通过后，唯一明文触点）跑弱密码字典，
+  fail-open、不阻塞登录、**绝不入 token**（`AuthResult.CredentialHealth`
+  带 `json:"-"`），审计 `password_weak`/`password_compromised`。
+- **无 leader 多副本 JWKS 公钥聚合**（`signingkeys/`，memory+etcd）：各副本
+  发布自身签名公钥、verify-only 采纳对端公钥（全三 alg），JWKS+Validate
+  服务全集而各副本仍只用自有私钥签发；opt-in nil-default 字节一致。期间
+  **对抗审计抓到并修复了一个 CRITICAL 伪造漏洞**（`decodeRSAJWK` 接受
+  e=1 致恒等验签）。这是 v3.1"方向① ActiveKID 多副本"的零依赖可自主子集。
+- 另：CIBA ping 交付、per-endpoint body limit、SIGTERM 优雅停机、
+  cross-issuer partial-revoke 审计、cross-replica `InvalidationBus`。
+
+**仍为空白 / 部分**（逐项 grep 确认，构成下方五方向）：KMS/HSM **具体**
+peer（仅 seam）、Admin Console + 终端自助门户（零前端）、SAML 2.0、CAEP/RISC
+持续访问评估信号、Redis 后端、same-kid 多副本签名（需共享密钥材料）、
+CIBA push/user_code、HIBP 网络校验。
+
+### 排序后的 5 个方向
+
+**① 签名密钥治理收口：KMS/HSM 具体 peer + same-kid 多副本一致 + 聚合可观测**
+—— *P0，最硬合规门槛、最小剩余工作量。*
+
+- **Why now**：四算法矩阵 + 运行时轮换 + 调度 + `{Algo}Signer` seam
+  （`defaultimpl/cryptosigner` 桥接任意 `crypto.Signer`）+ per-tenant + 无
+  leader 公钥聚合**已全部铺好**——唯独私钥仍裸存进程内存这一项，让
+  FIPS 140-2/3、PCI-DSS、SOC2 Type II 在 RFP 第一页就筛掉。"地基全铺、
+  只差一块砖"的最高 ROI 项。
+- **Scope**：(a) `defaultimpl/awskms/`（`aws-sdk-go-v2` 的 `kms.Sign` +
+  `GetPublicKey`，约 100-150 行），之后 `gcpkms`/`pkcs11`
+  （YubiHSM/SoftHSM/Thales）同形——**置于 operator cmd fork / 独立子模块，
+  核心 go.mod 零增**，与 etcd/push-transport 已验证的模式一致；(b)
+  **same-kid 多副本一致**：轮换期经 `cluster.Bus` 广播
+  `signing_key_rotation_{start,complete}{old_kid,new_kid,deadline}`，各副本
+  延迟到 deadline 再同步翻转 active kid，消除 grace 期 kid 漂移（公钥聚合
+  解决"验得了"，这一项解决"不漂移"）；(c) 补齐本轮 `signingkeys/` 聚合的
+  运维盲点：采纳失败指标 `sso_signing_key_adoption_errors_total{peer}`、
+  adoption-loop 存活纳入 readiness、watch 关闭/退出审计。
+- **边界**：KMS sign 是网络 RTT（5-50ms，比 `ed25519.Sign` 慢三个数量级）
+  → token TTL 拉长 + 进程内 `(kid,payload_hash)→sig` LRU + p99 熔断到本地
+  fallback kid；JWKS ETag 改 `sha256(canonical(jwks))` 防 KMS 公钥字节序
+  抖动；轮换 grace 重叠保留新旧 verify key。
+- **Sequencing**：(a) awskms 单独可交付（1-2 周）；(b) same-kid 独立 sprint
+  （复用本轮聚合 + cluster.Bus 底座）；(c) 可观测随 (a)(b) 顺带。
+
+**② 运维与终端操作面：Admin Console + 终端用户自助门户**
+—— *P0/P1：把已建好的能力包装出来卖；"auth 库 → identity 平台"的临门一脚。*
+
+- **Why now**：后端能力本轮已极完整——admin gRPC/REST 全 CRUD
+  （client/user/token/permission/tenant/snapshot/release）+ SCIM +
+  compliance（GDPR export/erase）+ audit + per-tenant，**但面向人的操作面
+  仍是 0**。竞品（Auth0/WorkOS/Stytch/Ory）卖的是"5 分钟 demo→生产，含
+  dashboard + 报表 + GDPR 按钮"。无 Console = 进不了企业采购清单。**零后端
+  改动起步**（吃现成 admin REST gateway）。
+- **Scope**：(a) `web/admin/` SPA（Next.js + shadcn，与 Go 二进制 co-locate）
+  首批六 panel 按 demo 价值排序：Dashboard / Sessions-explorer（一键吊销）/
+  Audit-explorer（facet 过滤 + 导出）/ Clients / Users-Roles /
+  Compliance（GDPR 按钮 + hash-chain verify）；Console 自身经本 SSO 登录
+  （dogfood，`client_id=sso-admin-console`，`scope=admin:*`）；(b) 终端自助
+  门户（同框架 `/me` 入口）：活跃会话 + 远程登出、Passkey/TOTP 自助启用、
+  登录历史、"下载我的数据"（吃 compliance `Exporter`）；(c) 配套
+  `audit.Query` facet 聚合返回（前端 filter 关键路径，唯一后端改动）。
+- **边界**：前端 auth 用短时 JWT + refresh（非长效 admin token）；敏感字段
+  绝不回显（secret 仅显"已轮换"）；大规模列表分页 + 搜索；多租户权限隔离
+  （`admin:read.tenant.{tid}` vs `.global`，现有 wildcard matcher 可表达，
+  需把 tenant context 注入权限检查）；审计时间戳 UTC 客户端本地化。
+- **Sequencing**：facet（后端 1-2 周）→ Console 三 panel（前端 3-4 周）→
+  自助门户（前端 2-3 周），前后端并行。
+
+**③ 企业联邦补完：SAML 2.0（IdP/SP）**
+—— *P1：SCIM 已落，SAML 是 RFP 表上仅剩会被直接筛掉的一行。*
+
+- **Why now**：OIDC 上游联邦已全（5 provider）。SAML 2.0 仍是 30-40%
+  政府/金融/传统企业 IdP（AD FS / PingFederate / Okta classic）的唯一语言。
+  `core/consts.go` 已留 `TokenTypeSAML2` 常量但无 validator（token-exchange
+  当前显式拒 SAML2 输出，`test/handle_token_exchange_test.go` 锁此行为）。
+- **Scope**：`saml/` 包 —— Assertion 解析 + XML-DSig 验签 + 可选 xmlenc
+  解密；HTTP-POST/Redirect binding；`/auth/saml/acs`（Assertion Consumer
+  Service）→ NameID/AttributeStatement 映射进 `core.User`（复用
+  `oidc_federation` 旁的 Authenticator 接入点）；`/saml/metadata`（SP
+  元数据）；Single-Logout。
+- **边界（关键取舍）**：**XML-DSig / C14N / xmlenc 在纯 Go 零依赖下手搓是
+  安全雷区**（XXE、签名包装 wrapping 攻击、C14N 歧义）——应像 KMS peer 一样
+  **引入经审计的 SAML 库（`crewjam/saml` 或 `russellhaering/gosaml2`）置于
+  operator cmd 侧，核心 go.mod 不污染**。其余边界：assertion replay（接
+  `JTIReplayStore`）、NameID format 路由（email/persistent/transient）、IdP
+  多签名证书轮换、SLO binding。
+- **Sequencing**：独立立项（≈4-6 周），不阻塞①②。先 SP 侧（消费外部 SAML
+  IdP）再 IdP 侧（对外发 SAML，按需）。
+
+**④ 持续访问评估：CAEP / RISC 共享安全信号**（OpenID Shared Signals）
+—— *P1-P2：新晋差异化方向，把"事后审计"升级为"实时跨 RP 撤销"。*
+
+- **Why now**：今天"立即跨 20 个 RP 撤销某用户"只能靠 token TTL 或各 RP
+  各自调 `/revoke`。CAEP（Continuous Access Evaluation Profile）+ RISC 定义
+  IdP 如何向所有持有该 subject token 的 RP **广播**撤销/风险/账户停用信号。
+  本仓库底座**已就位**：`audit.Recorder` + `cluster.Bus` + 租户暂停 + 异步
+  异常检测——缺的只是一个**面向外部 RP 的事件出口 + 订阅管理**。这是安全侧
+  从"auth 库"迈向"identity 平台"的差异化（多数竞品也才刚起步）。
+- **Scope**：(a) CAEP 形态事件（`{sub,iss,aud,jti,iat,txn,events{}}`）：
+  `token_revoked`/`grant_revoked`/`account_disabled`/`session_revoked`/
+  `risk_detected`；(b) 新 `audit.Sink` `CAEPSink` 向注册的 RP webhook 推送
+  （订阅存于 client metadata）；(c) `POST /caep/events`（admin-scoped）+ RP
+  webhook 注册/注销 admin RPC + 重试退避；(d) 与既有事件源接线：租户暂停→
+  `account_disabled`、refresh 家族复用→`token_revoked`、anomaly critical→
+  `risk_detected`。
+- **边界**：重放去重接 `JTIReplayStore`；事件乱序 → 带 timestamp + RP 拒收
+  早于本地状态的事件；webhook auth 用 mTLS 或签名 JWT；推送 best-effort
+  （不阻塞主路径，失败进重试队列 + 审计）。
+- **Sequencing**：(a)(b) 事件模型 + sink 一个 sprint；(c)(d) 出口 + 接线
+  一个 sprint。
+
+**⑤ 吞吐层：Redis 后端 + 热路径性能** —— *P2：正确性已完备，扩容课题，
+按 QPS 需求触发。*
+
+- **Why now / why not**：15+ store 的 SQLite peer 已保证**正确性**（含
+  migrate + cluster.Bus）；Redis 的 ROI 是**吞吐（>1k QPS）** 而非正确性，
+  代价是新有状态依赖——等真有高 QPS 客户再做。架构已就绪（每个 store 都是
+  SPI，`WithXxxStore` 直接插，`defaultimpl/memory_*.go` 注释已明指 Redis）。
+- **Scope**：(a) 热路径 store 的 Redis peer（Session / RefreshToken+family /
+  JTIReplay / RateLimit / AuthCode / PAR / MFAChallenge / CIBA）：单用经
+  `GETDEL`/Lua 原子、family 经 `HSET`、索引经 `ZSET`、TTL 经 `EXPIRE`；
+  (b) 顺带清下方热路径清单项。
+- **边界**：Lua 保证 `check+mark` 原子（family tracker）；跨区复制延迟
+  （A 区发的 refresh 在 B 区消费的 stale 检查）；OOM 用 `noeviction` +
+  fail-loud（绝不静默驱逐 auth code）；网络分区下 `/token` fail-closed。
+- **Sequencing**：按 store 逐个 PR（Session/Refresh/JTI 最先，是 QPS 瓶颈）。
+
+### 边界情况 & 性能优化（持续清单）
+
+> 颗粒度不足独立方向，建议作为 sprint-filler 逐项消化；每条锚定具体代码
+> 位置。本轮复扫新发现 + 仍有效项。
+
+**安全 / 正确性边界**
+
+- **时钟回拨复活已过期 session/token**（高）：`SessionManager.Refresh`
+  （`defaultimpl/sqlite/sessions.go`，`UPDATE … WHERE expires_at>now`）+
+  refresh `IsExpired`（`oauth/refresh_token.go`）+ DPoP iat 校验
+  （`server_extensions.go`，skew 硬编码 1min）均用裸 `time.Now()`、无 skew
+  容差。NTP 步进 / VM 快照回滚可让刚过期的 session 通过 `expires_at>now`
+  被无限续期（与 §2"Session Refresh 拒已过期"的保证相悖）。建议：关键路径
+  用 monotonic 比较 + 可配 `WithDPoPMaxClockSkew`/session skew，并在
+  AGENTS.md §2 显式记录假设。
+- **JTI replay store fail-open 无熔断**（高）：`security/jti_replay.go`
+  `MarkSeen` 错误 fail-open——store 瞬时故障（Redis 超时/etcd 分区）期间
+  **每个 JTI 都被当作首见**，攻击者可在故障窗口重放同一 JAR
+  `request_uri`/DPoP proof/actor_token。建议：可选熔断（连续 N 次失败后对
+  replay-敏感端点 fail-closed）+ per-store-error 审计。
+- **V18 聚合 adoption-loop 静默退出 / 无可观测**（中-高，本会话功能的运维
+  补完）：`StartSigningKeyAggregation` 订阅 loop 在 `Subscribe` 成功后若
+  watch channel 关闭（etcd 不可达）会**静默退出**，本地 Publish 仍成功但
+  停止采纳对端键 → 对端 token 验签 `unknown kid`，而 readiness 仍绿。
+  建议：adoption-loop 存活纳入 readiness + 退出审计 + 采纳失败指标。
+- **无 leader 轮换的 kid 采纳延迟 → 滚动部署期硬 401**（中）：副本 A 轮换到
+  kid A2 并发布，副本 B 尚未订阅到时，A2 签的 token 命中 B 的 `/userinfo`
+  直接 fail-closed `unknown kid`（非 backoff）。建议：kid-mismatch 401 带
+  `Retry-After`；或 same-kid 一致（方向①b）根治。
+- **租户暂停跨副本收敛窗口**（中-高）：`InvalidateTenantSuspensionCache`
+  经 bus best-effort，分区/丢事件时某副本最长按 TTL（默认 30s）继续放行已
+  暂停租户。建议：在 AGENTS.md §2 显式记录收敛窗口；可选 stale-hit 回源。
+- **refresh 家族复用检测窗口无界**（中）：攻击者偷到 refresh token 后**先于**
+  合法持有者轮换一次，铸出的 access token 存活至过期，只有当同一叶 token
+  被二次出示才触发家族击杀。建议：可选 per-family 轮换速率限制 + 家族击杀
+  审计信号。
+- **CIBA ping goroutine 无 recover/超时**（低）：`ResolveBackchannelAuthRequest`
+  用 `context.Background()` 起的 ping goroutine 无 `recover()`、无超时——
+  webhook 挂起则泄漏，panic 则静默退出。建议：`recover()` +
+  `context.WithTimeout` + `sso_ciba_ping_errors_total`。
+- **snapshot 明文模式不脱敏 `client.Secret`**（中）：`snapshot.Resources.Clients`
+  序列化保留 `Secret`；`encryption:none` 导出裸 secret。建议：可选
+  `SnapshotRedactSecrets()`（仿 `audit.Redactor`）+ 脱敏审计。
+- **body-limit 默认未设的 footgun**（中）：`WithBodyLimitForPath` 已存在，
+  但全局默认不设上限时 `/token` 的巨型 `request` object 在 size 校验前可
+  触发 JWE/JAR 大缓冲分配。建议：设保守默认（如 1MB）+ unmarshal 前校验
+  size + 413。
+
+**性能 / 热路径**
+
+- **每登录 `ClientStore.Get` / `TenantStore` 查找**（`handler.go` 多处）：
+  加 per-tenant/per-client TTL 缓存（30s）+ 失效经 bus。
+- **`adoptedPeerMu` 写锁竞争**（`sso.go`，签名键高 churn 集群）：考虑
+  RWMutex 让验证并行。
+- **discovery 双缓存 stale-ETag 窗口**（低）：snapshot 与 body 两个 TTL 非
+  协同失效，失效后短窗口内可能服务旧 ETag。建议：统一单 TTL 原子更新 +
+  doc version 字段。
+- **anomaly dispatch 丢弃可见性**（低）：仅有 `_drops_total` 计数无 rate/
+  比例；慢 detector 填满队列时静默丢弃。建议：丢弃率指标 + 可配 per-detector
+  超时。
+- **观测覆盖补完**（中）：部分 handler 缺 span；slog 缺 W3C TraceID 注入；
+  可加 per-tenant/per-client（有界基数）登录/颁发速率。
+
+### 一句话优先级
+
+**①（KMS peer 收口合规 gate，地基全铺只差一块砖）+ ②（Console+门户，进
+企业采购清单、零后端起步）并行 → ③（SAML，补 RFP 最后一行，引经审计的
+XML-DSig 库置 operator 侧）→ ④（CAEP/RISC，安全侧差异化，吃现成 audit+bus
+底座）→ ⑤（Redis，等吞吐需求）。** 边界/性能清单作为各 sprint 的 filler
+并行消化——其中**时钟回拨**、**JTI fail-open 熔断**、**V18 adoption 可观测**
+三项安全优先级最高。
+
+---
+
 ## v3.1（2026-05-25）—— 第七个 10 轮：方向 ①②⑤ 落地（KMS 接线 + GDPR + EC JWE）
 
 v3.0 复扫后的 10 轮开发,沿三个方向交付。每轮严格走"分析→编码→自测→
