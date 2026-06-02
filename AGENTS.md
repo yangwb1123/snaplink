@@ -75,7 +75,7 @@ registry/{memory,etcd}/    Service discovery
 bootstrap/{file,memory,builtin,lock}/   First-run init + dist lock
 snapshot/{storage,encryption,loader}/   State export/restore
 releases/{store,pinner,probe}/   Frontend+backend release pinning
-signingkeys/{memory,etcd}/   Opt-in leaderless multi-replica JWKS public-key aggregation (publish own signing pubkeys + adopt peers' verify-only)
+signingkeys/{memory,etcd}/   Opt-in leaderless multi-replica JWKS public-key aggregation (§3)
 ratelimit/ cors/ metrics/ tracing/   Middleware + observability
 config/{etcd}/   YAML + env + etcd + flag loader
 proto/ gen/proto/ grpcserver/   Protobuf + generated Go + gRPC + REST gateway
@@ -103,7 +103,8 @@ test/          Server-level integration suite (package ssotest)
 - **Oracle-leak hardening.** Single-use consumption (AuthCode/Refresh/
   Device/PAR/PKCE verifier) MUST collapse unknown/expired/consumed/
   client-mismatch into ONE response: `400 invalid_grant` (/token),
-  `invalid_request_uri` (PAR). DPoP/mTLS failure → `invalid_token`;
+  `invalid_request_uri` (on `/auth/login` consuming a stale/missing PAR
+  `request_uri`). DPoP/mTLS failure → `invalid_token`;
   `private_key_jwt` → `invalid_client`. Tests enumerate failures to lock it.
 - **Anti-enumeration.**
   - `/register/:client_id` (RFC 7592): missing/wrong/unknown bearer →
@@ -245,35 +246,28 @@ route signing through a `{Algo}Signer` seam — default in-process, or
 verify-only in JWKS through its TTL); `StartRotation` runs the scheduled
 loop. cmd wires `keys.rotation.*` → `signing_key_rotated` audit +
 `sso_signing_key_rotations_total` + busts the signed-discovery cache.
-Single-issuer cluster: run on a leader or share a KMS signer — OR opt into
-leaderless aggregation (below). Alg via `keys.signing.alg`
+Single-issuer cluster: run on a leader, share a KMS signer, or opt into
+leaderless aggregation (next). Alg via `keys.signing.alg`
 (`eddsa|es256|rs256|ps256`); each issuer accepts ONLY its own alg, so
 `validateAnyToken` is structurally alg-confusion-safe.
 
 **Leaderless multi-replica aggregation** (opt-in, `signingkeys/`). When
 replicas each hold their OWN per-process signing key (distinct kid, no
-shared KMS), a token signed by A fails on B because B's JWKS/verify-set
-lacks A's kid. `WithSharedSigningKeyRegistry` + `StartSigningKeyAggregation`
-fix it: each replica PUBLISHES its signing PUBLIC keys to a shared
-`signingkeys.Registry` and ADOPTS peers' keys VERIFY-ONLY into the
-matching-alg issuer (`{Ed25519,ECDSA,RSA}JWTIssuer.AdoptVerifyKey/DropVerifyKey`
-— all three signing algs), so JWKS() + Validate() serve the union while each
-replica still SIGNS only with its own private key. Alg-match is enforced BEFORE
-adoption (`issuerAlgs[name] == jwk.Alg`, routing by the issuer's own
-`JWKS()[0].Alg`); RS256 vs PS256 is a strict string match, so an RS256 key never
-lands on a PS256 issuer (and vice versa), and a cross-alg key (ES256 to EdDSA,
-etc.) is skipped. Peer JWK decode validates per-type (EdDSA length, EC on-curve
-via `crypto/ecdh`, RSA modulus floor), failing OPEN — a malformed key is logged
-+ skipped, never fatal. Adopted peer keys live in a SEPARATE `peerVerifyKeys`
-map untouched by local `RotateKey`/`RetireKey`. Nil registry = byte-identical to
-a non-aggregating build (zero regression). `WithSigningKeyReplicaID` is REQUIRED
-once a registry is wired — `StartSigningKeyAggregation` errors on an empty id
-rather than start one-directional aggregation (adopt peers but get its own
-announcement rejected). Re-publish on rotation. Backends: `memory`
-(single-process) + `etcd` (cross-process: announce under `<prefix>/<replicaID>`
-with a KeepAlive'd lease, peers prefix-Watch; lease expiry on a crashed replica
-emits KeysRemoved so its keys drop — pure transport, all validation stays in the
-Server decode gates).
+shared KMS), a token signed by A fails on B — B's verify-set lacks A's kid.
+`WithSharedSigningKeyRegistry` + `StartSigningKeyAggregation` fix it: each
+replica PUBLISHES its signing PUBLIC keys to a shared `signingkeys.Registry`
+and ADOPTS peers' keys VERIFY-ONLY
+(`{Ed25519,ECDSA,RSA}JWTIssuer.AdoptVerifyKey/DropVerifyKey`) into the
+matching-alg issuer, so JWKS + Validate serve the union while each replica
+still SIGNS only with its own key. Adoption is alg-matched BEFORE install
+(RS256≠PS256, cross-alg keys skipped — alg-confusion-safe) and peer-key
+decode fails OPEN (malformed key logged + skipped, never fatal); adopted
+keys sit in a separate verify set untouched by local `RotateKey`/`RetireKey`.
+**`WithSigningKeyReplicaID` is REQUIRED** once wired — empty id errors out
+rather than adopt peers while its own announcement is rejected. Re-publish on
+rotation. Backends: `memory` (single-process) + `etcd` (cross-process,
+KeepAlive'd lease; a crashed replica's expiry drops its keys). Nil registry =
+zero regression vs a non-aggregating build.
 
 ---
 
@@ -326,14 +320,13 @@ password users hit a cost-matched dummy bcrypt hash. **WebAuthn**
 (`authenticators/webauthn/`): the four-call ceremony doesn't fit the SPI,
 so cmd mounts `/webauthn/{registration,login}/{begin,finish}`;
 `login/finish?client_id=` mints tokens (AMR `["webauthn"]`). The `password`
-authenticator takes an optional `spi.PasswordHealthChecker`
+authenticator optionally chains a `spi.PasswordHealthChecker`
 (`WithPasswordHealthChecker`, reference `DictionaryPasswordHealthChecker`):
-a fail-open, NON-blocking login-time signal run AFTER bcrypt verify (the
-only plaintext touchpoint — creds are pre-bcrypted/seeded). A hit rides on
-`AuthResult.CredentialHealth` (typed, NEVER serialized into tokens — keep
-it OFF `Attributes`, which flows into id_token claims) and surfaces as a
-`password_weak`/`password_compromised` audit event (Outcome=success);
-adds no wire error.
+a fail-open, NON-blocking signal run AFTER bcrypt verify. A hit rides on
+`AuthResult.CredentialHealth` (`json:"-"`, NEVER in tokens — keep it OFF
+`Attributes`, which flows into id_token claims) and surfaces as a
+`password_weak`/`password_compromised` audit event (Outcome=success); adds
+no wire error.
 
 **Risk scoring** (`spi/risk.go`). `RiskScorer` runs on `/auth/login` AFTER
 creds, BEFORE issuance → `Allow`/`RequireMFA`/`Deny` (403). Fail-open,
@@ -534,13 +527,10 @@ knob; below is only the non-obvious operator surface.
 - **tenant.suspension_check.cache_ttl** — admin SetStatus invalidates via
   `InvalidateTenantSuspensionCache`.
 - **keys.signing_key_registry.{backend,replica_id,lease_ttl,etcd_*}**
-  (backend: ``|memory|etcd) — opt-in leaderless multi-replica JWKS
-  aggregation (§3). `memory` is per-process; `etcd`
-  (`etcd_{endpoints,prefix,dial_timeout,username,password}`, mirroring
-  `cluster.bus`) is cross-process. `replica_id` defaults to the
-  service-registry id; MUST be unique per replica. `lease_ttl` is the
-  announcement lease (kept alive while the replica lives; expiry drops a
-  crashed replica's keys).
+  (backend: ``|memory|etcd) — opt-in leaderless aggregation (§3). `etcd_*`
+  (`endpoints,prefix,dial_timeout,username,password`) mirrors `cluster.bus`.
+  `replica_id` defaults to the service-registry id and MUST be unique per
+  replica; `lease_ttl` is the announcement lease.
 - **oauth.jar** — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect).
 - **mfa** — gated by Risk `RequireMFA`. `provider.kind`:
   `totp`/`webauthn`/`push`/`multi` (`provider.kinds: [...]`); cmd fails
