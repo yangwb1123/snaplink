@@ -205,6 +205,17 @@ const (
 	// ActorID = subject; Metadata carries client_id.
 	EventCIBADenied EventType = "ciba_denied"
 
+	// EventCIBAPingFailed fires when the detached post-resolution ping
+	// notifier fails to deliver — either CIBAPingNotifier.Notify returned an
+	// error or it PANICKED (a custom notifier bug the supervising goroutine
+	// recovered from instead of crashing). Outcome=failure; ClientID set;
+	// Metadata carries auth_req_id + a "reason" detail. The ping is
+	// best-effort (the client can still poll), so this is operator
+	// visibility, NOT a wire error code: it surfaces which client's
+	// notification endpoint is wedged/unreachable so a SIEM can act before
+	// users notice their backchannel clients silently fell back to poll.
+	EventCIBAPingFailed EventType = "ciba_ping_failed"
+
 	// EventRefreshTokenReuse fires when the rotation grant detects a
 	// presented-after-rotation refresh token (OAuth Security BCP §4.13)
 	// AND the store implements oauth.RefreshTokenFamilyTracker. Reason

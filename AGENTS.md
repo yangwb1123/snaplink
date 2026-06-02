@@ -230,7 +230,7 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key auto-published in JWKS `use:enc` | `security/jwe.go` |
 | OIDC Core §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg`/`_Enc`; RP key from `Client.JWKS` `use:enc` | `oidc/userinfo_signing.go` + `server_extensions.go` |
 | OIDC Core §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg`/`_Enc` | `oidc/userinfo_signing.go` |
-| OIDC CIBA Core 1.0 (poll + ping) | `/backchannel-authentication`, `/token` (`grant=…:ciba`) | `WithCIBA`; ping via `WithCIBAPingNotifier` + `ResolveBackchannelAuthRequest` | `oauth/ciba.go` + `oauth/handle_ciba.go` |
+| OIDC CIBA Core 1.0 (poll + ping) | `/backchannel-authentication`, `/token` (`grant=…:ciba`) | `WithCIBA`; ping via `WithCIBAPingNotifier` + `ResolveBackchannelAuthRequest` (detached ping goroutine is supervised: bounded `cibaPingDeliveryTimeout` + recover + `sso_ciba_ping_total` / `ciba_ping_failed` audit) | `oauth/ciba.go` + `oauth/handle_ciba.go` |
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by Risk `RequireMFA`) | `handlers.go` + `spi/mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
 
@@ -505,6 +505,7 @@ provider's `SupportedMethods()` (user values dropped before the registry).
 | `sso_signing_key_adoption_errors_total` | Counter | reason (decode\|adopt) |
 | `sso_signing_key_aggregation_up` | Gauge | — |
 | `sso_fapi_violations_total` | Counter | rule, mode |
+| `sso_ciba_ping_total` | Counter | outcome (success\|error) |
 
 **Retention schedulers** — three cmd-side prune loops, uniformly wired
 (cancel + bounded-wait on shutdown, emit `sso_retention_*{subsystem}`,

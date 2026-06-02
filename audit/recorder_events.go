@@ -128,6 +128,30 @@ func RecordCIBADecision(rec *Recorder, ctx core.HandlerContext, clientID, subjec
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordCIBAPingFailed emits a ciba_ping_failed event when the detached
+// post-resolution ping notifier fails (Notify returned an error or panicked).
+// It runs from a BACKGROUND goroutine with no HandlerContext (the request that
+// triggered the resolution has already returned), so it takes a plain
+// context.Context and builds the Event directly — mirroring
+// RecordSigningKeyAggregationDegraded. reason carries the operator-side detail
+// (the error string or "panic: ..."); auth_req_id lands in Metadata so SIEMs
+// can correlate the failed ping with its originating request.
+func RecordCIBAPingFailed(rec *Recorder, ctx context.Context, clientID, authReqID, reason string) {
+	if rec == nil {
+		return
+	}
+	e := &Event{
+		Type:     EventCIBAPingFailed,
+		Outcome:  OutcomeFailure,
+		ClientID: clientID,
+		Reason:   reason,
+	}
+	if authReqID != "" {
+		SetMeta(e, "auth_req_id", authReqID)
+	}
+	rec.Record(ctx, e)
+}
+
 // RecordRefreshTokenReuse emits a refresh_token_reuse_detected event
 // after a refresh-token-reuse attack invalidates a whole family.
 func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, familyID string, killed int) {

@@ -142,6 +142,17 @@ type Metrics struct {
 	// when no signing-key registry is wired.
 	SigningKeyAdoptionErrorsTotal *prometheus.CounterVec // labels: reason
 
+	// CIBAPingTotal counts CIBA ping-delivery attempts fired from the
+	// detached notifier goroutine after a backchannel request resolves, by
+	// outcome ∈ {success, error} (bounded). A ping failure (the notifier
+	// returned an error OR panicked) degrades the client to poll, so it is
+	// non-fatal — but operators have no other visibility into a wedged or
+	// unreachable notification endpoint. Alert on a rising error series:
+	// sustained errors with no successes means ping delivery is broken and
+	// clients are silently falling back to poll. Zero traffic when no
+	// CIBAPingNotifier is wired.
+	CIBAPingTotal *prometheus.CounterVec // labels: outcome
+
 	// SigningKeyAggregationUp is 1 while this replica's peer-key subscription
 	// is healthy, 0 while it is degraded (the registry's Subscribe channel
 	// closed and the loop is between resubscribe attempts). A degraded
@@ -369,6 +380,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "Peer signing-key adoptions that failed in the leaderless aggregation loop, by reason (decode/adopt). decode = malformed/off-curve/weak peer JWK; adopt = decoded but every matching-alg issuer rejected it (e.g. kid collision). Fail-open (key skipped); a rising rate surfaces a peer publishing bad keys before it manifests as unknown-kid validation failures. Zero when no signing-key registry is wired.",
 			},
 			[]string{LabelReason},
+		),
+
+		CIBAPingTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameCIBAPingTotal,
+				Help: "CIBA ping-delivery attempts from the detached post-resolution notifier goroutine, by outcome (success/error). An error (notifier returned an error or panicked) degrades the client to poll; alert on a rising error series with no successes (notification endpoint wedged/unreachable). Zero traffic when no CIBAPingNotifier is wired.",
+			},
+			[]string{LabelOutcome},
 		),
 
 		SigningKeyAggregationUp: factory.NewGauge(

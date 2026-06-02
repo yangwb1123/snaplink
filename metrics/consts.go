@@ -30,6 +30,8 @@ const (
 
 	NameSigningKeyAdoptionErrorsTotal = "sso_signing_key_adoption_errors_total"
 	NameSigningKeyAggregationUp       = "sso_signing_key_aggregation_up"
+
+	NameCIBAPingTotal = "sso_ciba_ping_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
