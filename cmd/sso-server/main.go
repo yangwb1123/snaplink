@@ -17,6 +17,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/x509"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
@@ -65,6 +66,7 @@ import (
 	geostatic "github.com/snaplink/sso/geo/static"
 	"github.com/snaplink/sso/grpcserver"
 	"github.com/snaplink/sso/metrics"
+	"github.com/snaplink/sso/migrate"
 	"github.com/snaplink/sso/netpolicy"
 	netpolicyetcd "github.com/snaplink/sso/netpolicy/etcd"
 	"github.com/snaplink/sso/permissions"
@@ -1047,6 +1049,45 @@ func appendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
 		return opts
 	}
 	return append(opts, sso.WithReadyCheck(name, p.Ping))
+}
+
+// appendStorageHealthSource collects v as a per-store entry for the
+// /api/v1/admin/storage-health report (WithStorageHealth). It mirrors
+// appendReadyCheck's gating: only stores exposing Ping(ctx) are added, so
+// process-local memory backends silently no-op (no reachability signal to
+// report) and the report contains exactly the SQLite-backed stores — the
+// same set /readyz aggregates, but with per-store detail.
+//
+// When the store also exposes DB() *sql.DB (every SQLite store does) the
+// source carries a SchemaVersions closure that runs migrate.Status on that
+// store's handle, so the report shows each store's migrate-namespace ->
+// applied-version map. A store without an accessible *sql.DB is Ping-only
+// (no schema_versions). name is operator-facing and MUST NOT carry a DSN or
+// secret — the report never surfaces the connection string, only this label
+// plus a generic reachability error.
+func appendStorageHealthSource(sources []sso.StorageHealthSource, name string, v any) []sso.StorageHealthSource {
+	p, ok := v.(interface{ Ping(context.Context) error })
+	if !ok {
+		return sources
+	}
+	src := sso.StorageHealthSource{Name: name, Ping: p.Ping}
+	if d, ok := v.(interface{ DB() *sql.DB }); ok {
+		db := d.DB()
+		if db != nil {
+			src.SchemaVersions = func(ctx context.Context) (map[string]int, error) {
+				st, err := migrate.Status(ctx, db)
+				if err != nil {
+					return nil, err
+				}
+				out := make(map[string]int, len(st))
+				for _, ns := range st {
+					out[ns.Namespace] = ns.Version
+				}
+				return out, nil
+			}
+		}
+	}
+	return append(sources, src)
 }
 
 // appendRateLimitReadyChecks registers a /readyz check for the
@@ -2486,6 +2527,16 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	opts = appendReadyCheck(opts, "sqlite-identity-users", userProvider)
 	opts = appendReadyCheck(opts, "sqlite-identity-sessions", sessionMgr)
 
+	// Per-store storage-health report sources (WithStorageHealth), gathered
+	// at the same points as the /readyz checks above. Each SQLite store's
+	// DB() handle drives migrate.Status for the schema-version view; memory
+	// backends (no Ping) contribute nothing. Passed to WithStorageHealth
+	// after all stores are wired.
+	var storageHealthSources []sso.StorageHealthSource
+	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-identity-clients", clientStore)
+	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-identity-users", userProvider)
+	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-identity-sessions", sessionMgr)
+
 	var recorder *audit.Recorder
 	var asyncSink *audit.AsyncSink
 	var auditRetentionCancel context.CancelFunc
@@ -2602,6 +2653,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		// the Ping interface — the SQLite sink does; MemorySink
 		// silently no-ops.
 		opts = appendReadyCheck(opts, "audit-"+primaryName, primary)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "audit-"+primaryName, primary)
 	}
 
 	provider, err := buildPermissionsProvider(cfg, logger)
@@ -2611,6 +2663,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if provider != nil {
 		opts = append(opts, sso.WithPermissionProvider(provider))
 		opts = appendReadyCheck(opts, "sqlite-permissions", provider)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-permissions", provider)
 		if cfg.Permissions.EmbedInLogin {
 			opts = append(opts, sso.WithEmbedPermissionsInLogin())
 		}
@@ -2689,6 +2742,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	}
 	opts = appendReadyCheck(opts, "sqlite-webauthn-users", webauthnUsers)
 	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
+	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-webauthn-users", webauthnUsers)
+	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-webauthn-sessions", webauthnSessions)
 
 	// MFA orchestration wired AFTER the risk scorer so the wire-up
 	// order matches the runtime gating order (Risk emits
@@ -2704,6 +2759,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithMFAProvider(mfaProvider))
 		opts = append(opts, sso.WithMFAChallengeStore(mfaStore, mfaTTL))
 		opts = appendReadyCheck(opts, "sqlite-mfa-challenges", mfaStore)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-mfa-challenges", mfaStore)
 	}
 	// When push MFA wired with SQLite backend, surface the store
 	// handle for /readyz wiring + the optional PruneExpired loop
@@ -2713,6 +2769,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	var pushPruneDone <-chan struct{}
 	if pushApprovalStore != nil {
 		opts = appendReadyCheck(opts, "sqlite-push-approvals", pushApprovalStore)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-push-approvals", pushApprovalStore)
 		if pi := cfg.MFA.Provider.Push.PruneInterval; pi > 0 {
 			pruneCtx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
@@ -2734,9 +2791,11 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithAnomalyRunner(anomalyRT.runner))
 		if anomalyRT.recentSQLite != nil {
 			opts = appendReadyCheck(opts, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
+			storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
 		}
 		if anomalyRT.ipFailSQLite != nil {
 			opts = appendReadyCheck(opts, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
+			storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
 		}
 		logger.Info("anomaly detection: enabled",
 			"recent_login_backend", cfg.Anomaly.RecentLogin.Backend,
@@ -2755,6 +2814,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		// interface; appendReadyCheck only registers when the
 		// concrete type satisfies it).
 		opts = appendReadyCheck(opts, "sqlite-tenant", tenantStore)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-tenant", tenantStore)
 		if cfg.Tenant.LookupTimeout > 0 || cfg.Tenant.IncludeSuspended {
 			opts = append(opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
 				Timeout:          cfg.Tenant.LookupTimeout,
@@ -2800,6 +2860,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-auth-codes", store)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-auth-codes", store)
 	}
 	var refreshTokenStore oauth.RefreshTokenStore
 	var refreshTokenTTL time.Duration
@@ -2810,6 +2871,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-refresh-tokens", store)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-refresh-tokens", store)
 		refreshTokenStore = store
 		refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
 	}
@@ -2825,6 +2887,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			cfg.OAuth.DeviceCode.VerificationBaseURL,
 		))
 		opts = appendReadyCheck(opts, "sqlite-oauth-device-codes", store)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-device-codes", store)
 	}
 	if cfg.OAuth.PAR.Enabled {
 		store, err := buildPARStore(cfg.OAuth)
@@ -2833,6 +2896,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithPARStore(store, cfg.OAuth.PAR.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-par", store)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-par", store)
 	}
 	if jar := cfg.OAuth.JAR; jar.Enabled {
 		f := security.NewHTTPJARFetcher()
@@ -2856,6 +2920,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithCIBA(store, transport, cfg.CIBA.RequestTTL, cfg.CIBA.Interval))
 		if sqliteStore != nil {
 			opts = appendReadyCheck(opts, "sqlite-ciba", sqliteStore)
+			storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-ciba", sqliteStore)
 			if pi := cfg.CIBA.PruneInterval; pi > 0 {
 				pruneCtx, cancel := context.WithCancel(context.Background())
 				done := make(chan struct{})
@@ -2927,6 +2992,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			sso.WithSubjectClientIndex(idx),
 		)
 		opts = appendReadyCheck(opts, "sqlite-bcl-subject-client-index", idx)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-bcl-subject-client-index", idx)
 		if n := cfg.BackchannelLogout.MaxConcurrent; n > 0 {
 			opts = append(opts, sso.WithBackchannelLogoutMaxConcurrent(n))
 		}
@@ -2991,6 +3057,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			sso.WithPairwiseSalt(salt),
 		)
 		opts = appendReadyCheck(opts, "sqlite-pairwise-subjects", store)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-pairwise-subjects", store)
 		logger.Info("oidc pairwise subjects: enabled", "store", mode)
 	}
 	if len(cfg.Server.SupportedACRValues) > 0 {
@@ -3055,6 +3122,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithJTIReplayStore(store))
 		opts = appendReadyCheck(opts, "sqlite-jti-replay", store)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-jti-replay", store)
 		if cfg.Security.JTIReplay.FailClosed {
 			// Reject when the store can't confirm a jti is unseen,
 			// instead of falling through. Closes the replay window
@@ -3102,6 +3170,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithAccountLockout(lockout))
 		opts = appendReadyCheck(opts, "sqlite-account-lockout", lockout)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-account-lockout", lockout)
 		logger.Info("security: account lockout enabled",
 			"backend", mode,
 			"max_failures", al.MaxFailures,
@@ -3173,6 +3242,15 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			}),
 		)
 		logger.Info("signing key aggregation enabled", "replica_id", replicaID)
+	}
+
+	// Mount the per-store storage-health admin report from the sources
+	// gathered alongside the /readyz checks. Empty (all-memory backends) ⇒
+	// WithStorageHealth doesn't mount the route — byte-identical to a build
+	// without it. Admin-gated (admin:read) by the /api/v1/admin/ prefix.
+	if len(storageHealthSources) > 0 {
+		opts = append(opts, sso.WithStorageHealth(storageHealthSources...))
+		logger.Info("storage-health report enabled", "stores", len(storageHealthSources))
 	}
 
 	srv = sso.NewServer(opts...)

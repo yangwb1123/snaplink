@@ -92,6 +92,16 @@ type Server struct {
 	meshExtAuthz     bool
 	meshExtAuthzPath string
 
+	// Opt-in per-store storage-health admin report (WithStorageHealth).
+	// Each source describes one wired store: a Name, a Ping for
+	// reachability, and an optional schema-version getter (a cmd-supplied
+	// closure over the store's *sql.DB driving migrate.Status). Empty ⇒ the
+	// /api/v1/admin/storage-health route is NOT mounted (byte-identical to a
+	// build without it). The SDK doesn't own the store handles or their
+	// *sql.DB — cmd collects these at the same point it gathers Ping-capable
+	// stores for /readyz.
+	storageHealthSources []StorageHealthSource
+
 	// Opt-in leaderless multi-replica signing-key aggregation. When
 	// signingKeyRegistry is wired (WithSharedSigningKeyRegistry), each
 	// replica publishes its signing public keys and adopts its peers' keys
@@ -1461,6 +1471,14 @@ func (s *Server) Mount() {
 	// the role-DEFINITION half of that model.
 	if s.permissions != nil {
 		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
+	}
+
+	// Per-store storage-health report (opt-in WithStorageHealth). Full-path
+	// admin endpoint gated by AdminMiddleware via the /api/v1/admin/ prefix.
+	// Only mounted when at least one source is wired — byte-identical to a
+	// build without it.
+	if len(s.storageHealthSources) > 0 {
+		s.router.GET(PathStorageHealth, s.handleStorageHealth)
 	}
 
 	// Mesh ext_authz HTTP endpoint (opt-in, cluster C1). The sidecar may

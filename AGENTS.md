@@ -667,6 +667,16 @@ single-source entry.
 Offline CLIs work directly against wire artifacts (no running server) —
 backup-integrity + DR drills.
 
+**Storage-health report** (`storage_health.go`, opt-in `WithStorageHealth`).
+`GET /api/v1/admin/storage-health` (admin:read) — the detailed counterpart to
+`/readyz`'s pass/fail aggregate: per wired store it reports reachability
+(timed Ping → `reachable` + `ping_latency_ms`) + schema version (migrate
+namespace → version, from each SQLite store's `DB()` via `migrate.Status`).
+For DR drills + rolling-upgrade safety. One store down ⇒ `reachable:false` +
+generic error (NO DSN/secret), report still 200 (survivors surface). cmd
+collects sources at the `appendReadyCheck` points (`appendStorageHealthSource`);
+no sources ⇒ route unmounted.
+
 **Release pipeline**: `goreleaser` from `.github/workflows/release.yml` on
 `vX.Y.Z` tags (linux+darwin × amd64+arm64 + windows/amd64; archives bundle
 LICENSE + SECURITY.md + CHANGELOG.md; `checksums.txt` + syft SBOMs).

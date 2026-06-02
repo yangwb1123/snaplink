@@ -52,6 +52,17 @@ const (
 	// /api/v1/admin/ prefix.
 	PathAuthzPolicyBundle = "/api/v1/admin/authz/policy-bundle"
 
+	// PathStorageHealth is the read-only admin per-store health report:
+	// for every wired store (identity / oauth / audit / tenant / …) it
+	// reports reachability (Ping), schema version (migrate namespace ->
+	// version), and Ping latency. Distinct from /readyz, which is a
+	// pass/fail aggregate — this is the detailed view operators need for
+	// DR drills + rolling-upgrade safety (which store is on which schema,
+	// which is slow, which is down). Full path (not group-relative) so it
+	// mounts on the SSO router directly and is gated by AdminMiddleware via
+	// the /api/v1/admin/ prefix.
+	PathStorageHealth = "/api/v1/admin/storage-health"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"

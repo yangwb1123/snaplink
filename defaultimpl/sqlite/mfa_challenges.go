@@ -82,6 +82,11 @@ func (s *MFAChallengeStore) Close() error {
 	return err
 }
 
+// DB exposes the underlying *sql.DB for an operator-facing schema
+// reporter (sso.WithStorageHealth via migrate.Status). Nil after Close;
+// callers MUST NOT close it.
+func (s *MFAChallengeStore) DB() *sql.DB { return s.db }
+
 // Ping reports SQLite connection health for [sso.WithReadyCheck]
 // wiring.
 func (s *MFAChallengeStore) Ping(ctx context.Context) error {

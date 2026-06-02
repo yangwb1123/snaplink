@@ -109,6 +109,12 @@ func (p *UserProvider) Close() error {
 // Ping reports SQLite connection health for [sso.WithReadyCheck]
 // wiring. cmd registers this so /readyz flips to 503 on connection
 // loss (mount went read-only, file deleted underneath us, etc.).
+//
+// DB exposes the underlying *sql.DB for an operator-facing schema
+// reporter (sso.WithStorageHealth via migrate.Status). Nil after Close;
+// callers MUST NOT close it.
+func (p *UserProvider) DB() *sql.DB { return p.db }
+
 func (p *UserProvider) Ping(ctx context.Context) error {
 	if p == nil || p.db == nil {
 		return errors.New("sqlite: user provider closed")

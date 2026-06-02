@@ -111,6 +111,11 @@ func (p *Provider) Close() error {
 	return err
 }
 
+// DB exposes the underlying *sql.DB for an operator-facing schema
+// reporter (sso.WithStorageHealth via migrate.Status). Nil after Close;
+// callers MUST NOT close it.
+func (p *Provider) DB() *sql.DB { return p.db }
+
 // Ping reports SQLite connection health for [sso.WithReadyCheck].
 func (p *Provider) Ping(ctx context.Context) error {
 	if p == nil || p.db == nil {

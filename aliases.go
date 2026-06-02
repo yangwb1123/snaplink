@@ -247,6 +247,7 @@ const KeyVCSTime = core.KeyVCSTime
 const KeyVersion = core.KeyVersion
 const PathAPIPrefix = core.PathAPIPrefix
 const PathAuthzPolicyBundle = core.PathAuthzPolicyBundle
+const PathStorageHealth = core.PathStorageHealth
 const PathAuditEventByID = core.PathAuditEventByID
 const PathAuditEvents = core.PathAuditEvents
 const PathAuditFacets = core.PathAuditFacets

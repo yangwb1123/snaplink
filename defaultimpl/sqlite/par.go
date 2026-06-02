@@ -93,6 +93,11 @@ func (s *PARStore) Close() error {
 	return err
 }
 
+// DB exposes the underlying *sql.DB for an operator-facing schema
+// reporter (sso.WithStorageHealth via migrate.Status). Nil after Close;
+// callers MUST NOT close it.
+func (s *PARStore) DB() *sql.DB { return s.db }
+
 // Ping reports SQLite connection health for [sso.WithReadyCheck]
 // wiring.
 func (s *PARStore) Ping(ctx context.Context) error {

@@ -88,6 +88,12 @@ func (a *AccountLockout) Close() error {
 	return err
 }
 
+// DB exposes the underlying *sql.DB so an operator-facing reporter
+// (e.g. sso.WithStorageHealth driving migrate.Status) can read this
+// store's schema state. Returns nil after Close. Callers MUST NOT close
+// it — the store owns the handle.
+func (a *AccountLockout) DB() *sql.DB { return a.db }
+
 // Ping reports SQLite connection health for [sso.WithReadyCheck]
 // wiring.
 func (a *AccountLockout) Ping(ctx context.Context) error {
