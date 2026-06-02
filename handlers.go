@@ -1862,10 +1862,11 @@ type oidcConfiguration struct {
 	// OIDC CIBA Core 1.0 discovery metadata. Advertised only when
 	// WithCIBA is wired (opt-in). BackchannelAuthenticationEndpoint
 	// points at /backchannel-authentication;
-	// BackchannelTokenDeliveryModesSupported is ["poll"] (poll mode
-	// only — we don't implement ping/push delivery).
-	// BackchannelUserCodeParameterSupported is false (poll mode here
-	// resolves the user via login_hint/id_token_hint, not a user_code).
+	// BackchannelTokenDeliveryModesSupported is ["poll"], plus "ping"
+	// when a CIBAPingNotifier is wired (WithCIBAPingNotifier); push
+	// delivery is not implemented.
+	// BackchannelUserCodeParameterSupported is false (the user is
+	// resolved via login_hint/id_token_hint, not a user_code).
 	BackchannelAuthenticationEndpoint      string   `json:"backchannel_authentication_endpoint,omitempty"`
 	BackchannelTokenDeliveryModesSupported []string `json:"backchannel_token_delivery_modes_supported,omitempty"`
 	BackchannelUserCodeParameterSupported  bool     `json:"backchannel_user_code_parameter_supported,omitempty"`
