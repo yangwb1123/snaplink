@@ -2,9 +2,14 @@ package sso
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/snaplink/sso/core"
@@ -260,9 +265,13 @@ func (s *Server) registerAdoptedKids(replicaID string, kids []string) {
 //
 // Alg-match is enforced HERE, before adoption: the key is only handed to an
 // issuer whose own signing alg equals the key's Alg. A key whose alg matches
-// no wired issuer (e.g. an ES256 peer key on an EdDSA-only deployment, until
-// the ECDSA follow-up commit) is logged + skipped — not an error. Only
-// Ed25519 issuers expose AdoptVerifyKey in this commit; others are skipped.
+// no wired issuer (e.g. an ES256 peer key on an EdDSA-only deployment) is
+// logged + skipped — not an error. Decoding + adoption dispatch by the
+// issuer's adopt-capability (EdDSA -> ed25519.PublicKey, ES256 ->
+// *ecdsa.PublicKey, RS256/PS256 -> *rsa.PublicKey). Because each issuer signs
+// exactly one alg and the alg-match gate already passed, an RS256 key never
+// reaches a PS256 issuer (and vice versa) — the RS256/PS256 boundary stays
+// strict.
 func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 	if jwk.Kid == "" || jwk.Alg == "" {
 		s.logger.Debug("signingkeys: skipping peer key with empty kid/alg", "replica_id", replicaID)
@@ -274,30 +283,29 @@ func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 		if s.issuerAlgs[name] != jwk.Alg {
 			continue
 		}
-		adopter, ok := ti.(interface {
-			AdoptVerifyKey(string, ed25519.PublicKey) error
-		})
-		if !ok {
-			// Matching alg but no adoption support (e.g. ECDSA/RSA in this
-			// commit). Skip cleanly; the follow-up commit wires those.
-			continue
-		}
-		pub, err := decodeEd25519JWK(jwk)
-		if err != nil {
-			// A decode failure is a property of the JWK itself, not of any
-			// one issuer — no matching-alg issuer could adopt it. Fail-open:
+		// Dispatch by the issuer's adopt-capability. Each issuer exposes
+		// exactly ONE AdoptVerifyKey shape (matching its key type), so only
+		// one branch fires per issuer. The decode is keyed off the same key
+		// type the issuer accepts, so an EC issuer never receives RSA material
+		// and vice versa.
+		adopted, decodeFailed, supported := s.tryAdoptIntoIssuer(replicaID, name, ti, jwk)
+		if decodeFailed {
+			// A decode failure is a property of the JWK itself, not of any one
+			// issuer — no matching-alg issuer could adopt it. Fail-open:
 			// abandon THIS key (the caller's per-JWK loop continues to the
 			// remaining keys in the announcement).
-			s.logger.Error("signingkeys: undecodable peer key, skipping",
-				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
 			return "", false
 		}
-		if err := adopter.AdoptVerifyKey(jwk.Kid, pub); err != nil {
+		if !supported {
+			// Matching alg but this issuer does not expose the matching
+			// AdoptVerifyKey shape — skip cleanly and try the next issuer.
+			continue
+		}
+		if !adopted {
 			// One matching-alg issuer rejected the key (e.g. a local kid
 			// collision in that issuer). Don't abandon the key wholesale —
-			// another matching-alg issuer may accept it. Log + try the next.
-			s.logger.Error("signingkeys: adopt peer key failed on issuer, trying next matching-alg issuer",
-				"replica_id", replicaID, "kid", jwk.Kid, "issuer", name, "error", err)
+			// another matching-alg issuer may accept it. Already logged inside
+			// tryAdoptIntoIssuer; try the next.
 			continue
 		}
 		s.logger.Info("signingkeys: adopted peer verify key",
@@ -308,6 +316,93 @@ func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 		"replica_id", replicaID, "kid", jwk.Kid, "alg", jwk.Alg)
 	return "", false
 }
+
+// tryAdoptIntoIssuer decodes the JWK to the key type the issuer adopts and
+// calls its AdoptVerifyKey. Returns (adopted, decodeFailed, supported):
+//   - supported=false: the issuer doesn't expose the matching AdoptVerifyKey
+//     shape (caller skips to the next matching-alg issuer).
+//   - decodeFailed=true: the JWK itself is malformed/off-curve/undersized for
+//     its key type (caller abandons the key — no issuer could adopt it).
+//   - adopted=true: the issuer accepted the key.
+//
+// A nil/zero return triple (false,false,false) is the "supported=false" case.
+// Logging of decode + adopt failures happens here so adoptPeerKey stays a thin
+// router. Fail-open throughout: a bad peer key is logged and skipped, never
+// fatal to the subscriber goroutine.
+func (s *Server) tryAdoptIntoIssuer(replicaID, name string, ti core.TokenIssuer, jwk core.JWK) (adopted, decodeFailed, supported bool) {
+	switch {
+	case isEdDSAJWK(jwk):
+		ad, ok := ti.(interface {
+			AdoptVerifyKey(string, ed25519.PublicKey) error
+		})
+		if !ok {
+			return false, false, false
+		}
+		pub, err := decodeEd25519JWK(jwk)
+		if err != nil {
+			s.logger.Error("signingkeys: undecodable peer key, skipping",
+				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
+			return false, true, true
+		}
+		return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
+
+	case isECJWK(jwk):
+		ad, ok := ti.(interface {
+			AdoptVerifyKey(string, *ecdsa.PublicKey) error
+		})
+		if !ok {
+			return false, false, false
+		}
+		pub, err := decodeECDSAJWK(jwk)
+		if err != nil {
+			s.logger.Error("signingkeys: undecodable peer key, skipping",
+				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
+			return false, true, true
+		}
+		return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
+
+	case isRSAJWK(jwk):
+		ad, ok := ti.(interface {
+			AdoptVerifyKey(string, *rsa.PublicKey) error
+		})
+		if !ok {
+			return false, false, false
+		}
+		pub, err := decodeRSAJWK(jwk)
+		if err != nil {
+			s.logger.Error("signingkeys: undecodable peer key, skipping",
+				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
+			return false, true, true
+		}
+		return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
+
+	default:
+		// Unknown kty — no decoder. Treat as unsupported so the caller keeps
+		// scanning issuers (none will match), then logs "no matching-alg
+		// issuer". Not a decode error (we never attempted a decode).
+		return false, false, false
+	}
+}
+
+// adoptOne runs an issuer's AdoptVerifyKey and logs a rejection, returning
+// whether it succeeded. Centralizes the "try next matching-alg issuer on
+// error" logging so the three type-branches in tryAdoptIntoIssuer stay terse.
+func (s *Server) adoptOne(replicaID, name, kid string, adopt func() error) bool {
+	if err := adopt(); err != nil {
+		s.logger.Error("signingkeys: adopt peer key failed on issuer, trying next matching-alg issuer",
+			"replica_id", replicaID, "kid", kid, "issuer", name, "error", err)
+		return false
+	}
+	return true
+}
+
+// isEdDSAJWK / isECJWK / isRSAJWK classify a peer JWK by its key type so
+// adoptPeerKey routes it to the right decoder. Classification is by kty (the
+// authoritative JWK key-type discriminator, RFC 7517 §4.1), not by alg — the
+// alg-match gate already ran, and kty selects the wire shape (X vs X+Y vs N+E).
+func isEdDSAJWK(jwk core.JWK) bool { return jwk.Kty == jwkKtyOKP }
+func isECJWK(jwk core.JWK) bool    { return jwk.Kty == jwkKtyEC }
+func isRSAJWK(jwk core.JWK) bool   { return jwk.Kty == jwkKtyRSA }
 
 // dropAllAdopted forgets every peer key this replica adopted from replicaID
 // and clears its tracking entry. A kid is only actually removed from the
@@ -348,6 +443,27 @@ func (s *Server) dropAllAdopted(replicaID string) {
 	}
 }
 
+// JWK key-type discriminators (RFC 7517 §4.1). The Server classifies a peer
+// JWK by kty to pick the right decoder; these mirror the same string values
+// the defaultimpl issuers stamp into their JWKS output.
+const (
+	jwkKtyOKP = "OKP" // Ed25519 (EdDSA)
+	jwkKtyEC  = "EC"  // P-256 (ES256)
+	jwkKtyRSA = "RSA" // RS256 | PS256
+
+	// jwkCrvP256 is the only EC curve this aggregator adopts — ES256's curve.
+	// A peer EC key on any other curve is rejected at decode (it could never
+	// have signed an ES256 token the local issuer accepts).
+	jwkCrvP256 = "P-256"
+
+	// rsaMinPeerKeyBits is the minimum modulus size for an ADOPTED peer RSA
+	// key, mirroring the RSA issuer's own rsaMinKeyBits floor (RFC 7518 §3.3
+	// >= 2048). Decoding rejects a sub-floor key so a weak modulus never
+	// enters the verify-set via aggregation. Kept in sync with the issuer's
+	// constant by value; both cite the same RFC floor.
+	rsaMinPeerKeyBits = 2048
+)
+
 // decodeEd25519JWK reconstructs an ed25519.PublicKey from an OKP/Ed25519
 // JWK's base64url-encoded X coordinate, validating the decoded length so a
 // malformed peer key fails closed rather than producing a key that silently
@@ -361,6 +477,79 @@ func decodeEd25519JWK(jwk core.JWK) (ed25519.PublicKey, error) {
 		return nil, &decodeError{kid: jwk.Kid, gotLen: len(raw)}
 	}
 	return ed25519.PublicKey(raw), nil
+}
+
+// decodeECDSAJWK reconstructs a P-256 *ecdsa.PublicKey from an EC JWK's
+// base64url X/Y coordinates (RFC 7518 §6.2), REJECTING any point that is not on
+// the P-256 curve. On-curve validation reuses the same crypto/ecdh path the
+// ECDH JWE encrypter uses (ecPublicFromJWK in ecdh_jwe_encrypter.go): assemble
+// the uncompressed SEC1 point 0x04||X||Y and hand it to ecdh.P256().NewPublicKey,
+// which rejects off-curve / invalid-curve points. Restricted to P-256 because
+// ES256 is the only EC alg this aggregator routes — a peer key on another curve
+// could never verify an ES256 token, so it fails closed here rather than
+// entering the verify-set as a key that silently rejects every signature.
+func decodeECDSAJWK(jwk core.JWK) (*ecdsa.PublicKey, error) {
+	if jwk.Crv != jwkCrvP256 {
+		return nil, fmt.Errorf("signingkeys: peer EC key %s: unsupported crv %q (want %s)", jwk.Kid, jwk.Crv, jwkCrvP256)
+	}
+	if jwk.X == "" || jwk.Y == "" {
+		return nil, fmt.Errorf("signingkeys: peer EC key %s: missing x/y", jwk.Kid)
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(jwk.X)
+	if err != nil {
+		return nil, fmt.Errorf("signingkeys: peer EC key %s: decode x: %w", jwk.Kid, err)
+	}
+	yb, err := base64.RawURLEncoding.DecodeString(jwk.Y)
+	if err != nil {
+		return nil, fmt.Errorf("signingkeys: peer EC key %s: decode y: %w", jwk.Kid, err)
+	}
+	curve := elliptic.P256()
+	byteLen := (curve.Params().BitSize + 7) / 8
+	if len(xb) > byteLen || len(yb) > byteLen {
+		return nil, fmt.Errorf("signingkeys: peer EC key %s: coordinate exceeds curve size", jwk.Kid)
+	}
+	// Build the uncompressed SEC1 point and validate it lies on P-256 via
+	// crypto/ecdh (rejects invalid-curve / off-curve points). go.crypto's
+	// ecdsa wants the affine *ecdsa.PublicKey, so we return that after the
+	// ecdh validation succeeds.
+	point := make([]byte, 1+2*byteLen)
+	point[0] = 4
+	x := new(big.Int).SetBytes(xb)
+	y := new(big.Int).SetBytes(yb)
+	x.FillBytes(point[1 : 1+byteLen])
+	y.FillBytes(point[1+byteLen:])
+	if _, err := ecdh.P256().NewPublicKey(point); err != nil {
+		return nil, fmt.Errorf("signingkeys: peer EC key %s: invalid EC point: %w", jwk.Kid, err)
+	}
+	return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
+}
+
+// decodeRSAJWK reconstructs an *rsa.PublicKey from an RSA JWK's base64url N
+// (big-endian modulus) + E (big-endian public exponent) per RFC 7518 §6.3.
+// Rejects an undersized modulus (< rsaMinPeerKeyBits) and a non-positive
+// exponent so a weak or malformed peer key fails closed rather than entering
+// the verify-set.
+func decodeRSAJWK(jwk core.JWK) (*rsa.PublicKey, error) {
+	if jwk.N == "" || jwk.E == "" {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: missing n/e", jwk.Kid)
+	}
+	nb, err := base64.RawURLEncoding.DecodeString(jwk.N)
+	if err != nil {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: decode n: %w", jwk.Kid, err)
+	}
+	eb, err := base64.RawURLEncoding.DecodeString(jwk.E)
+	if err != nil {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: decode e: %w", jwk.Kid, err)
+	}
+	n := new(big.Int).SetBytes(nb)
+	if n.BitLen() < rsaMinPeerKeyBits {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: modulus is %d bits, minimum is %d", jwk.Kid, n.BitLen(), rsaMinPeerKeyBits)
+	}
+	e := new(big.Int).SetBytes(eb)
+	if !e.IsInt64() || e.Int64() <= 0 {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: invalid public exponent", jwk.Kid)
+	}
+	return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
 }
 
 // decodeError reports a peer JWK whose decoded public key is the wrong

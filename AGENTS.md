@@ -256,17 +256,20 @@ shared KMS), a token signed by A fails on B because B's JWKS/verify-set
 lacks A's kid. `WithSharedSigningKeyRegistry` + `StartSigningKeyAggregation`
 fix it: each replica PUBLISHES its signing PUBLIC keys to a shared
 `signingkeys.Registry` and ADOPTS peers' keys VERIFY-ONLY into the
-matching-alg issuer (`Ed25519JWTIssuer.AdoptVerifyKey/DropVerifyKey`), so
-JWKS() + Validate() serve the union while each replica still SIGNS only with
-its own private key. Alg-match is enforced BEFORE adoption (preserves
-per-issuer kid→alg + alg-confusion safety); adopted peer keys live in a
-SEPARATE `peerVerifyKeys` map untouched by local `RotateKey`/`RetireKey`.
-Nil registry = byte-identical to a non-aggregating build (zero regression).
-`WithSigningKeyReplicaID` is REQUIRED once a registry is wired —
-`StartSigningKeyAggregation` errors on an empty id rather than start
-one-directional aggregation (adopt peers but get its own announcement
-rejected). Re-publish on rotation. Ed25519 only today (ECDSA/RSA + etcd
-backend follow).
+matching-alg issuer (`{Ed25519,ECDSA,RSA}JWTIssuer.AdoptVerifyKey/DropVerifyKey`
+— all three signing algs), so JWKS() + Validate() serve the union while each
+replica still SIGNS only with its own private key. Alg-match is enforced BEFORE
+adoption (`issuerAlgs[name] == jwk.Alg`, routing by the issuer's own
+`JWKS()[0].Alg`); RS256 vs PS256 is a strict string match, so an RS256 key never
+lands on a PS256 issuer (and vice versa), and a cross-alg key (ES256 to EdDSA,
+etc.) is skipped. Peer JWK decode validates per-type (EdDSA length, EC on-curve
+via `crypto/ecdh`, RSA modulus floor), failing OPEN — a malformed key is logged
++ skipped, never fatal. Adopted peer keys live in a SEPARATE `peerVerifyKeys`
+map untouched by local `RotateKey`/`RetireKey`. Nil registry = byte-identical to
+a non-aggregating build (zero regression). `WithSigningKeyReplicaID` is REQUIRED
+once a registry is wired — `StartSigningKeyAggregation` errors on an empty id
+rather than start one-directional aggregation (adopt peers but get its own
+announcement rejected). Re-publish on rotation. (etcd registry backend follows.)
 
 ---
 

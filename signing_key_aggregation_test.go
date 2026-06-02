@@ -392,3 +392,222 @@ func waitFor(d time.Duration, cond func() bool) bool {
 	}
 	return cond()
 }
+
+// jwkForAlg pulls a peer issuer's primary signing JWK as a core.JWK, the
+// material a real replica announces. ti must be a JWKSProvider (every default
+// JWT issuer is).
+func jwkForAlg(t *testing.T, ti core.JWKSProvider) core.JWK {
+	t.Helper()
+	jwks, err := ti.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("peer JWKS: %v", err)
+	}
+	if len(jwks) == 0 {
+		t.Fatal("peer issuer has no JWK")
+	}
+	return jwks[0]
+}
+
+// newMultiAlgEventServer builds a Server with one issuer of EACH alg (EdDSA,
+// ES256, RS256) and a fixed replicaID but NO registry, so a test feeds it
+// crafted events via ApplySigningKeyEventForTest and asserts each announced key
+// routes to the correct-alg issuer.
+func newMultiAlgEventServer(t *testing.T, replicaID string) (*sso.Server, *defaultimpl.Ed25519JWTIssuer, *defaultimpl.ECDSAJWTIssuer, *defaultimpl.RSAJWTIssuer) {
+	t.Helper()
+	ed := defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519Issuer("https://sso.example"),
+		defaultimpl.WithEd25519TokenTTL(5*time.Minute),
+	)
+	ec := defaultimpl.NewECDSAJWTIssuer(
+		defaultimpl.WithECDSAIssuer("https://sso.example"),
+		defaultimpl.WithECDSATokenTTL(5*time.Minute),
+	)
+	rs := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://sso.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+		defaultimpl.WithRSATokenTTL(5*time.Minute),
+	)
+	srv := sso.NewServer(
+		sso.WithTokenIssuer("jwt-eddsa", ed),
+		sso.WithTokenIssuer("jwt-es256", ec),
+		sso.WithTokenIssuer("jwt-rs256", rs),
+	)
+	srv.SetReplicaIDForTest(replicaID)
+	return srv, ed, ec, rs
+}
+
+// issuerHasKidEC / issuerHasKidRSA are the EC/RSA analogues of issuerHasKid.
+func issuerHasKidEC(t *testing.T, iss *defaultimpl.ECDSAJWTIssuer, kid string) bool {
+	t.Helper()
+	jwks, err := iss.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("JWKS: %v", err)
+	}
+	for _, k := range jwks {
+		if k.Kid == kid {
+			return true
+		}
+	}
+	return false
+}
+
+func issuerHasKidRSA(t *testing.T, iss *defaultimpl.RSAJWTIssuer, kid string) bool {
+	t.Helper()
+	jwks, err := iss.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("JWKS: %v", err)
+	}
+	for _, k := range jwks {
+		if k.Kid == kid {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSigningKeyAggregation_MultiAlgRouting is the cross-alg integration
+// property: a Server wired with one issuer of each alg (EdDSA + ES256 + RS256)
+// receives peer announcements of all three algs, and each key routes to the
+// CORRECT-alg issuer — appears in that issuer's JWKS, validates a token signed
+// by the matching peer, and does NOT appear in any other-alg issuer.
+func TestSigningKeyAggregation_MultiAlgRouting(t *testing.T) {
+	srv, edLocal, ecLocal, rsLocal := newMultiAlgEventServer(t, "replica-local")
+
+	// Three peers, one per alg, each minting a token + announcing its key.
+	edPeer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://peer.example"))
+	ecPeer := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("https://peer.example"))
+	rsPeer := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://peer.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+	)
+
+	edTok, err := edPeer.Issue(context.Background(), &sso.Subject{ID: "u-ed", ClientID: "c"}, []string{"read"})
+	if err != nil {
+		t.Fatalf("ed peer Issue: %v", err)
+	}
+	ecTok, err := ecPeer.Issue(context.Background(), &sso.Subject{ID: "u-ec", ClientID: "c"}, []string{"read"})
+	if err != nil {
+		t.Fatalf("ec peer Issue: %v", err)
+	}
+	rsTok, err := rsPeer.Issue(context.Background(), &sso.Subject{ID: "u-rs", ClientID: "c"}, []string{"read"})
+	if err != nil {
+		t.Fatalf("rs peer Issue: %v", err)
+	}
+
+	// Announce all three keys from three distinct peer replicas.
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-ed", Keys: []core.JWK{jwkForAlg(t, edPeer)}},
+	})
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-ec", Keys: []core.JWK{jwkForAlg(t, ecPeer)}},
+	})
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-rs", Keys: []core.JWK{jwkForAlg(t, rsPeer)}},
+	})
+
+	// Each peer kid lands in ITS alg's issuer.
+	if !issuerHasKid(t, edLocal, edPeer.KeyID()) {
+		t.Fatalf("EdDSA peer kid %s not adopted by the EdDSA issuer", edPeer.KeyID())
+	}
+	if !issuerHasKidEC(t, ecLocal, ecPeer.KeyID()) {
+		t.Fatalf("ES256 peer kid %s not adopted by the ECDSA issuer", ecPeer.KeyID())
+	}
+	if !issuerHasKidRSA(t, rsLocal, rsPeer.KeyID()) {
+		t.Fatalf("RS256 peer kid %s not adopted by the RSA issuer", rsPeer.KeyID())
+	}
+
+	// And each peer kid is NOT cross-adopted into a wrong-alg issuer.
+	if issuerHasKidEC(t, ecLocal, edPeer.KeyID()) || issuerHasKidRSA(t, rsLocal, edPeer.KeyID()) {
+		t.Fatal("EdDSA peer kid leaked into a non-EdDSA issuer")
+	}
+	if issuerHasKid(t, edLocal, ecPeer.KeyID()) || issuerHasKidRSA(t, rsLocal, ecPeer.KeyID()) {
+		t.Fatal("ES256 peer kid leaked into a non-ES256 issuer")
+	}
+	if issuerHasKid(t, edLocal, rsPeer.KeyID()) || issuerHasKidEC(t, ecLocal, rsPeer.KeyID()) {
+		t.Fatal("RS256 peer kid leaked into a non-RS256 issuer")
+	}
+
+	// The Server's union ValidateToken accepts a token from each peer alg.
+	for name, tok := range map[string]string{
+		"eddsa": edTok.AccessToken,
+		"es256": ecTok.AccessToken,
+		"rs256": rsTok.AccessToken,
+	} {
+		if _, err := srv.ValidateToken(context.Background(), tok); err != nil {
+			t.Fatalf("%s peer token failed Server validation after adoption: %v", name, err)
+		}
+	}
+}
+
+// TestSigningKeyAggregation_RS256VsPS256Routing locks strict RS256/PS256
+// routing at the Server level: a Server with ONLY an RS256 issuer must NOT
+// adopt a PS256-announced key (and a PS256-only Server must NOT adopt an
+// RS256-announced key). Alg-match is by the exact alg string, so RS256 != PS256.
+func TestSigningKeyAggregation_RS256VsPS256Routing(t *testing.T) {
+	// RS256-only Server; announce a PS256 key.
+	rsIss := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://sso.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+	)
+	rsSrv := sso.NewServer(sso.WithTokenIssuer("jwt-rs256", rsIss))
+	rsSrv.SetReplicaIDForTest("rs-replica")
+
+	psPeer := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://peer.example"),
+		defaultimpl.WithRSAAlg("PS256"),
+	)
+	rsSrv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-ps", Keys: []core.JWK{jwkForAlg(t, psPeer)}},
+	})
+	if issuerHasKidRSA(t, rsIss, psPeer.KeyID()) {
+		t.Fatalf("RS256 issuer adopted a PS256-announced key (kid=%s) — RS256/PS256 routing breached", psPeer.KeyID())
+	}
+
+	// PS256-only Server; announce an RS256 key.
+	psIss := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://sso.example"),
+		defaultimpl.WithRSAAlg("PS256"),
+	)
+	psSrv := sso.NewServer(sso.WithTokenIssuer("jwt-ps256", psIss))
+	psSrv.SetReplicaIDForTest("ps-replica")
+
+	rsPeer := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://peer.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+	)
+	psSrv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-rs", Keys: []core.JWK{jwkForAlg(t, rsPeer)}},
+	})
+	if issuerHasKidRSA(t, psIss, rsPeer.KeyID()) {
+		t.Fatalf("PS256 issuer adopted an RS256-announced key (kid=%s) — RS256/PS256 routing breached", rsPeer.KeyID())
+	}
+}
+
+// TestSigningKeyAggregation_MalformedECKeySkipped proves a malformed/off-curve
+// EC peer key is logged + skipped (fail-open), never adopted, and the
+// subscriber path keeps going. An EC JWK whose x/y do not lie on P-256 must not
+// land in the ES256 issuer.
+func TestSigningKeyAggregation_MalformedECKeySkipped(t *testing.T) {
+	ecIss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("https://sso.example"))
+	srv := sso.NewServer(sso.WithTokenIssuer("jwt-es256", ecIss))
+	srv.SetReplicaIDForTest("local")
+
+	// Start from a real EC JWK, then corrupt Y so the point is off-curve.
+	good := jwkForAlg(t, defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("https://peer.example")))
+	bad := good
+	bad.Kid = "off-curve-kid"
+	bad.Y = "AAAA" // wrong length / off-curve
+
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-bad", Keys: []core.JWK{bad}},
+	})
+	if issuerHasKidEC(t, ecIss, bad.Kid) {
+		t.Fatalf("malformed EC peer key %s was adopted — must be skipped", bad.Kid)
+	}
+}

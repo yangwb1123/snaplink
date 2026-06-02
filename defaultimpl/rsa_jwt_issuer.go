@@ -93,6 +93,17 @@ type RSAJWTIssuer struct {
 	// rotation, matching the other issuers' locking discipline.
 	keyMu sync.RWMutex
 
+	// peerVerifyKeys holds VERIFY-ONLY public keys adopted from OTHER
+	// replicas in a leaderless multi-replica deployment (package
+	// signingkeys). It is deliberately SEPARATE from verifyKeys, guarded by
+	// its own mutex, so this replica's local key lifecycle — RotateKey /
+	// RetireKey — NEVER touches peer keys: peer-key lifecycle is owned by
+	// the registry/peer side, not by local rotation. The two mutexes are
+	// never held nested; lock order is independent (acquire one, fully
+	// release, then acquire the other) — see lookupVerifyKey and JWKS.
+	peerKeysMu     sync.RWMutex
+	peerVerifyKeys map[string]*rsa.PublicKey
+
 	// signer performs the raw RSA signing. Defaults to the in-process
 	// software signer; WithRSAExternalSigner swaps in a KMS/HSM signer.
 	signer RSASigner
@@ -208,7 +219,71 @@ func NewRSAJWTIssuer(opts ...RSAOption) *RSAJWTIssuer {
 		j.verifyKeys = make(map[string]*rsa.PublicKey, 1)
 	}
 	j.verifyKeys[j.keyID] = j.publicKey
+	// peerVerifyKeys starts empty: it only ever populates via AdoptVerifyKey
+	// when this replica is wired into a shared signing-key registry. With no
+	// registry it stays empty forever, so JWKS() and Validate() are
+	// byte-identical to a build that lacks the aggregation feature.
+	j.peerVerifyKeys = make(map[string]*rsa.PublicKey)
 	return j
+}
+
+// AdoptVerifyKey installs a peer replica's RSA signing public key as a
+// VERIFY-ONLY key, so this replica's JWKS() serves it and Validate() accepts
+// tokens it signed (package signingkeys). It NEVER affects signing — this
+// replica keeps minting only with its own private key. Idempotent: re-adopting
+// the same kid updates the public key in place.
+//
+// Defensive guards mirror the other issuers: kid must be non-empty; pub must be
+// non-nil and meet the SAME modulus floor this issuer enforces on its own keys
+// (rsaMinKeyBits, RFC 7518 §3.3 >= 2048) — a sub-floor peer key is rejected so
+// a weak key never enters this replica's verify-set via aggregation; and kid
+// must NOT collide with this replica's active signing kid or any LOCAL verify
+// key. A collision means two distinct keys claim one kid, breaking the O(1)
+// kid->key lookup; it is rejected loudly rather than silently shadowing the
+// local key.
+//
+// Alg-strictness (RS256 vs PS256) is enforced by the Server's alg-match gate
+// BEFORE this call (a PS256-announced key never reaches an RS256 issuer and
+// vice versa), so the padding scheme need not be re-checked here; the key
+// material itself is identical across the two paddings.
+func (j *RSAJWTIssuer) AdoptVerifyKey(kid string, pub *rsa.PublicKey) error {
+	if kid == "" {
+		return errors.New("rsa: adopt verify key: empty kid")
+	}
+	if pub == nil || pub.N == nil {
+		return fmt.Errorf("rsa: adopt verify key %q: nil public key", kid)
+	}
+	if pub.N.BitLen() < rsaMinKeyBits {
+		return fmt.Errorf("rsa: adopt verify key %q: key is %d bits, minimum is %d", kid, pub.N.BitLen(), rsaMinKeyBits)
+	}
+	// Read local key identity under keyMu, then release it fully before
+	// touching peerKeysMu — the two locks are never held nested.
+	j.keyMu.RLock()
+	collidesLocal := kid == j.keyID
+	if !collidesLocal {
+		_, collidesLocal = j.verifyKeys[kid]
+	}
+	j.keyMu.RUnlock()
+	if collidesLocal {
+		return fmt.Errorf("rsa: adopt verify key %q: kid collides with a local signing/verify key", kid)
+	}
+
+	j.peerKeysMu.Lock()
+	defer j.peerKeysMu.Unlock()
+	if j.peerVerifyKeys == nil {
+		j.peerVerifyKeys = make(map[string]*rsa.PublicKey, 1)
+	}
+	j.peerVerifyKeys[kid] = pub
+	return nil
+}
+
+// DropVerifyKey removes a previously adopted peer key (idempotent). It operates
+// ONLY on peerVerifyKeys, never on local verifyKeys, so it can never strand a
+// local signing/retired key — peer and local key lifecycles are independent.
+func (j *RSAJWTIssuer) DropVerifyKey(kid string) {
+	j.peerKeysMu.Lock()
+	defer j.peerKeysMu.Unlock()
+	delete(j.peerVerifyKeys, kid)
 }
 
 // currentKey snapshots the active signer + its kid together under the read
@@ -570,37 +645,92 @@ func (j *RSAJWTIssuer) signClaims(ctx context.Context, sgn RSASigner, kid, typ s
 }
 
 // lookupVerifyKey selects the verification key matching the header kid.
-// Empty kid falls back to the primary (legacy tokens); an unrecognised kid
+// Empty kid falls back to the primary (legacy tokens); then the local
+// verifyKeys; then the adopted peer keys (peerVerifyKeys); an unrecognised kid
 // returns nil so Validate fails closed.
+//
+// Lock discipline: read the active key + local verifyKeys under keyMu,
+// release it FULLY, then read peerVerifyKeys under peerKeysMu. The two
+// mutexes are never held nested, so there is no lock-ordering deadlock and no
+// double-unlock. The alg gate in Validate (h.Alg == j.alg) runs BEFORE this
+// lookup, so an adopted RS256 peer key is only ever reachable on an RS256
+// issuer's verify path (PS256 likewise) — adoption cannot weaken the
+// alg-confusion defense or blur the RS256/PS256 boundary.
 func (j *RSAJWTIssuer) lookupVerifyKey(kid string) *rsa.PublicKey {
 	j.keyMu.RLock()
-	defer j.keyMu.RUnlock()
 	if kid == "" {
-		return j.publicKey
+		pub := j.publicKey
+		j.keyMu.RUnlock()
+		return pub
 	}
-	if pub, ok := j.verifyKeys[kid]; ok {
+	pub, ok := j.verifyKeys[kid]
+	j.keyMu.RUnlock()
+	if ok {
+		return pub
+	}
+
+	// Fall through to adopted peer keys under a SEPARATE lock — keyMu is
+	// already released above, so the two are never held simultaneously.
+	j.peerKeysMu.RLock()
+	defer j.peerKeysMu.RUnlock()
+	if pub, ok := j.peerVerifyKeys[kid]; ok {
 		return pub
 	}
 	return nil
 }
 
 // JWKS publishes the RSA public key(s) per RFC 7518 §6.3: kty "RSA", n/e.
-// Emits the primary first, then verify-only keys in fingerprint-sorted
-// order (stable ETag) so a rotation keeps pre-swap tokens verifiable.
+// Emits the primary first, then LOCAL verify-only keys in fingerprint-sorted
+// order, then ADOPTED PEER verify-only keys in fingerprint-sorted order (stable
+// ETag) so a rotation keeps pre-swap tokens verifiable and any replica's token
+// verifies anywhere. Every entry carries this issuer's configured alg (RS256
+// xor PS256) — a peer key only reaches this issuer when the Server's alg-match
+// gate already confirmed the peer announced the same alg, so stamping j.alg is
+// correct.
+//
+// Lock discipline: snapshot the active key + local verifyKeys under keyMu and
+// release it FULLY before acquiring peerKeysMu. The two mutexes are never held
+// nested (independent lock order), so there is no double-unlock and no
+// deadlock.
 func (j *RSAJWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	j.keyMu.RLock()
-	defer j.keyMu.RUnlock()
-	out := []sso.JWK{rsaPublicJWK(j.keyID, j.publicKey, j.alg)}
+	keyID := j.keyID
+	alg := j.alg
+	out := []sso.JWK{rsaPublicJWK(keyID, j.publicKey, alg)}
 	verifyKids := make([]string, 0, len(j.verifyKeys))
 	for kid := range j.verifyKeys {
-		if kid == j.keyID {
+		if kid == keyID {
 			continue
 		}
 		verifyKids = append(verifyKids, kid)
 	}
+	// Snapshot the matching public keys while still under keyMu.
+	local := make(map[string]*rsa.PublicKey, len(verifyKids))
+	for _, kid := range verifyKids {
+		local[kid] = j.verifyKeys[kid]
+	}
+	j.keyMu.RUnlock()
+
 	sortStrings(verifyKids)
 	for _, kid := range verifyKids {
-		out = append(out, rsaPublicJWK(kid, j.verifyKeys[kid], j.alg))
+		out = append(out, rsaPublicJWK(kid, local[kid], alg))
+	}
+
+	// Adopted peer keys under a SEPARATE lock — keyMu is already released.
+	j.peerKeysMu.RLock()
+	peerKids := make([]string, 0, len(j.peerVerifyKeys))
+	for kid := range j.peerVerifyKeys {
+		peerKids = append(peerKids, kid)
+	}
+	peer := make(map[string]*rsa.PublicKey, len(peerKids))
+	for _, kid := range peerKids {
+		peer[kid] = j.peerVerifyKeys[kid]
+	}
+	j.peerKeysMu.RUnlock()
+
+	sortStrings(peerKids)
+	for _, kid := range peerKids {
+		out = append(out, rsaPublicJWK(kid, peer[kid], alg))
 	}
 	return out, nil
 }
