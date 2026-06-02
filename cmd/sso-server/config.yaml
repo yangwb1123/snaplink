@@ -795,6 +795,17 @@ keys:
     enabled: false
     interval: 2160h           # 90d
     grace_period: 168h        # 7d (>= max access-token TTL)
+  # Opt-in leaderless multi-replica JWKS public-key aggregation. When each
+  # replica holds its OWN per-process signing key (distinct kid, no shared
+  # KMS), a token signed by one replica fails verification on a peer (or on
+  # an RP that fetched JWKS from a peer). Enable this and every replica
+  # publishes its signing PUBLIC keys to a shared registry and adopts peers'
+  # keys verify-only, so JWKS + Validate serve the union (each replica still
+  # signs only with its own key). Disabled by default = zero behavior change.
+  signing_key_registry:
+    backend: ""              # "" (disabled) | memory | etcd (etcd not yet supported)
+    replica_id: ""           # defaults to the service-registry id; MUST be unique per replica
+    lease_ttl: 0s            # publish lease; 0 -> 5m default
 
 # OIDC CIBA (Client-Initiated Backchannel Authentication), poll mode.
 # Server issues an auth_req_id, delivers an out-of-band challenge via

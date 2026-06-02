@@ -30,37 +30,59 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/signingkeys"
 	"github.com/snaplink/sso/tenant"
 	"github.com/snaplink/sso/tracing"
 )
 
 // Server is the core SSO orchestrator.
 type Server struct {
-	authenticators                 map[string]Authenticator
-	tokenIssuers                   map[string]TokenIssuer // strategy name -> issuer
-	defaultTokenStrategy           string
-	tenantTokenStrategies          map[string]string // tenant id -> strategy (issuer) name
-	userProvider                   UserProvider
-	clientStore                    ClientStore
-	sessionMgr                     SessionManager
-	router                         Router
-	middleware                     []MiddlewareFunc
-	logger                         spi.Logger
-	auditor                        *audit.Recorder
-	auditAPI                       bool
-	requestIDMW                    bool
-	permissions                    permissions.Provider
-	embedPermissions               bool
-	netStore                       netpolicy.Store
-	netClassifier                  *netpolicy.Classifier
-	netAPI                         bool
-	geoProvider                    geo.Provider
-	geoMiddlewareOpts              GeoMiddlewareOptions
-	tenantStore                    tenant.Store
-	tenantMiddlewareOpts           TenantMiddlewareOptions
-	tenantSuspensionEnabled        bool
-	tenantSuspensionCache          *suspensionCache
-	invalidationBus                cluster.Bus
+	authenticators          map[string]Authenticator
+	tokenIssuers            map[string]TokenIssuer // strategy name -> issuer
+	defaultTokenStrategy    string
+	tenantTokenStrategies   map[string]string // tenant id -> strategy (issuer) name
+	userProvider            UserProvider
+	clientStore             ClientStore
+	sessionMgr              SessionManager
+	router                  Router
+	middleware              []MiddlewareFunc
+	logger                  spi.Logger
+	auditor                 *audit.Recorder
+	auditAPI                bool
+	requestIDMW             bool
+	permissions             permissions.Provider
+	embedPermissions        bool
+	netStore                netpolicy.Store
+	netClassifier           *netpolicy.Classifier
+	netAPI                  bool
+	geoProvider             geo.Provider
+	geoMiddlewareOpts       GeoMiddlewareOptions
+	tenantStore             tenant.Store
+	tenantMiddlewareOpts    TenantMiddlewareOptions
+	tenantSuspensionEnabled bool
+	tenantSuspensionCache   *suspensionCache
+	invalidationBus         cluster.Bus
+
+	// Opt-in leaderless multi-replica signing-key aggregation. When
+	// signingKeyRegistry is wired (WithSharedSigningKeyRegistry), each
+	// replica publishes its signing public keys and adopts its peers' keys
+	// VERIFY-ONLY, so JWKS + Validate serve the union (see
+	// signing_key_aggregation.go). Nil = the feature is entirely off:
+	// behavior is byte-identical to a build without it.
+	signingKeyRegistry signingkeys.Registry
+	replicaID          string
+	signingKeyLeaseTTL time.Duration
+	// adoptedPeerKids tracks, per peer replicaID, the kids this replica has
+	// adopted from it, so a KeysRemoved (or a shrinking KeysUpserted) drops
+	// exactly the keys that replica owns. Guarded by adoptedPeerMu.
+	adoptedPeerMu   sync.Mutex
+	adoptedPeerKids map[string][]string
+	// issuerAlgs caches each token issuer's signing alg (from its JWKS at
+	// wiring time) so the event handler can route an announced key to the
+	// matching-alg issuer without re-querying JWKS per event. Built lazily,
+	// once, by ensureIssuerAlgs.
+	issuerAlgsOnce                 sync.Once
+	issuerAlgs                     map[string]string
 	riskScorer                     spi.RiskScorer
 	mfaProvider                    spi.MFAProvider
 	mfaChallengeStore              spi.MFAChallengeStore

@@ -80,6 +80,8 @@ import (
 	releasefile "github.com/snaplink/sso/releases/store/file"
 	releasememory "github.com/snaplink/sso/releases/store/memory"
 	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/signingkeys"
+	signingkeysmemory "github.com/snaplink/sso/signingkeys/memory"
 	"github.com/snaplink/sso/snapshot"
 	encryptionaes "github.com/snaplink/sso/snapshot/encryption/aesgcm"
 	encryptionnone "github.com/snaplink/sso/snapshot/encryption/none"
@@ -302,6 +304,12 @@ type app struct {
 	invalidationBus cluster.Bus
 	busStop         <-chan struct{}
 
+	// signingKeyRegistry is the opt-in leaderless multi-replica signing-key
+	// aggregation registry (nil when unconfigured); signingKeyStop closes
+	// when its subscriber exits.
+	signingKeyRegistry signingkeys.Registry
+	signingKeyStop     <-chan struct{}
+
 	// keyRotationCancel stops the signing-key rotation loop (nil when
 	// rotation is disabled); keyRotationStop closes when it has exited.
 	keyRotationCancel context.CancelFunc
@@ -421,6 +429,17 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if a.busStop != nil {
 		select {
 		case <-a.busStop:
+		case <-ctx.Done():
+		}
+	}
+	// Close the signing-key registry so its subscriber stream exits, then
+	// wait briefly for that goroutine to drain — same shape as busStop.
+	if a.signingKeyRegistry != nil {
+		_ = a.signingKeyRegistry.Close()
+	}
+	if a.signingKeyStop != nil {
+		select {
+		case <-a.signingKeyStop:
 		case <-ctx.Done():
 		}
 	}
@@ -1373,6 +1392,27 @@ func buildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (clus
 		return bus, "etcd", nil
 	default:
 		return nil, "", fmt.Errorf("unknown cluster.bus.backend %q", cfg.Backend)
+	}
+}
+
+// buildSigningKeyRegistry constructs the shared signing-key registry for
+// leaderless multi-replica JWKS aggregation. Returns (nil, "", nil) when
+// disabled. Only the memory backend is functional in this build; etcd
+// returns a clear not-yet-supported error rather than silently no-opping,
+// so an operator who configured it isn't lulled into thinking cross-process
+// aggregation is active.
+func buildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Logger) (signingkeys.Registry, string, error) {
+	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
+	switch backend {
+	case "":
+		return nil, "", nil
+	case "memory":
+		logger.Info("signing key registry", "backend", "memory")
+		return signingkeysmemory.New(), "memory", nil
+	case "etcd":
+		return nil, "", errors.New("keys.signing_key_registry.backend=etcd is not yet supported (use memory; etcd lands in a follow-up commit)")
+	default:
+		return nil, "", fmt.Errorf("unknown keys.signing_key_registry.backend %q", cfg.Backend)
 	}
 }
 
@@ -2942,6 +2982,28 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithInvalidationBus(invalidationBus))
 	}
 
+	// Shared signing-key registry (opt-in leaderless multi-replica JWKS
+	// aggregation). Built before NewServer so the option is in place; the
+	// publish/subscribe loop starts just after (needs the Server). Default
+	// the replica id to the same hostname-derived id the service registry
+	// uses, so two replicas of one issuer announce distinct ids.
+	signingKeyRegistry, _, err := buildSigningKeyRegistry(&cfg.Keys.SigningKeyRegistry, logger)
+	if err != nil {
+		return nil, fmt.Errorf("signing key registry: %w", err)
+	}
+	if signingKeyRegistry != nil {
+		replicaID := strings.TrimSpace(cfg.Keys.SigningKeyRegistry.ReplicaID)
+		if replicaID == "" {
+			replicaID = resolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer)
+		}
+		opts = append(opts,
+			sso.WithSharedSigningKeyRegistry(signingKeyRegistry),
+			sso.WithSigningKeyReplicaID(replicaID),
+			sso.WithSigningKeyLeaseTTL(cfg.Keys.SigningKeyRegistry.LeaseTTL),
+		)
+		logger.Info("signing key aggregation enabled", "replica_id", replicaID)
+	}
+
 	srv := sso.NewServer(opts...)
 
 	// Background ctx + Close-at-shutdown mirrors the netpolicy Classifier:
@@ -2952,6 +3014,20 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			_ = invalidationBus.Close()
 		}
 		return nil, fmt.Errorf("invalidation bus subscribe: %w", err)
+	}
+
+	// Signing-key aggregation: publish our public keys + adopt peers'. Same
+	// background-ctx + Close-at-shutdown shape as the invalidation bus —
+	// closing the registry ends the subscriber stream, closing signingKeyStop.
+	signingKeyStop, err := srv.StartSigningKeyAggregation(context.Background())
+	if err != nil {
+		if signingKeyRegistry != nil {
+			_ = signingKeyRegistry.Close()
+		}
+		if invalidationBus != nil {
+			_ = invalidationBus.Close()
+		}
+		return nil, fmt.Errorf("signing key aggregation start: %w", err)
 	}
 
 	// Automatic signing-key rotation. OnRotate emits an audit event and
@@ -2977,6 +3053,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			srv.InvalidateDiscoveryCache()
 			if metricsRegistry != nil {
 				metricsRegistry.SigningKeyRotationsTotal.Inc()
+			}
+			// Re-publish our keys so peers adopt the rotated kid (the
+			// announcement replaces our prior one wholesale, dropping the
+			// retired kid from peers' verify-sets after its grace window).
+			// No-op when no signing-key registry is wired.
+			if err := srv.PublishSigningKeys(context.Background()); err != nil {
+				logger.Error("signingkeys: re-publish after rotation failed", "error", err)
 			}
 			logger.Info("signing key rotated", "from", oldKID, "to", newKID)
 		}
@@ -3134,6 +3217,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		netStop:                 netStop,
 		invalidationBus:         invalidationBus,
 		busStop:                 busStop,
+		signingKeyRegistry:      signingKeyRegistry,
+		signingKeyStop:          signingKeyStop,
 		keyRotationCancel:       keyRotationCancel,
 		keyRotationStop:         keyRotationStop,
 	}, nil

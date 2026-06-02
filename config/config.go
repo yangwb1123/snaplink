@@ -126,8 +126,26 @@ type ResponseEncryptionConfig struct {
 
 // KeysConfig governs signing-key lifecycle.
 type KeysConfig struct {
-	Signing  SigningConfig     `yaml:"signing"`
-	Rotation KeyRotationConfig `yaml:"rotation"`
+	Signing            SigningConfig            `yaml:"signing"`
+	Rotation           KeyRotationConfig        `yaml:"rotation"`
+	SigningKeyRegistry SigningKeyRegistryConfig `yaml:"signing_key_registry"`
+}
+
+// SigningKeyRegistryConfig opts into leaderless multi-replica signing-key
+// aggregation. In a leaderless deployment each replica holds its own
+// in-process signing key with a distinct kid; without aggregation a token
+// minted by one replica fails verification on a peer (or on an RP that
+// fetched JWKS from a peer). With this enabled each replica PUBLISHES its
+// signing PUBLIC keys to a shared registry and ADOPTS its peers' public keys
+// VERIFY-ONLY, so JWKS + Validate serve the union while each replica still
+// signs only with its own key. No shared private key, no leader election.
+//
+// Backend: "" (disabled, default) | "memory" | "etcd". In this build only
+// "memory" is functional ("etcd" returns a clear not-yet-supported error).
+type SigningKeyRegistryConfig struct {
+	Backend   string        `yaml:"backend"`
+	ReplicaID string        `yaml:"replica_id"`
+	LeaseTTL  time.Duration `yaml:"lease_ttl"`
 }
 
 // SigningConfig selects the JWT signing algorithm for the server's own

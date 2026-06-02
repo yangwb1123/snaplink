@@ -99,6 +99,18 @@ type Ed25519JWTIssuer struct {
 	// lock; only runtime rotation does.
 	keyMu sync.RWMutex
 
+	// peerVerifyKeys holds VERIFY-ONLY public keys adopted from OTHER
+	// replicas in a leaderless multi-replica deployment (see package
+	// signingkeys). It is deliberately SEPARATE from verifyKeys, guarded
+	// by its own mutex, so that this replica's local key lifecycle —
+	// RotateKey / RetireKey — NEVER touches peer keys: peer-key lifecycle
+	// is owned by the registry/peer side, not by local rotation. The two
+	// mutexes are never held nested; lock order is independent (acquire
+	// one, fully release, then acquire the other) — see lookupVerifyKey
+	// and JWKS for the discipline.
+	peerKeysMu     sync.RWMutex
+	peerVerifyKeys map[string]ed25519.PublicKey
+
 	// signer performs the raw EdDSA signing. Defaults to an in-process
 	// signer holding privateKey; WithEd25519ExternalSigner swaps in a
 	// KMS/HSM-backed signer (private key never enters this process).
@@ -224,7 +236,64 @@ func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	// Always register the primary signing key in the verify map so
 	// Validate has one lookup path (no special-case for "primary").
 	j.verifyKeys[j.keyID] = j.publicKey
+	// peerVerifyKeys starts empty: it only ever populates via
+	// AdoptVerifyKey when this replica is wired into a shared signing-key
+	// registry. With no registry, it stays nil-empty forever, so JWKS()
+	// and Validate() are byte-identical to a build that lacks this feature.
+	j.peerVerifyKeys = make(map[string]ed25519.PublicKey)
 	return j
+}
+
+// AdoptVerifyKey installs a peer replica's signing public key as a
+// VERIFY-ONLY key, so this replica's JWKS() serves it and Validate()
+// accepts tokens it signed (see package signingkeys). It NEVER affects
+// signing — this replica keeps minting tokens only with its own private
+// key. Idempotent: re-adopting the same kid updates the public key in
+// place (a peer rotation re-publishes under the same kid only if it pins
+// the key; normally a rotation publishes a new kid + drops the old).
+//
+// Defensive collision guards: kid must be non-empty, pub must be a valid
+// Ed25519 public key, and kid must NOT collide with this replica's active
+// signing kid or any LOCAL verify key (verifyKeys). Such a collision would
+// mean two distinct keys claim one kid, breaking the O(1) kid->key lookup
+// — it can only happen via a fingerprint collision or a misconfiguration,
+// and is rejected loudly rather than silently shadowing the local key.
+func (j *Ed25519JWTIssuer) AdoptVerifyKey(kid string, pub ed25519.PublicKey) error {
+	if kid == "" {
+		return errors.New("ed25519: adopt verify key: empty kid")
+	}
+	if pub == nil || len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("ed25519: adopt verify key %q: invalid public key length %d", kid, len(pub))
+	}
+	// Read local key identity under keyMu, then release it fully before
+	// touching peerKeysMu — the two locks are never held nested.
+	j.keyMu.RLock()
+	collidesLocal := kid == j.keyID
+	if !collidesLocal {
+		_, collidesLocal = j.verifyKeys[kid]
+	}
+	j.keyMu.RUnlock()
+	if collidesLocal {
+		return fmt.Errorf("ed25519: adopt verify key %q: kid collides with a local signing/verify key", kid)
+	}
+
+	j.peerKeysMu.Lock()
+	defer j.peerKeysMu.Unlock()
+	if j.peerVerifyKeys == nil {
+		j.peerVerifyKeys = make(map[string]ed25519.PublicKey, 1)
+	}
+	j.peerVerifyKeys[kid] = pub
+	return nil
+}
+
+// DropVerifyKey removes a previously adopted peer key (idempotent). It
+// operates ONLY on peerVerifyKeys, never on local verifyKeys, so it can
+// never strand a local signing/retired key — peer and local key lifecycles
+// are independent.
+func (j *Ed25519JWTIssuer) DropVerifyKey(kid string) {
+	j.peerKeysMu.Lock()
+	defer j.peerKeysMu.Unlock()
+	delete(j.peerVerifyKeys, kid)
 }
 
 // WithEd25519ExternalSigner injects a signer whose private key lives
@@ -793,8 +862,16 @@ func idTokenSigningInput(header ed25519Header, payload ed25519IDPayload) ([]byte
 // lookupVerifyKey selects the verification key matching the JWT
 // header's kid. Returns the primary publicKey when the header is
 // missing kid (legacy tokens without a kid still verify under the
-// primary), or nil when the kid is supplied but unrecognised so
+// primary), then the local verifyKeys, then the adopted peer keys
+// (peerVerifyKeys), or nil when the kid is supplied but unrecognised so
 // Validate can fail closed on an unknown signer.
+//
+// Lock discipline: read the active key + local verifyKeys under keyMu,
+// release it FULLY, then read peerVerifyKeys under peerKeysMu. The two
+// mutexes are never held nested, so there is no lock-ordering deadlock
+// and no double-unlock. The alg gate in Validate runs BEFORE this lookup,
+// so an adopted EdDSA peer key is only ever reachable via the EdDSA
+// verify path — adoption cannot weaken the alg-confusion defense.
 func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
 	raw, err := base64.RawURLEncoding.DecodeString(headerB64)
 	if err != nil {
@@ -804,12 +881,24 @@ func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
 	if err := json.Unmarshal(raw, &h); err != nil {
 		return nil
 	}
+
 	j.keyMu.RLock()
-	defer j.keyMu.RUnlock()
 	if h.Kid == "" {
-		return j.publicKey
+		pub := j.publicKey
+		j.keyMu.RUnlock()
+		return pub
 	}
-	if pub, ok := j.verifyKeys[h.Kid]; ok {
+	pub, ok := j.verifyKeys[h.Kid]
+	j.keyMu.RUnlock()
+	if ok {
+		return pub
+	}
+
+	// Fall through to adopted peer keys under a SEPARATE lock — keyMu is
+	// already released above, so the two are never held simultaneously.
+	j.peerKeysMu.RLock()
+	defer j.peerKeysMu.RUnlock()
+	if pub, ok := j.peerVerifyKeys[h.Kid]; ok {
 		return pub
 	}
 	return nil
@@ -819,31 +908,47 @@ func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
 // /.well-known/jwks.json. During a key rotation this emits BOTH
 // the primary signing key AND every WithEd25519VerifyKey retired
 // key, so RPs that pulled a token before the rotation can still
-// verify it after the swap.
+// verify it after the swap. When peer keys have been adopted (a
+// leaderless multi-replica deployment wired to a shared signing-key
+// registry), those are emitted too as verify-only keys, so the union
+// is published and any replica's token verifies anywhere.
 //
-// Output order: primary first, then verify-only keys in
-// fingerprint-sorted order. Stable across one process lifetime so
-// the JWKS ETag stays valid until something actually changes.
+// Output order: primary first, then LOCAL verify-only keys in
+// fingerprint-sorted order, then ADOPTED PEER verify-only keys in
+// fingerprint-sorted order. Stable across one process lifetime so the
+// JWKS ETag stays valid until the key set actually changes.
+//
+// Lock discipline: snapshot the active key + local verifyKeys under
+// keyMu and release it FULLY before acquiring peerKeysMu. The two
+// mutexes are never held nested (independent lock order), so there is no
+// double-unlock and no deadlock.
 func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	j.keyMu.RLock()
-	defer j.keyMu.RUnlock()
+	keyID := j.keyID
 	out := []sso.JWK{{
 		Kty: jwkKtyOKP,
 		Crv: jwkCrvEd25519,
-		Kid: j.keyID,
+		Kid: keyID,
 		X:   base64.RawURLEncoding.EncodeToString(j.publicKey),
 		Use: jwkUseSig,
 		Alg: jwtAlgEdDSA,
 	}}
-	// Collect kids of verify-only keys (skip the primary, already
+	// Collect kids of LOCAL verify-only keys (skip the primary, already
 	// emitted above).
 	verifyKids := make([]string, 0, len(j.verifyKeys))
 	for kid := range j.verifyKeys {
-		if kid == j.keyID {
+		if kid == keyID {
 			continue
 		}
 		verifyKids = append(verifyKids, kid)
 	}
+	// Snapshot the matching public keys while still under keyMu.
+	local := make(map[string]ed25519.PublicKey, len(verifyKids))
+	for _, kid := range verifyKids {
+		local[kid] = j.verifyKeys[kid]
+	}
+	j.keyMu.RUnlock()
+
 	// Sort for deterministic output — the JWKS ETag depends on it.
 	sortStrings(verifyKids)
 	for _, kid := range verifyKids {
@@ -851,7 +956,31 @@ func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 			Kty: jwkKtyOKP,
 			Crv: jwkCrvEd25519,
 			Kid: kid,
-			X:   base64.RawURLEncoding.EncodeToString(j.verifyKeys[kid]),
+			X:   base64.RawURLEncoding.EncodeToString(local[kid]),
+			Use: jwkUseSig,
+			Alg: jwtAlgEdDSA,
+		})
+	}
+
+	// Adopted peer keys under a SEPARATE lock — keyMu is already released.
+	j.peerKeysMu.RLock()
+	peerKids := make([]string, 0, len(j.peerVerifyKeys))
+	for kid := range j.peerVerifyKeys {
+		peerKids = append(peerKids, kid)
+	}
+	peer := make(map[string]ed25519.PublicKey, len(peerKids))
+	for _, kid := range peerKids {
+		peer[kid] = j.peerVerifyKeys[kid]
+	}
+	j.peerKeysMu.RUnlock()
+
+	sortStrings(peerKids)
+	for _, kid := range peerKids {
+		out = append(out, sso.JWK{
+			Kty: jwkKtyOKP,
+			Crv: jwkCrvEd25519,
+			Kid: kid,
+			X:   base64.RawURLEncoding.EncodeToString(peer[kid]),
 			Use: jwkUseSig,
 			Alg: jwtAlgEdDSA,
 		})
