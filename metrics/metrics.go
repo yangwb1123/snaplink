@@ -130,6 +130,27 @@ type Metrics struct {
 	// stale failures; this gauge reflects the last raw outcome). Labels:
 	// alg. Never set when no external signer is wired.
 	SigningBackendUp *prometheus.GaugeVec // labels: alg
+
+	// SigningKeyAdoptionErrorsTotal counts peer signing-key adoptions that
+	// failed in the leaderless aggregation loop, by reason ∈ {decode, adopt}
+	// (bounded). decode = a peer JWK was malformed/off-curve/weak; adopt = it
+	// decoded but every matching-alg issuer rejected AdoptVerifyKey. Both are
+	// fail-open (the key is skipped, the loop continues), so the only signal an
+	// operator gets WITHOUT this metric is a log line — a rising rate here
+	// surfaces a peer publishing bad keys (or a kid collision) before it
+	// manifests as unexplained "unknown kid" validation failures. Zero traffic
+	// when no signing-key registry is wired.
+	SigningKeyAdoptionErrorsTotal *prometheus.CounterVec // labels: reason
+
+	// SigningKeyAggregationUp is 1 while this replica's peer-key subscription
+	// is healthy, 0 while it is degraded (the registry's Subscribe channel
+	// closed and the loop is between resubscribe attempts). A degraded
+	// subscription means the replica STOPS adopting peers' newly-rotated keys
+	// while local signing keeps succeeding — peers' tokens later fail with
+	// "unknown kid" yet nothing else flags it. This gauge (plus the matching
+	// readiness check) is the direct alert. No labels — aggregation health is a
+	// single per-replica condition. Never set when no registry is wired.
+	SigningKeyAggregationUp prometheus.Gauge
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -340,6 +361,21 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "External (KMS/HSM) signing backend health: 1 if the last signing operation succeeded, 0 after a failure. Labeled by alg. Alert on 0 — it fires before /readyz drains the replica. Never set when no external signer is wired.",
 			},
 			[]string{LabelAlg},
+		),
+
+		SigningKeyAdoptionErrorsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameSigningKeyAdoptionErrorsTotal,
+				Help: "Peer signing-key adoptions that failed in the leaderless aggregation loop, by reason (decode/adopt). decode = malformed/off-curve/weak peer JWK; adopt = decoded but every matching-alg issuer rejected it (e.g. kid collision). Fail-open (key skipped); a rising rate surfaces a peer publishing bad keys before it manifests as unknown-kid validation failures. Zero when no signing-key registry is wired.",
+			},
+			[]string{LabelReason},
+		),
+
+		SigningKeyAggregationUp: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: NameSigningKeyAggregationUp,
+				Help: "Leaderless signing-key aggregation subscription health: 1 while this replica is subscribed and adopting peers' keys, 0 while degraded (registry Subscribe channel closed, loop retrying). Degraded means the replica stops adopting peers' newly-rotated keys while local signing still succeeds — alert on 0. Never set when no signing-key registry is wired.",
+			},
 		),
 	}
 }

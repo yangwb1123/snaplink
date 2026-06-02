@@ -265,9 +265,16 @@ decode fails OPEN (malformed key logged + skipped, never fatal); adopted
 keys sit in a separate verify set untouched by local `RotateKey`/`RetireKey`.
 **`WithSigningKeyReplicaID` is REQUIRED** once wired — empty id errors out
 rather than adopt peers while its own announcement is rejected. Re-publish on
-rotation. Backends: `memory` (single-process) + `etcd` (cross-process,
-KeepAlive'd lease; a crashed replica's expiry drops its keys). Nil registry =
-zero regression vs a non-aggregating build.
+rotation. The adoption loop SELF-HEALS: a Subscribe-channel close while ctx is
+live (watch death) no longer kills the consumer silently — it flips a degraded
+flag (→ `signing-key-aggregation` /readyz check fails 503 +
+`signing_key_aggregation_degraded` audit once-per-transition +
+`sso_signing_key_aggregation_up`=0), backs off, and resubscribes (re-seeding
+List); a clean ctx-cancel exits WITHOUT degrading. Peer decode/adopt failures
+bump `sso_signing_key_adoption_errors_total{reason}`. Backends: `memory`
+(single-process) + `etcd` (cross-process, KeepAlive'd lease; a crashed
+replica's expiry drops its keys). Nil registry = zero regression vs a
+non-aggregating build (no goroutine, metric, or readycheck).
 
 ---
 
@@ -490,6 +497,8 @@ provider's `SupportedMethods()` (user values dropped before the registry).
 | `sso_signing_key_rotations_total` | Counter | — |
 | `sso_signing_operations_total` / `_operation_duration_seconds` | Counter/Histogram | alg, outcome / alg |
 | `sso_signing_backend_up` | Gauge | alg |
+| `sso_signing_key_adoption_errors_total` | Counter | reason (decode\|adopt) |
+| `sso_signing_key_aggregation_up` | Gauge | — |
 | `sso_fapi_violations_total` | Counter | rule, mode |
 
 **Retention schedulers** — three cmd-side prune loops, uniformly wired

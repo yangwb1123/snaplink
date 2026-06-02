@@ -27,6 +27,9 @@ const (
 	NameSigningDuration            = "sso_signing_operation_duration_seconds"
 	NameSigningBackendUp           = "sso_signing_backend_up"
 	NameCredentialHealthSignals    = "sso_credential_health_signals_total"
+
+	NameSigningKeyAdoptionErrorsTotal = "sso_signing_key_adoption_errors_total"
+	NameSigningKeyAggregationUp       = "sso_signing_key_aggregation_up"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -48,6 +51,16 @@ const (
 	LabelFAPIMode    = "mode"   // inspection | enforce
 	LabelAlg         = "alg"    // bounded: eddsa | es256 | rs256 | ps256
 	LabelSignal      = "signal" // bounded: weak | compromised
+	LabelReason      = "reason" // bounded per metric; see AdoptionReason* below
+)
+
+// Signing-key adoption-error reasons, bounded to the two failure modes the
+// aggregation adoption path can hit for a peer JWK: it failed to decode
+// (malformed/off-curve/weak material) or it decoded but the issuer rejected
+// AdoptVerifyKey (e.g. a local kid collision). Bounded cardinality by design.
+const (
+	AdoptionReasonDecode = "decode"
+	AdoptionReasonAdopt  = "adopt"
 )
 
 // Credential-health signal label values, bounded to two.

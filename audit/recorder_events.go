@@ -9,6 +9,7 @@
 package audit
 
 import (
+	"context"
 	"time"
 
 	"github.com/snaplink/sso/core"
@@ -401,6 +402,40 @@ func RecordFAPIViolation(rec *Recorder, ctx core.HandlerContext, clientID, ruleI
 	SetMeta(e, "fapi_detail", detail)
 	SetMeta(e, "fapi_mode", mode)
 	rec.Record(ctx.Request().Context(), e)
+}
+
+// RecordSigningKeyAggregationDegraded emits a signing_key_aggregation_degraded
+// event when the leaderless aggregation subscriber loses its registry
+// subscription (Subscribe channel closed while the run context is still live).
+// It runs from a BACKGROUND goroutine with no HandlerContext, so it takes a
+// plain context.Context and builds the Event directly. reason lands in
+// Metadata via SetMeta. Emitted exactly once per transition-to-degraded by the
+// caller (the loop tracks the degraded flag), not per retry.
+func RecordSigningKeyAggregationDegraded(rec *Recorder, ctx context.Context, reason string) {
+	if rec == nil {
+		return
+	}
+	e := &Event{
+		Type:    EventSigningKeyAggregationDegraded,
+		Outcome: OutcomeFailure,
+	}
+	SetMeta(e, "reason", reason)
+	rec.Record(ctx, e)
+}
+
+// RecordSigningKeyAggregationRecovered emits a
+// signing_key_aggregation_recovered event when a degraded aggregation
+// subscriber successfully resubscribes and resumes adopting peers' keys.
+// Like its degraded counterpart it runs off the request path. Emitted once per
+// transition back to healthy.
+func RecordSigningKeyAggregationRecovered(rec *Recorder, ctx context.Context) {
+	if rec == nil {
+		return
+	}
+	rec.Record(ctx, &Event{
+		Type:    EventSigningKeyAggregationRecovered,
+		Outcome: OutcomeSuccess,
+	})
 }
 
 func joinComma(s []string) string {

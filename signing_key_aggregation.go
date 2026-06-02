@@ -8,12 +8,30 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
 
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/signingkeys"
+)
+
+// Signing-key aggregation resubscribe backoff bounds. On a Subscribe-channel
+// close while ctx is live the loop retries with an exponentially growing,
+// jittered, capped delay so a flapping registry doesn't hot-loop. Deterministic
+// jitter (a per-attempt step, NOT crypto/math rand) keeps the loop allocation-
+// and dependency-free while still de-synchronizing a fleet of replicas that all
+// lost the registry at the same instant.
+const (
+	signingKeyAggBackoffInitial = 1 * time.Second
+	signingKeyAggBackoffMax     = 30 * time.Second
+
+	// signingKeyAggDegradedReason is the SetMeta reason on the one-per-
+	// transition degraded audit event.
+	signingKeyAggDegradedReason = "subscribe_channel_closed"
 )
 
 // DefaultSigningKeyLeaseTTL is the lease a replica requests when publishing
@@ -72,9 +90,17 @@ func WithSigningKeyLeaseTTL(ttl time.Duration) Option {
 
 // StartSigningKeyAggregation publishes this replica's signing public keys,
 // seeds the local verify-set from every peer already in the registry, then
-// consumes registry events until the stream closes (ctx cancelled or
-// registry closed). The returned channel closes when the consumer goroutine
-// exits, mirroring [Server.StartInvalidationBus] so cmd coordinates shutdown
+// consumes registry events. Unlike a single drain of the subscription, the
+// consumer SELF-HEALS: if the registry's Subscribe channel closes while the
+// run context is still live (etcd watch died / network blip), the replica
+// would otherwise STOP adopting peers' keys silently — local Publish keeps
+// succeeding, but peers' newly-rotated tokens later fail with "unknown kid"
+// while /readyz stays green. So instead the loop marks itself DEGRADED
+// (SigningKeyAggregationReady → not-ready, sso_signing_key_aggregation_up → 0,
+// one audit event), backs off, and RESUBSCRIBES — re-running the initial
+// Publish + List seed each time so a recovered loop catches up. The returned
+// channel closes ONLY when ctx is cancelled (the loop exits cleanly),
+// mirroring [Server.StartInvalidationBus] so cmd coordinates shutdown
 // identically.
 //
 // No-op when no registry is wired: returns an already-closed channel and a
@@ -99,9 +125,31 @@ func (s *Server) StartSigningKeyAggregation(ctx context.Context) (<-chan struct{
 		return done, fmt.Errorf("signingkeys: WithSigningKeyReplicaID is required when a registry is wired")
 	}
 
+	// Synchronous first subscribe so a Subscribe error surfaces to the caller
+	// (matching the prior contract + the bus's startup semantics) rather than
+	// being swallowed into the background retry loop. A LATER channel close is
+	// the self-heal path; an INITIAL Subscribe failure is a wiring/transport
+	// fault the operator should see at boot.
+	events, err := s.subscribeAndSeed(ctx)
+	if err != nil {
+		close(done)
+		return done, err
+	}
+	// Healthy from the first successful subscribe.
+	s.setSigningKeyAggHealthy()
+
+	go s.runSigningKeyAggregation(ctx, done, events)
+	return done, nil
+}
+
+// subscribeAndSeed publishes this replica's keys, opens a subscription, and
+// seeds the local verify-set from every peer already present. Returns the live
+// event channel on success. Re-run verbatim on every (re)subscribe so a
+// recovered loop catches up on peers it missed while degraded.
+func (s *Server) subscribeAndSeed(ctx context.Context) (<-chan signingkeys.Event, error) {
 	// Publish our own keys first so peers can adopt them.
 	if err := s.PublishSigningKeys(ctx); err != nil {
-		s.logger.Error("signingkeys: initial publish failed", "error", err)
+		s.logger.Error("signingkeys: publish failed", "error", err)
 		// Non-fatal: a transport hiccup here only delays peers seeing our
 		// keys until the next rotation re-publish. Continue to subscribe so
 		// we still adopt THEIR keys.
@@ -109,28 +157,164 @@ func (s *Server) StartSigningKeyAggregation(ctx context.Context) (<-chan struct{
 
 	events, err := s.signingKeyRegistry.Subscribe(ctx)
 	if err != nil {
-		close(done)
-		return done, err
+		return nil, err
 	}
 
 	// Seed from peers already present before our subscription started, so a
-	// late-joining replica adopts incumbents immediately rather than waiting
-	// for their next renewing Publish.
+	// late-joining (or just-recovered) replica adopts incumbents immediately
+	// rather than waiting for their next renewing Publish.
 	if anns, listErr := s.signingKeyRegistry.List(ctx); listErr != nil {
-		s.logger.Error("signingkeys: initial peer list failed", "error", listErr)
+		s.logger.Error("signingkeys: peer list failed", "error", listErr)
 	} else {
 		for _, ann := range anns {
 			s.applySigningKeyEvent(signingkeys.Event{Type: signingkeys.EventKeysUpserted, Announcement: ann})
 		}
 	}
+	return events, nil
+}
 
-	go func() {
-		defer close(done)
+// runSigningKeyAggregation is the self-healing consumer. It drains the current
+// subscription, and on a channel close distinguishes a clean ctx-cancel (exit
+// normally, NOT degraded) from a live-context registry drop (mark degraded,
+// back off, resubscribe). Closes done exactly once, only when ctx is cancelled.
+func (s *Server) runSigningKeyAggregation(ctx context.Context, done chan struct{}, events <-chan signingkeys.Event) {
+	defer close(done)
+	attempt := 0
+	for {
 		for evt := range events {
 			s.applySigningKeyEvent(evt)
 		}
-	}()
-	return done, nil
+		// The channel closed. If ctx is done this is a clean shutdown — the
+		// subscriber stream closed BECAUSE ctx was cancelled (memory + etcd
+		// peers both close on ctx.Done). Exit without marking degraded so a
+		// graceful drain never trips /readyz or pages anyone.
+		if ctx.Err() != nil {
+			return
+		}
+
+		// A close with a live context is the silent-failure mode this whole
+		// loop exists to defend against: mark degraded ONCE per transition
+		// (audit + gauge + flag), then back off and resubscribe.
+		s.setSigningKeyAggDegraded()
+
+		attempt++
+		if !sleepCtx(ctx, s.signingKeyAggBackoff(attempt)) {
+			return // ctx cancelled during backoff — clean exit, stay-degraded flag is moot.
+		}
+
+		next, err := s.subscribeAndSeed(ctx)
+		if err != nil {
+			// Resubscribe failed (registry still down). Stay degraded and try
+			// again after a longer backoff. ErrClosed (registry permanently
+			// closed at shutdown) is benign here — the next ctx check or
+			// backoff will observe the cancel and exit.
+			if ctx.Err() != nil {
+				return
+			}
+			s.logger.Error("signingkeys: resubscribe failed, will retry", "attempt", attempt, "error", err)
+			continue
+		}
+		// Recovered: clear degraded (gauge → 1, flag → false, recovered audit)
+		// and resume draining the fresh stream with a reset backoff.
+		s.setSigningKeyAggHealthy()
+		events = next
+		attempt = 0
+	}
+}
+
+// setSigningKeyAggDegraded flips the replica into the degraded state ONCE per
+// transition: it no-ops if already degraded (so a flapping registry emits one
+// audit event + one gauge write per outage, not per retry). Called only from
+// the single subscriber goroutine, so the read-then-set is race-free w.r.t.
+// itself; the flag is atomic only for the concurrent /readyz reader.
+func (s *Server) setSigningKeyAggDegraded() {
+	if s.signingKeyAggDegraded.Swap(true) {
+		return // already degraded — don't re-emit.
+	}
+	s.logger.Error("signingkeys: aggregation subscription closed while running; peer-key adoption stalled, resubscribing", "replica_id", s.replicaID)
+	if s.metrics != nil {
+		s.metrics.SigningKeyAggregationUp.Set(0)
+	}
+	audit.RecordSigningKeyAggregationDegraded(s.auditor, context.Background(), signingKeyAggDegradedReason)
+}
+
+// setSigningKeyAggHealthy clears the degraded state. On the initial subscribe
+// it just stamps the gauge to 1 (Swap returns false). On RECOVERY from a
+// degraded state it additionally emits the recovered audit event. Symmetric
+// with setSigningKeyAggDegraded; one transition, one event.
+func (s *Server) setSigningKeyAggHealthy() {
+	wasDegraded := s.signingKeyAggDegraded.Swap(false)
+	if s.metrics != nil {
+		s.metrics.SigningKeyAggregationUp.Set(1)
+	}
+	if wasDegraded {
+		s.logger.Info("signingkeys: aggregation subscription recovered; resumed adopting peer keys", "replica_id", s.replicaID)
+		audit.RecordSigningKeyAggregationRecovered(s.auditor, context.Background())
+	}
+}
+
+// SigningKeyAggregationReady reports whether this replica's leaderless
+// signing-key aggregation subscription is healthy. It returns an error while
+// the subscription is degraded (the registry stream closed and the loop is
+// between resubscribe attempts) — at which point the replica is no longer
+// adopting peers' newly-published keys, so it may reject valid peer tokens
+// ("unknown kid") or serve a stale JWKS. cmd wraps this into a /readyz
+// ReadyCheck ONLY when a registry is wired; with no registry the aggregation
+// loop never runs, the flag is always false, and no check is registered.
+func (s *Server) SigningKeyAggregationReady() error {
+	if s.signingKeyAggDegraded.Load() {
+		return errors.New("signingkeys: aggregation subscription degraded (not adopting peer keys)")
+	}
+	return nil
+}
+
+// signingKeyAggBackoff returns the resubscribe delay for the given 1-based
+// attempt: exponential from the initial up to the cap, plus a deterministic
+// per-attempt jitter (no rand) so a fleet that all lost the registry at once
+// de-synchronizes its retries. The jitter is bounded to a quarter of the
+// computed base, keeping the delay within [base, base+base/4] and never above
+// the cap + jitter ceiling. The base is the production const unless a test set
+// signingKeyAggBackoffBase (so the resubscribe path is exercisable without
+// real-second waits).
+func (s *Server) signingKeyAggBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	base := signingKeyAggBackoffInitial
+	if s.signingKeyAggBackoffBase > 0 {
+		base = s.signingKeyAggBackoffBase
+	}
+	max := signingKeyAggBackoffMax
+	if base > max {
+		max = base
+	}
+	d := base
+	for i := 1; i < attempt && d < max; i++ {
+		d *= 2
+	}
+	if d > max {
+		d = max
+	}
+	// Deterministic jitter: a small spread keyed off the attempt number so two
+	// replicas on different attempt counts (they lost the watch at slightly
+	// different times) don't retry in lockstep. attempt%5 spans 0..4/5 of a
+	// quarter-window — enough spread without a randomness dependency.
+	jitter := (d / 4) * time.Duration(attempt%5) / 5
+	return d + jitter
+}
+
+// sleepCtx waits for d or ctx cancellation, returning true if the full delay
+// elapsed and false if ctx was cancelled first. Lets the backoff abort
+// promptly on shutdown.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // PublishSigningKeys gathers every JWKS-publishing issuer's public keys into
@@ -293,7 +477,9 @@ func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 			// A decode failure is a property of the JWK itself, not of any one
 			// issuer — no matching-alg issuer could adopt it. Fail-open:
 			// abandon THIS key (the caller's per-JWK loop continues to the
-			// remaining keys in the announcement).
+			// remaining keys in the announcement). Surface it as a metric so a
+			// peer publishing bad keys is visible beyond the log line.
+			s.recordAdoptionError(metrics.AdoptionReasonDecode)
 			return "", false
 		}
 		if !supported {
@@ -391,9 +577,23 @@ func (s *Server) adoptOne(replicaID, name, kid string, adopt func() error) bool 
 	if err := adopt(); err != nil {
 		s.logger.Error("signingkeys: adopt peer key failed on issuer, trying next matching-alg issuer",
 			"replica_id", replicaID, "kid", kid, "issuer", name, "error", err)
+		// A matching-alg issuer rejected an otherwise-decodable key (e.g. a
+		// local kid collision). Count it so a kid clash that silently shrinks
+		// the verify-set is observable; the caller still tries the next issuer.
+		s.recordAdoptionError(metrics.AdoptionReasonAdopt)
 		return false
 	}
 	return true
+}
+
+// recordAdoptionError increments the bounded adoption-error counter. Guarded:
+// nil metrics (no WithMetrics wired) is a no-op, preserving the opt-in zero-
+// overhead contract. reason is bounded to {decode, adopt}.
+func (s *Server) recordAdoptionError(reason string) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.SigningKeyAdoptionErrorsTotal.WithLabelValues(reason).Inc()
 }
 
 // isEdDSAJWK / isECJWK / isRSAJWK classify a peer JWK by its key type so

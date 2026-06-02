@@ -1,6 +1,10 @@
 package sso
 
-import "github.com/snaplink/sso/signingkeys"
+import (
+	"time"
+
+	"github.com/snaplink/sso/signingkeys"
+)
 
 // ApplySigningKeyEventForTest exposes the private applySigningKeyEvent to
 // external (package sso_test) tests so they can drive the EventKeysRemoved /
@@ -20,3 +24,16 @@ func (s *Server) ApplySigningKeyEventForTest(evt signingkeys.Event) {
 // SetReplicaIDForTest sets the replica id without wiring a registry, so a test
 // can feed events through ApplySigningKeyEventForTest with a fixed local id.
 func (s *Server) SetReplicaIDForTest(id string) { s.replicaID = id }
+
+// SetSigningKeyAggBackoffBaseForTest shrinks the resubscribe backoff so a test
+// can exercise the self-healing loop without waiting real seconds. Production
+// leaves it 0 (the const). MUST be called before StartSigningKeyAggregation.
+func (s *Server) SetSigningKeyAggBackoffBaseForTest(d time.Duration) {
+	s.signingKeyAggBackoffBase = d
+}
+
+// SigningKeyAggDegradedForTest reads the degraded flag directly so a test can
+// assert the state-machine transitions without depending on /readyz wiring.
+func (s *Server) SigningKeyAggDegradedForTest() bool {
+	return s.signingKeyAggDegraded.Load()
+}

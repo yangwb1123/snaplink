@@ -150,6 +150,19 @@ const (
 	// active when, and when the previous one stopped signing).
 	EventSigningKeyRotated EventType = "signing_key_rotated"
 
+	// EventSigningKeyAggregationDegraded / EventSigningKeyAggregationRecovered
+	// bracket a stall in the leaderless signing-key aggregation subscriber.
+	// Degraded (Outcome=failure) fires ONCE per transition when the registry's
+	// Subscribe channel closes while the run context is still live — at that
+	// point the replica stops adopting peers' newly-rotated keys (peers' tokens
+	// will later fail with "unknown kid") even though local signing keeps
+	// working, so it MUST page someone. Metadata "reason" carries the operator
+	// detail (e.g. "subscribe_channel_closed"). Recovered (Outcome=success)
+	// fires once when a resubscribe succeeds and adoption resumes. These are
+	// INTERNAL audit events, not a wire error code.
+	EventSigningKeyAggregationDegraded  EventType = "signing_key_aggregation_degraded"
+	EventSigningKeyAggregationRecovered EventType = "signing_key_aggregation_recovered"
+
 	// OAuth/OIDC token lifecycle beyond the legacy EventTokenIssued.
 	// Refresh + ID Token + device-flow events let SIEMs build per-grant
 	// dashboards (how often is refresh rotating? are device flows being

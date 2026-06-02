@@ -3014,6 +3014,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("signing key registry: %w", err)
 	}
+	// srv is forward-declared so the signing-key-aggregation readiness check
+	// (registered as an Option below) can close over it: the check runs at
+	// /readyz probe time, long after srv = sso.NewServer(opts...) assigns it.
+	var srv *sso.Server
 	if signingKeyRegistry != nil {
 		replicaID := strings.TrimSpace(cfg.Keys.SigningKeyRegistry.ReplicaID)
 		if replicaID == "" {
@@ -3023,11 +3027,19 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			sso.WithSharedSigningKeyRegistry(signingKeyRegistry),
 			sso.WithSigningKeyReplicaID(replicaID),
 			sso.WithSigningKeyLeaseTTL(cfg.Keys.SigningKeyRegistry.LeaseTTL),
+			// Trip /readyz when the aggregation subscriber goes degraded (its
+			// registry stream closed and it's resubscribing) — the replica is
+			// no longer adopting peers' keys, so it may reject valid peer
+			// tokens. Registered ONLY when a registry is wired; nil registry ⇒
+			// the loop never runs, the flag stays false, no check registered.
+			sso.WithReadyCheck("signing-key-aggregation", func(context.Context) error {
+				return srv.SigningKeyAggregationReady()
+			}),
 		)
 		logger.Info("signing key aggregation enabled", "replica_id", replicaID)
 	}
 
-	srv := sso.NewServer(opts...)
+	srv = sso.NewServer(opts...)
 
 	// Background ctx + Close-at-shutdown mirrors the netpolicy Classifier:
 	// closing the bus ends the subscriber Watch, which closes busStop.

@@ -72,6 +72,19 @@ type Server struct {
 	signingKeyRegistry signingkeys.Registry
 	replicaID          string
 	signingKeyLeaseTTL time.Duration
+	// signingKeyAggDegraded is true while the aggregation subscriber is
+	// between resubscribe attempts (the registry's Subscribe channel closed
+	// while the run context was still live). True ⇒ this replica is no longer
+	// adopting peers' newly-rotated keys, so SigningKeyAggregationReady reports
+	// not-ready and sso_signing_key_aggregation_up reads 0. Set/cleared only by
+	// the single subscriber goroutine; read by /readyz from another goroutine,
+	// so it must be atomic. Always false (and never read by a registered check)
+	// when no registry is wired.
+	signingKeyAggDegraded atomic.Bool
+	// signingKeyAggBackoffBase overrides the resubscribe backoff base for
+	// tests only (0 ⇒ the production const). Lets a test exercise the
+	// resubscribe loop without waiting real seconds. Never set in production.
+	signingKeyAggBackoffBase time.Duration
 	// adoptedPeerKids tracks, per peer replicaID, the kids this replica has
 	// adopted from it, so a KeysRemoved (or a shrinking KeysUpserted) drops
 	// exactly the keys that replica owns. Guarded by adoptedPeerMu.
