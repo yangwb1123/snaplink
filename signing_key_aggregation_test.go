@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/signingkeys"
 	signingkeysmemory "github.com/snaplink/sso/signingkeys/memory"
 )
 
@@ -169,6 +170,215 @@ func TestSigningKeyAggregation_OptInByteIdentity(t *testing.T) {
 	own, _ := iss.JWKS(context.Background())
 	if len(own) != 1 {
 		t.Fatalf("issuer JWKS has %d keys without a registry, want 1 (peerVerifyKeys must be empty)", len(own))
+	}
+}
+
+// TestSigningKeyAggregation_RequiresReplicaID locks FIX A: a wired registry
+// with an empty replicaID must fail LOUD at StartSigningKeyAggregation rather
+// than start silent one-directional aggregation (this replica would adopt
+// peers but its own announcement — rejected by the registry for an empty
+// ReplicaID — would never land, so peers could not verify its tokens).
+func TestSigningKeyAggregation_RequiresReplicaID(t *testing.T) {
+	reg := signingkeysmemory.New()
+	defer reg.Close()
+
+	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://sso.example"))
+	srv := sso.NewServer(
+		sso.WithTokenIssuer(sso.TokenStrategyJWT, iss),
+		sso.WithSharedSigningKeyRegistry(reg),
+		// Deliberately NO WithSigningKeyReplicaID.
+	)
+
+	done, err := srv.StartSigningKeyAggregation(context.Background())
+	if err == nil {
+		t.Fatal("StartSigningKeyAggregation must error when a registry is wired but replicaID is empty")
+	}
+	// The done channel must be closed so a caller that still drains it does
+	// not block.
+	select {
+	case <-done:
+	default:
+		t.Fatal("StartSigningKeyAggregation returned an un-closed channel alongside its error")
+	}
+}
+
+// newEventServer builds a Server with one Ed25519 issuer and a fixed
+// replicaID but NO registry, so a test feeds it crafted events directly via
+// ApplySigningKeyEventForTest. Returns the local issuer to assert on.
+func newEventServer(t *testing.T, replicaID string) (*sso.Server, *defaultimpl.Ed25519JWTIssuer) {
+	t.Helper()
+	iss := defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519Issuer("https://sso.example"),
+		defaultimpl.WithEd25519TokenTTL(5*time.Minute),
+	)
+	srv := sso.NewServer(sso.WithTokenIssuer(sso.TokenStrategyJWT, iss))
+	srv.SetReplicaIDForTest(replicaID)
+	return srv, iss
+}
+
+// peerIssuerJWK returns a peer issuer's primary signing JWK so an
+// announcement can carry a real, decodable Ed25519 verify key.
+func peerIssuerJWK(t *testing.T, iss *defaultimpl.Ed25519JWTIssuer) core.JWK {
+	t.Helper()
+	jwks, err := iss.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("peer JWKS: %v", err)
+	}
+	if len(jwks) == 0 {
+		t.Fatal("peer issuer has no JWK")
+	}
+	return jwks[0]
+}
+
+func issuerHasKid(t *testing.T, iss *defaultimpl.Ed25519JWTIssuer, kid string) bool {
+	t.Helper()
+	jwks, err := iss.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("JWKS: %v", err)
+	}
+	for _, k := range jwks {
+		if k.Kid == kid {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSigningKeyAggregation_DropPath is FIX D: an EventKeysRemoved for a
+// replica whose key was previously adopted via EventKeysUpserted must remove
+// the adopted kid from the issuer's JWKS AND make a token signed by that
+// peer's key fail Validate (unknown kid).
+func TestSigningKeyAggregation_DropPath(t *testing.T) {
+	srv, localIss := newEventServer(t, "replica-local")
+	_, peerIss := newEventServer(t, "replica-peer")
+	peerKid := peerIss.KeyID()
+
+	tok, err := peerIss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, []string{"read"})
+	if err != nil {
+		t.Fatalf("peer Issue: %v", err)
+	}
+	if _, err := localIss.Validate(context.Background(), tok.AccessToken); err == nil {
+		t.Fatal("local issuer validated peer token before adoption")
+	}
+
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type: signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{
+			ReplicaID: "replica-peer",
+			Keys:      []core.JWK{peerIssuerJWK(t, peerIss)},
+		},
+	})
+	if !issuerHasKid(t, localIss, peerKid) {
+		t.Fatalf("peer kid %s not in JWKS after adoption", peerKid)
+	}
+	if _, err := localIss.Validate(context.Background(), tok.AccessToken); err != nil {
+		t.Fatalf("peer token must validate after adoption: %v", err)
+	}
+
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysRemoved,
+		Announcement: signingkeys.Announcement{ReplicaID: "replica-peer"},
+	})
+	if issuerHasKid(t, localIss, peerKid) {
+		t.Fatalf("peer kid %s still in JWKS after EventKeysRemoved", peerKid)
+	}
+	if _, err := localIss.Validate(context.Background(), tok.AccessToken); err == nil {
+		t.Fatal("peer token must FAIL validation after its key was dropped (unknown kid)")
+	}
+}
+
+// TestSigningKeyAggregation_SharedKidRefcount is FIX C: when two distinct
+// replicas announce the SAME kid (fingerprint collision / shared key /
+// misconfig), removing ONE must NOT evict the kid the other live replica
+// still announces — the kid stays in JWKS and tokens signed by it still
+// validate. Only when BOTH are gone does the refcount reach 0 and the kid
+// drop.
+func TestSigningKeyAggregation_SharedKidRefcount(t *testing.T) {
+	srv, localIss := newEventServer(t, "replica-local")
+
+	// One peer issuer; both announcements carry ITS key, simulating two
+	// replicas that happen to announce the same kid.
+	_, peerIss := newEventServer(t, "replica-shared")
+	sharedKid := peerIss.KeyID()
+	jwk := peerIssuerJWK(t, peerIss)
+
+	tok, err := peerIss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, []string{"read"})
+	if err != nil {
+		t.Fatalf("peer Issue: %v", err)
+	}
+
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "replica-1", Keys: []core.JWK{jwk}},
+	})
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "replica-2", Keys: []core.JWK{jwk}},
+	})
+	if !issuerHasKid(t, localIss, sharedKid) {
+		t.Fatalf("shared kid %s not in JWKS after both announcements", sharedKid)
+	}
+
+	// Drop replica-1: the kid must SURVIVE because replica-2 still holds it.
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysRemoved,
+		Announcement: signingkeys.Announcement{ReplicaID: "replica-1"},
+	})
+	if !issuerHasKid(t, localIss, sharedKid) {
+		t.Fatalf("shared kid %s evicted by dropping replica-1 — refcount broken (FIX C)", sharedKid)
+	}
+	if _, err := localIss.Validate(context.Background(), tok.AccessToken); err != nil {
+		t.Fatalf("token must still validate while replica-2 announces the kid: %v", err)
+	}
+
+	// Drop replica-2 too: refcount reaches 0 and the kid is gone.
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysRemoved,
+		Announcement: signingkeys.Announcement{ReplicaID: "replica-2"},
+	})
+	if issuerHasKid(t, localIss, sharedKid) {
+		t.Fatalf("shared kid %s still in JWKS after BOTH replicas dropped", sharedKid)
+	}
+	if _, err := localIss.Validate(context.Background(), tok.AccessToken); err == nil {
+		t.Fatal("token must fail validation once no replica announces the kid")
+	}
+}
+
+// TestSigningKeyAggregation_CrossAlgRoutingGate is FIX E: an announced key
+// whose Alg is NOT the Server's issuer alg (ES256 to an EdDSA-only Server)
+// must be silently skipped — it must not appear in the EdDSA issuer's JWKS
+// and must not change Validate behavior. This proves the alg-match routing
+// gate at adoption time.
+func TestSigningKeyAggregation_CrossAlgRoutingGate(t *testing.T) {
+	srv, localIss := newEventServer(t, "replica-local")
+
+	before, err := localIss.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("JWKS: %v", err)
+	}
+
+	// Real Ed25519 key material, but tagged with a non-EdDSA alg. The alg
+	// gate must reject it before any decode/adopt, so it never lands in the
+	// EdDSA issuer.
+	peerEd := peerIssuerJWK(t, defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://peer.example")))
+	crossAlg := peerEd
+	crossAlg.Alg = "ES256"
+	crossAlg.Kid = "es256-peer-kid"
+
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "replica-es256", Keys: []core.JWK{crossAlg}},
+	})
+
+	if issuerHasKid(t, localIss, crossAlg.Kid) {
+		t.Fatalf("cross-alg kid %s leaked into the EdDSA issuer's JWKS", crossAlg.Kid)
+	}
+	after, err := localIss.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("JWKS: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("JWKS size changed after a cross-alg announcement: before=%d after=%d", len(before), len(after))
 	}
 }
 

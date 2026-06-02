@@ -77,6 +77,14 @@ type Server struct {
 	// exactly the keys that replica owns. Guarded by adoptedPeerMu.
 	adoptedPeerMu   sync.Mutex
 	adoptedPeerKids map[string][]string
+	// adoptedKidRefs refcounts each adopted kid by how many DISTINCT live
+	// replicas currently announce it. Invariant: a kid is only DropVerifyKey'd
+	// from the issuer when this count falls to 0, so dropping one replica
+	// (KeysRemoved / shrinking announcement) never evicts a kid that another
+	// live replica still announces (fingerprint collision / shared key /
+	// misconfig). Guarded by adoptedPeerMu (same lock as adoptedPeerKids, so
+	// the per-replica kid set and its refcounts mutate atomically together).
+	adoptedKidRefs map[string]int
 	// issuerAlgs caches each token issuer's signing alg (from its JWKS at
 	// wiring time) so the event handler can route an announced key to the
 	// matching-alg issuer without re-querying JWKS per event. Built lazily,

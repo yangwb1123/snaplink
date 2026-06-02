@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"time"
 
 	"github.com/snaplink/sso/core"
@@ -41,9 +42,13 @@ func WithSharedSigningKeyRegistry(reg signingkeys.Registry) Option {
 
 // WithSigningKeyReplicaID sets the stable identifier this replica announces
 // to the shared signing-key registry. It MUST be unique per replica (reusing
-// one across replicas makes them clobber each other's announcement). When
-// unset, cmd derives it from the same hostname-based id it uses for the
-// service registry. Ignored unless a registry is wired.
+// one across replicas makes them clobber each other's announcement). cmd
+// derives it from the same hostname-based id it uses for the service
+// registry. REQUIRED whenever a registry is wired: an empty id makes
+// StartSigningKeyAggregation return an error rather than start one-directional
+// aggregation (this replica would adopt peers but its own rejected
+// announcement would leave peers unable to verify its tokens). Ignored when no
+// registry is wired.
 func WithSigningKeyReplicaID(id string) Option {
 	return func(s *Server) { s.replicaID = id }
 }
@@ -74,6 +79,19 @@ func (s *Server) StartSigningKeyAggregation(ctx context.Context) (<-chan struct{
 	if s.signingKeyRegistry == nil {
 		close(done)
 		return done, nil
+	}
+
+	// Fail loud on SDK misuse: a wired registry with no replicaID would let
+	// the registry reject this replica's PublishSigningKeys (the memory peer
+	// requires a non-empty ReplicaID), so this replica would ADOPT its peers'
+	// keys but its OWN announcement would never land — peers (and RPs that
+	// fetched JWKS from a peer) could not verify tokens this replica signs.
+	// That silent one-directional aggregation is worse than not starting, so
+	// refuse rather than limp along. cmd always sets replicaID, so only direct
+	// SDK callers can hit this.
+	if s.replicaID == "" {
+		close(done)
+		return done, fmt.Errorf("signingkeys: WithSigningKeyReplicaID is required when a registry is wired")
 	}
 
 	// Publish our own keys first so peers can adopt them.
@@ -191,7 +209,9 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 		// Reconcile: drop everything previously adopted from this replica,
 		// then re-adopt the current announcement. This makes a SHRINKING
 		// announcement (peer rotated, old kid gone) drop the stale kid, not
-		// just add the new one — without tracking per-key diffs.
+		// just add the new one — without tracking per-key diffs. Refcounting
+		// (see registerAdoptedKids/dropAllAdopted) ensures the drop here never
+		// evicts a kid another live replica still announces.
 		s.dropAllAdopted(replicaID)
 
 		var adopted []string
@@ -201,14 +221,7 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 				adopted = append(adopted, kid)
 			}
 		}
-		if len(adopted) > 0 {
-			s.adoptedPeerMu.Lock()
-			if s.adoptedPeerKids == nil {
-				s.adoptedPeerKids = make(map[string][]string)
-			}
-			s.adoptedPeerKids[replicaID] = adopted
-			s.adoptedPeerMu.Unlock()
-		}
+		s.registerAdoptedKids(replicaID, adopted)
 
 	default:
 		// Unknown event type from a newer peer — ignore rather than error,
@@ -216,8 +229,34 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 	}
 }
 
-// adoptPeerKey routes one announced JWK to the matching-alg issuer and
-// adopts it verify-only. Returns the adopted kid and true on success.
+// registerAdoptedKids records that replicaID currently announces exactly the
+// given kids and bumps each kid's cross-replica refcount. Must run AFTER the
+// matching dropAllAdopted in a reconcile so the per-replica set reflects the
+// latest announcement. A kid adopted by two replicas reaches refcount 2, so
+// dropping one leaves the issuer key in place for the other (FIX C).
+func (s *Server) registerAdoptedKids(replicaID string, kids []string) {
+	if len(kids) == 0 {
+		return
+	}
+	s.adoptedPeerMu.Lock()
+	defer s.adoptedPeerMu.Unlock()
+	if s.adoptedPeerKids == nil {
+		s.adoptedPeerKids = make(map[string][]string)
+	}
+	if s.adoptedKidRefs == nil {
+		s.adoptedKidRefs = make(map[string]int)
+	}
+	s.adoptedPeerKids[replicaID] = kids
+	for _, kid := range kids {
+		s.adoptedKidRefs[kid]++
+	}
+}
+
+// adoptPeerKey routes one announced JWK to a matching-alg issuer and adopts
+// it verify-only. Returns the adopted kid and true on the first issuer that
+// accepts it; tries EVERY matching-alg issuer before giving up, so one
+// issuer's AdoptVerifyKey error (e.g. a local kid collision in that issuer)
+// does not abandon a key another issuer would happily verify.
 //
 // Alg-match is enforced HERE, before adoption: the key is only handed to an
 // issuer whose own signing alg equals the key's Alg. A key whose alg matches
@@ -245,16 +284,21 @@ func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 		}
 		pub, err := decodeEd25519JWK(jwk)
 		if err != nil {
-			// Fail-open: a malformed peer key is logged and skipped, never
-			// fatal — the rest of the union still adopts cleanly.
+			// A decode failure is a property of the JWK itself, not of any
+			// one issuer — no matching-alg issuer could adopt it. Fail-open:
+			// abandon THIS key (the caller's per-JWK loop continues to the
+			// remaining keys in the announcement).
 			s.logger.Error("signingkeys: undecodable peer key, skipping",
 				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
 			return "", false
 		}
 		if err := adopter.AdoptVerifyKey(jwk.Kid, pub); err != nil {
-			s.logger.Error("signingkeys: adopt peer key failed, skipping",
-				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
-			return "", false
+			// One matching-alg issuer rejected the key (e.g. a local kid
+			// collision in that issuer). Don't abandon the key wholesale —
+			// another matching-alg issuer may accept it. Log + try the next.
+			s.logger.Error("signingkeys: adopt peer key failed on issuer, trying next matching-alg issuer",
+				"replica_id", replicaID, "kid", jwk.Kid, "issuer", name, "error", err)
+			continue
 		}
 		s.logger.Info("signingkeys: adopted peer verify key",
 			"replica_id", replicaID, "kid", jwk.Kid, "alg", jwk.Alg, "issuer", name)
@@ -265,15 +309,32 @@ func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 	return "", false
 }
 
-// dropAllAdopted drops every peer key this replica adopted from replicaID
-// across every issuer that supports DropVerifyKey, and clears the tracking
-// entry. Idempotent.
+// dropAllAdopted forgets every peer key this replica adopted from replicaID
+// and clears its tracking entry. A kid is only actually removed from the
+// issuer (DropVerifyKey) when NO live replica still announces it — i.e. when
+// its cross-replica refcount falls to 0 (FIX C). This prevents dropping one
+// replica from evicting a kid another live replica still holds (fingerprint
+// collision / shared key / misconfig), which would break the other replica's
+// live tokens. Idempotent.
 func (s *Server) dropAllAdopted(replicaID string) {
 	s.adoptedPeerMu.Lock()
 	kids := s.adoptedPeerKids[replicaID]
 	delete(s.adoptedPeerKids, replicaID)
+	// Decrement refcounts under the lock; collect only the kids whose count
+	// reached 0 — those are the only ones safe to remove from the issuer.
+	var toDrop []string
+	for _, kid := range kids {
+		if s.adoptedKidRefs == nil {
+			break
+		}
+		s.adoptedKidRefs[kid]--
+		if s.adoptedKidRefs[kid] <= 0 {
+			delete(s.adoptedKidRefs, kid)
+			toDrop = append(toDrop, kid)
+		}
+	}
 	s.adoptedPeerMu.Unlock()
-	if len(kids) == 0 {
+	if len(toDrop) == 0 {
 		return
 	}
 	for _, ti := range s.tokenIssuers {
@@ -281,7 +342,7 @@ func (s *Server) dropAllAdopted(replicaID string) {
 		if !ok {
 			continue
 		}
-		for _, kid := range kids {
+		for _, kid := range toDrop {
 			dropper.DropVerifyKey(kid)
 		}
 	}

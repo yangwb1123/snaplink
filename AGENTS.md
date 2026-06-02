@@ -262,8 +262,11 @@ its own private key. Alg-match is enforced BEFORE adoption (preserves
 per-issuer kid→alg + alg-confusion safety); adopted peer keys live in a
 SEPARATE `peerVerifyKeys` map untouched by local `RotateKey`/`RetireKey`.
 Nil registry = byte-identical to a non-aggregating build (zero regression).
-Re-publish on rotation. Ed25519 only today (ECDSA/RSA + etcd backend
-follow).
+`WithSigningKeyReplicaID` is REQUIRED once a registry is wired —
+`StartSigningKeyAggregation` errors on an empty id rather than start
+one-directional aggregation (adopt peers but get its own announcement
+rejected). Re-publish on rotation. Ed25519 only today (ECDSA/RSA + etcd
+backend follow).
 
 ---
 
