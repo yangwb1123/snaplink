@@ -3562,6 +3562,21 @@ components:
             RFC 8693 §3 token-type URI naming the subject_token's
             shape. Determines which store / validator the SSO server
             looks the token up in.
+
+            SPIFFE JWT-SVID (mesh service-to-service identity): when the
+            server is configured with a SPIRE trust bundle
+            (`WithSPIFFEJWTSVID`), a subject_token of type
+            `urn:ietf:params:oauth:token-type:jwt` whose `sub` is a
+            `spiffe://` URI is accepted as a JWT-SVID — validated against
+            the trust-bundle JWKS with a strict asymmetric alg-allowlist
+            (no `alg=none`), STRICT audience binding (the SVID `aud` MUST
+            contain the configured SVID audience), and a trust-domain
+            check. It is tried ONLY as a fallback after the local-issuer
+            path, so a normal, locally-issued `:jwt` subject_token is
+            unaffected. Every SVID validation failure collapses to
+            `invalid_grant` (no per-cause oracle). When the feature is
+            off, a spiffe-sub subject_token is rejected exactly like any
+            other invalid subject_token.
         actor_token:
           type: string
           description: |

@@ -296,6 +296,38 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	}
 
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), req.SubjectToken)
+	// SPIFFE JWT-SVID fallback (cluster C1). Tried ONLY when:
+	//   - the local-issuer path above FAILED (so a normal, locally-issued
+	//     subject_token_type=jwt token is byte-identical to today — it
+	//     validates locally and never reaches here), AND
+	//   - the validator is wired (WithSPIFFEJWTSVID; nil ⇒ skipped, so the
+	//     feature-off path is byte-identical), AND
+	//   - the inbound type is the standard `jwt` type SVIDs use (an
+	//     access_token-typed subject_token is never treated as an SVID).
+	// The validator further requires the `sub` to be a spiffe:// URI in the
+	// configured trust domain, so a foreign non-SVID JWT still fails and
+	// collapses to the SAME invalid_grant below. On success the SVID is
+	// mapped onto a synthetic claims set the existing issuance path reuses.
+	var spiffeID *security.SPIFFEID
+	if (err != nil || claims == nil) && s.spiffeValidator != nil && req.SubjectTokenType == TokenTypeJWT {
+		if id, verr := s.spiffeValidator.Validate(ctx.Request().Context(), req.SubjectToken, s.spiffeAudience); verr == nil {
+			spiffeID = id
+			// Build the subject claims from the SVID. The principal is the
+			// spiffe:// id; AMR=["spiffe"] tells downstream services this
+			// was a mesh-workload authentication (RFC 8176). AuthTime=now
+			// because the exchange is the moment the workload presented a
+			// valid SVID (an SVID carries no end-user auth event to carry
+			// forward). RFC 9068 Subject.ClientID is set later from the
+			// exchanging client, exactly as the local-token path does.
+			claims = &TokenClaims{
+				Subject:  id.URI,
+				Extra:    id.Attributes(),
+				AuthTime: time.Now(),
+				AMR:      []string{core.AMRSpiffe},
+			}
+			err = nil
+		}
+	}
 	if err != nil || claims == nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
 		return
@@ -457,6 +489,31 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	}
 	s.recordTokenIssued(ctx, client.ID, strategy, claims.Subject)
 	s.recordSubjectClientAccess(ctx.Request().Context(), claims.Subject, client.ID)
+
+	// Internal audit trail for an accepted SPIFFE JWT-SVID (the
+	// security-sensitive inbound-external-identity path). Records WHICH
+	// mesh workload (trust domain / ns / sa) was admitted and by which
+	// client. SVID REJECTIONS are deliberately NOT audited here — they
+	// already collapsed to invalid_grant, and per-cause reject events
+	// would re-open the oracle the wire is hardened against (§2).
+	if spiffeID != nil && s.auditor != nil {
+		evt := &audit.Event{
+			Type:     audit.EventSPIFFEJWTSVIDAccepted,
+			Outcome:  audit.OutcomeSuccess,
+			ActorID:  spiffeID.URI,
+			ClientID: client.ID,
+			Provider: core.AMRSpiffe,
+			ActorIP:  audit.ClientIP(ctx.Request()),
+		}
+		audit.SetMeta(evt, core.KeySPIFFETrustDomain, spiffeID.TrustDomain)
+		if spiffeID.Namespace != "" {
+			audit.SetMeta(evt, core.KeySPIFFENamespace, spiffeID.Namespace)
+		}
+		if spiffeID.ServiceAccount != "" {
+			audit.SetMeta(evt, core.KeySPIFFEServiceAccount, spiffeID.ServiceAccount)
+		}
+		s.auditor.Record(ctx.Request().Context(), evt)
+	}
 
 	resp := map[string]any{
 		KeyAccessToken:     token.AccessToken,

@@ -996,6 +996,38 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 	}
 }
 
+// buildSPIFFEOption assembles the WithSPIFFEJWTSVID option from config,
+// loading the SPIRE trust-bundle JWKS from disk into a StaticJWKS. It
+// fails LOUD on any missing required field — there is no safe default for
+// the trust domain, the audience the SVID must bind to, or the trust
+// bundle itself, and silently degrading would leave an operator believing
+// SVID acceptance is on when it isn't (or, worse, accepting tokens it
+// shouldn't).
+func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
+	if cfg.TrustDomain == "" {
+		return nil, errors.New("spiffe.trust_domain required when spiffe.enabled")
+	}
+	if cfg.Audience == "" {
+		return nil, errors.New("spiffe.audience required when spiffe.enabled")
+	}
+	if cfg.JWKSFile == "" {
+		return nil, errors.New("spiffe.jwks_file required when spiffe.enabled")
+	}
+	doc, err := os.ReadFile(cfg.JWKSFile)
+	if err != nil {
+		return nil, fmt.Errorf("read spiffe.jwks_file: %w", err)
+	}
+	source, err := security.ParseStaticJWKS(doc)
+	if err != nil {
+		return nil, fmt.Errorf("parse spiffe trust bundle: %w", err)
+	}
+	var vopts []security.SPIFFEValidatorOption
+	if cfg.MaxClockSkew > 0 {
+		vopts = append(vopts, security.WithSPIFFEMaxClockSkew(cfg.MaxClockSkew))
+	}
+	return sso.WithSPIFFEJWTSVID(cfg.TrustDomain, cfg.Audience, source, vopts...), nil
+}
+
 // buildClientCertExtractor picks the RFC 8705 mTLS extractor backend.
 //   - "" / "tls" — DefaultTLSPeerCertExtractor (in-process TLS only)
 //   - "header"   — HeaderClientCertExtractor (reverse-proxy edge)
@@ -3030,6 +3062,18 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			opts = append(opts, sso.WithJTIReplayFailClosed())
 		}
 		logger.Info("security: jti replay protection enabled", "backend", mode, "fail_closed", cfg.Security.JTIReplay.FailClosed)
+	}
+	if cfg.SPIFFE.Enabled {
+		spiffeOpt, err := buildSPIFFEOption(cfg.SPIFFE)
+		if err != nil {
+			return nil, fmt.Errorf("spiffe jwt-svid: %w", err)
+		}
+		opts = append(opts, spiffeOpt)
+		logger.Info("spiffe: jwt-svid token-exchange acceptance enabled",
+			"trust_domain", cfg.SPIFFE.TrustDomain,
+			"audience", cfg.SPIFFE.Audience,
+			"jwks_file", cfg.SPIFFE.JWKSFile,
+		)
 	}
 	if cfg.Security.MTLS.Enabled {
 		extractor, mode, err := buildClientCertExtractor(cfg.Security.MTLS)

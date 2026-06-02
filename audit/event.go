@@ -238,6 +238,18 @@ const (
 	EventPasswordWeak        EventType = "password_weak"
 	EventPasswordCompromised EventType = "password_compromised"
 
+	// EventSPIFFEJWTSVIDAccepted fires when a SPIFFE JWT-SVID was
+	// successfully validated and accepted as a token-exchange
+	// subject_token, minting this server's token for the mapped mesh
+	// workload. Outcome=success; ActorID is the spiffe:// id; ClientID is
+	// the exchanging (downstream) client; Metadata carries
+	// spiffe_trust_domain / spiffe_namespace / spiffe_service_account.
+	// This is an INTERNAL audit event, NOT a wire error code — SVID
+	// REJECTIONS are deliberately NOT audited per-cause here (they collapse
+	// to one invalid_grant; surfacing the cause would re-introduce the
+	// oracle the wire response is hardened against).
+	EventSPIFFEJWTSVIDAccepted EventType = "spiffe_jwt_svid_accepted"
+
 	// EventFAPIComplianceViolation fires when the FAPI 2.0 profile
 	// (inspection or enforce mode) detects a baseline rule violation.
 	// Reason carries the rule id (e.g. "fapi:par_required"); Metadata

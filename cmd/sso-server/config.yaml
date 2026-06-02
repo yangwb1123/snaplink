@@ -879,6 +879,38 @@ caep:
   receiver_timeout: 0s       # per-receiver SET POST timeout; 0 -> SDK default (10s)
   set_ttl: 0s                # SET lifetime; 0 -> SDK default (2m)
 
+# SPIFFE JWT-SVID acceptance via RFC 8693 token-exchange (mesh-native
+# service-to-service identity). A mesh workload holding a SPIRE-issued
+# JWT-SVID (a JWT whose `sub` is a spiffe:// URI, signed by the SPIRE
+# server's JWT key) POSTs it to /token as
+#   grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+#   subject_token=<the JWT-SVID>
+#   subject_token_type=urn:ietf:params:oauth:token-type:jwt
+# and receives THIS server's access token for the mapped workload
+# identity -- exactly like upstream-IdP federation but via token-exchange
+# instead of /auth/login.
+#
+# The SVID is validated against the operator-supplied SPIRE trust-bundle
+# JWKS with a strict asymmetric alg-allowlist (no alg=none, no HS*),
+# STRICT aud-binding (the SVID `aud` MUST contain `audience` -- a lax aud
+# would let an SVID minted for another service be replayed here), and a
+# trust-domain check (the SVID `sub` trust-domain MUST equal
+# `trust_domain`). ALL failures collapse to one 400 invalid_grant (no
+# oracle). A normal locally-issued subject_token_type=jwt token is
+# unaffected: it validates against this server's own issuers first and
+# never reaches the SVID path.
+#
+# Disabled -> byte-identical to a build without the feature. When enabled,
+# trust_domain + audience + jwks_file are ALL required (the server fails
+# loud on boot otherwise). Scope: JWT-SVID only (x509-SVID / mTLS-SVID /
+# SPIRE Workload API are out).
+spiffe:
+  enabled: false
+  trust_domain: ""           # e.g. "example.org" -- the ONLY trust domain accepted
+  audience: ""               # THIS server's identifier the SVID `aud` MUST contain
+  jwks_file: ""              # path to the SPIRE trust-bundle JWKS ({"keys":[...]})
+  max_clock_skew: 0s         # widens exp/nbf; 0 -> SDK default (60s)
+
 # OIDC response encryption (JWE). When enabled, clients that register
 # id_token_encrypted_response_alg / userinfo_encrypted_response_alg
 # receive a JWE(JWS(...)) nested response; the recipient public key is

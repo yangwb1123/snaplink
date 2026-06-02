@@ -65,6 +65,20 @@ type Server struct {
 	tenantSuspensionCache   *suspensionCache
 	invalidationBus         cluster.Bus
 
+	// SPIFFE JWT-SVID acceptance (cluster C1, mesh-native service-to-
+	// service identity). When spiffeValidator is wired
+	// (WithSPIFFEJWTSVID), a token-exchange subject_token_type=jwt whose
+	// `sub` is a spiffe:// URI — and which is NOT a token this server's
+	// own issuers can validate — is verified against the operator-
+	// supplied SPIRE trust bundle (strict alg-allowlist + aud-binding +
+	// trust-domain check) and mapped onto a Subject. Nil = the feature is
+	// entirely off: a spiffe-sub subject_token is rejected byte-identically
+	// to any other foreign/invalid subject_token (collapses to
+	// invalid_grant). spiffeAudience is THIS server's identifier the SVID
+	// `aud` MUST contain.
+	spiffeValidator *security.SPIFFEValidator
+	spiffeAudience  string
+
 	// Opt-in leaderless multi-replica signing-key aggregation. When
 	// signingKeyRegistry is wired (WithSharedSigningKeyRegistry), each
 	// replica publishes its signing public keys and adopts its peers' keys
@@ -667,6 +681,48 @@ func WithJTIReplayStore(store security.JTIReplayStore) Option {
 // either way.
 func WithJTIReplayFailClosed() Option {
 	return func(s *Server) { s.jtiReplayFailClosed = true }
+}
+
+// WithSPIFFEJWTSVID accepts a SPIFFE JWT-SVID as a token-exchange
+// subject_token (RFC 8693), minting this server's access token for the
+// mapped mesh-workload identity. It is the service-to-service analog of
+// upstream-IdP federation: a mesh workload holding a SPIRE-issued
+// JWT-SVID (a JWT whose `sub` is a spiffe:// URI, signed by the SPIRE
+// server's JWT key) swaps it for a local token, instead of a user
+// logging in at /auth/login.
+//
+//   - trustDomain — the ONLY SPIFFE trust domain whose SVIDs are
+//     accepted. An SVID whose `sub` trust-domain differs is rejected.
+//   - expectedAudience — THIS server's identifier; the SVID `aud` MUST
+//     contain it (strict aud-binding stops an SVID minted for another
+//     service being replayed here).
+//   - source — the SPIRE trust-bundle JWKS (security.NewStaticJWKS from
+//     an operator-supplied file is the in-scope minimum).
+//
+// Routing (subject_token_type=jwt only): an inbound subject_token is
+// FIRST tried against this server's own issuers (the existing local-JWT
+// path); the SVID validator runs ONLY as a fallback when the local path
+// fails AND the validator is wired. So a normal, locally-issued jwt
+// subject_token behaves byte-identically to today, and any SVID failure
+// collapses to the same 400 invalid_grant a foreign/invalid token already
+// returns (oracle-leak hardening §2). Nil (option not passed) ⇒ the
+// feature is entirely off and a spiffe-sub subject_token is rejected
+// byte-identically.
+//
+// Any nil/empty argument makes the option a no-op (feature stays off)
+// rather than panicking — cmd validates config before wiring.
+func WithSPIFFEJWTSVID(trustDomain, expectedAudience string, source security.JWKSSource, opts ...security.SPIFFEValidatorOption) Option {
+	return func(s *Server) {
+		if trustDomain == "" || expectedAudience == "" || source == nil {
+			return
+		}
+		v, err := security.NewSPIFFEValidator(trustDomain, source, opts...)
+		if err != nil {
+			return
+		}
+		s.spiffeValidator = v
+		s.spiffeAudience = expectedAudience
+	}
 }
 
 // WithSubjectClientIndex enables OIDC Back-Channel Logout multi-RP

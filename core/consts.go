@@ -131,6 +131,13 @@ const (
 	KeyMFAMethod      = "mfa_method"
 	KeyMFAMethodData  = "mfa_method_data"
 
+	// SPIFFE JWT-SVID audit metadata keys — written via audit.SetMeta on
+	// the spiffe_jwt_svid_accepted event (internal). Mesh-workload
+	// identity dimensions a SIEM pivots on.
+	KeySPIFFETrustDomain    = "spiffe_trust_domain"
+	KeySPIFFENamespace      = "spiffe_namespace"
+	KeySPIFFEServiceAccount = "spiffe_service_account"
+
 	// ScopeOpenID triggers OIDC ID Token issuance when an oidc.IDTokenIssuer
 	// is wired (OIDC Core §3.1.2.1).
 	ScopeOpenID = "openid"
@@ -259,6 +266,15 @@ const (
 )
 
 // RFC 8693 token type URIs used by the token-exchange grant.
+//
+// SPIFFE JWT-SVIDs are exchanged as the STANDARD TokenTypeJWT
+// ("urn:ietf:params:oauth:token-type:jwt") — they ARE generic JWTs, so
+// no bespoke SPIFFE token-type URI is minted (which would be
+// non-standard and force SVID-bearing workloads onto a custom value).
+// The server disambiguates a SVID from a locally-issued JWT by trying the
+// local issuers first and only falling back to the SPIFFE validator (which
+// further requires a spiffe:// sub) — so an ordinary jwt subject_token is
+// unaffected.
 const (
 	TokenTypeAccessToken  = "urn:ietf:params:oauth:token-type:access_token"
 	TokenTypeRefreshToken = "urn:ietf:params:oauth:token-type:refresh_token"
@@ -266,6 +282,11 @@ const (
 	TokenTypeSAML2        = "urn:ietf:params:oauth:token-type:saml2"
 	TokenTypeJWT          = "urn:ietf:params:oauth:token-type:jwt"
 )
+
+// AMR (RFC 8176) value placed on a token minted from an accepted SPIFFE
+// JWT-SVID, so a downstream service can tell the principal authenticated
+// as a mesh workload (not an interactive user).
+const AMRSpiffe = "spiffe"
 
 // Revocation tags returned by /logout.
 const (

@@ -239,6 +239,7 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | OIDC CIBA Core 1.0 (poll + ping) | `/backchannel-authentication`, `/token` (`grant=…:ciba`) | `WithCIBA`; ping via `WithCIBAPingNotifier` + `ResolveBackchannelAuthRequest` (detached ping goroutine is supervised: bounded `cibaPingDeliveryTimeout` + recover + `sso_ciba_ping_total` / `ciba_ping_failed` audit) | `oauth/ciba.go` + `oauth/handle_ciba.go` |
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by Risk `RequireMFA`) | `handlers.go` + `spi/mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
+| SPIFFE JWT-SVID token-exchange | `/token` (`subject_token_type=jwt`, `sub` a `spiffe://` URI) | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` — validates the SVID against the operator-supplied SPIRE trust-bundle JWKS via the shared `security.VerifyCompactJWS` (asymmetric alg-allowlist, no alg=none); strict `aud` + trust-domain; maps `spiffe://` → Subject (AMR `["spiffe"]`, RFC 9068 ClientID set); tried ONLY as a fallback after the local-issuer path (local `:jwt` unchanged); all failures → `invalid_grant` (oracle-safe); nil = byte-identical off; JWT-SVID only (x509/Workload-API out) | `security/spiffe_svid.go` + `security/jwks_verify.go` + `handlers.go` |
 | OpenID SSF v1 (CAEP+RISC) SET push | none (push transmitter; receiver in `Client.Attributes`) | `WithCAEPTransmitter`; SET via issuer `SignJWT` (`typ:secevent+jwt`); scoped to affected client/tenant; async best-effort | `caep/` |
 
 **JWE decrypters/encrypters** (JAR-in, id_token-out, userinfo-out):
@@ -602,6 +603,12 @@ knob; below is only the non-obvious operator surface.
   (`endpoints,prefix,dial_timeout,username,password`) mirrors `cluster.bus`.
   `replica_id` defaults to the service-registry id and MUST be unique per
   replica; `lease_ttl` is the announcement lease.
+- **spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}** — opt
+  into SPIFFE JWT-SVID token-exchange acceptance (§3). Enabled requires ALL
+  of `trust_domain` + `audience` + `jwks_file` (cmd fails loud; no safe
+  default for any). `jwks_file` is the operator-supplied SPIRE trust-bundle
+  JWKS (`StaticJWKS`); `audience` is THIS server's id the SVID `aud` MUST
+  contain (lax aud = cross-service replay). Disabled = byte-identical off.
 - **oauth.jar** — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect).
 - **dpop.{proof_max_age,max_clock_skew}** — RFC 9449 proof iat-window
   (past staleness / future skew). Both 0 = SDK default 60s (byte-identical
