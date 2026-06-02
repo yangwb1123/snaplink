@@ -148,6 +148,8 @@ type Server struct {
 	jweResponseEncrypter           security.JWEEncrypter
 	clientCertExtractor            ClientCertExtractor
 	dpopNonceProvider              DPoPNonceProvider
+	dpopProofMaxAge                time.Duration
+	dpopProofClockSkew             time.Duration
 	metadataSigner                 oidc.MetadataSigner
 	jarmSigner                     oidc.JARMSigner
 	jwksCacheTTL                   time.Duration

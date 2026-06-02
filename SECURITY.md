@@ -84,3 +84,9 @@ When deploying `snaplink/sso`:
 - [ ] Audit log shipping — wire the `audit.WebhookSink` or a custom
       `audit.Sink` to a tamper-evident store rather than relying on
       the in-process `MemorySink`.
+- [ ] Keep the wall clock forward/monotonic — slew, never step, it on
+      running nodes (use chrony, not periodic `ntpdate`/`hwclock` steps).
+      Session + refresh-token expiry compare `expires_at > now` exactly
+      (no skew slack, by design); a backward clock step (NTP step, VM
+      snapshot rollback) can transiently resurrect a just-expired session
+      or token. DPoP/JWT iat-window skew is configurable instead.

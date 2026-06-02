@@ -1295,6 +1295,8 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			s.jtiReplayStore,
 			s.jtiReplayFailClosed,
 			s.dpopNonceProvider,
+			s.resolvedDPoPProofMaxAge(),
+			s.resolvedDPoPProofClockSkew(),
 		)
 		if err != nil {
 			// RFC 9449 §8 — nonce required: stamp a fresh nonce on

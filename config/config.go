@@ -54,6 +54,23 @@ type Config struct {
 	CIBA               CIBAConfig               `yaml:"ciba"`
 	OIDC               OIDCConfig               `yaml:"oidc"`
 	SCIM               SCIMConfig               `yaml:"scim"`
+	DPoP               DPoPConfig               `yaml:"dpop"`
+}
+
+// DPoPConfig tunes the RFC 9449 DPoP proof iat-window validation. Both
+// knobs default to 60s in the SDK (the conventional FAPI 2.0 / RFC 9449
+// value); leaving them at 0 wires nothing, so behavior is byte-identical
+// to the previous hardcoded 60s. They exist for the same reason the JWT
+// issuers expose keys.signing.max_clock_skew: a fleet whose DPoP clients
+// drift beyond 60s needs to loosen, and a strict deployment to tighten.
+//
+// ProofMaxAge bounds how stale a proof may be (iat in the PAST);
+// MaxClockSkew bounds how far ahead a client's clock may run (iat in the
+// FUTURE). This block governs proof iat only — the optional server-issued
+// nonce (security.dpop_nonce) carries its own TTL.
+type DPoPConfig struct {
+	ProofMaxAge  time.Duration `yaml:"proof_max_age"`
+	MaxClockSkew time.Duration `yaml:"max_clock_skew"`
 }
 
 // SCIMConfig opts into the SCIM 2.0 /Groups resource (RFC 7643 §4.2).

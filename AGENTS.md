@@ -137,7 +137,13 @@ test/          Server-level integration suite (package ssotest)
   `invalid_grant`. Empty `FamilyID` opts out.
 - **Session Refresh refuses expired/revoked.** Memory + SQLite
   `SessionManager.Refresh` filter expired/revoked rows BEFORE extending —
-  a captured expired session id can't be resurrected.
+  a captured expired session id can't be resurrected. Assumes a
+  FORWARD/MONOTONIC wall clock: a backward step (NTP step, VM-snapshot
+  rollback) can transiently let a just-expired session pass `expires_at >
+  now`. Session + refresh expiry are deliberately EXACT (no skew slack —
+  unlike DPoP/JWT iat-window, which gets configurable skew; loosening
+  expiry would accept slightly-expired tokens). Ops MUST slew, never step,
+  the clock (chrony).
 - **Audit metadata via `SetMeta(e, k, v)`.** Geo + tenant middleware
   enrich `Event.Metadata`; **never** assign `e.Metadata = map{...}`
   (clobbers enrichment).
@@ -221,7 +227,7 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | RFC 9068 JWT Access Token | `{Ed25519,ECDSA,RSA}JWTIssuer` (EdDSA/ES256/RS256\|PS256) | always; alg gate `WithSupportedSigningAlgs`, strict per-issuer kid→alg; `Rotate`/`Retire`/`StartRotation` + KMS seam | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
-| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider` | `server_extensions.go` |
+| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider`; iat window via `WithDPoPProofMaxAge`/`WithDPoPMaxClockSkew` (default 60s each) | `server_extensions.go` |
 | RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `handlers.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
 | FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)`; rules: PAR-only, signed request, S256, code-only, sender-constrained, no shared secret | `fapi/` + `handler.go` |
@@ -560,6 +566,11 @@ knob; below is only the non-obvious operator surface.
   `replica_id` defaults to the service-registry id and MUST be unique per
   replica; `lease_ttl` is the announcement lease.
 - **oauth.jar** — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect).
+- **dpop.{proof_max_age,max_clock_skew}** — RFC 9449 proof iat-window
+  (past staleness / future skew). Both 0 = SDK default 60s (byte-identical
+  to the old hardcoded bound); loosen for drifty DPoP-client fleets,
+  tighten for strict deployments. Governs proof iat only — the nonce TTL
+  is `security.dpop_nonce.ttl`.
 - **mfa** — gated by Risk `RequireMFA`. `provider.kind`:
   `totp`/`webauthn`/`push`/`multi` (`provider.kinds: [...]`); cmd fails
   loud on missing leaf deps. `push.transport` `log`/`webhook` (custom

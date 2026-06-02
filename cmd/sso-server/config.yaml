@@ -675,6 +675,19 @@ oauth:
     profile: ""            # "" | fapi_2
     inspection_only: false # true: audit-only ramp-up; false: enforce
 
+# RFC 9449 DPoP proof iat-window validation. Both knobs default to 60s
+# in the SDK (the conventional FAPI 2.0 / RFC 9449 value), so leaving
+# them at 0 (or omitting this block) is byte-identical to the previous
+# hardcoded behavior. Exposed for the same reason keys.signing.max_clock_skew
+# is: loosen proof_max_age for a fleet whose DPoP clients drift beyond
+# 60s, or tighten both for a strict deployment. proof_max_age bounds how
+# stale a proof may be (iat in the past); max_clock_skew bounds how far a
+# client clock may run ahead (iat in the future). Governs proof iat only —
+# the optional server-issued nonce (security.dpop_nonce) carries its own ttl.
+dpop:
+  proof_max_age: 0s      # 0s = SDK default (60s)
+  max_clock_skew: 0s     # 0s = SDK default (60s)
+
 # OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
 # POST a signed logout_token to every affected RP's backchannel_logout_uri
 # so server-side sessions get torn down without depending on a browser

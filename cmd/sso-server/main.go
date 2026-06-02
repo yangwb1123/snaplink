@@ -2714,6 +2714,15 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithDPoPNonceProvider(provider))
 	}
+	// DPoP proof iat-window tunables. Both default to 60s in the SDK when
+	// the option is not wired, so a zero value here is byte-identical to
+	// the previous hardcoded behavior — we only append when set.
+	if cfg.DPoP.ProofMaxAge > 0 {
+		opts = append(opts, sso.WithDPoPProofMaxAge(cfg.DPoP.ProofMaxAge))
+	}
+	if cfg.DPoP.MaxClockSkew > 0 {
+		opts = append(opts, sso.WithDPoPMaxClockSkew(cfg.DPoP.MaxClockSkew))
+	}
 	if cfg.OAuth.AuthCode.Enabled {
 		store, err := buildAuthCodeStore(cfg.OAuth)
 		if err != nil {

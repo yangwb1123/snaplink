@@ -716,14 +716,18 @@ const HeaderDPoP = "DPoP"
 // tokens, JAR request objects, etc.
 const dpopProofTyp = "dpop+jwt"
 
-// dpopProofMaxAge bounds how stale a proof JWT may be. RFC 9449
+// dpopProofMaxAgeDefault bounds how stale a proof JWT may be. RFC 9449
 // §4.3 mandates a "reasonable" iat window; 60 seconds matches
 // the conventional value across the FAPI 2.0 + RFC 9449 ecosystem.
-const dpopProofMaxAge = 60 * time.Second
+// Operators override per deployment via WithDPoPProofMaxAge; this is
+// the value the Server falls back to when the field is unset (<= 0).
+const dpopProofMaxAgeDefault = 60 * time.Second
 
-// dpopProofClockSkew tolerates clients whose clocks are slightly
+// dpopProofClockSkewDefault tolerates clients whose clocks are slightly
 // ahead of the AS. Same bound as iat staleness on the other side.
-const dpopProofClockSkew = 60 * time.Second
+// Override via WithDPoPMaxClockSkew (mirrors the JWT issuers'
+// With{Algo}MaxClockSkew options for a uniform configurable-skew story).
+const dpopProofClockSkewDefault = 60 * time.Second
 
 // DPoPBinding is the verified outcome of a DPoP proof check. The
 // caller proved possession of the key whose thumbprint is `JKT`;
@@ -748,8 +752,14 @@ type DPoPBinding struct {
 //     signed the proof
 //   - payload htm MUST equal the request method
 //   - payload htu MUST equal the request URL (sans query/fragment)
-//   - payload iat MUST be within dpopProofMaxAge / clock-skew
+//   - payload iat MUST be within maxAge (past) / clockSkew (future)
 //   - payload jti MUST be present (replay-defense token)
+//
+// maxAge + clockSkew are the operator-tunable windows resolved from the
+// Server (WithDPoPProofMaxAge / WithDPoPMaxClockSkew), defaulting to 60s.
+// They are passed in (rather than read from a const) so a deployment whose
+// DPoP clients drift beyond 60s can loosen, and a strict one can tighten —
+// matching the JWT issuers' already-configurable skew.
 func verifyDPoPProof(
 	ctx context.Context,
 	proof string,
@@ -758,6 +768,8 @@ func verifyDPoPProof(
 	replay security.JTIReplayStore,
 	replayFailClosed bool,
 	nonceProvider DPoPNonceProvider,
+	maxAge time.Duration,
+	clockSkew time.Duration,
 ) (*DPoPBinding, error) {
 	parts := strings.Split(proof, ".")
 	if len(parts) != 3 {
@@ -831,10 +843,10 @@ func verifyDPoPProof(
 	if p.IAT == 0 {
 		return nil, errors.New("dpop: missing iat")
 	}
-	if p.IAT > now+int64(dpopProofClockSkew.Seconds()) {
+	if p.IAT > now+int64(clockSkew.Seconds()) {
 		return nil, errors.New("dpop: iat in the future beyond clock skew")
 	}
-	if p.IAT < now-int64(dpopProofMaxAge.Seconds()) {
+	if p.IAT < now-int64(maxAge.Seconds()) {
 		return nil, errors.New("dpop: proof too old")
 	}
 	if p.JTI == "" {
@@ -861,7 +873,7 @@ func verifyDPoPProof(
 	// single-replica deployments; production should wire the
 	// store).
 	if replay != nil {
-		first, err := replay.MarkSeen(ctx, "dpop:"+p.JTI, time.Now().Add(dpopProofMaxAge))
+		first, err := replay.MarkSeen(ctx, "dpop:"+p.JTI, time.Now().Add(maxAge))
 		switch {
 		case err != nil:
 			// Store error — default fail-OPEN (continue). Fail-CLOSED
@@ -942,6 +954,8 @@ func (s *Server) verifyDPoPBearer(ctx HandlerContext, claims *TokenClaims) error
 		s.jtiReplayStore,
 		s.jtiReplayFailClosed,
 		s.dpopNonceProvider,
+		s.resolvedDPoPProofMaxAge(),
+		s.resolvedDPoPProofClockSkew(),
 	)
 	if err != nil {
 		return fmt.Errorf("dpop: proof verification: %w", err)
@@ -1110,7 +1124,13 @@ func (p *HMACNonceProvider) Verify(nonce string) error {
 	}
 	ts := int64(binary.BigEndian.Uint64(payload[dpopNonceRandomLen:]))
 	now := time.Now().UnixNano()
-	if ts > now+int64(dpopProofClockSkew) {
+	// ts + now are UnixNano, and time.Duration is already nanoseconds, so
+	// int64(dpopProofClockSkewDefault) is the correct nanosecond bound here
+	// (no .Seconds() — that would shrink the skew to 60ns). The nonce
+	// provider is a standalone component with its own lifecycle (own ttl,
+	// own key); it is not Server-coupled, so it tolerates the same default
+	// future-skew as proof iat rather than reaching into a Server field.
+	if ts > now+int64(dpopProofClockSkewDefault) {
 		return errors.New("dpop nonce: issued in the future")
 	}
 	if ts < now-int64(p.ttl) {
@@ -1168,6 +1188,58 @@ func WithMetadataSigner(s oidc.MetadataSigner) Option {
 // Skip this option to keep the original two-step flow.
 func WithDPoPNonceProvider(p DPoPNonceProvider) Option {
 	return func(s *Server) { s.dpopNonceProvider = p }
+}
+
+// WithDPoPProofMaxAge sets how far in the PAST a DPoP proof's `iat`
+// may be before it is rejected as stale (RFC 9449 §4.3). The default
+// is 60s ([dpopProofMaxAgeDefault]) — the conventional FAPI 2.0 / RFC
+// 9449 value. Loosen it for fleets whose DPoP clients drift; tighten
+// it for strict deployments. d <= 0 keeps the 60s default, so leaving
+// this unset is byte-identical to the previous hardcoded behavior.
+//
+// This mirrors the JWT issuers' With{Algo}MaxClockSkew options so DPoP
+// and bearer-token validation share one configurable-skew story.
+func WithDPoPProofMaxAge(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.dpopProofMaxAge = d
+		}
+	}
+}
+
+// WithDPoPMaxClockSkew sets how far in the FUTURE a DPoP proof's `iat`
+// may be (clients whose clocks run ahead of the AS) before rejection.
+// Default 60s ([dpopProofClockSkewDefault]); d <= 0 keeps it. Naming
+// mirrors WithEd25519MaxClockSkew et al. so the operator surface is
+// uniform across DPoP proofs and JWT bearers.
+//
+// Note: this governs proof `iat` only. The standalone HMAC nonce
+// provider keeps the default future-skew (it is not Server-coupled).
+func WithDPoPMaxClockSkew(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.dpopProofClockSkew = d
+		}
+	}
+}
+
+// resolvedDPoPProofMaxAge returns the configured proof max-age, falling
+// back to the 60s default when unset (<= 0). One place owns the clamp so
+// a zero-valued field is always interpreted identically.
+func (s *Server) resolvedDPoPProofMaxAge() time.Duration {
+	if s.dpopProofMaxAge > 0 {
+		return s.dpopProofMaxAge
+	}
+	return dpopProofMaxAgeDefault
+}
+
+// resolvedDPoPProofClockSkew returns the configured future-skew tolerance,
+// defaulting to 60s when unset (<= 0).
+func (s *Server) resolvedDPoPProofClockSkew() time.Duration {
+	if s.dpopProofClockSkew > 0 {
+		return s.dpopProofClockSkew
+	}
+	return dpopProofClockSkewDefault
 }
 
 // stampDPoPNonce writes a fresh DPoP-Nonce header on the current
