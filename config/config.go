@@ -55,6 +55,23 @@ type Config struct {
 	OIDC               OIDCConfig               `yaml:"oidc"`
 	SCIM               SCIMConfig               `yaml:"scim"`
 	DPoP               DPoPConfig               `yaml:"dpop"`
+	CAEP               CAEPConfig               `yaml:"caep"`
+}
+
+// CAEPConfig opts into the OpenID Shared Signals (CAEP/RISC) transmitter:
+// real-time cross-RP revocation by pushing signed Security Event Tokens
+// (RFC 8417) to the affected client's registered receiver endpoint
+// (clients[].attributes.caep_receiver_endpoint). Disabled = byte-identical
+// to no transmitter. The SET is signed by the same key already in JWKS, so
+// no extra signing config is needed.
+type CAEPConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ReceiverTimeout caps a single SET POST (per-receiver). 0 = the SDK
+	// default (10s). A slow/dead receiver's SET is dropped past this bound;
+	// the broadcast goroutine never pins on it.
+	ReceiverTimeout time.Duration `yaml:"receiver_timeout"`
+	// SETTTL bounds the lifetime stamped into each SET. 0 = SDK default (2m).
+	SETTTL time.Duration `yaml:"set_ttl"`
 }
 
 // DPoPConfig tunes the RFC 9449 DPoP proof iat-window validation. Both
@@ -1710,6 +1727,15 @@ type ClientConfig struct {
 	SectorIdentifierURI              string        `yaml:"sector_identifier_uri,omitempty"`
 	FrontchannelLogoutURI            string        `yaml:"frontchannel_logout_uri,omitempty"`
 	JWKS                             []ClientJWK   `yaml:"jwks,omitempty"`
+
+	// Attributes is the open per-client extension bag (mirrors
+	// sso.Client.Attributes). Carries server-side registered capabilities
+	// such as the OpenID Shared Signals / CAEP receiver:
+	//   attributes:
+	//     caep_receiver_endpoint: https://rp.example.com/ssf/receive
+	//     caep_receiver_auth: "Bearer <token>"
+	// caep_receiver_endpoint is validated https at boot.
+	Attributes map[string]string `yaml:"attributes,omitempty"`
 }
 
 // ClientJWK mirrors sso.JWK in YAML-friendly form. Used to register

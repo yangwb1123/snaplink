@@ -861,6 +861,24 @@ ciba:
     timeout: 0s              # per-ping HTTP timeout; 0 -> 5s default
     endpoints: {}            # client_id -> notification endpoint URL; a client absent here degrades to poll
 
+# OpenID Shared Signals Framework v1 (CAEP + RISC) transmitter:
+# real-time cross-RP revocation. When enabled, a revocation / tenant
+# suspension / refresh-token-family-reuse event makes the IdP mint a
+# SIGNED Security Event Token (RFC 8417) — using the SAME signing key
+# already in JWKS, so RPs validate with no new trust setup — and PUSH it
+# to the AFFECTED client's registered receiver only (scoped to the
+# event's client/tenant; never broadcast to all RPs). Async + best-effort:
+# a slow/dead receiver drops the SET (sso_caep_sets_total{outcome=failed}
+# + caep_broadcast_failed audit) and never blocks the revocation, which
+# already happened. The receiver endpoint lives in each client's
+# attributes (see clients[].attributes below), NOT here — there is no
+# documented HTTP endpoint in v1. Disabled = byte-identical to no
+# transmitter.
+caep:
+  enabled: false
+  receiver_timeout: 0s       # per-receiver SET POST timeout; 0 -> SDK default (10s)
+  set_ttl: 0s                # SET lifetime; 0 -> SDK default (2m)
+
 # OIDC response encryption (JWE). When enabled, clients that register
 # id_token_encrypted_response_alg / userinfo_encrypted_response_alg
 # receive a JWE(JWS(...)) nested response; the recipient public key is

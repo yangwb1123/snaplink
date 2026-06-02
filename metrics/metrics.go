@@ -162,6 +162,16 @@ type Metrics struct {
 	// readiness check) is the direct alert. No labels — aggregation health is a
 	// single per-replica condition. Never set when no registry is wired.
 	SigningKeyAggregationUp prometheus.Gauge
+
+	// CAEPSetsTotal counts OpenID Shared Signals (CAEP/RISC) Security
+	// Event Token push attempts from the detached transmitter goroutine, by
+	// outcome ∈ {success, failed, dropped} (bounded). A failed/dropped SET
+	// means an affected RP did NOT receive a real-time revocation signal and
+	// will only converge on its own token TTL — alert on a rising
+	// failed/dropped series to catch a wedged or misconfigured receiver
+	// before it widens the cross-RP revocation window. Zero traffic when no
+	// CAEP transmitter is wired.
+	CAEPSetsTotal *prometheus.CounterVec // labels: outcome
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -395,6 +405,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Name: NameSigningKeyAggregationUp,
 				Help: "Leaderless signing-key aggregation subscription health: 1 while this replica is subscribed and adopting peers' keys, 0 while degraded (registry Subscribe channel closed, loop retrying). Degraded means the replica stops adopting peers' newly-rotated keys while local signing still succeeds — alert on 0. Never set when no signing-key registry is wired.",
 			},
+		),
+
+		CAEPSetsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameCAEPSetsTotal,
+				Help: "OpenID Shared Signals (CAEP/RISC) Security Event Token push attempts from the detached transmitter goroutine, by outcome (success/failed/dropped). A failed/dropped SET means an affected RP missed a real-time revocation signal; alert on a rising failed/dropped series. Zero traffic when no CAEP transmitter is wired.",
+			},
+			[]string{LabelOutcome},
 		),
 	}
 }

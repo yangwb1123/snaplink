@@ -192,8 +192,15 @@ func TestSigningKeyAggregation_SelfHealsOnChannelClose(t *testing.T) {
 		sso.WithMetrics(m),
 		sso.WithAuditRecorder(rec),
 	)
-	// Shrink the backoff so the resubscribe happens in milliseconds.
-	srv.SetSigningKeyAggBackoffBaseForTest(5 * time.Millisecond)
+	// Shrink the backoff so the resubscribe happens fast, but keep the
+	// degraded window WIDE ENOUGH to be observable by the synchronous
+	// degraded-state assertions below: with a 5ms backoff the loop can
+	// resubscribe (clearing degraded + flipping the gauge back to 1)
+	// between waitFor() detecting degraded and the immediate gauge==0
+	// check, a latent timing race that surfaces under -cpu=1 / loaded CI.
+	// 60ms is still well under the recovery timeouts (2-3s), so the
+	// self-heal assertions stay fast.
+	srv.SetSigningKeyAggBackoffBaseForTest(60 * time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

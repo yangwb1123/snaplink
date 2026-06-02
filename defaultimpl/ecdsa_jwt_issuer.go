@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/oidc"
 )
 
@@ -845,6 +846,35 @@ func (j *ECDSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTo
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
+// SignJWT signs an arbitrary claims object as a compact JWS using the
+// SAME ES256 key (and kid) as access + ID + logout tokens, stamping the
+// supplied `typ` in the JOSE header. It is the generic-JWT seam the
+// CAEP/SSF transmitter reuses to mint Security Event Tokens (RFC 8417,
+// `typ: secevent+jwt`) — the SET verifies against the key already in
+// JWKS, so no new RP trust setup is needed. See the Ed25519 sibling for
+// the full rationale; typ MUST be non-empty.
+func (j *ECDSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (string, error) {
+	if typ == "" {
+		return "", errors.New("ecdsa: sign jwt requires a typ header")
+	}
+	sgn, kid := j.currentKey()
+	header := ecdsaHeader{Alg: jwtAlgES256, Typ: typ, Kid: kid}
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	pb, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
+	sig, err := sgn.Sign(ctx, []byte(signingInput))
+	if err != nil {
+		return "", fmt.Errorf("ecdsa: sign jwt (typ=%s): %w", typ, err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
 // AcceptsTokenFormat implements sso.TokenFormatHinter — a compact JWS has
 // exactly two dots between three segments. Lets the multi-issuer
 // dispatcher skip this issuer for non-JWT tokens. Note: an EdDSA JWT also
@@ -875,4 +905,5 @@ var (
 	_ sso.LogoutTokenIssuer = (*ECDSAJWTIssuer)(nil)
 	_ sso.TokenFormatHinter = (*ECDSAJWTIssuer)(nil)
 	_ sso.JWKSProvider      = (*ECDSAJWTIssuer)(nil)
+	_ caep.JWTSigner        = (*ECDSAJWTIssuer)(nil)
 )

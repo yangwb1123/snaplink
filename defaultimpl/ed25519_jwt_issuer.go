@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/caep"
 )
 
 // Ed25519 JWT constants.
@@ -1027,6 +1028,46 @@ var _ oidc.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
 // Compile-time check: same key also mints OIDC Back-Channel
 // Logout tokens.
 var _ sso.LogoutTokenIssuer = (*Ed25519JWTIssuer)(nil)
+
+// Compile-time check: same key signs CAEP/SSF Security Event Tokens
+// (RFC 8417) via the generic-JWT path.
+var _ caep.JWTSigner = (*Ed25519JWTIssuer)(nil)
+
+// SignJWT signs an arbitrary claims object as a compact JWS using the
+// SAME Ed25519 key (and kid) as access + ID + logout tokens, stamping
+// the supplied `typ` in the JOSE header. It is the generic-JWT seam the
+// CAEP/SSF transmitter reuses to mint Security Event Tokens (RFC 8417,
+// `typ: secevent+jwt`) without going through the access-token Issue path
+// (which would stamp `typ: at+jwt` and an access-token claim shape).
+// Because the signing key is the one already published in JWKS, an RP
+// validates a SET with no new trust setup.
+//
+// claims is marshalled as-is — the caller owns the full payload shape
+// (iss, jti, iat, aud, sub_id, events). No claim is injected here, so
+// this method makes no policy decisions and stays a pure signing
+// primitive. typ MUST be non-empty (an unset typ would let a SET be
+// mistaken for another JWT shape on the wire).
+func (j *Ed25519JWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (string, error) {
+	if typ == "" {
+		return "", errors.New("ed25519: sign jwt requires a typ header")
+	}
+	sgn, kid := j.currentKey()
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: typ, Kid: kid}
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	pb, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
+	sig, err := sgn.Sign(ctx, []byte(signingInput))
+	if err != nil {
+		return "", fmt.Errorf("ed25519: sign jwt (typ=%s): %w", typ, err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
 
 // AcceptsTokenFormat implements sso.TokenFormatHinter. A compact JWS
 // has exactly two `.` separators between three non-empty base64url

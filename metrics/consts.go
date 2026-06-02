@@ -32,6 +32,8 @@ const (
 	NameSigningKeyAggregationUp       = "sso_signing_key_aggregation_up"
 
 	NameCIBAPingTotal = "sso_ciba_ping_total"
+
+	NameCAEPSetsTotal = "sso_caep_sets_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

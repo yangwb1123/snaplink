@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/fapi"
@@ -48,6 +49,7 @@ type Server struct {
 	middleware              []MiddlewareFunc
 	logger                  spi.Logger
 	auditor                 *audit.Recorder
+	caepTransmitter         *caep.Transmitter
 	auditAPI                bool
 	requestIDMW             bool
 	permissions             permissions.Provider
@@ -278,6 +280,14 @@ func NewServer(opts ...Option) *Server {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// Tap the audit pipeline for the CAEP/SSF transmitter, if wired. Done
+	// here (after every option ran, so order between WithAuditRecorder and
+	// WithCAEPTransmitter doesn't matter) by fanning the recorder's sink
+	// out to the transmitter. When the transmitter is unwired this branch
+	// is skipped entirely, so a build without it is byte-identical.
+	if s.caepTransmitter != nil && s.auditor != nil {
+		s.auditor.AddSink(s.caepTransmitter)
 	}
 	return s
 }
@@ -883,6 +893,29 @@ func WithBaseURL(_ string) Option {
 func WithAuditRecorder(r *audit.Recorder) Option {
 	return func(s *Server) { s.auditor = r }
 }
+
+// WithCAEPTransmitter wires the OpenID Shared Signals (CAEP/RISC)
+// transmitter for real-time cross-RP revocation. When set AND an audit
+// recorder is also wired, the Server taps its audit pipeline so the
+// transmitter sees every recorded event, maps the small mapped subset
+// (refresh-token-family reuse, tenant tokens revoked, scoped admin token
+// revoke) onto a signed Security Event Token (RFC 8417), and PUSHES it
+// async + best-effort to the AFFECTED client's registered receiver —
+// scoped to the event's client/tenant so one RP's revocation never leaks
+// to another. The SET is signed by the SAME key already in JWKS, so RPs
+// validate it with no new trust setup.
+//
+// Opt-in: omit it and the Server is byte-identical — no SETs, no extra
+// sink, no overhead. The transmitter is itself an audit.Sink, so SDK
+// consumers who build their own recorder MAY alternatively compose it
+// into their sink chain directly instead of using this option.
+func WithCAEPTransmitter(t *caep.Transmitter) Option {
+	return func(s *Server) { s.caepTransmitter = t }
+}
+
+// CAEPTransmitter returns the wired transmitter (nil when unset), so cmd
+// can drain its in-flight async sends on shutdown via Close.
+func (s *Server) CAEPTransmitter() *caep.Transmitter { return s.caepTransmitter }
 
 // WithAuditAPI mounts the audit query endpoints
 // (GET /api/v1/audit/events, GET /api/v1/audit/events/:id). Requires a

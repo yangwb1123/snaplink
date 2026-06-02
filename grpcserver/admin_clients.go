@@ -6,10 +6,27 @@ import (
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/caep"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// validateClientCAEP enforces the registration-time invariant that a
+// client's CAEP receiver endpoint, when present, is an https URL — the
+// anti-exfil rule shared with the YAML + DCR paths. No-op when the
+// attribute is unset.
+func validateClientCAEP(c *sso.Client) error {
+	if c == nil || c.Attributes == nil {
+		return nil
+	}
+	if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
+		if err := caep.ValidateReceiverEndpoint(ep); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ClientAdminService implements admin CRUD over a sso.ClientStore. Secrets
 // are never echoed in List/Get/Update responses — RotateSecret is the only
@@ -75,6 +92,9 @@ func (s *ClientAdminService) Create(ctx context.Context, in *adminv1.CreateClien
 		return nil, status.Error(codes.InvalidArgument, "client.id required")
 	}
 	c := protoToClient(in.Client)
+	if err := validateClientCAEP(c); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 	if err := s.store.Add(ctx, c); err != nil {
 		if errors.Is(err, sso.ErrClientExists) {
 			return nil, status.Error(codes.AlreadyExists, "client already exists")
@@ -96,11 +116,22 @@ func (s *ClientAdminService) Update(ctx context.Context, in *adminv1.UpdateClien
 	c := protoToClient(in.Client)
 	// Preserve the existing secret unless the caller explicitly set one —
 	// the Update RPC shouldn't be a backdoor to overwrite secrets silently.
-	if c.Secret == "" {
+	// Likewise carry forward the existing Attributes: the admin proto has no
+	// Attributes field, so an Update would otherwise silently WIPE a client's
+	// registered CAEP receiver config (and any other server-side attribute).
+	if c.Secret == "" || c.Attributes == nil {
 		existing, err := s.store.Get(ctx, c.ID)
 		if err == nil && existing != nil {
-			c.Secret = existing.Secret
+			if c.Secret == "" {
+				c.Secret = existing.Secret
+			}
+			if c.Attributes == nil {
+				c.Attributes = existing.Attributes
+			}
 		}
+	}
+	if err := validateClientCAEP(c); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	if err := s.store.Update(ctx, c); err != nil {
 		if errors.Is(err, sso.ErrNoSuchClient) {

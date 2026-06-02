@@ -76,6 +76,25 @@ func New(sink Sink, opts ...Option) *Recorder {
 // Sink returns the underlying sink. Used by query endpoints.
 func (r *Recorder) Sink() Sink { return r.sink }
 
+// AddSink fans every recorded event out to extra IN ADDITION to the
+// existing sink, by wrapping the current sink in a MultiSink. The
+// original sink stays first, so reads (Get/Query) keep being served by
+// it; extra is a write-side tap (e.g. a CAEP Transmitter) whose Record
+// runs after the primary's. Redaction + hash-chaining still happen once,
+// before either sink sees the event (they run in Record ahead of the
+// sink call), so the tap observes the SAME redacted, chained event the
+// primary stored.
+//
+// Not safe for concurrent use with Record — call it during wiring,
+// before the Recorder is shared with request handlers. No-op on a nil
+// Recorder or nil extra.
+func (r *Recorder) AddSink(extra Sink) {
+	if r == nil || extra == nil {
+		return
+	}
+	r.sink = NewMultiSink(r.sink, extra)
+}
+
 // Record persists e. Safe to call on a nil Recorder (no-op) so handlers can
 // always invoke it without guard. Timestamp is filled in if zero. When the
 // Recorder was constructed with [WithHashChain], the event's PrevHash + Hash

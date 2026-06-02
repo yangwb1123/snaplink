@@ -46,6 +46,7 @@ import (
 	lockEtcd "github.com/snaplink/sso/bootstrap/lock/etcd"
 	lockFile "github.com/snaplink/sso/bootstrap/lock/file"
 	lockNoop "github.com/snaplink/sso/bootstrap/lock/noop"
+	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
 	clusteretcd "github.com/snaplink/sso/cluster/etcd"
 	clustermemory "github.com/snaplink/sso/cluster/memory"
@@ -518,6 +519,16 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if a.auditAsyncSink != nil {
 		if err := a.auditAsyncSink.Close(ctx); err != nil {
 			logger.Error("audit async drain timed out", "error", err)
+		}
+	}
+	// Drain in-flight CAEP SET pushes so a shutting-down replica doesn't
+	// abandon a goroutine mid-POST. Bounded by the shutdown ctx; each send
+	// also has its own per-receiver timeout.
+	if a.server != nil {
+		if tx := a.server.CAEPTransmitter(); tx != nil {
+			if err := tx.Close(ctx); err != nil {
+				logger.Error("caep transmitter drain timed out", "error", err)
+			}
 		}
 	}
 	logger.Info("server stopped cleanly")
@@ -2237,6 +2248,10 @@ type signingIssuer interface {
 	sso.TokenIssuer
 	oidc.IDTokenIssuer
 	sso.LogoutTokenIssuer
+	// caep.JWTSigner (SignJWT) lets the same key mint Security Event
+	// Tokens (RFC 8417) for the CAEP transmitter — one key, one JWKS
+	// entry, every JWT shape.
+	caep.JWTSigner
 }
 
 // buildSigningIssuer constructs the JWT signing issuer for the configured
@@ -2369,6 +2384,16 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			SectorIdentifierURI:              c.SectorIdentifierURI,
 			FrontchannelLogoutURI:            c.FrontchannelLogoutURI,
 			JWKS:                             convertClientJWKs(c.JWKS),
+			Attributes:                       c.Attributes,
+		}
+		// Validate the CAEP receiver endpoint (https) at boot — a
+		// non-https receiver would mean a SET (carrying a revocation
+		// signal) is exfiltrated over plaintext. Same anti-exfil rule the
+		// admin gRPC path enforces.
+		if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
+			if err := caep.ValidateReceiverEndpoint(ep); err != nil {
+				return nil, fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
+			}
 		}
 		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
 			return nil, fmt.Errorf("seed client %q: %w", c.ID, err)
@@ -2874,6 +2899,33 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			opts = append(opts, sso.WithBackchannelLogoutMaxConcurrent(n))
 		}
 		logger.Info("backchannel logout: enabled", "subject_client_index", mode)
+	}
+	if cfg.CAEP.Enabled {
+		// OpenID Shared Signals (CAEP/RISC) transmitter: real-time cross-RP
+		// revocation. Reuses the same signing issuer (SET via its generic
+		// SignJWT path) + the ClientStore (receivers resolved fresh per
+		// event, no cache/bus) + the audit pipeline (tapped via
+		// WithCAEPTransmitter). Best-effort, fail-open, opt-in — a delivery
+		// failure never affects the revocation that already happened.
+		caepOpts := []caep.Option{
+			caep.WithIssuer(cfg.Server.Issuer),
+			caep.WithLogger(logger),
+			caep.WithFailureRecorder(recorder),
+		}
+		if metricsRegistry != nil {
+			caepOpts = append(caepOpts, caep.WithMetric(func(outcome string) {
+				metricsRegistry.CAEPSetsTotal.WithLabelValues(outcome).Inc()
+			}))
+		}
+		if d := cfg.CAEP.ReceiverTimeout; d > 0 {
+			caepOpts = append(caepOpts, caep.WithReceiverTimeout(d))
+		}
+		if d := cfg.CAEP.SETTTL; d > 0 {
+			caepOpts = append(caepOpts, caep.WithSETTTL(d))
+		}
+		caepTx := caep.NewTransmitter(jwtIssuer, clientStore, caepOpts...)
+		opts = append(opts, sso.WithCAEPTransmitter(caepTx))
+		logger.Info("caep: OpenID Shared Signals transmitter enabled — signed SETs pushed to affected clients' registered receivers on revocation/suspension/family-reuse events")
 	}
 	if cfg.Server.OAuth21StrictMode {
 		opts = append(opts, sso.WithOAuth21StrictMode(true))

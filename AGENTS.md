@@ -239,6 +239,7 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | OIDC CIBA Core 1.0 (poll + ping) | `/backchannel-authentication`, `/token` (`grant=…:ciba`) | `WithCIBA`; ping via `WithCIBAPingNotifier` + `ResolveBackchannelAuthRequest` (detached ping goroutine is supervised: bounded `cibaPingDeliveryTimeout` + recover + `sso_ciba_ping_total` / `ciba_ping_failed` audit) | `oauth/ciba.go` + `oauth/handle_ciba.go` |
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by Risk `RequireMFA`) | `handlers.go` + `spi/mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
+| OpenID SSF v1 (CAEP+RISC) SET push | none (push transmitter; receiver in `Client.Attributes`) | `WithCAEPTransmitter`; SET via issuer `SignJWT` (`typ:secevent+jwt`); scoped to affected client/tenant; async best-effort | `caep/` |
 
 **JWE decrypters/encrypters** (JAR-in, id_token-out, userinfo-out):
 `RSA` (RSA-OAEP-256 + A256GCM, default), `ECDH` (ECDH-ES), or `Multi`
@@ -477,6 +478,27 @@ lookup, Suspended → `ErrTenantSuspended` (cached, default 30s; admin
 `SetStatus` MUST call `InvalidateTenantSuspensionCache`; outage
 fail-open). Without it, existing tokens survive suspension.
 
+**CAEP / Shared Signals** (`caep/`). OpenID SSF v1 (CAEP + RISC) push
+transmitter for real-time cross-RP revocation. Opt-in
+`WithCAEPTransmitter` (nil ⇒ no-op, byte-identical); the `Transmitter` is
+an `audit.Sink` tapped onto the recorder (`Recorder.AddSink`). On each
+recorded event it maps the SMALL mapped subset (`event_mapper.go`:
+`refresh_token_reuse_detected`→session-revoked+token-claims-change,
+`tenant_tokens_revoked`→account-disabled+session-revoked, scoped
+`admin_token_revoked`→token-revoked), mints a SIGNED SET (RFC 8417,
+`typ:secevent+jwt`) via the issuer's generic `SignJWT` seam — the SAME key
+in JWKS, so RPs validate with no new trust — and POSTs it. **Scoping is
+the crux**: push ONLY to the AFFECTED client's receiver, never broadcast —
+client-named events → that client; tenant events → `ListByTenant` of THAT
+tenant only (no cross-tenant leak); multi-RP-per-subject fan-out is v2.
+Receiver endpoint + auth come ONLY from registered
+`Client.Attributes["caep_receiver_endpoint"|"caep_receiver_auth"]`
+(validated https at create/update; never request input), resolved FRESH
+from the ClientStore per send (no cache, no bus). Async + best-effort +
+fail-open (a dead receiver drops the SET — metric + `caep_broadcast_failed`
+audit; bounded per-receiver timeout + `recover()`, no hot-path retry —
+the revocation already happened). jti unique per SET (RP replay defense).
+
 **ssoclient.** Per-capability `ssoclient/local` (in-process) or
 `ssoclient/remote` (gRPC + JWKS); mix freely on one `appcore.Handler`.
 `remote.JWKSCache` does background refresh + single-flight refetch on
@@ -532,6 +554,7 @@ provider's `SupportedMethods()` (user values dropped before the registry).
 | `sso_signing_key_aggregation_up` | Gauge | — |
 | `sso_fapi_violations_total` | Counter | rule, mode |
 | `sso_ciba_ping_total` | Counter | outcome (success\|error) |
+| `sso_caep_sets_total` | Counter | outcome (success\|failed\|dropped) |
 
 **Retention schedulers** — three cmd-side prune loops, uniformly wired
 (cancel + bounded-wait on shutdown, emit `sso_retention_*{subsystem}`,
@@ -591,6 +614,12 @@ knob; below is only the non-obvious operator surface.
   FCM/APNs via cmd fork on `PushTransport`); callback via
   `POST /push/approval/:id/:decision` (empty auth = open, only safe behind
   an edge).
+- **caep.{enabled,receiver_timeout,set_ttl}** — OpenID Shared Signals
+  transmitter (reuses the signing issuer + ClientStore + audit pipeline;
+  no extra signing config). Per-RP receiver lives in
+  `clients[].attributes.caep_receiver_endpoint` (https, validated at boot)
+  + `caep_receiver_auth`; NO documented HTTP endpoint in v1. Disabled =
+  byte-identical.
 
 **Multi-source loader.** `config.Loader` composes prioritized `Source`s
 (lowest first, last wins): `NewFileSource` (baseline) → `NewEnvSource`

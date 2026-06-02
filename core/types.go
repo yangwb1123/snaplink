@@ -264,6 +264,22 @@ type Client struct {
 	// signature. Empty = JAR disabled for this client; presented
 	// request parameters return invalid_request_object.
 	JWKS []JWK `json:"jwks,omitempty" yaml:"jwks,omitempty"`
+
+	// Attributes is an open per-client extension bag for optional
+	// capabilities that don't warrant a first-class field. It carries
+	// REGISTERED, server-side configuration only — never request input.
+	//
+	// Current well-known keys (OpenID Shared Signals / CAEP transmitter):
+	//   - "caep_receiver_endpoint": the https URL a Security Event Token
+	//     (RFC 8417) is pushed to when an event affecting this client
+	//     fires. Validated https at create/update. Absent = this RP
+	//     receives no Shared Signals.
+	//   - "caep_receiver_auth": the literal Authorization header value the
+	//     SET POST carries (e.g. "Bearer <token>").
+	//
+	// Deliberately NOT projected into any token or id_token claim — unlike
+	// User.Attributes, these are transmitter wiring, not subject claims.
+	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

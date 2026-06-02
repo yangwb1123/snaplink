@@ -3,8 +3,22 @@ package sso
 import (
 	"time"
 
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/signingkeys"
 )
+
+// AuditorSinkForTest exposes the recorder's current sink so a test can
+// assert whether the CAEP transmitter tapped it (the sink becomes a
+// MultiSink) or left it untouched (opt-in byte-identical proof).
+func (s *Server) AuditorSinkForTest() audit.Sink {
+	if s.auditor == nil {
+		return nil
+	}
+	return s.auditor.Sink()
+}
+
+// HasCAEPTransmitterForTest reports whether a transmitter is wired.
+func (s *Server) HasCAEPTransmitterForTest() bool { return s.caepTransmitter != nil }
 
 // ApplySigningKeyEventForTest exposes the private applySigningKeyEvent to
 // external (package sso_test) tests so they can drive the EventKeysRemoved /
