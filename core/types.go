@@ -669,9 +669,15 @@ type AuthResult struct {
 	// field rather than an Attributes entry: Attributes flows into the
 	// id_token Claims, so a health signal stashed there would leak onto
 	// the wire. nil = no signal (the credential was healthy or the check
-	// was disabled). Never serialized into tokens — the login
-	// orchestrator only reads it to emit an audit event.
-	CredentialHealth *CredentialHealth
+	// was disabled). The login orchestrator only reads it to emit an
+	// audit event.
+	//
+	// json:"-" keeps this advisory signal off ALL generic AuthResult
+	// serialization (tokens, and — critically — the MFA challenge store,
+	// which persists the whole *AuthResult as a resume blob). The MFA
+	// step-up path re-threads it explicitly through mfaResumeState so the
+	// post-step-up audit still fires; nothing else carries it.
+	CredentialHealth *CredentialHealth `json:"-"`
 }
 
 // CredentialHealth carries a non-blocking login-time signal about the

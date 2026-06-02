@@ -27,6 +27,7 @@ func (f PasswordVerifierFunc) Verify(ctx context.Context, u, p string) (*sso.Aut
 type PasswordAuthenticator struct {
 	verifier PasswordVerifier
 	health   spi.PasswordHealthChecker // optional; nil = no signal, zero overhead
+	logger   spi.Logger                // optional; nil = silent (health-check errors only)
 }
 
 // PasswordOption configures a PasswordAuthenticator at construction.
@@ -40,6 +41,16 @@ type PasswordOption func(*PasswordAuthenticator)
 // overhead.
 func WithPasswordHealthChecker(c spi.PasswordHealthChecker) PasswordOption {
 	return func(p *PasswordAuthenticator) { p.health = c }
+}
+
+// WithPasswordLogger attaches an optional logger used only to surface a
+// malfunctioning credential-health checker (the default
+// DictionaryPasswordHealthChecker never errors, but a custom operator
+// checker — e.g. an HIBP lookup — can). The health check stays fail-open:
+// the logger never changes the login outcome. A nil logger — or simply
+// not passing this option — keeps the prior silent behavior.
+func WithPasswordLogger(l spi.Logger) PasswordOption {
+	return func(p *PasswordAuthenticator) { p.logger = l }
 }
 
 func NewPasswordAuthenticator(v PasswordVerifier, opts ...PasswordOption) *PasswordAuthenticator {
@@ -70,12 +81,22 @@ func (p *PasswordAuthenticator) Authenticate(ctx context.Context, req *sso.AuthR
 	}
 	// Credential-health signal: runs ONLY on a verified password (login
 	// is the sole plaintext touchpoint in this server). Fail-open — a
-	// checker error must never turn a valid login into a failure, and the
-	// authenticator holds no logger, so the error is swallowed. A non-nil
-	// signal rides back on the AuthResult for the orchestrator to audit;
-	// it is never serialized into a token.
+	// checker error must never turn a valid login into a failure; it is
+	// logged (if a logger is wired) for observability, matching every other
+	// fail-open path, but never returned. A non-nil signal rides back on the
+	// AuthResult for the orchestrator to audit; AuthResult.CredentialHealth
+	// is json:"-", so it is never serialized into a token.
 	if p.health != nil {
-		if signal, hErr := p.health.Check(ctx, password); hErr == nil && signal != nil {
+		signal, hErr := p.health.Check(ctx, password)
+		switch {
+		case hErr != nil:
+			// Match the fail-open logging convention every other such path
+			// uses (risk scorer, geo, audit sink): spi.Logger has no Warn
+			// level, so this surfaces at Error — observable but non-fatal.
+			if p.logger != nil {
+				p.logger.Error("password health check failed", "error", hErr)
+			}
+		case signal != nil:
 			result.CredentialHealth = signal
 		}
 	}

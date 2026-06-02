@@ -3579,7 +3579,10 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authentic
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("password health checker: %w", err)
 			}
-			pwOpts = append(pwOpts, authenticators.WithPasswordHealthChecker(checker))
+			// Pass the logger alongside the checker so a malfunctioning
+			// custom checker (e.g. an HIBP lookup) is observable in
+			// production; the health check stays fail-open regardless.
+			pwOpts = append(pwOpts, authenticators.WithPasswordHealthChecker(checker), authenticators.WithPasswordLogger(logger))
 			logger.Info("password health checker enabled", "weak_password_file", h.WeakPasswordFile)
 		}
 		auths = append(auths, authenticators.NewPasswordAuthenticator(verifier, pwOpts...))

@@ -583,9 +583,17 @@ func (s *Server) handleRegistrationDelete(ctx HandlerContext) { oauth.HandleRegi
 // spi.MFAChallenge. Opaque to spi.MFAChallengeStore backends; the SSO server
 // marshals + unmarshals so the post-step-up handler can replay the
 // same finishLogin flow the no-MFA path takes.
+//
+// CredentialHealth is carried out-of-band from Result on purpose:
+// AuthResult.CredentialHealth is json:"-" (kept off all generic
+// serialization, including this blob), so the embedded Result would drop
+// the signal on the round trip. This is the ONE intentional persistence
+// point for the advisory — re-threading it here keeps the post-MFA
+// credential-health audit firing exactly as the no-MFA path's does.
 type mfaResumeState struct {
-	Result  *AuthResult  `json:"result"`
-	Request loginRequest `json:"request"`
+	Result           *AuthResult       `json:"result"`
+	Request          loginRequest      `json:"request"`
+	CredentialHealth *CredentialHealth `json:"credential_health,omitempty"`
 }
 
 // issueMFAChallenge mints a single-use challenge ID + persists the
@@ -593,7 +601,10 @@ type mfaResumeState struct {
 // Audit: emits mfa_required (success outcome — primary credential was
 // fine, the user just hasn't completed step-up yet).
 func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req loginRequest, client *Client) {
-	stateBlob, err := json.Marshal(&mfaResumeState{Result: result, Request: req})
+	// Set CredentialHealth explicitly: AuthResult.CredentialHealth is
+	// json:"-", so the embedded Result drops it; this side channel
+	// preserves it for the post-step-up audit in finishLogin.
+	stateBlob, err := json.Marshal(&mfaResumeState{Result: result, Request: req, CredentialHealth: result.CredentialHealth})
 	if err != nil {
 		s.logger.Error("mfa: failed to marshal resume state", "error", err, "client", client.ID, "user", result.UserID)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
@@ -783,6 +794,11 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 		return
 	}
+	// Re-attach the advisory carried out-of-band (AuthResult.CredentialHealth
+	// is json:"-", so it never survives the embedded Result round trip) so
+	// finishLogin emits the credential-health audit on the MFA-resumed path
+	// exactly as it does on the direct path.
+	state.Result.CredentialHealth = state.CredentialHealth
 
 	if s.clientStore == nil {
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
