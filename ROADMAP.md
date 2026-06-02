@@ -231,6 +231,112 @@ XML-DSig 库置 operator 侧）→ ④（CAEP/RISC，安全侧差异化，吃现
 并行消化——其中**时钟回拨**、**JTI fail-open 熔断**、**V18 adoption 可观测**
 三项安全优先级最高。
 
+### 分布式微服务集群视角：再排序、一致性模型与分区矩阵
+
+> 上方五方向偏产品/协议/合规。若部署目标是 **N 个无状态副本 + 服务网格
+> （k8s + Istio/Linkerd）、可能多区域**，优先级应重排。核心 reframe：把本
+> 项目从**"被调用的 SSO 服务器"**升级为**"服务网格的身份控制平面"**——网格
+> 内每个 pod 以最小延迟、无中心瓶颈地拿到身份与授权。分三层看：控制平面
+> （SSO 集群自身协同）/ 数据平面（每个工作负载的验签+授权）/ 跨区域。
+
+#### 跨副本状态的 CP-vs-AP 一致性模型（核验代码后归类）
+
+| 跨副本状态 | 当前模型 | 应为 | 缺口 |
+|---|---|---|---|
+| discovery / JWKS / 租户暂停缓存 | AP（TTL + bus 失效，幂等清除） | AP ✓ | 合理 |
+| 签名公钥聚合（verify-only 全集） | AP（lease + watch，`signingkeys/`） | AP ✓ | adoption-loop 静默死无可观测；晚加入副本无历史追平 |
+| active-kid 轮换（same-kid 场景） | 各副本独立翻转 | **需 deadline 协调** | 滚动部署期 kid-lag → 对端硬 401 `unknown kid` |
+| JTI 单用重放 | AP（per-store，fail-open） | **趋 CP**（单用是安全不变量） | 跨副本/store 故障窗口可重放 JAR/DPoP/actor |
+| refresh 家族复用检测 | per-store，本地击杀 | **趋 CP** | 被盗 token 在另一副本/区呈现为首见 → 重放成功 |
+| 撤销 / 租户暂停传播 | AP（默认 30s TTL + bus） | AP 但需短窗 | access-token 撤销是 **lazy**（仅清 refresh）；分区下放行 |
+| session 读写 | region-local SQLite | 跨区需共享或 home-pin | 跨区 `session_invalid` 404 |
+| 审计 | AP（async，满则丢） | AP ✓ | 跨副本无全局事务 id（SIEM 关联弱） |
+
+#### 集群视角的再排序（C①-C⑤）
+
+**C① 网格原生身份数据平面**（ext_authz + SPIFFE + 去中心化授权）—— *集群
+旗舰方向，v4.0 完全未覆盖；把"server"变成"mesh 身份控制平面"。*
+- **Why cluster**：今天 `authz.v1.Authorizer` gRPC 是 **app-pull**——每请求
+  回调 SSO = 中心瓶颈 + 延迟尾。网格里每请求应在 **sidecar 本地**完成。
+- **Scope**：(a) **Envoy/Istio `ext_authz` v3 gRPC filter**（sidecar 接管入站、
+  向 `Authorizer.Check` 取一次决策、TTL 缓存、bus 失效推送）——吃现成
+  Authorizer + permission Check，约 200-300 行，置 sidecar/operator 侧；
+  (b) **SPIFFE/SPIRE 工作负载身份桥**：验 JWT-SVID（信 SPIRE CA）→ 映射
+  `spiffe://…/ns/sa` 到 `core.Subject` → token-exchange 接受新
+  `subject_token_type`（mesh 原生服务间身份，差异化于 Auth0/Okta）；
+  (c) **去中心化授权 bundle**：把 `permissions.Provider` 导出为 OPA Rego /
+  Cedar policy bundle（`GET /api/v1/admin/policies/bundle`，cache-control +
+  bus `KindAuthzPolicyChange` 失效），sidecar 拉取后本地 eval——100+ 服务
+  规模下把 authz 从"每请求 RPC"降为"缓存 + 本地判定"。
+- **一致性**：均 AP（决策/bundle 只读缓存 TTL，bus 触发失效）；无需共识。
+- **ROI/effort**：highest / M（核心 SDK 零改，全在 sidecar/operator 侧）。
+
+**C② 控制平面一致性与韧性硬化** —— *正确性-under-分布；从 v4.0 边界清单
+promote 为一等方向。*
+- **同步密钥轮换**：轮换副本经 `cluster.Bus` 广播
+  `signing_key_rotation{old_kid,new_kid,retire_deadline}`，各副本延迟到
+  deadline 才 `DropVerifyKey(old)`，消除滚动部署期 `unknown kid` 硬 401
+  （复用本会话聚合 + bus 底座，约 60 行）。
+- **共享 JTI replay + 可选 fail-closed**：跨副本/store 故障窗口现可重放——
+  提供共享后端（Redis/etcd）+ 对 replay-敏感端点的可选熔断（连续失败转
+  fail-closed）。同理 **refresh 家族复用**需跨副本失效广播。
+- **撤销传播收紧**：access-token 撤销今天是 lazy（仅清 refresh + 暂停缓存
+  TTL）——可选缩短 TTL / 经 bus 即时 + （与对外 §④ CAEP/RISC 互补）。
+- **DPoP nonce key 跨副本共享 + 轮换**（今天每副本进程内随机 key，多副本
+  必须手动同步、无轮换）：`WithSharedDPoPNonceKey` + etcd 分发 + grace 轮换。
+- **readiness 补全 + adoption 可观测**：`/readyz` 现仅聚合 SQLite Ping——
+  补 bus 连通、**signingkeys adoption-loop 存活**（静默死则 503 而非假绿）、
+  schema-version 兼容；加 `sso_signing_key_adoption_errors_total{peer}`。
+- **ROI/effort**：high / M（多数复用现有 bus/registry 原语）。
+
+**C③ 共享存储基座：Redis**（承自 v4.0 ⑤，集群视角**提级**）—— *跨副本/跨区
+强一致 session/refresh/JTI 的前置基座，而非单纯吞吐。*
+- 单进程 SQLite WAL ~1k QPS 写竞争见顶；更重要的是 **session/refresh/JTI
+  单用语义在多副本下需要一个共享原子层**——Redis（`GETDEL`/Lua/`ZSET`/
+  `EXPIRE`）正是 C② 那几项强一致的落地载体。SQLite 保留为嵌入式 fallback。
+
+**C④ 多区域 + 数据驻留** —— *XL 前沿；GDPR/PIPL 把它从"扩容"升级为"合规
+硬约束"。*
+- **数据驻留**（最高）：`Tenant.DataResidencyRegion`（EU/CN/US）→ 登录/颁发/
+  session 持久化 pin 到匹配区；`RegionalStoreRouter` 按租户区路由 store；
+  审计富化 region + 越界标志。GDPR Art.44 要求**强一致**驻留。
+- **读本地/写 home 拆分**：缓存区域化（最终一致）；用户库只读副本各区（快
+  登录）；session/refresh/JTI 写 home 区（强一致）。
+- **跨区 JWKS 联邦**：`signingkeys` 是 per-region etcd——要么单一**共享 KMS
+  key**（同 kid，跨区 JWKS 聚合 trivial，见 C⑤）、要么跨区 registry 桥、
+  要么 CDN-cached 中心 JWKS。
+- **etcd 跨区**：raft 50-100ms RTT + 脑裂——建议**每区独立 etcd + 应用层
+  联邦**（幂等失效/公钥聚合本就适合 AP），而非跨区单一 raft。
+
+**C⑤ KMS（承自 v4.0 ①）—— 集群视角多一层意义**：单一共享 KMS key →
+全副本同 kid → **跨区 JWKS 聚合退化为平凡**（C④ 的最简解）；且 `ActiveKID`
+轮换共识本就是分布式问题，与 C② 同源。仍是合规 P0。
+
+#### 分区行为矩阵（建议显式写入 AGENTS.md / SECURITY.md）
+
+> 当前各路径的 fail-open/closed 散落在代码注释，缺一张运维可查的真值表。
+
+| 关键路径 | etcd 全断 | bus 分区 | 单副本孤立 |
+|---|---|---|---|
+| `/token`、`/auth/login` | 本地 SQLite 仍服务；**bootstrap lock 不可得 → 无法首发初始化** | 正常 | 正常（本地） |
+| 验签、`/userinfo` | 本地 + 已采纳对端键仍验；**新对端键停止采纳**（adoption 静默死）→ 新 kid `unknown` | 同 etcd 断 | 同 etcd 断 |
+| 撤销 / 暂停传播 | 仅本地失效，他副本按 TTL（30s）继续放行 | 同左 | 孤立副本按 TTL 滞后 |
+| JTI 重放防护 | 共享 store 断 → **fail-open → 重放窗口** | — | per-replica → 跨副本可重放 |
+| 密钥轮换 | 公钥发布失败 → 对端验不了新 kid | 同左 | — |
+
+**结论矩阵的价值**：多数为**有意的 AP fail-open**（可用性优先、缓存幂等、
+短窗）；但 **JTI 重放 + refresh 家族复用 + active-kid 轮换**三项在分区下的
+行为是**安全敏感**的，应是 C② 的最高优先子项。
+
+#### 集群视角一句话优先级
+
+**C①（mesh 数据平面：ext_authz+SPIFFE+OPA bundle，把库变控制平面、核心零
+改）→ C②（控制平面一致性硬化：同步轮换 + 共享/可熔断 JTI + readiness/adoption
+可观测）→ C③（Redis 共享基座，承载 C② 的强一致）→ C⑤（KMS，兼跨区 JWKS
+最简解）→ C④（多区域 + 数据驻留，XL 前沿）。** 与产品视角（①②）正交：
+若客户是"网格内大规模微服务"，C① 高于产品 Console（②）；若客户是"企业采购
+单租户运维"，②③仍领先。
+
 ---
 
 ## v3.1（2026-05-25）—— 第七个 10 轮：方向 ①②⑤ 落地（KMS 接线 + GDPR + EC JWE）
