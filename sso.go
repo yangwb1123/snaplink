@@ -79,6 +79,19 @@ type Server struct {
 	spiffeValidator *security.SPIFFEValidator
 	spiffeAudience  string
 
+	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
+	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
+	// needs the go-control-plane proto dep and lives in a separate
+	// operator module). When meshExtAuthz is true (WithMeshExtAuthz), the
+	// server mounts a per-request authorization endpoint at
+	// meshExtAuthzPath: a mesh sidecar calls it, a 200 = ALLOW with
+	// derived X-Auth-* identity headers the sidecar injects upstream, any
+	// other status = DENY. False ⇒ the route is NOT mounted — behavior is
+	// byte-identical to a build without it. meshExtAuthzPath empty ⇒
+	// PathMeshExtAuthz.
+	meshExtAuthz     bool
+	meshExtAuthzPath string
+
 	// Opt-in leaderless multi-replica signing-key aggregation. When
 	// signingKeyRegistry is wired (WithSharedSigningKeyRegistry), each
 	// replica publishes its signing public keys and adopts its peers' keys
@@ -722,6 +735,50 @@ func WithSPIFFEJWTSVID(trustDomain, expectedAudience string, source security.JWK
 		}
 		s.spiffeValidator = v
 		s.spiffeAudience = expectedAudience
+	}
+}
+
+// WithMeshExtAuthz mounts the Envoy/Istio ext_authz HTTP-mode
+// authorization endpoint (cluster C1 mesh data-plane, the HTTP variant).
+// A mesh sidecar — Envoy's ext_authz HTTP filter, or an Istio
+// AuthorizationPolicy CUSTOM action pointing at an HTTP provider — calls
+// this endpoint per request to validate the inbound bearer:
+//
+//   - 200 = ALLOW. The endpoint stamps DERIVED X-Auth-* identity headers
+//     (subject, client_id, scopes, expiry) that the sidecar injects into
+//     the upstream request, so the upstream service reads identity from
+//     trusted headers instead of re-validating the token. This is the
+//     standard "validate the token at the sidecar, inject identity to the
+//     upstream" mesh pattern.
+//   - 401 = DENY. Missing token → no error= challenge; an invalid /
+//     expired / sender-constraint-failing token → invalid_token (the
+//     exact /userinfo opaque-failure shape — no oracle leak).
+//
+// It reuses the SAME alg-confusion-safe validation path /userinfo uses
+// (validateAnyToken + the DPoP/mTLS sender-constraint checks), so a
+// stolen DPoP- or mTLS-bound token cannot be replayed through the mesh as
+// a plain bearer. No new validation logic.
+//
+// TRUST MODEL: the upstream trusts the injected X-Auth-* headers ONLY
+// because the sidecar enforced ext_authz. The endpoint DERIVES every
+// X-Auth-* from the validated token and NEVER trusts an inbound X-Auth-*;
+// the mesh MUST be configured to STRIP any client-supplied X-Auth-* at
+// ingress — the same "edge must strip untrusted headers" model that
+// governs X-Forwarded-* and security.mtls.backend: header (AGENTS.md §2).
+// The endpoint itself is MESH-INTERNAL: only the trusted sidecar should
+// be able to reach it (operator network policy); it is not a public
+// endpoint.
+//
+// path empty ⇒ PathMeshExtAuthz ("/mesh/ext-authz"). Not wired ⇒ the
+// route is not mounted; behavior is byte-identical to a build without it.
+//
+// The gRPC ext_authz variant needs the envoyproxy/go-control-plane proto
+// dependency and is intentionally OUT of scope here (a separate operator
+// module) — this HTTP variant is plain HTTP and adds zero deps.
+func WithMeshExtAuthz(path string) Option {
+	return func(s *Server) {
+		s.meshExtAuthz = true
+		s.meshExtAuthzPath = path
 	}
 }
 
@@ -1401,6 +1458,19 @@ func (s *Server) Mount() {
 	// the role-DEFINITION half of that model.
 	if s.permissions != nil {
 		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
+	}
+
+	// Mesh ext_authz HTTP endpoint (opt-in, cluster C1). The sidecar may
+	// call it with the original request method, so register both GET and
+	// POST at the configured path. Not mounted unless WithMeshExtAuthz is
+	// wired — byte-identical to a build without it.
+	if s.meshExtAuthz {
+		path := s.meshExtAuthzPath
+		if path == "" {
+			path = PathMeshExtAuthz
+		}
+		s.router.GET(path, s.handleMeshExtAuthz)
+		s.router.POST(path, s.handleMeshExtAuthz)
 	}
 
 	api := s.router.Group(PathAPIPrefix)

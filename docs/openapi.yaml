@@ -70,6 +70,11 @@ tags:
     description: Kubernetes / load-balancer liveness + readiness probes.
   - name: webauthn
     description: CTAP/FIDO2 registration + login ceremony (four-call begin/finish).
+  - name: mesh
+    description: |
+      Service-mesh data-plane integrations (cluster C1). The ext_authz
+      HTTP-mode endpoint is mesh-internal: only the trusted sidecar may
+      call it, and the mesh MUST strip client-supplied X-Auth-* at ingress.
   - name: admin
     description: |
       Operator-side REST surface. Admin endpoints are gated by the
@@ -1072,6 +1077,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /mesh/ext-authz:
+    get:
+      tags: [mesh]
+      summary: Envoy/Istio ext_authz HTTP-mode authorization check (opt-in).
+      description: |
+        Opt-in (`WithMeshExtAuthz`, config `mesh.ext_authz.enabled`) HTTP
+        external-authorization endpoint for a service-mesh sidecar — Envoy's
+        `ext_authz` HTTP filter, or an Istio `AuthorizationPolicy` CUSTOM
+        action with an HTTP provider. The sidecar calls it per request to
+        validate the inbound bearer:
+
+        - **200 = ALLOW.** The endpoint stamps DERIVED identity response
+          headers (`X-Auth-Subject`, `X-Auth-Client-Id`, `X-Auth-Scopes`,
+          `X-Auth-Expires`, and `X-Auth-Roles` when a permissions provider
+          is wired) which the sidecar injects into the upstream request. The
+          response body is empty.
+        - **401 = DENY.** A missing token returns a bare `Bearer` challenge
+          (no `error=`); an invalid, expired, or sender-constraint-failing
+          token returns `error="invalid_token"` — the exact opaque-failure
+          shape `/userinfo` returns (no oracle leak).
+
+        It reuses the same alg-confusion-safe bearer validation `/userinfo`
+        uses, including the RFC 9449 DPoP and RFC 8705 mTLS sender-constraint
+        checks, so a stolen sender-constrained token cannot be replayed
+        through the mesh as a plain bearer. No request body is read.
+
+        TRUST MODEL: every `X-Auth-*` header is DERIVED from the validated
+        token; the endpoint NEVER trusts an inbound `X-Auth-*`. The upstream
+        trusts the injected headers ONLY because the sidecar ran this check,
+        so the mesh MUST strip any client-supplied `X-Auth-*` at ingress —
+        the same "edge must strip untrusted headers" model that governs
+        `X-Forwarded-*` and `security.mtls.backend: header`. The endpoint is
+        mesh-internal: only the trusted sidecar should be able to reach it.
+      operationId: meshExtAuthz
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: |
+            ALLOW. Empty body; the bearer's identity is carried in the
+            `X-Auth-*` response headers for the sidecar to inject upstream.
+          headers:
+            X-Auth-Subject:
+              description: The validated token's subject (`sub`).
+              schema:
+                type: string
+            X-Auth-Client-Id:
+              description: The OAuth client the token was minted for.
+              schema:
+                type: string
+            X-Auth-Scopes:
+              description: Space-joined token scopes.
+              schema:
+                type: string
+            X-Auth-Expires:
+              description: Token expiry as a Unix timestamp (seconds).
+              schema:
+                type: string
+            X-Auth-Roles:
+              description: |
+                Comma-joined role codes — present only when a permissions
+                provider is wired and a role lookup succeeds.
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /permissions/me:
     get:

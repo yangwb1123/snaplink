@@ -911,6 +911,28 @@ spiffe:
   jwks_file: ""              # path to the SPIRE trust-bundle JWKS ({"keys":[...]})
   max_clock_skew: 0s         # widens exp/nbf; 0 -> SDK default (60s)
 
+# Service-mesh data-plane integrations (cluster C1). ext_authz is the
+# Envoy/Istio HTTP-mode external authorization endpoint: a mesh sidecar
+# (Envoy's ext_authz HTTP filter, or an Istio AuthorizationPolicy CUSTOM
+# action with an HTTP provider) calls it per request. A 200 = ALLOW and
+# the sidecar injects this endpoint's X-Auth-* identity response headers
+# (subject, client_id, scopes, expiry; roles when a permissions provider
+# is wired) into the upstream request; any other status = DENY. It reuses
+# the same alg-confusion-safe bearer validation /userinfo uses, including
+# the DPoP/mTLS sender-constraint checks, so a stolen sender-constrained
+# token can't be replayed as a plain bearer. The gRPC ext_authz variant
+# (needs go-control-plane) is a separate operator module.
+#
+# MESH-INTERNAL: only the trusted sidecar should reach this endpoint
+# (operator network policy), and the mesh MUST strip any client-supplied
+# X-Auth-* at ingress -- same "edge must strip untrusted headers" model as
+# X-Forwarded-* / security.mtls.backend: header. The endpoint DERIVES
+# every X-Auth-* from the validated token; it never trusts an inbound one.
+mesh:
+  ext_authz:
+    enabled: false
+    path: ""                 # mount point; empty -> SDK default ("/mesh/ext-authz")
+
 # OIDC response encryption (JWE). When enabled, clients that register
 # id_token_encrypted_response_alg / userinfo_encrypted_response_alg
 # receive a JWE(JWS(...)) nested response; the recipient public key is

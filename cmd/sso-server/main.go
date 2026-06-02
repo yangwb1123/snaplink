@@ -3075,6 +3075,18 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			"jwks_file", cfg.SPIFFE.JWKSFile,
 		)
 	}
+	if cfg.Mesh.ExtAuthz.Enabled {
+		// Envoy/Istio ext_authz HTTP-mode endpoint (cluster C1 mesh
+		// data-plane). Mesh-internal: only the trusted sidecar may call it,
+		// and the mesh MUST strip any client-supplied X-Auth-* at ingress
+		// (same edge-strip model as X-Forwarded-* / mtls.backend: header).
+		path := cfg.Mesh.ExtAuthz.Path
+		if path == "" {
+			path = sso.PathMeshExtAuthz
+		}
+		opts = append(opts, sso.WithMeshExtAuthz(cfg.Mesh.ExtAuthz.Path))
+		logger.Info("mesh: ext_authz HTTP endpoint enabled", "path", path)
+	}
 	if cfg.Security.MTLS.Enabled {
 		extractor, mode, err := buildClientCertExtractor(cfg.Security.MTLS)
 		if err != nil {

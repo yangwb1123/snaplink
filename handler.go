@@ -19,6 +19,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1794,6 +1795,106 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	}
 
 	ctx.JSON(http.StatusOK, user)
+}
+
+// handleMeshExtAuthz is the Envoy/Istio ext_authz HTTP-mode authorization
+// endpoint (cluster C1 mesh data-plane). A mesh sidecar calls it per
+// request: a 200 ALLOWs (and the sidecar injects the X-Auth-* response
+// headers stamped here into the upstream request), any other status
+// DENIES. It is essentially a /userinfo variant that returns IDENTITY
+// HEADERS instead of a body — so it reuses the EXACT bearer-validation
+// path /userinfo uses (validateAnyToken + the DPoP/mTLS sender-constraint
+// checks), with no new validation logic. The "validate at the sidecar,
+// inject identity to the upstream" mesh pattern.
+//
+// TRUST MODEL: every X-Auth-* header is DERIVED from the validated token;
+// the endpoint NEVER trusts an inbound X-Auth-*. The upstream trusts the
+// injected headers ONLY because the sidecar ran this check, so the mesh
+// MUST strip client-supplied X-Auth-* at ingress (same edge-strip model
+// as X-Forwarded-* / mtls.backend: header — AGENTS.md §2). The endpoint
+// is mesh-internal: only the trusted sidecar should be able to reach it.
+func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
+	// Credential-validating endpoint: the (header-only) response must
+	// never be retained by an intermediary — a cached cross-request
+	// ALLOW would let a different bearer's identity be injected upstream.
+	tokenNoStoreHeaders(ctx)
+	if err := s.requireDeps(DepTokenIssuer); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	tokenString := bearerToken(ctx.Request())
+	if tokenString == "" {
+		// RFC 6750 §3.1 — no credentials presented: 401 + a bare Bearer
+		// challenge (no error= parameter). DENY.
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
+		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
+	if err != nil {
+		// RFC 6750 §3.1 — validation failure carries error="invalid_token".
+		// Same opaque failure shape as /userinfo (no oracle leak). DENY.
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
+		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	// Sender-constraint enforcement, mirrored EXACTLY from /userinfo so a
+	// stolen DPoP- or mTLS-bound token cannot be replayed through the mesh
+	// as a plain bearer. A token with cnf.jkt / cnf.x5t#S256 but no
+	// matching proof / client cert collapses to the same invalid_token
+	// 401 as any other invalid bearer — attackers can't probe binding.
+	if err := s.verifyDPoPBearer(ctx, claims); err != nil {
+		if errors.Is(err, ErrDPoPNonceRequired) {
+			s.stampDPoPNonce(ctx)
+			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
+			ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		s.logger.Error("mesh ext_authz dpop bearer verification failed", "error", err, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
+		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
+		s.logger.Error("mesh ext_authz mtls bearer verification failed", "error", err, "subject", claims.Subject)
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
+		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	// ALLOW. Stamp the DERIVED identity headers for the sidecar to inject
+	// upstream. These are computed from the validated token only — never
+	// echoed from the inbound request.
+	h := ctx.ResponseWriter().Header()
+	h.Set(HeaderAuthSubject, claims.Subject)
+	if claims.ClientID != "" {
+		h.Set(HeaderAuthClientID, claims.ClientID)
+	}
+	if len(claims.Scopes) > 0 {
+		h.Set(HeaderAuthScopes, strings.Join(claims.Scopes, " "))
+	}
+	if !claims.ExpiresAt.IsZero() {
+		h.Set(HeaderAuthExpires, strconv.FormatInt(claims.ExpiresAt.Unix(), 10))
+	}
+	// Optional roles — only when a permissions provider is wired AND a
+	// role lookup succeeds. The token's scopes are the cheap default; a
+	// richer downstream can pull the OPA policy-bundle instead. Role
+	// lookup failure is non-fatal here: ALLOW still holds (the token is
+	// valid); we simply omit X-Auth-Roles rather than fail the request.
+	if s.permissions != nil && claims.Subject != "" {
+		if roles, rerr := s.permissions.Roles(ctx.Request().Context(), claims.Subject, claims.ClientID); rerr == nil && len(roles) > 0 {
+			codes := make([]string, 0, len(roles))
+			for _, r := range roles {
+				codes = append(codes, r.Code)
+			}
+			h.Set(HeaderAuthRoles, strings.Join(codes, ","))
+		}
+	}
+	// Empty body — Envoy reads the status (2xx) + the response headers.
+	ctx.ResponseWriter().WriteHeader(http.StatusOK)
 }
 
 // projectUserInfoForOIDC returns the OIDC-standard claim set for a user

@@ -31,6 +31,18 @@ const (
 	PathMyMenus       = "/menus/me"
 	PathMyRoles       = "/roles/me"
 
+	// PathMeshExtAuthz is the default mount point for the opt-in
+	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
+	// mesh data-plane, the HTTP variant). A mesh sidecar calls it per
+	// request: a 2xx response = ALLOW (and the sidecar injects this
+	// endpoint's chosen X-Auth-* response headers into the upstream
+	// request), any other status = DENY. Only mounted when
+	// WithMeshExtAuthz is wired; the path is operator-overridable. It is
+	// MESH-INTERNAL — only the trusted sidecar may reach it (operator
+	// network policy), and the mesh MUST strip any client-supplied
+	// X-Auth-* at ingress (same edge-strip trust model as X-Forwarded-*).
+	PathMeshExtAuthz = "/mesh/ext-authz"
+
 	// PathAuthzPolicyBundle is the read-only admin export of the
 	// permissions role-DEFINITION model as a portable bundle a service-mesh
 	// sidecar pulls to enforce authorization locally (no per-request
@@ -63,6 +75,20 @@ const (
 	CORSAllowedMethods = "GET, POST, OPTIONS"
 	CORSAllowedHeaders = "Content-Type, Authorization"
 	CORSAllowAllOrigin = "*"
+
+	// Mesh ext_authz identity response headers. On a 200 ALLOW the
+	// ext_authz HTTP endpoint stamps these so the sidecar injects them
+	// into the upstream request — the "validate the token at the sidecar,
+	// inject identity to the upstream" mesh pattern. They are DERIVED from
+	// the validated access token, never trusted from the inbound request;
+	// the mesh MUST strip any client-supplied X-Auth-* at ingress (same
+	// "edge must strip untrusted headers" model as X-Forwarded-* and
+	// security.mtls.backend: header).
+	HeaderAuthSubject  = "X-Auth-Subject"
+	HeaderAuthClientID = "X-Auth-Client-Id"
+	HeaderAuthScopes   = "X-Auth-Scopes"
+	HeaderAuthExpires  = "X-Auth-Expires"
+	HeaderAuthRoles    = "X-Auth-Roles"
 )
 
 // JSON response keys used across handlers.

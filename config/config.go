@@ -57,6 +57,39 @@ type Config struct {
 	DPoP               DPoPConfig               `yaml:"dpop"`
 	CAEP               CAEPConfig               `yaml:"caep"`
 	SPIFFE             SPIFFEConfig             `yaml:"spiffe"`
+	Mesh               MeshConfig               `yaml:"mesh"`
+}
+
+// MeshConfig opts into the service-mesh data-plane integrations
+// (cluster C1). Today it carries the ext_authz HTTP-mode authorization
+// endpoint (the gRPC ext_authz variant needs the go-control-plane proto
+// dep and lives in a separate operator module).
+type MeshConfig struct {
+	ExtAuthz MeshExtAuthzConfig `yaml:"ext_authz"`
+}
+
+// MeshExtAuthzConfig opts into the Envoy/Istio ext_authz HTTP-mode
+// authorization endpoint. A mesh sidecar (Envoy's ext_authz HTTP filter,
+// or an Istio AuthorizationPolicy CUSTOM action with an HTTP provider)
+// calls it per request: a 200 = ALLOW (and the sidecar injects the
+// endpoint's X-Auth-* identity response headers into the upstream
+// request), any other status = DENY. It reuses the same alg-confusion-safe
+// bearer validation /userinfo uses (incl. the DPoP/mTLS sender-constraint
+// checks), so a stolen sender-constrained token can't be replayed as a
+// plain bearer.
+//
+// Disabled (the default) ⇒ the route is NOT mounted, byte-identical to a
+// build without it. The endpoint is MESH-INTERNAL — only the trusted
+// sidecar should reach it (operator network policy) — and the mesh MUST
+// strip any client-supplied X-Auth-* at ingress (same edge-strip trust
+// model as X-Forwarded-* / security.mtls.backend: header).
+type MeshExtAuthzConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Path overrides the mount point. Empty ⇒ the SDK default
+	// ("/mesh/ext-authz"). Must match the Envoy ext_authz HTTP filter's
+	// path_prefix / the Istio provider URL.
+	Path string `yaml:"path"`
 }
 
 // SPIFFEConfig opts into accepting a SPIFFE JWT-SVID as a token-exchange

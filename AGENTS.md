@@ -152,7 +152,10 @@ test/          Server-level integration suite (package ssotest)
   **only safe behind a trusted edge** that strips + re-sets them.
   Internet-facing without one MUST install `TrustedProxies(CIDR...)`. The
   same "edge must strip untrusted headers" model governs
-  `security.mtls.backend: header` and ratelimit IP keying (§4, §6).
+  `security.mtls.backend: header`, ratelimit IP keying, and the mesh
+  ext_authz `X-Auth-*` identity headers — the mesh MUST strip any
+  client-supplied `X-Auth-*` at ingress (the endpoint DERIVES them from
+  the validated token, never trusts an inbound one) (§3, §4, §6).
 - **`aud` claim parsing** (RFC 7519 §4.1.3): `audClaim` unmarshals string
   or array, marshals single-aud as a compact string per OIDC.
 - **`alg` + `typ` allowlist on Validate** (RFC 9068 §4), checked BEFORE
@@ -241,6 +244,7 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
 | SPIFFE JWT-SVID token-exchange | `/token` (`subject_token_type=jwt`, `sub` a `spiffe://` URI) | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` — validates the SVID against the operator-supplied SPIRE trust-bundle JWKS via the shared `security.VerifyCompactJWS` (asymmetric alg-allowlist, no alg=none); strict `aud` + trust-domain; maps `spiffe://` → Subject (AMR `["spiffe"]`, RFC 9068 ClientID set); tried ONLY as a fallback after the local-issuer path (local `:jwt` unchanged); all failures → `invalid_grant` (oracle-safe); nil = byte-identical off; JWT-SVID only (x509/Workload-API out) | `security/spiffe_svid.go` + `security/jwks_verify.go` + `handlers.go` |
 | OpenID SSF v1 (CAEP+RISC) SET push | none (push transmitter; receiver in `Client.Attributes`) | `WithCAEPTransmitter`; SET via issuer `SignJWT` (`typ:secevent+jwt`); scoped to affected client/tenant; async best-effort | `caep/` |
+| Envoy/Istio ext_authz (HTTP mode) | `/mesh/ext-authz` (GET+POST, default path) | `WithMeshExtAuthz(path)` — per-request mesh authz: validates the bearer EXACTLY like `/userinfo` (`validateAnyToken` + DPoP/mTLS sender-constraint enforced, so a stolen sender-constrained token can't replay as a plain bearer), 200 ALLOW with DERIVED `X-Auth-{Subject,Client-Id,Scopes,Expires}` (+ `X-Auth-Roles` when a permissions provider is wired) identity headers the sidecar injects upstream, else 401 DENY (`invalid_token`, oracle-safe; no body); `tokenNoStoreHeaders`; mesh-internal + mesh MUST strip client-supplied `X-Auth-*` (edge-strip, §2); nil = byte-identical off; gRPC variant (needs go-control-plane) is a separate operator module | `handler.go` |
 
 **JWE decrypters/encrypters** (JAR-in, id_token-out, userinfo-out):
 `RSA` (RSA-OAEP-256 + A256GCM, default), `ECDH` (ECDH-ES), or `Multi`
@@ -609,6 +613,12 @@ knob; below is only the non-obvious operator surface.
   default for any). `jwks_file` is the operator-supplied SPIRE trust-bundle
   JWKS (`StaticJWKS`); `audience` is THIS server's id the SVID `aud` MUST
   contain (lax aud = cross-service replay). Disabled = byte-identical off.
+- **mesh.ext_authz.{enabled,path}** — opt into the Envoy/Istio ext_authz
+  HTTP-mode authorization endpoint (§3). `path` empty = SDK default
+  `/mesh/ext-authz`; must match the sidecar's filter path. Disabled = route
+  NOT mounted (byte-identical off). MESH-INTERNAL (operator network policy)
+  + the mesh MUST strip client-supplied `X-Auth-*` at ingress (edge-strip,
+  §2). The gRPC ext_authz variant (needs go-control-plane) is out of scope.
 - **oauth.jar** — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect).
 - **dpop.{proof_max_age,max_clock_skew}** — RFC 9449 proof iat-window
   (past staleness / future skew). Both 0 = SDK default 60s (byte-identical
