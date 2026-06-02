@@ -526,9 +526,9 @@ func decodeECDSAJWK(jwk core.JWK) (*ecdsa.PublicKey, error) {
 
 // decodeRSAJWK reconstructs an *rsa.PublicKey from an RSA JWK's base64url N
 // (big-endian modulus) + E (big-endian public exponent) per RFC 7518 §6.3.
-// Rejects an undersized modulus (< rsaMinPeerKeyBits) and a non-positive
-// exponent so a weak or malformed peer key fails closed rather than entering
-// the verify-set.
+// Rejects an undersized modulus (< rsaMinPeerKeyBits) and a degenerate
+// public exponent (< 3 or even) so a weak or malformed peer key fails closed
+// rather than entering the verify-set.
 func decodeRSAJWK(jwk core.JWK) (*rsa.PublicKey, error) {
 	if jwk.N == "" || jwk.E == "" {
 		return nil, fmt.Errorf("signingkeys: peer RSA key %s: missing n/e", jwk.Kid)
@@ -546,10 +546,20 @@ func decodeRSAJWK(jwk core.JWK) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("signingkeys: peer RSA key %s: modulus is %d bits, minimum is %d", jwk.Kid, n.BitLen(), rsaMinPeerKeyBits)
 	}
 	e := new(big.Int).SetBytes(eb)
-	if !e.IsInt64() || e.Int64() <= 0 {
-		return nil, fmt.Errorf("signingkeys: peer RSA key %s: invalid public exponent", jwk.Kid)
+	// Reject e < 3 and even exponents. e=1 makes RSA verification the
+	// identity (sig^1 mod N == sig), so anyone could forge a "signature"
+	// with no private key; an even e has no inverse modulo the (odd) RSA
+	// totient and is cryptographically degenerate. Go's rsa.Verify{PKCS1v15,PSS}
+	// do NOT reject either, so a malicious or garbage peer announcement must
+	// be rejected here rather than trusted from the registry.
+	if !e.IsInt64() {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: public exponent too large", jwk.Kid)
 	}
-	return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
+	ev := e.Int64()
+	if ev < 3 || ev&1 == 0 {
+		return nil, fmt.Errorf("signingkeys: peer RSA key %s: degenerate public exponent %d", jwk.Kid, ev)
+	}
+	return &rsa.PublicKey{N: n, E: int(ev)}, nil
 }
 
 // decodeError reports a peer JWK whose decoded public key is the wrong

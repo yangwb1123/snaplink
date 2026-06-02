@@ -256,6 +256,13 @@ func (j *RSAJWTIssuer) AdoptVerifyKey(kid string, pub *rsa.PublicKey) error {
 	if pub.N.BitLen() < rsaMinKeyBits {
 		return fmt.Errorf("rsa: adopt verify key %q: key is %d bits, minimum is %d", kid, pub.N.BitLen(), rsaMinKeyBits)
 	}
+	// Reject a degenerate public exponent defensively (decodeRSAJWK already
+	// gates the registry path; this guards direct SDK callers). e=1 makes
+	// verification the identity (universal forgery); even e is non-invertible
+	// modulo the totient. Neither is rejected by Go's rsa.Verify*.
+	if pub.E < 3 || pub.E&1 == 0 {
+		return fmt.Errorf("rsa: adopt verify key %q: degenerate public exponent %d", kid, pub.E)
+	}
 	// Read local key identity under keyMu, then release it fully before
 	// touching peerKeysMu — the two locks are never held nested.
 	j.keyMu.RLock()

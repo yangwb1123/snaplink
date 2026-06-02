@@ -28,6 +28,32 @@ func issueRSAPeerToken(t *testing.T, alg string) (token, peerKid string, peerPub
 	return tok.AccessToken, peer.KeyID(), peer.PublicKey()
 }
 
+// TestRSAPeerKey_DegenerateExponentRejected proves AdoptVerifyKey rejects a
+// degenerate public exponent defensively (guarding direct SDK callers that
+// bypass the registry decode gate). e=1 makes verification the identity
+// (universal forgery); even e is non-invertible modulo the totient.
+func TestRSAPeerKey_DegenerateExponentRejected(t *testing.T) {
+	local := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("local-iss"),
+		defaultimpl.WithRSAAlg("RS256"),
+	)
+	// A real 2048-bit modulus so only the exponent is at fault.
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	for _, e := range []int{1, 2} {
+		bad := &rsa.PublicKey{N: k.N, E: e}
+		if err := local.AdoptVerifyKey("deg-kid", bad); err == nil {
+			t.Fatalf("AdoptVerifyKey accepted degenerate public exponent e=%d", e)
+		}
+	}
+	// A sound exponent on the same modulus still adopts.
+	if err := local.AdoptVerifyKey("ok-kid", &rsa.PublicKey{N: k.N, E: 65537}); err != nil {
+		t.Fatalf("AdoptVerifyKey rejected a sound key: %v", err)
+	}
+}
+
 // TestRSAPeerKey_AdoptAppearsInJWKS proves an adopted RSA peer key surfaces in
 // JWKS as a verify-only (use:sig) RSA entry stamped with the LOCAL issuer's alg.
 func TestRSAPeerKey_AdoptAppearsInJWKS(t *testing.T) {

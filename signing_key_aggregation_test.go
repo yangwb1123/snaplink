@@ -2,6 +2,9 @@ package sso_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -609,5 +612,68 @@ func TestSigningKeyAggregation_MalformedECKeySkipped(t *testing.T) {
 	})
 	if issuerHasKidEC(t, ecIss, bad.Kid) {
 		t.Fatalf("malformed EC peer key %s was adopted — must be skipped", bad.Kid)
+	}
+}
+
+// TestSigningKeyAggregation_DegenerateRSAExponentSkipped proves the registry
+// adoption path rejects an RSA peer key whose public exponent is degenerate.
+// e=1 makes RSA verification the identity (sig^1 mod N == sig) so anyone could
+// forge a "signature" with no private key; an even e is non-invertible modulo
+// the (odd) totient. Go's rsa.Verify* reject neither, so decodeRSAJWK must —
+// the key must never enter the RS256 issuer's verify-set.
+func TestSigningKeyAggregation_DegenerateRSAExponentSkipped(t *testing.T) {
+	rsIss := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://sso.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+	)
+	srv := sso.NewServer(sso.WithTokenIssuer("jwt-rs256", rsIss))
+	srv.SetReplicaIDForTest("local")
+
+	// Start from a real 2048-bit RSA peer JWK (valid modulus) and forge a
+	// degenerate exponent: "AQ" = 0x01 (e=1), "Ag" = 0x02 (e=2, even).
+	good := jwkForAlg(t, defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://peer.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+	))
+	for name, badE := range map[string]string{"e1": "AQ", "e2_even": "Ag"} {
+		bad := good
+		bad.Kid = "degenerate-" + name
+		bad.E = badE
+		srv.ApplySigningKeyEventForTest(signingkeys.Event{
+			Type:         signingkeys.EventKeysUpserted,
+			Announcement: signingkeys.Announcement{ReplicaID: "peer-" + name, Keys: []core.JWK{bad}},
+		})
+		if issuerHasKidRSA(t, rsIss, bad.Kid) {
+			t.Fatalf("%s: degenerate-exponent RSA peer key %s was adopted — must be skipped", name, bad.Kid)
+		}
+	}
+}
+
+// TestSigningKeyAggregation_WeakRSAModulusSkipped proves a sub-2048-bit RSA
+// peer key is rejected at the aggregation decode path, symmetric with the
+// malformed-EC skip test (decodeRSAJWK modulus floor).
+func TestSigningKeyAggregation_WeakRSAModulusSkipped(t *testing.T) {
+	rsIss := defaultimpl.NewRSAJWTIssuer(
+		defaultimpl.WithRSAIssuer("https://sso.example"),
+		defaultimpl.WithRSAAlg("RS256"),
+	)
+	srv := sso.NewServer(sso.WithTokenIssuer("jwt-rs256", rsIss))
+	srv.SetReplicaIDForTest("local")
+
+	weak, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generate weak key: %v", err)
+	}
+	jwk := core.JWK{
+		Kty: "RSA", Alg: "RS256", Use: "sig", Kid: "weak-1024",
+		N: base64.RawURLEncoding.EncodeToString(weak.N.Bytes()),
+		E: "AQAB", // 65537 — exponent is fine; the 1024-bit modulus is the defect
+	}
+	srv.ApplySigningKeyEventForTest(signingkeys.Event{
+		Type:         signingkeys.EventKeysUpserted,
+		Announcement: signingkeys.Announcement{ReplicaID: "peer-weak", Keys: []core.JWK{jwk}},
+	})
+	if issuerHasKidRSA(t, rsIss, jwk.Kid) {
+		t.Fatalf("sub-2048 RSA peer key %s was adopted — must be skipped", jwk.Kid)
 	}
 }
