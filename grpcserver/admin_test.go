@@ -42,7 +42,7 @@ func startAdminGRPC(
 		TempStore: tempStore,
 		Recorder:  recorder,
 	}))
-	adminv1.RegisterPermissionAdminServiceServer(srv, grpcserver.NewPermissionAdminService(permProvider, recorder))
+	adminv1.RegisterPermissionAdminServiceServer(srv, grpcserver.NewPermissionAdminService(permProvider, recorder, nil))
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough://bufnet",

@@ -2119,6 +2119,10 @@ func (s *Server) applyInvalidation(evt cluster.Event) {
 		}
 	case cluster.KindDiscoveryReload:
 		s.invalidateDiscoveryCaches()
+	case cluster.KindAuthzPolicyChange:
+		// evt.Key is the clientID whose role definitions changed; drop this
+		// replica's cached bundle so the sidecar's next pull re-renders.
+		s.invalidateAuthzPolicyBundleCacheLocal(evt.Key)
 	default:
 		// Unknown kind from a newer peer — ignore rather than error, so a
 		// mixed-version cluster degrades gracefully during a rollout.

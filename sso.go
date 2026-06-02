@@ -174,6 +174,16 @@ type Server struct {
 	discoveryDocCacheTTL time.Duration
 	discoveryDocCache    sync.Map
 
+	// Authorization policy bundle body cache: the marshaled role-
+	// DEFINITION bundle + ETag, keyed by "<clientID>\x00<baseURL>" so a
+	// multi-host deployment doesn't conflate per-host renders. Reads are
+	// sync.Map-served lock-free; misses re-render from the permissions
+	// provider. Invalidated on any role/menu mutation (locally +, when a
+	// bus is wired, across the cluster) so a sidecar's next pull sees the
+	// change before the TTL elapses.
+	authzPolicyBundleCacheTTL time.Duration
+	authzPolicyBundleCache    sync.Map
+
 	// Collapses concurrent /jwks.json document computations. The doc is
 	// global (not per-host) and recomputing it on every poll — iterating
 	// every issuer, marshaling, hashing — is wasted work under the
@@ -257,13 +267,14 @@ type Option func(*Server)
 // NewServer creates a new SSO server.
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		authenticators:        make(map[string]Authenticator),
-		tokenIssuers:          make(map[string]TokenIssuer),
-		tenantTokenStrategies: make(map[string]string),
-		issuer:                DefaultIssuer,
-		logger:                spi.NopLogger{},
-		discoveryCacheTTL:     defaultDiscoveryCacheTTL,
-		discoveryDocCacheTTL:  DefaultDiscoveryDocCacheTTL,
+		authenticators:            make(map[string]Authenticator),
+		tokenIssuers:              make(map[string]TokenIssuer),
+		tenantTokenStrategies:     make(map[string]string),
+		issuer:                    DefaultIssuer,
+		logger:                    spi.NopLogger{},
+		discoveryCacheTTL:         defaultDiscoveryCacheTTL,
+		discoveryDocCacheTTL:      DefaultDiscoveryDocCacheTTL,
+		authzPolicyBundleCacheTTL: DefaultAuthzPolicyBundleCacheTTL,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -1293,6 +1304,15 @@ func (s *Server) Mount() {
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)
 	s.router.GET(PathMyMenus, s.handleMyMenus)
 	s.router.GET(PathMyRoles, s.handleMyRoles)
+
+	// Authorization policy bundle export (decentralized authz). Full
+	// path (not group-relative) registered directly on the router; its
+	// /api/v1/admin/ prefix means AdminMiddleware gates it as admin:read.
+	// Only mounted when a permissions provider is wired — the bundle is
+	// the role-DEFINITION half of that model.
+	if s.permissions != nil {
+		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
+	}
 
 	api := s.router.Group(PathAPIPrefix)
 	api.GET(PathClientByID, s.handleGetClient)

@@ -13,14 +13,31 @@ import (
 
 // PermissionAdminService manages roles, role assignments, and menu trees
 // over a permissions.Provider. Operations are scoped per client_id.
+//
+// invalidateAuthzPolicy is the optional callback fired (fire-and-forget,
+// nil-safe) after a role-DEFINITION mutation succeeds, wired in cmd to
+// (*sso.Server).InvalidateAuthzPolicyBundleCache so a sidecar's next pull
+// of the role-definition bundle sees the change before the bundle cache
+// TTL. Mirrors the TenantAdminService callback-field pattern
+// (invalidateSuspensionCache / revokeTenantTokens) — the gRPC service
+// holds a plain func, never the whole *sso.Server, to keep the dependency
+// one-directional.
 type PermissionAdminService struct {
 	adminv1.UnimplementedPermissionAdminServiceServer
-	prov     permissions.Provider
-	recorder *audit.Recorder
+	prov                  permissions.Provider
+	recorder              *audit.Recorder
+	invalidateAuthzPolicy func(ctx context.Context, clientID string)
 }
 
-func NewPermissionAdminService(prov permissions.Provider, recorder *audit.Recorder) *PermissionAdminService {
-	return &PermissionAdminService{prov: prov, recorder: recorder}
+// NewPermissionAdminService wires the provider, audit recorder, and the
+// optional authz-policy-bundle invalidation callback fired on role/menu
+// mutations. Pass nil for the callback when the SSO server doesn't export
+// the policy bundle (it is then a no-op).
+func NewPermissionAdminService(prov permissions.Provider, recorder *audit.Recorder, invalidateAuthzPolicy func(context.Context, string)) *PermissionAdminService {
+	if invalidateAuthzPolicy == nil {
+		invalidateAuthzPolicy = func(context.Context, string) {}
+	}
+	return &PermissionAdminService{prov: prov, recorder: recorder, invalidateAuthzPolicy: invalidateAuthzPolicy}
 }
 
 func (s *PermissionAdminService) ListRoles(ctx context.Context, in *adminv1.ListRolesRequest) (*adminv1.ListRolesResponse, error) {
@@ -56,6 +73,7 @@ func (s *PermissionAdminService) AddRole(ctx context.Context, in *adminv1.AddRol
 		return nil, status.Errorf(codes.Internal, "add: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminRoleAdded, in.ClientId+"/"+r.Code)
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
 	return &adminv1.AddRoleResponse{Role: in.Role}, nil
 }
 
@@ -74,6 +92,7 @@ func (s *PermissionAdminService) UpdateRole(ctx context.Context, in *adminv1.Upd
 		return nil, status.Errorf(codes.Internal, "update: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminRoleUpdated, in.ClientId+"/"+r.Code)
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
 	return &adminv1.UpdateRoleResponse{Role: in.Role}, nil
 }
 
@@ -91,6 +110,7 @@ func (s *PermissionAdminService) RemoveRole(ctx context.Context, in *adminv1.Rem
 		return nil, status.Errorf(codes.Internal, "remove: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminRoleRemoved, in.ClientId+"/"+in.RoleCode)
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
 	return &adminv1.RemoveRoleResponse{}, nil
 }
 
@@ -151,6 +171,7 @@ func (s *PermissionAdminService) SetMenus(ctx context.Context, in *adminv1.SetMe
 		return nil, status.Errorf(codes.Internal, "set menus: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminMenusUpdated, in.ClientId)
+	s.invalidateAuthzPolicy(ctx, in.ClientId)
 	return &adminv1.SetMenusResponse{}, nil
 }
 

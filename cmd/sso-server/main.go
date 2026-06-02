@@ -549,7 +549,9 @@ func newGRPCServer(a *app) *grpc.Server {
 			Issuers:   a.tokenIssuers,
 			Recorder:  a.recorder,
 		}))
-		adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(a.provider, a.recorder))
+		adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(
+			a.provider, a.recorder,
+			func(_ context.Context, id string) { a.server.InvalidateAuthzPolicyBundleCache(id) }))
 		if a.snapshotPipeline != nil {
 			adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
 				a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))
@@ -685,7 +687,9 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	})); err != nil {
 		return nil, fmt.Errorf("gateway tokens: %w", err)
 	}
-	if err := adminv1.RegisterPermissionAdminServiceHandlerServer(ctx, gw, grpcserver.NewPermissionAdminService(a.provider, a.recorder)); err != nil {
+	if err := adminv1.RegisterPermissionAdminServiceHandlerServer(ctx, gw, grpcserver.NewPermissionAdminService(
+		a.provider, a.recorder,
+		func(_ context.Context, id string) { a.server.InvalidateAuthzPolicyBundleCache(id) })); err != nil {
 		return nil, fmt.Errorf("gateway permissions: %w", err)
 	}
 	if a.snapshotPipeline != nil {
@@ -714,6 +718,15 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	gated := a.adminMW.HTTPMiddleware(gw)
 	mux := http.NewServeMux()
 	mux.Handle(adminAPIPathPrefix, gated)
+	// The authz policy-bundle export is a custom HTTP handler on the SSO
+	// router (it needs the Server's bundle cache + provider), not a
+	// gRPC-gateway route — but its path lives under /api/v1/admin/, which
+	// the line above sends to the gateway. Route this exact path back to
+	// `base` (already admin-gated at line ~665); ServeMux's longest-match
+	// makes the exact pattern win over the /api/v1/admin/ subtree.
+	if a.provider != nil {
+		mux.Handle(sso.PathAuthzPolicyBundle, base)
+	}
 	mux.Handle("/", base)
 	return mux, nil
 }

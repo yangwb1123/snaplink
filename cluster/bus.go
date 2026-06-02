@@ -38,6 +38,14 @@ const (
 	// request. Event.Key is unused (the discovery doc is global, derived
 	// from the union of all clients), so it is empty.
 	KindDiscoveryReload EventKind = "discovery_reload"
+
+	// KindAuthzPolicyChange signals that a client's role DEFINITIONS
+	// changed (a role added/updated/removed or its menus reset), so
+	// subscribers drop the cached authorization policy bundle for
+	// Event.Key (the client ID) and re-render it from the permissions
+	// provider on the next sidecar pull. Best-effort like every kind: a
+	// dropped Event only degrades a replica to its bundle-cache TTL.
+	KindAuthzPolicyChange EventKind = "authz_policy_change"
 )
 
 // Event is one coordination signal. Key identifies the affected entity

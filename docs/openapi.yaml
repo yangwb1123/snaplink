@@ -1961,6 +1961,90 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/authz/policy-bundle:
+    get:
+      tags: [admin]
+      summary: Export the role-definition authorization policy bundle.
+      description: |
+        Read-only export of the permissions role-DEFINITION model as a
+        portable JSON bundle a service-mesh sidecar (OPA/Cedar/custom)
+        pulls to enforce authorization LOCALLY — no per-request Authorizer
+        RPC. The bundle carries ONLY role definitions (code →
+        permissions[]) plus the static wildcard match semantics, NOT the
+        per-subject role assignments: a sidecar already has the caller's
+        roles from the token (the SSO server embeds them when
+        `WithEmbedPermissionsInLogin` is set), so the bundle stays
+        O(roles) and contains no subject PII.
+
+        Admin-gated — the admin middleware enforces `admin:read` (the path
+        sits under `/api/v1/admin/`). Cacheable read (NOT a credential
+        endpoint): stamps `public` Cache-Control + a strong content-based
+        ETag (sha256 over the canonical role bytes, EXCLUDING
+        `generated_at`) so the same role set yields the same ETag across
+        regenerations; honors `If-None-Match` → 304. The cache is
+        invalidated on any role/menu mutation (locally and, when an
+        invalidation bus is wired, cluster-wide) so a sidecar's next pull
+        sees a change before the cache TTL (`WithAuthzPolicyBundleCacheTTL`,
+        default 5m). A reference OPA Rego that reproduces the wildcard
+        match lives in `docs/examples/opa-authz-policy.rego`.
+      operationId: getAuthzPolicyBundle
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: The app whose role definitions to export.
+      responses:
+        "200":
+          description: The role-definition policy bundle.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: '`public, max-age=<ttl>` when caching is enabled.'
+            ETag:
+              schema:
+                type: string
+              description: Short sha256 prefix over the canonical role bytes (stable across rebuilds with unchanged roles).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzPolicyBundle"
+        "304":
+          description: Not Modified — roles unchanged since the supplied If-None-Match.
+        "400":
+          description: '`missing_client_id` — `client_id` query parameter absent.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: '`client_not_found` — no such client.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: '`internal_error` — provider read or render failure.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # ---- Admin gRPC services exposed via grpc-gateway ----
   #
   # Every endpoint below requires the AdminMiddleware Bearer-validated
@@ -4731,6 +4815,76 @@ components:
           type: array
           items: { type: string }
           description: Per-step failures; present on a 207 partial erasure.
+
+    AuthzPolicyBundle:
+      type: object
+      required: [version, client_id, roles, wildcard_semantics]
+      description: |
+        Portable role-definition export for decentralized (sidecar)
+        authorization. Carries role definitions + the wildcard match
+        rules, never per-subject assignments.
+      properties:
+        version:
+          type: integer
+          description: Bundle schema version; a sidecar branches on it.
+          example: 1
+        generated_at:
+          type: string
+          format: date-time
+          description: When the export rendered. Informational only — NOT part of the ETag (the ETag is hashed over the role content), so the same role set yields the same ETag across regenerations.
+        client_id:
+          type: string
+          description: The app whose role definitions this bundle exports.
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleBundle"
+        wildcard_semantics:
+          $ref: "#/components/schemas/WildcardSemantics"
+
+    RoleBundle:
+      type: object
+      required: [code, permissions]
+      description: One role definition — a role code plus the permission codes it grants.
+      properties:
+        code:
+          type: string
+          example: admin
+        name:
+          type: string
+        description:
+          type: string
+        permissions:
+          type: array
+          items: { type: string }
+          description: Granted permission codes (sorted for a stable canonical form).
+          example: ["order:*", "user:*"]
+
+    WildcardSemantics:
+      type: object
+      required: [all_token, domain_suffix, separator, rules]
+      description: |
+        Static, self-describing match rules an enforcer implements to
+        reproduce the server's permission matcher: a granted code satisfies
+        a wanted code when it is "*", an exact match, or "<domain>:*" where
+        the wanted code is "<domain>:<action>".
+      properties:
+        all_token:
+          type: string
+          description: Token that grants every permission.
+          example: "*"
+        domain_suffix:
+          type: string
+          description: Suffix that, on a domain, grants every action under it.
+          example: ":*"
+        separator:
+          type: string
+          description: Splits a "domain:action" code.
+          example: ":"
+        rules:
+          type: array
+          items: { type: string }
+          description: Human-readable description of the match order.
 
     LivenessResponse:
       type: object

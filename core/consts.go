@@ -31,6 +31,14 @@ const (
 	PathMyMenus       = "/menus/me"
 	PathMyRoles       = "/roles/me"
 
+	// PathAuthzPolicyBundle is the read-only admin export of the
+	// permissions role-DEFINITION model as a portable bundle a service-mesh
+	// sidecar pulls to enforce authorization locally (no per-request
+	// Authorizer RPC). Full path (not group-relative) so it can be mounted
+	// on the SSO router directly and gated by AdminMiddleware via the
+	// /api/v1/admin/ prefix.
+	PathAuthzPolicyBundle = "/api/v1/admin/authz/policy-bundle"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"

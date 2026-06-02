@@ -382,6 +382,20 @@ Audit: `mfa_required`/`mfa_success`/`mfa_failure`.
 `WithEmbedPermissionsInLogin()`. SQLite peer: 3 tables; `RemoveRole`
 transactionally strips the code from every assignment.
 `permissionstest.ConformanceSuite` locks memory/sqlite equivalence.
+**Decentralized authz** (`policy_bundle.go`): read-only admin export `GET
+/api/v1/admin/authz/policy-bundle?client_id=` (admin:read, gated by the
+`/api/v1/admin/` prefix) serializes ONLY role DEFINITIONS (code →
+permissions[] + static `WildcardSemantics`), NOT per-subject assignments —
+a mesh sidecar (OPA/Cedar; ref Rego `docs/examples/opa-authz-policy.rego`)
+already has the caller's roles from the token (pairs with
+`WithEmbedPermissionsInLogin`), so it enforces locally with no per-request
+Authorizer RPC. ETag-cached like the discovery doc (content-hash over
+canonical roles EXCLUDING `generated_at` → stable across rebuilds; 304 on
+`If-None-Match`; `WithAuthzPolicyBundleCacheTTL`, default 5m). Role/menu
+mutations fire `InvalidateAuthzPolicyBundleCache` (local + bus
+`KindAuthzPolicyChange`, fail-open on publish) via a nil-safe callback on
+`grpcserver.PermissionAdminService` (the callback-field pattern, NOT a
+`*sso.Server` injection).
 
 **Compliance** (`compliance/`). GDPR Art. 17/15/20 (+ CCPA/PIPL) workflows
 no single SPI owns. `Eraser`: revoke refresh tokens (per client) → destroy
