@@ -2,12 +2,15 @@ package ssotest
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,11 +34,33 @@ const (
 	svidResource    = "https://api.example/v1"
 )
 
-// spireKey is a test SPIRE JWT signing key (ES256, SPIRE's default).
+// spireKey is a test SPIRE JWT signing key. SPIRE defaults to ES256
+// (priv set); a PS256 variant carries rsaPriv instead.
 type spireKey struct {
-	priv *ecdsa.PrivateKey
-	kid  string
-	jwk  core.JWK
+	priv    *ecdsa.PrivateKey
+	rsaPriv *rsa.PrivateKey
+	alg     string
+	kid     string
+	jwk     core.JWK
+}
+
+// newSpirePS256Key generates an RSA-2048 PS256 SPIRE key — exercising the
+// allowlisted PS256 SVID branch end-to-end through /token exchange.
+func newSpirePS256Key(t *testing.T, kid string) spireKey {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("gen rsa: %v", err)
+	}
+	eb := big.NewInt(int64(priv.E)).Bytes()
+	return spireKey{
+		rsaPriv: priv, alg: "PS256", kid: kid,
+		jwk: core.JWK{
+			Kty: "RSA", Kid: kid, Use: "sig", Alg: "PS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(eb),
+		},
+	}
 }
 
 func newSpireKey(t *testing.T, kid string) spireKey {
@@ -49,7 +74,7 @@ func newSpireKey(t *testing.T, kid string) spireKey {
 	priv.X.FillBytes(xb)
 	priv.Y.FillBytes(yb)
 	return spireKey{
-		priv: priv, kid: kid,
+		priv: priv, alg: "ES256", kid: kid,
 		jwk: core.JWK{
 			Kty: "EC", Crv: "P-256", Kid: kid, Use: "sig", Alg: "ES256",
 			X: base64.RawURLEncoding.EncodeToString(xb),
@@ -58,11 +83,11 @@ func newSpireKey(t *testing.T, kid string) spireKey {
 	}
 }
 
-// mint signs an ES256 JWT-SVID. algOverride forges the header alg (e.g.
-// "none"); empty uses ES256.
+// mint signs a JWT-SVID with the key's own alg (ES256 or PS256).
+// algOverride forges the header alg (e.g. "none").
 func (k spireKey) mint(t *testing.T, algOverride string, claims map[string]any) string {
 	t.Helper()
-	alg := "ES256"
+	alg := k.alg
 	if algOverride != "" {
 		alg = algOverride
 	}
@@ -83,6 +108,17 @@ func (k spireKey) mint(t *testing.T, algOverride string, claims map[string]any) 
 		out := make([]byte, 64)
 		r.FillBytes(out[:32])
 		s.FillBytes(out[32:])
+		sig = out
+	case "PS256":
+		// Standard PS256 signer (go-jose / golang-jwt / SPIRE): auto/max salt.
+		d := sha256.Sum256([]byte(signingInput))
+		out, err := rsa.SignPSS(rand.Reader, k.rsaPriv, crypto.SHA256, d[:], &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthAuto,
+			Hash:       crypto.SHA256,
+		})
+		if err != nil {
+			t.Fatalf("sign pss: %v", err)
+		}
 		sig = out
 	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
@@ -208,6 +244,57 @@ func TestSPIFFE_HappyPath_IssuesTokenWithAttributes(t *testing.T) {
 		e.Metadata[core.KeySPIFFENamespace] != "prod" ||
 		e.Metadata[core.KeySPIFFEServiceAccount] != "payments" {
 		t.Errorf("audit metadata = %v", e.Metadata)
+	}
+}
+
+// TestSPIFFE_PS256HappyPath_IssuesToken exchanges a PS256 JWT-SVID signed
+// with the standard auto/max PSS salt end-to-end. Before the verify-side
+// salt fix this returned 400 invalid_grant (the auto-salt signature failed
+// the hash-length-salt verify), silently breaking the allowlisted PS256 SVID.
+func TestSPIFFE_PS256HappyPath_IssuesToken(t *testing.T) {
+	key := newSpirePS256Key(t, "spire-ps")
+	srv, _ := newSPIFFEHarness(t, key, true)
+	svid := key.mint(t, "", svidClaims(svidSub, svidAudience))
+
+	status, body := exchangeSVID(t, srv, svid, svidResource)
+	if status != http.StatusOK {
+		t.Fatalf("ps256 status=%d body=%v", status, body)
+	}
+	access, _ := body["access_token"].(string)
+	if access == "" {
+		t.Fatalf("no access_token: %v", body)
+	}
+	if sub := jwtPayloadField(t, access, "sub"); sub != svidSub {
+		t.Errorf("sub = %v want %q", sub, svidSub)
+	}
+}
+
+// TestSPIFFE_WeakRSAKeyRejected: a sub-2048-bit trust-bundle RSA key is
+// rejected — the SVID it signs gets the SAME 400 invalid_grant (the external
+// trust boundary must meet the issued-key modulus floor, RFC 7518 §3.3).
+func TestSPIFFE_WeakRSAKeyRejected(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 1024) // below the 2048-bit floor
+	if err != nil {
+		t.Fatalf("gen rsa: %v", err)
+	}
+	eb := big.NewInt(int64(priv.E)).Bytes()
+	key := spireKey{
+		rsaPriv: priv, alg: "PS256", kid: "weak-rsa",
+		jwk: core.JWK{
+			Kty: "RSA", Kid: "weak-rsa", Use: "sig", Alg: "PS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(eb),
+		},
+	}
+	srv, _ := newSPIFFEHarness(t, key, true)
+	svid := key.mint(t, "", svidClaims(svidSub, svidAudience))
+
+	status, body := exchangeSVID(t, srv, svid, svidResource)
+	if status != http.StatusBadRequest {
+		t.Fatalf("weak-rsa status=%d want 400 body=%v", status, body)
+	}
+	if body["error"] != "invalid_grant" {
+		t.Errorf("error=%v want invalid_grant (oracle-safe)", body["error"])
 	}
 }
 

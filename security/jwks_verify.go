@@ -212,8 +212,16 @@ func verifyJWSWithJWK(alg string, jwk core.JWK, signingInput, sig []byte) error 
 			return err
 		}
 		hash := hashForAlg(alg)
+		// Interop: standard PS256 signers (go-jose / golang-jwt, and thus
+		// SPIRE) sign with the MAXIMUM salt (PSSSaltLengthAuto = (keyBits-1)/8
+		// - hashLen - 2, e.g. 222 bytes for RSA-2048/SHA-256), NOT the
+		// hash-length salt. Verifying with PSSSaltLengthEqualsHash would
+		// reject every such valid SVID. PSSSaltLengthAuto on the VERIFY side
+		// auto-detects the salt length present in the signature, accepting the
+		// full RFC 7518 §3.5 valid range. This is verification-only; any
+		// signing path keeps its own salt choice.
 		if err := rsa.VerifyPSS(pub, hash, digestOf(alg, signingInput), sig, &rsa.PSSOptions{
-			SaltLength: rsa.PSSSaltLengthEqualsHash,
+			SaltLength: rsa.PSSSaltLengthAuto,
 			Hash:       hash,
 		}); err != nil {
 			return errors.New("jws: PS signature invalid")
@@ -285,6 +293,16 @@ func rsaPublicFromJWK(jwk core.JWK) (*rsa.PublicKey, error) {
 	nb, err := base64.RawURLEncoding.DecodeString(jwk.N)
 	if err != nil || len(nb) == 0 {
 		return nil, errors.New("jws: malformed RSA n")
+	}
+	// Externally-supplied verify keys (an operator's trust bundle is an
+	// EXTERNAL trust boundary) must meet the same floor as keys we issue:
+	// RFC 7518 §3.3 requires RSA >= 2048 bits, matching
+	// defaultimpl.rsaMinKeyBits. 2048 bits = 256 bytes of modulus; a shorter
+	// modulus is a weak key and is rejected, fail-closed. (Leading zero bytes
+	// in a correctly base64url-encoded modulus are omitted, so a genuine
+	// 2048-bit key is exactly 256 bytes.)
+	if len(nb) < 256 {
+		return nil, errors.New("jws: RSA key below 2048-bit minimum")
 	}
 	eb, err := base64.RawURLEncoding.DecodeString(jwk.E)
 	if err != nil || len(eb) == 0 {

@@ -2,13 +2,16 @@ package security_test
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"testing"
 	"time"
 
@@ -77,9 +80,32 @@ func TestParseSPIFFEURI_Rejects(t *testing.T) {
 type testKey struct {
 	es25519 ed25519.PrivateKey
 	ecdsa   *ecdsa.PrivateKey
+	rsa     *rsa.PrivateKey
 	kid     string
 	jwk     core.JWK
 	alg     string
+}
+
+// newPS256Key generates an RSA key of bits size and returns it as a PS256
+// signing key whose JWK carries the modulus/exponent. bits < 2048 produces a
+// weak key (used to assert the trust-bundle RSA floor).
+func newPS256Key(t *testing.T, kid string, bits int) testKey {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		t.Fatalf("gen rsa: %v", err)
+	}
+	eb := big.NewInt(int64(priv.E)).Bytes()
+	return testKey{
+		rsa: priv,
+		kid: kid,
+		alg: "PS256",
+		jwk: core.JWK{
+			Kty: "RSA", Kid: kid, Use: "sig", Alg: "PS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(eb),
+		},
+	}
 }
 
 func newES256Key(t *testing.T, kid string) testKey {
@@ -153,6 +179,18 @@ func mintSVID(t *testing.T, k testKey, algOverride string, claims map[string]any
 		out := make([]byte, 64)
 		r.FillBytes(out[:32])
 		s.FillBytes(out[32:])
+		sig = out
+	case "PS256":
+		// Standard-signer behavior: go-jose / golang-jwt (and SPIRE) use
+		// PSSSaltLengthAuto, i.e. the MAXIMUM salt, NOT the hash length.
+		digest := sha256.Sum256([]byte(signingInput))
+		out, err := rsa.SignPSS(rand.Reader, k.rsa, crypto.SHA256, digest[:], &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthAuto,
+			Hash:       crypto.SHA256,
+		})
+		if err != nil {
+			t.Fatalf("sign pss: %v", err)
+		}
 		sig = out
 	default:
 		t.Fatalf("unsupported test alg %q", alg)
@@ -232,6 +270,36 @@ func TestSPIFFEValidator_HappyPath_EdDSA(t *testing.T) {
 	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
 	if _, err := v.Validate(context.Background(), svid, testAudience); err != nil {
 		t.Fatalf("validate eddsa: %v", err)
+	}
+}
+
+// TestSPIFFEValidator_HappyPath_PS256 mints a PS256 JWT-SVID with the
+// standard auto/max salt (rsa.PSSSaltLengthAuto) and asserts it VERIFIES.
+// Before the verify-side fix (PSSSaltLengthEqualsHash), this auto-salt
+// signature was rejected with crypto/rsa: verification error →
+// ErrSPIFFESVIDInvalid, silently breaking the allowlisted PS256 branch.
+func TestSPIFFEValidator_HappyPath_PS256(t *testing.T) {
+	k := newPS256Key(t, "spire-ps", 2048)
+	v := newValidator(t, k.jwk)
+	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
+	if _, err := v.Validate(context.Background(), svid, testAudience); err != nil {
+		t.Fatalf("validate ps256 (auto-salt): %v", err)
+	}
+}
+
+// TestSPIFFEValidator_WeakRSAKeyRejected: a trust-bundle RSA key below the
+// 2048-bit floor (RFC 7518 §3.3) is rejected. The external trust boundary
+// must meet the same modulus floor as keys the SSO itself issues.
+func TestSPIFFEValidator_WeakRSAKeyRejected(t *testing.T) {
+	k := newPS256Key(t, "weak-rsa", 1024) // below the 2048-bit minimum
+	v := newValidator(t, k.jwk)
+	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
+	_, err := v.Validate(context.Background(), svid, testAudience)
+	if err == nil {
+		t.Fatal("expected weak (1024-bit) RSA trust-bundle key to be rejected")
+	}
+	if err != security.ErrSPIFFESVIDInvalid {
+		t.Errorf("err = %v want ErrSPIFFESVIDInvalid (oracle-safe)", err)
 	}
 }
 
