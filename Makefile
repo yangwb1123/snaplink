@@ -65,15 +65,18 @@ playground: ## Run the interactive Web UI playground on localhost:8090.
 	@go run ./examples/playground
 
 # ci-modules builds + tests each NESTED module separately. They are
-# excluded from the root `go ... ./...` on purpose (kms/awskms carries the
-# aws-sdk-go-v2 dep, redis carries go-redis — both MUST NOT enter the core
-# go.mod), so CI must enter each submodule explicitly. There is deliberately
+# excluded from the root `go ... ./...` on purpose (kms/awskms carries
+# aws-sdk-go-v2, kms/gcpkms carries cloud.google.com/go/kms, kms/pkcs11
+# carries github.com/miekg/pkcs11 [cgo], redis carries go-redis — none MUST
+# enter the core go.mod), so CI must enter each submodule explicitly. There is deliberately
 # no go.work: a workspace would merge the build lists and surface those SDKs
 # in the root module graph (`go list -m all`), blurring the core's
 # zero-external-SDK invariant. Each submodule resolves the core module via
 # its own `replace => ../` (or ../../).
-ci-modules: ## Build + race-test the nested modules (kms/awskms, redis).
+ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms/pkcs11, redis).
 	cd kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
+	cd kms/gcpkms && $(GO) build ./... && $(GO) test -race -count=1 ./...
+	cd kms/pkcs11 && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd redis && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
 ci: fmt vet race build proto-lint ci-modules ## Run the same checks CI runs.
