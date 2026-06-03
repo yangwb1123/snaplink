@@ -53,11 +53,21 @@ const (
 	// Single Logout Service URLs. A LogoutResponse the IdP sends back after a
 	// SP-initiated SLO goes ONLY to a URL in this list — never a
 	// request-supplied one (logout-response-injection defense, the SLO analogue
-	// of AttrSPACSURLs). An SP that wants to RECEIVE a LogoutResponse MUST
+	// of AttrSPACSURLs). It is ALSO the fan-out destination: an SP-initiated
+	// global logout pushes a signed LogoutRequest ONLY to a URL in this list. An
+	// SP that wants to RECEIVE a LogoutResponse or a fan-out LogoutRequest MUST
 	// register at least one; absent ⇒ the IdP can validate + terminate but has
 	// nowhere to send the response (it returns 200 with no response — the
-	// session is still killed).
+	// session is still killed) and the SP is skipped in the fan-out.
 	AttrSPSLOUrls = "saml_sp_slo_url"
+
+	// AttrSPSLOBinding selects the SAML binding the SLO fan-out delivers this
+	// SP's LogoutRequest over: "redirect" (HTTP-Redirect, a GET with a detached
+	// §3.4.4.1 signature — the default, and what saml/sp validates by default) or
+	// "post" (HTTP-POST, an enveloped-XML-DSig LogoutRequest form). Absent/unknown
+	// ⇒ redirect. It governs ONLY the outbound fan-out direction; the inbound
+	// SP-initiated /saml/slo receiver accepts BOTH bindings regardless.
+	AttrSPSLOBinding = "saml_sp_slo_binding"
 )
 
 // acsURLDelimiter separates registered ACS URLs in AttrSPACSURLs.
@@ -130,6 +140,15 @@ type Deps struct {
 	// Pending stores SP-initiated AuthnRequests between /saml/sso and
 	// /saml/sso/finish. Nil ⇒ a default in-memory store is created.
 	Pending *PendingStore
+
+	// SessionIndex records, per subject, the SAML SPs that subject has an active
+	// SSO session with (populated at /saml/sso/finish on assertion-issuance, read
+	// at /saml/slo to drive the multi-SP SLO fan-out — the SAML analogue of the
+	// OIDC BCL subject-client index). OPTIONAL: nil ⇒ the SLO fan-out is DISABLED
+	// and byte-identical to the single-SP SLO (nothing is recorded or read; no
+	// goroutine spawned). Wire the default MemorySessionIndex (or a shared
+	// sqlite/redis impl for a multi-replica IdP) to enable global single logout.
+	SessionIndex SAMLSessionIndex
 
 	// AuditRecorder records the login_success (provider "saml-idp") event when
 	// an assertion is issued. Nil ⇒ no audit (the rest of the flow is
@@ -383,6 +402,18 @@ func firstSLO(spClient *sso.Client) string {
 		}
 	}
 	return ""
+}
+
+// spSLOBinding returns the SP's registered SLO fan-out binding (AttrSPSLOBinding),
+// normalized to BindingRedirect (the default) or BindingPost. An unrecognized or
+// absent value yields BindingRedirect — the safe, real-IdP-default form.
+func spSLOBinding(spClient *sso.Client) string {
+	switch strings.ToLower(strings.TrimSpace(spClient.Attributes[AttrSPSLOBinding])) {
+	case BindingPost:
+		return BindingPost
+	default:
+		return BindingRedirect
+	}
 }
 
 // sloAllowed reports whether sloURL is in the SP client's registered SLO

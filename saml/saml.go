@@ -57,6 +57,18 @@ type Deps struct {
 
 	// Logger is the server logger. Nil ⇒ a no-op logger is used.
 	Logger spi.Logger
+
+	// SAMLSessionIndex enables the IdP-side SLO back-channel FAN-OUT (global
+	// single logout): it records, per subject, the SAML SPs that subject has an
+	// active SSO session with at assertion-issuance, and an SP-initiated /saml/slo
+	// then pushes a SIGNED LogoutRequest to every OTHER such SP's registered SLO
+	// URL (async + best-effort + bounded, the SAML analogue of OIDC back-channel
+	// logout). OPTIONAL: nil ⇒ the fan-out is DISABLED and the single-SP SLO
+	// behavior is byte-identical (nothing recorded or read). Wire
+	// idp.NewMemorySessionIndex(0, 0) for the default bounded in-memory index, or
+	// a shared sqlite/redis SAMLSessionIndex for a multi-replica IdP. IdP-only;
+	// the SP side does not use it.
+	SAMLSessionIndex idp.SAMLSessionIndex
 }
 
 // Config wraps the per-IdP SP configs the operator wants to wire. One SPConfig
@@ -210,6 +222,7 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 			AssertionTTL:    cfg.IdP.AssertionTTL,
 			AuditRecorder:   deps.AuditRecorder,
 			Logger:          logger,
+			SessionIndex:    deps.SAMLSessionIndex,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("saml: build IdP: %w", err)

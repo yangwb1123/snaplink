@@ -1,6 +1,7 @@
 package idp
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 
@@ -127,6 +128,13 @@ func (h *Handlers) Finish(w http.ResponseWriter, r *http.Request) {
 	// (8) Audit login_success on the SAME recorder the rest of the server uses.
 	h.recordAssertion(r, spClient.ID, pending.SPEntityID, user.ID)
 
+	// (9) Record the subject->SP session in the SAML session index so a later
+	// SP-initiated SLO can fan out a signed LogoutRequest to this SP. Only when
+	// the index is wired (nil ⇒ fan-out disabled ⇒ this is a no-op, byte-
+	// identical to the pre-fan-out behavior). Best-effort: a record failure is
+	// logged, never surfaced — it MUST NOT fail an otherwise-successful login.
+	h.recordSessionIndex(r.Context(), spClient, pending.SPEntityID, user.ID)
+
 	// Return the auto-POST form to the REGISTERED ACS (pending.ACSURL, never a
 	// response-controlled URL). The pending request was already consumed, so
 	// this is single-use.
@@ -156,4 +164,32 @@ func (h *Handlers) recordAssertion(r *http.Request, clientID, spEntityID, userID
 	}
 	audit.SetMeta(e, "saml_sp_entity_id", spEntityID)
 	h.deps.AuditRecorder.Record(r.Context(), e)
+}
+
+// recordSessionIndex records this subject->SP session in the SAML session index
+// (for the SLO fan-out). It captures the SP's REGISTERED SLO URL + binding from
+// the LIVE client (server-side config, never request input), the SP entity id,
+// and the subject (== the assertion NameID == user.ID). The SessionIndex is
+// EMPTY because the IdP does not currently stamp a per-session SessionIndex into
+// assertions (so a fanned-out LogoutRequest carries no SessionIndex ⇒ the SP
+// does full-subject logout, the documented behavior). Nil index ⇒ no-op.
+//
+// An SP that registered NO SLO URL is still recorded (with an empty SPSLOUrl);
+// the fan-out skips it (nowhere to deliver) — but recording it keeps the index a
+// faithful picture of the subject's SP sessions for RemoveAll. Best-effort: a
+// record error is logged, never surfaced.
+func (h *Handlers) recordSessionIndex(ctx context.Context, spClient *sso.Client, spEntityID, subject string) {
+	if h.deps.SessionIndex == nil {
+		return
+	}
+	if err := h.deps.SessionIndex.Record(ctx, subject, SAMLSPSession{
+		SPEntityID:   spEntityID,
+		SPClientID:   spClient.ID,
+		SPSLOUrl:     firstSLO(spClient),
+		SPBinding:    spSLOBinding(spClient),
+		NameID:       subject,
+		SessionIndex: "", // IdP emits no per-session SessionIndex (full-subject logout)
+	}); err != nil {
+		h.deps.Logger.Error("saml/idp: record session index failed", "client_id", spClient.ID, "error", err)
+	}
 }

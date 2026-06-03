@@ -170,6 +170,20 @@ func (h *Handlers) SLO(w http.ResponseWriter, r *http.Request) {
 	// attempt without the wire response leaking existence.
 	h.recordSLO(r, spClient.ID, issuer, nameID, terminated)
 
+	// (6, cont.) GLOBAL SINGLE LOGOUT FAN-OUT. The IdP session is terminated;
+	// now push a SIGNED LogoutRequest to every OTHER SP the subject has an active
+	// SAML session with (read from the SAMLSessionIndex), EXCLUDING the initiating
+	// SP (its `issuer` entity id) — the standard SLO chain, the SAML analogue of
+	// OIDC back-channel logout. This is async + best-effort + bounded inside
+	// Fanout (a detached supervised goroutine with a per-SP timeout + recover), so
+	// a slow/dead SP NEVER blocks the LogoutResponse returned to the initiator
+	// below. The index is read + cleaned (RemoveAll) synchronously inside Fanout
+	// before the dispatch goroutine is spawned. Nil index ⇒ Fanout is a no-op
+	// (byte-identical to the single-SP SLO). The subject NameID is the (already
+	// signature-verified) request's NameID — never request-influenceable beyond
+	// the value the SP signed.
+	h.Fanout(r.Context(), nameID, issuer)
+
 	// (6, cont.) Reply with a SIGNED LogoutResponse to the SP's REGISTERED SLO
 	// URL only. If the SP registered no SLO URL there is nowhere to send the
 	// response — the session is already terminated, so return 200 with no body

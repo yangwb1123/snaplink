@@ -214,12 +214,36 @@
 //     non-existent session still returns a Success LogoutResponse, so SLO is not
 //     a session-enumeration oracle.
 //
-// IdP-INITIATED SLO fan-out (this server pushing logout to every SP a subject
-// has a session with) is DEFERRED: it needs a SAML session->SP index (the
-// analogue of the OIDC BCL subject-client index) to know which SPs to notify,
-// which the current Session model does not carry. The SP-INITIATED path above is
-// complete; the fan-out is a follow-up that adds that index — it is NOT
-// half-built here.
+// SLO BACK-CHANNEL FAN-OUT (global single logout). An SP-initiated /saml/slo now
+// completes the SLO chain: after terminating the IdP session it pushes a SIGNED
+// SAML LogoutRequest to every OTHER SP the subject has an active SAML session
+// with, so those SPs terminate their local sessions too — the SAML analogue of
+// OIDC back-channel logout. It is gated by an OPT-IN SAML session index:
+//
+//   - idp.SAMLSessionIndex (interface + the default bounded idp.MemorySessionIndex)
+//     records, per subject (NameID), the SPs that subject federated to —
+//     populated at /saml/sso/finish on assertion-issuance (the SP entity id, its
+//     REGISTERED SLO URL + binding from Client.Attributes, the NameID), read at
+//     /saml/slo, and RemoveAll'd after the fan-out so no stale subject->SP rows
+//     leak. Wire it via saml.Deps.SAMLSessionIndex (nil ⇒ fan-out DISABLED ⇒
+//     byte-identical to the single-SP SLO; nothing recorded/read, no goroutine).
+//   - The fan-out EXCLUDES the initiating SP, SIGNS each LogoutRequest with the
+//     SAME per-tenant key the target SP pinned (so the target SP's own saml/sp
+//     ProcessLogoutRequest accepts it — cross-validated in the tests), and
+//     delivers ONLY to the SP's REGISTERED SLO URL (never request-supplied).
+//   - It is ASYNC + BEST-EFFORT + BOUNDED (a detached supervised goroutine, a
+//     per-SP timeout + recover, a bounded worker pool), so a slow/dead SP NEVER
+//     blocks the LogoutResponse returned to the initiator — a dead SP just drops
+//     its request (logged + audited as a logout_notified failure). Per-SP
+//     outcomes are recorded as bounded-cardinality logout_notified audit events
+//     (provider "saml-idp"), the module's observability seam.
+//
+// IdP-INITIATED global logout (this server pushing logout from its own logout
+// flow, e.g. /end_session or an admin action) is exposed as a HOOK rather than
+// invasively wired into the core SessionManager: an operator's forked main calls
+// handlers.Fanout(ctx, subject, "") (the exported method on the IdP handler set)
+// from wherever it terminates the subject's primary session. The SP-initiated
+// path calls the same Fanout internally with the initiating SP excluded.
 //
 // SP side — this server is logged out by its UPSTREAM IdP (mounted with any SP,
 // at PathSAMLSPSLO = /auth/saml/slo, GET+POST):
