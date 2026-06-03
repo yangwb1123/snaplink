@@ -1,16 +1,20 @@
 package ssotest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/defaultimpl"
 	"github.com/snaplink/sso/geo"
 	geostatic "github.com/snaplink/sso/geo/static"
@@ -285,5 +289,183 @@ func TestResidency_AuditCarriesServingRegionWithoutClobberingGeo(t *testing.T) {
 	}
 	if got := login.Metadata["geo.region"]; got != "US-CA" {
 		t.Errorf("geo.region clobbered/conflated with region.serving: %v", login.Metadata)
+	}
+}
+
+// --- prompt=none silent-renewal residency gate ---------------------------
+//
+// The credential path's residency gate sits AFTER an earlier prompt=none
+// branch that mints a fresh access/id token and returns. Without a gate on
+// that branch, a valid-session prompt=none request from a DISALLOWED serving
+// region mints tokens, bypassing the primary write control. These tests
+// exercise that branch over the full server.
+
+const (
+	residencyPromptUserID  = "user-renew"
+	residencyPromptClient  = "renew-app"
+	residencyPromptPass    = "pw"
+	residencyServingHeader = "X-Serving-Region"
+)
+
+// residencyRenewalFixture wires a server whose serving region is resolved
+// from the X-Serving-Region header (Default = the tenant's home eu-west-1).
+// A request with no header resolves to the allowed home region; a request
+// carrying the header pins traffic to whatever region it names. That lets one
+// server BOTH mint the initial session + id_token_hint from the home region
+// AND replay a prompt=none renewal from a disallowed region — exactly the
+// silent-renewal-bypass scenario. A JWT issuer (shared access+id) makes the
+// minted id_token_hint validate on the second hop.
+func residencyRenewalFixture(t *testing.T) *httptest.Server {
+	t.Helper()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: residencyPromptUserID})
+
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID:                    residencyPromptClient,
+		Active:                true,
+		TenantID:              residencyTenantID,
+		AllowedAuthenticators: []string{"password"},
+		TokenStrategy:         "jwt",
+	})
+
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, _, p string) (*sso.AuthResult, error) {
+			if p != residencyPromptPass {
+				return nil, errors.New("bad")
+			}
+			return &sso.AuthResult{UserID: residencyPromptUserID, Provider: "password"}, nil
+		},
+	))
+
+	tstore := tenantmemory.New()
+	if err := tstore.PutTenant(context.Background(), residencyTenant(true)); err != nil {
+		t.Fatalf("PutTenant: %v", err)
+	}
+
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(2 * time.Minute))
+	srv := sso.NewServer(
+		sso.WithRouter(sso.NewStdRouter()),
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithIDTokenIssuer(issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithTenantStore(tstore),
+		// Home region is the header Default — a request without the header
+		// resolves to eu-west-1 (allowed). With it, traffic pins to the
+		// named region (us-east-1 → disallowed).
+		sso.WithRegionMiddleware(region.HeaderResolver{
+			Header:  residencyServingHeader,
+			Default: "eu-west-1",
+		}, region.MiddlewareOptions{}),
+		sso.WithTenantResidencyCheck(0),
+	)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// residencyHomeLogin performs the initial credential login from the home
+// region (no serving header) and returns the minted id_token to use as the
+// silent-renewal hint.
+func residencyHomeLogin(t *testing.T, ts *httptest.Server) string {
+	t.Helper()
+	body := map[string]any{
+		"provider":   "password",
+		"client_id":  residencyPromptClient,
+		"credential": map[string]string{"username": residencyPromptUserID, "password": residencyPromptPass},
+		"scope":      []string{"openid"},
+	}
+	raw, _ := json.Marshal(body)
+	resp, err := http.Post(ts.URL+"/auth/login", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("home login: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("home login status=%d body=%s", resp.StatusCode, rb)
+	}
+	out := map[string]any{}
+	_ = json.Unmarshal(rb, &out)
+	hint, _ := out["id_token"].(string)
+	if hint == "" {
+		t.Fatalf("no id_token from home login: %v", out)
+	}
+	return hint
+}
+
+// postRenewalFromRegion replays a prompt=none silent renewal carrying the
+// serving-region header (empty servingRegion → no header → home region).
+func postRenewalFromRegion(t *testing.T, ts *httptest.Server, hint, servingRegion string) (int, map[string]any) {
+	t.Helper()
+	body := map[string]any{
+		"client_id":     residencyPromptClient,
+		"prompt":        "none",
+		"id_token_hint": hint,
+		"scope":         []string{"openid"},
+	}
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", ts.URL+"/auth/login", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	if servingRegion != "" {
+		req.Header.Set(residencyServingHeader, servingRegion)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("renewal: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	out := map[string]any{}
+	if len(rb) > 0 {
+		_ = json.Unmarshal(rb, &out)
+	}
+	return resp.StatusCode, out
+}
+
+// TestResidency_PromptNone_DisallowedRegion_Blocked is the regression test for
+// the silent-renewal bypass: a valid-session prompt=none renewal served from a
+// region OUTSIDE the tenant's allowed set must be rejected (403,
+// region_not_allowed, iss present) — NOT mint a fresh token. This FAILS
+// against the pre-fix code (the prompt=none branch minted before the residency
+// gate ran) and passes once that branch is gated.
+func TestResidency_PromptNone_DisallowedRegion_Blocked(t *testing.T) {
+	ts := residencyRenewalFixture(t)
+	hint := residencyHomeLogin(t, ts) // mints session + id_token from home.
+
+	status, body := postRenewalFromRegion(t, ts, hint, "us-east-1")
+	if status != http.StatusForbidden {
+		t.Fatalf("prompt=none from disallowed region status=%d, want 403 (bypass!) body=%v", status, body)
+	}
+	if got := body[sso.KeyError]; got != sso.ErrRegionNotAllowed {
+		t.Errorf("error = %v, want %q", got, sso.ErrRegionNotAllowed)
+	}
+	// A blocked renewal must NOT leak a freshly minted token.
+	if _, ok := body[sso.KeyAccessToken]; ok {
+		t.Errorf("blocked prompt=none renewal still minted an access_token: %v", body)
+	}
+	// RFC 9207 iss rides the authz error body (§2: authzErrorBody, not errorBody).
+	if iss, ok := body[sso.KeyIss].(string); !ok || iss == "" {
+		t.Errorf("iss missing/empty on residency-blocked renewal: %v", body)
+	}
+}
+
+// TestResidency_PromptNone_HomeRegion_Mints proves the gate doesn't break the
+// happy path: the same renewal served from the home region succeeds and mints
+// a fresh access token.
+func TestResidency_PromptNone_HomeRegion_Mints(t *testing.T) {
+	ts := residencyRenewalFixture(t)
+	hint := residencyHomeLogin(t, ts)
+
+	status, body := postRenewalFromRegion(t, ts, hint, "") // no header → home.
+	if status != http.StatusOK {
+		t.Fatalf("prompt=none from home region status=%d, want 200 body=%v", status, body)
+	}
+	if _, ok := body[sso.KeyAccessToken].(string); !ok {
+		t.Errorf("home-region renewal minted no access_token: %v", body)
 	}
 }

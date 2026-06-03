@@ -2247,9 +2247,19 @@ func (c *residencyCache) invalidate(tenantID string) {
 //
 // The cache is allocated ONLY here, so a server that never calls this
 // option keeps tenantResidencyCache nil and behaves byte-identically to a
-// pre-residency build. checkTenantResidency is not yet wired into any
-// handler in this commit — the middleware + login gate that call it land
-// in a follow-up; until then the engine is defined-but-inert.
+// pre-residency build.
+//
+// Coverage: checkTenantResidency is the WRITE-side residency gate, dominating
+// every token-MINTING exit of the interactive-login flow — the credential
+// path's /auth/login direct/code mint, the prompt=none silent-renewal branch,
+// and the /auth/mfa second leg — all via residencyGateLogin (handleLogin +
+// handleMFAComplete). The /token grant-side issuance (authorization_code
+// exchange, refresh rotation, token-exchange, CIBA, device) and the
+// resource-server READ side (validateAnyToken: userinfo / introspect / mesh
+// ext_authz / admin) are a documented follow-up: both take a bare
+// context.Context with no HandlerContext, so the serving region is not in
+// scope there without threading it through every grant + validate call site.
+// The interactive-login write-gate is the primary control.
 func WithTenantResidencyCheck(ttl time.Duration) Option {
 	return func(s *Server) {
 		if ttl <= 0 {
@@ -2352,6 +2362,42 @@ func (s *Server) mapResidencyError(err error) string {
 	default:
 		return ErrAccessDenied
 	}
+}
+
+// residencyGateLogin is the data-residency write-gate shared by every
+// token-MINTING exit of the interactive-login flow (the credential path's
+// /auth/login direct/code mint, the prompt=none silent-renewal branch, and
+// the /auth/mfa second leg). It reads the LIVE serving region the region
+// middleware stashed on THIS request — so each minting branch is gated by the
+// region that will actually mint, not by an earlier leg — and, when the engine
+// is wired, rejects a mint that violates the tenant's ResidencyPolicy. Mint is
+// the write side, so isWrite=true.
+//
+// Centralizing the check guarantees every minting path enforces residency
+// IDENTICALLY (no copy-paste drift): same authzErrorBody shape (so the RFC
+// 9207 iss rides the 403, §2), same distinct governance wire codes from
+// mapResidencyError (region_not_allowed / residency_violation, NOT collapsed
+// to access_denied — they reveal a tenant's residency binding like
+// tenant_mismatch reveals tenant binding, no credential oracle), and exactly
+// ONE recordLoginFailure per blocked mint (no double-record, §2).
+//
+// Returns true when it WROTE the 403 and the caller MUST return without
+// minting; false when the mint may proceed. Nil-default byte-identical: no
+// region resolver wired → FromHandlerContext reports no region (or empty) →
+// the gate never fires; engine not wired → checkTenantResidency returns nil.
+func (s *Server) residencyGateLogin(ctx HandlerContext, clientID, provider, tenantID string) (handled bool) {
+	servingRegion, ok := region.FromHandlerContext(ctx)
+	if !ok || servingRegion == "" {
+		return false
+	}
+	err := s.checkTenantResidency(ctx.Request().Context(), tenantID, servingRegion, true)
+	if err == nil {
+		return false
+	}
+	code := s.mapResidencyError(err)
+	s.recordLoginFailure(ctx, clientID, provider, code)
+	ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, code))
+	return true
 }
 
 // residencyPolicyFromTenant maps a tenant's plain-string residency fields

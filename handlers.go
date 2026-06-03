@@ -896,6 +896,19 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 		s.auditor.Record(ctx.Request().Context(), evt)
 	}
 
+	// Data-residency write-gate on the SECOND leg. The token is minted NOW, in
+	// finishLogin, from the serving region of THIS /auth/mfa request — which
+	// went through the same region middleware as /auth/login — so the gate reads
+	// the live region here, not the (possibly different) region of the first
+	// leg that issued the challenge. Mirrors the credential-path gate exactly
+	// (isWrite=true, distinct governance codes, RFC 9207 iss via authzErrorBody,
+	// one recordLoginFailure). Without a wired region resolver / residency check
+	// the gate never fires (byte-identical). Provider is attributed to the
+	// original credential provider, matching the mfa_success audit above.
+	if s.residencyGateLogin(ctx, client.ID, state.Result.Provider, client.TenantID) {
+		return
+	}
+
 	// Resume the standard post-risk login flow. finishLogin writes
 	// the response, which can be the normal token/code/form-post
 	// payload — caller can't tell the difference between an MFA-gated

@@ -264,6 +264,16 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
 			return
 		}
+		// Data-residency write-gate BEFORE the silent-renewal mint. prompt=none
+		// mints a fresh access (and id) token in handleSilentRenewal and returns
+		// — without this gate it executes ABOVE the credential-path gate below,
+		// so a foreign-region prompt=none request would bypass the primary write
+		// control. The mint happens from THIS request's serving region, so the
+		// gate reads the live region here (isWrite=true). Provider is attributed
+		// "silent_renewal" to match the success audit RecordLoginSuccess emits.
+		if s.residencyGateLogin(ctx, c.ID, "silent_renewal", c.TenantID) {
+			return
+		}
 		if s.handleSilentRenewal(ctx, prompts, oidc.SilentRenewalRequest{
 			ClientID:             req.ClientID,
 			Scope:                req.Scope,
@@ -311,22 +321,18 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 	// Data-residency gate — a SECOND tenant-binding gate after tenant_mismatch,
-	// not a replacement. When the region middleware stashed a non-empty serving
-	// region AND WithTenantResidencyCheck is wired, reject a login whose serving
-	// region violates the tenant's ResidencyPolicy. Login MINTS tokens, so this
-	// is the write side (isWrite=true): a disallowed region → region_not_allowed,
-	// a write outside HomeRegion under EnforceWrites → residency_violation. Both
-	// are governance signals (like tenant_mismatch), surfaced via authzErrorBody
-	// so the RFC 9207 iss rides the error response. No resolver / no check wired
-	// → servingRegion=="" or the engine disabled → checkTenantResidency returns
-	// nil → byte-identical to a pre-residency build.
-	if servingRegion, ok := region.FromHandlerContext(ctx); ok && servingRegion != "" {
-		if err := s.checkTenantResidency(ctx.Request().Context(), client.TenantID, servingRegion, true); err != nil {
-			code := s.mapResidencyError(err)
-			s.recordLoginFailure(ctx, req.ClientID, req.Provider, code)
-			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, code))
-			return
-		}
+	// not a replacement. The credential path mints tokens downstream in
+	// finishLogin, so it is dominated here by the shared residency write-gate:
+	// when the region middleware stashed a serving region AND
+	// WithTenantResidencyCheck is wired, a login whose serving region violates
+	// the tenant's ResidencyPolicy is rejected before any credential work. The
+	// SAME gate dominates the prompt=none silent-renewal branch above and the
+	// /auth/mfa second leg (see residencyGateLogin / handleMFAComplete) so every
+	// interactive-login mint path enforces residency identically. No resolver /
+	// no check wired → the gate never fires → byte-identical to a pre-residency
+	// build.
+	if s.residencyGateLogin(ctx, req.ClientID, req.Provider, client.TenantID) {
+		return
 	}
 	// RFC 9126 §2.1 — clients with RequirePAR=true MUST push their
 	// authorization request via /par first. We check AFTER the PAR
