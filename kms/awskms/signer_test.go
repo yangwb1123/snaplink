@@ -10,8 +10,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
@@ -35,6 +37,18 @@ type fakeKMS struct {
 
 	getPubCalls atomic.Int32
 	signErr     error // when set, Sign returns this (fail-closed test)
+
+	// failPubN: the first failPubN GetPublicKey calls return a transient
+	// error, the rest succeed. Models a KMS outage at startup that clears
+	// (drives the FIX 1 concurrency/retry test). Read atomically so many
+	// goroutines can race on it safely.
+	failPubN atomic.Int32
+
+	// getPubBlock / signBlock, when non-nil, are received from before the
+	// respective op returns — the test closes/sends to simulate a KMS call
+	// that hangs longer than WithCallTimeout (drives the FIX 2 test).
+	getPubBlock <-chan struct{}
+	signBlock   <-chan struct{}
 }
 
 func newFakeECKMS(t *testing.T) *fakeKMS {
@@ -62,8 +76,22 @@ func (f *fakeKMS) publicKey() crypto.PublicKey {
 	return &f.rsaKey.PublicKey
 }
 
-func (f *fakeKMS) GetPublicKey(_ context.Context, _ *kms.GetPublicKeyInput, _ ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error) {
+func (f *fakeKMS) GetPublicKey(ctx context.Context, _ *kms.GetPublicKeyInput, _ ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error) {
 	f.getPubCalls.Add(1)
+	// Fail the first failPubN calls to model a transient KMS outage that
+	// later clears. Decrement so retries eventually break through; once the
+	// counter is exhausted Load() stays <= 0 and every call succeeds.
+	if f.failPubN.Load() > 0 && f.failPubN.Add(-1) >= 0 {
+		return nil, errors.New("fakeKMS: transient GetPublicKey outage")
+	}
+	if f.getPubBlock != nil {
+		// Honor cancellation so a WithCallTimeout deadline fires.
+		select {
+		case <-f.getPubBlock:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	der, err := x509.MarshalPKIXPublicKey(f.publicKey())
 	if err != nil {
 		return nil, err
@@ -71,9 +99,16 @@ func (f *fakeKMS) GetPublicKey(_ context.Context, _ *kms.GetPublicKeyInput, _ ..
 	return &kms.GetPublicKeyOutput{PublicKey: der, KeySpec: f.keySpec}, nil
 }
 
-func (f *fakeKMS) Sign(_ context.Context, in *kms.SignInput, _ ...func(*kms.Options)) (*kms.SignOutput, error) {
+func (f *fakeKMS) Sign(ctx context.Context, in *kms.SignInput, _ ...func(*kms.Options)) (*kms.SignOutput, error) {
 	if f.signErr != nil {
 		return nil, f.signErr
+	}
+	if f.signBlock != nil {
+		select {
+		case <-f.signBlock:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if in.MessageType != kmstypes.MessageTypeDigest {
 		return nil, errors.New("fakeKMS: expected MessageType=DIGEST")
@@ -307,5 +342,129 @@ func TestNewRejectsBadArgs(t *testing.T) {
 	}
 	if _, err := New(newFakeECKMS(t), ""); err == nil {
 		t.Fatal("New(empty keyID) should error")
+	}
+}
+
+// TestConcurrentLoadPublicRetriesTransientError exercises FIX 1: the
+// public-key cache must be mutex-guarded, not sync.Once-reset. Many
+// goroutines hammer Public()/Sign() concurrently while the fake KMS errors
+// the first few GetPublicKey calls (a transient startup outage) before
+// succeeding.
+//
+// Pre-fix (sync.Once reset inside Do) this test data-races — the reset
+// writes a sync.Once while peer goroutines call .Do on it — so `go test
+// -race` FAILS pre-fix. Post-fix the mutex serializes fetches, the
+// transient error is retried (not poisoned), and once it clears every
+// signer caches the same immutable key and signs successfully.
+func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
+	f := newFakeECKMS(t)
+	// First 5 GetPublicKey attempts fail; the rest succeed. With the cache
+	// only populated on success, concurrent callers retry past the outage.
+	f.failPubN.Store(5)
+
+	s, err := New(f, testKeyID)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	digest := sha256.Sum256([]byte("header.payload"))
+
+	const goroutines = 64
+	var wg sync.WaitGroup
+	var signOK atomic.Int32
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			// Loop a few times so every goroutine eventually races past the
+			// transient-error window and proves the cached success is stable.
+			for j := 0; j < 8; j++ {
+				_ = s.Public() // may be nil during the outage window
+				if sig, err := s.Sign(rand.Reader, digest[:], crypto.SHA256); err == nil {
+					if !ecdsa.VerifyASN1(&f.ecKey.PublicKey, digest[:], sig) {
+						t.Errorf("signature from cached key did not verify")
+						return
+					}
+					signOK.Add(1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	if signOK.Load() == 0 {
+		t.Fatal("no goroutine ever signed successfully; transient error was not retried")
+	}
+
+	// After the outage cleared the key is cached: a fresh Sign must succeed
+	// and verify, proving the cached success is stable.
+	sig, err := s.Sign(rand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		t.Fatalf("post-outage Sign: %v", err)
+	}
+	if !ecdsa.VerifyASN1(&f.ecKey.PublicKey, digest[:], sig) {
+		t.Fatal("post-outage signature did not verify")
+	}
+}
+
+// TestSignNilOptsRejected exercises FIX 3: crypto.SignerOpts MAY be nil per
+// the stdlib contract; this signer needs the hash it carries, so a nil must
+// yield a clear error, never a nil-interface panic on opts.HashFunc().
+func TestSignNilOptsRejected(t *testing.T) {
+	f := newFakeECKMS(t)
+	s, err := New(f, testKeyID)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	digest := sha256.Sum256([]byte("x"))
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Sign panicked on nil opts: %v", r)
+		}
+	}()
+
+	if _, err := s.Sign(rand.Reader, digest[:], nil); err == nil {
+		t.Fatal("Sign(nil opts) succeeded, want a clear error")
+	} else if !errors.Is(err, ErrUnsupportedKey) {
+		t.Fatalf("Sign(nil opts) error = %v, want ErrUnsupportedKey", err)
+	}
+}
+
+// TestSignCallTimeout exercises FIX 2: a KMS round-trip that blocks longer
+// than WithCallTimeout must return a context-deadline error promptly rather
+// than hanging the signing goroutine past any handler deadline.
+func TestSignCallTimeout(t *testing.T) {
+	f := newFakeECKMS(t)
+	// Pre-load the public key (no block) so the timeout we measure is the
+	// Sign round-trip itself, isolating the FIX-2 behavior.
+	never := make(chan struct{})
+	f.signBlock = never // Sign blocks forever (until ctx deadline)
+
+	s, err := New(f, testKeyID, WithCallTimeout(20*time.Millisecond))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := s.PublicKey(context.Background()); err != nil {
+		t.Fatalf("PublicKey: %v", err)
+	}
+
+	digest := sha256.Sum256([]byte("header.payload"))
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Sign(rand.Reader, digest[:], crypto.SHA256)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Sign returned nil despite a KMS call that never completes")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Sign error = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Sign hung past the configured call timeout (FIX 2 regression)")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
@@ -70,14 +71,32 @@ type Signer struct {
 	client KMSAPI
 	keyID  string
 
-	// pubOnce + cached memoize the GetPublicKey round-trip: KMS public
-	// keys are immutable for a key id, so one fetch suffices for the
-	// process lifetime and Public() (called on every wiring + JWKS build)
-	// stays cheap. A failed fetch is not cached, so a transient outage at
-	// startup can be retried.
-	pubOnce sync.Once
+	// baseCtx + callTimeout bound the KMS round-trip for the context-less
+	// stdlib entrypoints (Sign — crypto.Signer.Sign takes no ctx — and the
+	// Public()/internal loadPublic default path). Without this, a slow or
+	// unavailable KMS would hang a signing goroutine indefinitely, past any
+	// HTTP handler deadline. The explicit PublicKey(ctx) form bypasses these
+	// and honors the caller's own ctx.
+	baseCtx     context.Context
+	callTimeout time.Duration
+
+	// mu guards the public-key cache. KMS public keys are immutable for a
+	// key id, so one successful fetch suffices for the process lifetime and
+	// Public() (called on every wiring + JWKS build) stays cheap.
+	//
+	// We deliberately do NOT use sync.Once here: Once's only retry path is
+	// resetting the Once value, and writing a sync.Once while other
+	// goroutines call .Do on it is a data race (the race detector flags it,
+	// and a real issuer signs concurrently). The mutex distinguishes three
+	// states cleanly: not-yet-fetched, cached-success (fetched==true, never
+	// re-fetched, immutable once set), and transient-error (fetched stays
+	// false → the NEXT call retries, so a startup KMS outage is not
+	// permanently poisoned). The lock is held across the GetPublicKey call,
+	// which serializes concurrent first-fetches — acceptable, since they
+	// would all fetch the same immutable key.
+	mu      sync.Mutex
 	cached  *publicKey
-	pubErr  error
+	fetched bool
 }
 
 // publicKey bundles the parsed key with the JWS alg its KMS key spec
@@ -93,6 +112,36 @@ type publicKey struct {
 // Option configures the Signer.
 type Option func(*Signer)
 
+// DefaultCallTimeout bounds a single KMS round-trip made from the
+// context-less stdlib entrypoints (Sign / Public). A KMS sign is typically
+// 5-50ms, so 10s leaves enormous headroom for a slow-but-alive service
+// while still capping a hang well under any sane handler deadline.
+const DefaultCallTimeout = 10 * time.Second
+
+// WithContext sets the base context the context-less stdlib entrypoints
+// (Sign / Public / internal loadPublic) derive their per-call timeout from.
+// Default context.Background(). Cancelling this context cancels in-flight
+// KMS calls made via those entrypoints (e.g. on server shutdown).
+func WithContext(ctx context.Context) Option {
+	return func(s *Signer) {
+		if ctx != nil {
+			s.baseCtx = ctx
+		}
+	}
+}
+
+// WithCallTimeout sets the per-call deadline applied to each KMS round-trip
+// made from the context-less stdlib entrypoints. A non-positive value
+// leaves the default (DefaultCallTimeout). PublicKey(ctx) is unaffected —
+// it honors the caller's own context.
+func WithCallTimeout(d time.Duration) Option {
+	return func(s *Signer) {
+		if d > 0 {
+			s.callTimeout = d
+		}
+	}
+}
+
 // New builds a KMS-backed crypto.Signer for the asymmetric key named by
 // keyID (a key ID, ARN, or alias). It does NOT call KMS — the first
 // Public() or Sign() performs the lazy GetPublicKey. client is typically
@@ -104,41 +153,57 @@ func New(client KMSAPI, keyID string, opts ...Option) (*Signer, error) {
 	if keyID == "" {
 		return nil, errors.New("awskms: empty key id")
 	}
-	s := &Signer{client: client, keyID: keyID}
+	s := &Signer{
+		client:      client,
+		keyID:       keyID,
+		baseCtx:     context.Background(),
+		callTimeout: DefaultCallTimeout,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s, nil
 }
 
-// loadPublic fetches + parses the public key once. KMS returns the public
-// key as a DER-encoded SubjectPublicKeyInfo (RFC 5280), which
-// x509.ParsePKIXPublicKey turns into a *ecdsa.PublicKey or *rsa.PublicKey.
+// callCtx derives a bounded context for one KMS round-trip from the
+// signer's base context + configured call timeout. The caller MUST invoke
+// the returned cancel (defer cancel()).
+func (s *Signer) callCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(s.baseCtx, s.callTimeout)
+}
+
+// loadPublic fetches + parses the public key once, caching success for the
+// process lifetime. KMS returns the public key as a DER-encoded
+// SubjectPublicKeyInfo (RFC 5280), which x509.ParsePKIXPublicKey turns into
+// a *ecdsa.PublicKey or *rsa.PublicKey.
+//
+// The mutex (not sync.Once) lets a transient KMS error be retried on the
+// next call without the data race a Once-reset would cause (see the Signer
+// field doc). A success is cached immutably; an error returns WITHOUT
+// setting fetched, so the next caller re-attempts the round-trip.
 func (s *Signer) loadPublic(ctx context.Context) (*publicKey, error) {
-	s.pubOnce.Do(func() {
-		out, err := s.client.GetPublicKey(ctx, &kms.GetPublicKeyInput{KeyId: &s.keyID})
-		if err != nil {
-			s.pubErr = fmt.Errorf("awskms: get public key: %w", err)
-			s.pubOnce = sync.Once{} // allow retry after a transient failure
-			return
-		}
-		pub, err := x509.ParsePKIXPublicKey(out.PublicKey)
-		if err != nil {
-			s.pubErr = fmt.Errorf("awskms: parse public key DER: %w", err)
-			return
-		}
-		switch pub.(type) {
-		case *ecdsa.PublicKey, *rsa.PublicKey:
-			// supported
-		default:
-			s.pubErr = fmt.Errorf("awskms: %w: public key type %T", ErrUnsupportedKey, pub)
-			return
-		}
-		s.cached = &publicKey{key: pub, keySpec: out.KeySpec}
-	})
-	if s.pubErr != nil {
-		return nil, s.pubErr
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fetched {
+		return s.cached, nil
 	}
+	out, err := s.client.GetPublicKey(ctx, &kms.GetPublicKeyInput{KeyId: &s.keyID})
+	if err != nil {
+		// Transient (throttle/outage): NOT cached — retried on next call.
+		return nil, fmt.Errorf("awskms: get public key: %w", err)
+	}
+	pub, err := x509.ParsePKIXPublicKey(out.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("awskms: parse public key DER: %w", err)
+	}
+	switch pub.(type) {
+	case *ecdsa.PublicKey, *rsa.PublicKey:
+		// supported
+	default:
+		return nil, fmt.Errorf("awskms: %w: public key type %T", ErrUnsupportedKey, pub)
+	}
+	s.cached = &publicKey{key: pub, keySpec: out.KeySpec}
+	s.fetched = true
 	return s.cached, nil
 }
 
@@ -149,7 +214,9 @@ func (s *Signer) loadPublic(ctx context.Context) (*publicKey, error) {
 // wiring-time public-key shape check — surfaces the failure. Wire through
 // PublicKey(ctx) when an explicit error is needed at startup.
 func (s *Signer) Public() crypto.PublicKey {
-	pk, err := s.loadPublic(context.Background())
+	ctx, cancel := s.callCtx()
+	defer cancel()
+	pk, err := s.loadPublic(ctx)
 	if err != nil {
 		return nil
 	}
@@ -177,14 +244,28 @@ func (s *Signer) PublicKey(ctx context.Context) (crypto.PublicKey, error) {
 // KMS signature verbatim: ASN.1 DER for ECDSA (the stdlib crypto.Signer
 // ECDSA contract — the cryptosigner bridge converts it to JWS R||S), raw
 // bytes for RSA. EdDSA/Ed25519 has no KMS key spec and is rejected.
+//
+// Cancellation: crypto.Signer.Sign carries no context (the stdlib
+// contract), so each KMS round-trip (public-key fetch + sign) is bounded by
+// the signer's base context + WithCallTimeout deadline. A slow or
+// unavailable KMS therefore returns a context-deadline error promptly
+// rather than hanging the signing goroutine.
 func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	if opts != nil && opts.HashFunc() == crypto.Hash(0) {
+	if opts == nil {
+		// crypto.SignerOpts MAY be nil per the contract, but this signer
+		// needs the hash (and PSS selection) it carries; guard before any
+		// opts use so a nil never panics on opts.HashFunc() below.
+		return nil, fmt.Errorf("awskms: %w: nil SignerOpts", ErrUnsupportedKey)
+	}
+	if opts.HashFunc() == crypto.Hash(0) {
 		// HashFunc()==0 means "no pre-hash" — the Ed25519 contract. KMS
 		// cannot sign EdDSA, so reject clearly rather than mis-mapping it.
 		return nil, fmt.Errorf("awskms: %w: EdDSA / unhashed signing is not supported by AWS KMS (ECDSA + RSA only)", ErrUnsupportedKey)
 	}
 
-	pk, err := s.loadPublic(context.Background())
+	loadCtx, loadCancel := s.callCtx()
+	pk, err := s.loadPublic(loadCtx)
+	loadCancel()
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +276,9 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 		return nil, err
 	}
 
-	out, err := s.client.Sign(context.Background(), &kms.SignInput{
+	signCtx, signCancel := s.callCtx()
+	defer signCancel()
+	out, err := s.client.Sign(signCtx, &kms.SignInput{
 		KeyId: &s.keyID,
 		// MessageType=DIGEST: the JWS issuer already hashed header.payload,
 		// so we hand KMS the digest, not the raw message (KMS would
