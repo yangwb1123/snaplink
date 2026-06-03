@@ -166,6 +166,29 @@ func mustSigner(t *testing.T, f *fakeSession, pub crypto.PublicKey) *Signer {
 	return s
 }
 
+// TestSignECDSAHashCurveMismatchRejected proves the signer fails closed when the
+// requested hash does not match the curve's JWS pairing -- a direct crypto.Signer
+// caller must not be able to sign a digest that would verify under a different
+// hash than the published ES* alg (mirrors the awskms/gcpkms peers, which both
+// enforce the curve->hash pairing).
+func TestSignECDSAHashCurveMismatchRejected(t *testing.T) {
+	f := newFakeEC(t, elliptic.P256())
+	s := mustSigner(t, f, nil)
+
+	// P-256 requires SHA-256; any other hash (incl. the zero hash) fails closed
+	// BEFORE the token is asked to sign, so it never receives a mismatched digest.
+	for _, h := range []crypto.Hash{crypto.SHA384, crypto.SHA512, crypto.Hash(0)} {
+		if _, err := s.Sign(rand.Reader, make([]byte, 48), h); !errors.Is(err, ErrUnsupportedKey) {
+			t.Fatalf("P-256 key + hash %v = %v, want ErrUnsupportedKey", h, err)
+		}
+	}
+	// The correct pairing still signs.
+	d := sha256.Sum256([]byte("ok"))
+	if _, err := s.Sign(rand.Reader, d[:], crypto.SHA256); err != nil {
+		t.Fatalf("P-256 + SHA-256 happy path: %v", err)
+	}
+}
+
 // TestPublicKeyParsesAndCaches verifies Public() parses the SPKI DER into the
 // right key type and reads the token public key only once (the cache).
 func TestPublicKeyParsesAndCaches(t *testing.T) {

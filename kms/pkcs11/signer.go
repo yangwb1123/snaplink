@@ -264,8 +264,19 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 
 	switch pk := pub.(type) {
 	case *ecdsa.PublicKey:
-		if opts.HashFunc() == crypto.Hash(0) {
-			return nil, fmt.Errorf("pkcs11: %w: ECDSA key requires a pre-hash (opts.HashFunc()==0)", ErrUnsupportedKey)
+		// The curve fixes the JWS hash (P-256->SHA-256, P-384->SHA-384,
+		// P-521->SHA-512). Reject any other pairing fail-closed -- matching
+		// the awskms/gcpkms peers -- so a direct crypto.Signer caller cannot
+		// sign a digest that would verify under a different hash than the
+		// ES* alg the JWKS publishes. (The issuer/cryptosigner bridge always
+		// pairs them; this guards the public crypto.Signer contract. The
+		// !=want check also subsumes the HashFunc()==0 rejection.)
+		want, ok := ecdsaHashForCurve(pk.Curve)
+		if !ok {
+			return nil, fmt.Errorf("pkcs11: %w: unsupported ECDSA curve %s", ErrUnsupportedKey, pk.Curve.Params().Name)
+		}
+		if opts.HashFunc() != want {
+			return nil, fmt.Errorf("pkcs11: %w: %s key requires %v, got %v", ErrUnsupportedKey, pk.Curve.Params().Name, want, opts.HashFunc())
 		}
 		raw, err := s.sess.Sign(MechECDSA, s.keyHandle, digest)
 		if err != nil {
@@ -332,6 +343,22 @@ type ecdsaDERSignature struct{ R, S *big.Int }
 // R then S, each left-padded to the curve's coordinate octet length — so we
 // split it in half and DER-encode the two integers. It rejects a length that
 // does not match the curve rather than emit a signature no verifier accepts.
+// ecdsaHashForCurve returns the JWS-paired hash for an EC curve: P-256->
+// SHA-256 (ES256), P-384->SHA-384 (ES384), P-521->SHA-512 (ES512). The curve
+// fixes the hash, so Sign rejects any other pairing (matching awskms/gcpkms).
+func ecdsaHashForCurve(c elliptic.Curve) (crypto.Hash, bool) {
+	switch c {
+	case elliptic.P256():
+		return crypto.SHA256, true
+	case elliptic.P384():
+		return crypto.SHA384, true
+	case elliptic.P521():
+		return crypto.SHA512, true
+	default:
+		return 0, false
+	}
+}
+
 func rawECDSAToDER(raw []byte, curve elliptic.Curve) ([]byte, error) {
 	coordLen := (curve.Params().BitSize + 7) / 8
 	if len(raw) != 2*coordLen {
