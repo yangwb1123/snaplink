@@ -2412,6 +2412,37 @@ func (s *Server) residencyGateLogin(ctx HandlerContext, clientID, provider, tena
 	return true
 }
 
+// ResidencyDecision is the HandlerContext-FREE residency-decision seam: it
+// renders the same write/read residency verdict as the in-pipeline gates
+// (residencyGateLogin / residencyDeniedForAccess) but takes a bare
+// context.Context + an already-resolved serving region and returns the verdict
+// instead of writing an HTTP response.
+//
+// WHY this exists: some token-MINTING surfaces are mounted by cmd as RAW
+// http.HandlerFunc (e.g. the WebAuthn login ceremony in
+// cmd/sso-server/webauthn.go), OUTSIDE the HandlerContext pipeline that the
+// region middleware uses to stash the serving region — so they can't call the
+// unexported checkTenantResidency, and FromHandlerContext has nothing to read.
+// This exported seam lets such a handler resolve the serving region itself
+// (via a region.Resolver over the raw *http.Request) and reuse the exact same
+// policy engine + wire-code mapping, so residency enforcement stays IDENTICAL
+// across the in-pipeline and raw-handler mint paths (no policy drift).
+//
+// Returns ("", false) when the mint/access may proceed — INCLUDING every
+// fail-open / unconstrained case checkTenantResidency collapses to nil
+// (engine not wired, empty serving region, tenant unconstrained, tenant-store
+// outage). Returns (wireCode, true) — region_not_allowed / residency_violation
+// from mapResidencyError — when it must be DENIED. isWrite mirrors the calling
+// surface (true for a mint, like residencyGateLogin). Nil-safe / byte-identical
+// when residency isn't wired: tenantResidencyEnabled is false ⇒ ("", false).
+func (s *Server) ResidencyDecision(ctx context.Context, tenantID string, servingRegion region.ID, isWrite bool) (wireCode string, denied bool) {
+	err := s.checkTenantResidency(ctx, tenantID, servingRegion, isWrite)
+	if err == nil {
+		return "", false
+	}
+	return s.mapResidencyError(err), true
+}
+
 // residencyDeniedForAccess is the data-residency READ-gate shared by the
 // resource-ACCESS bearer endpoints that serve tenant data (/userinfo + the
 // mesh ext_authz endpoint). It completes the read-side of data residency:

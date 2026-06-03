@@ -24,6 +24,7 @@ import (
 	webauthnsqlite "github.com/snaplink/sso/authenticators/webauthn/sqlite"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/metrics"
+	"github.com/snaplink/sso/region"
 )
 
 // buildWebAuthnHelper assembles the helper + stores from YAML.
@@ -167,6 +168,25 @@ type webauthnDeps struct {
 	// cleartext). Nil-safe: nil means no encryption layer wired, so
 	// the signed token passes through. Set in mountWebAuthnRoutes.
 	EncryptIDToken func(ctx context.Context, client *sso.Client, signed string) (string, bool)
+
+	// RegionResolver + ResidencyDecision close the data-residency hole on the
+	// WebAuthn LOGIN mint path. WebAuthn login mints tokens exactly like
+	// /auth/login, but the ceremony is mounted as RAW http.HandlerFunc (no
+	// core.HandlerContext), so the in-pipeline login residency gate
+	// (residencyGateLogin, which reads the serving region the region
+	// middleware stashes on the HandlerContext) never runs here. Without these
+	// a region-constrained tenant's user could complete WebAuthn login from a
+	// disallowed serving region and receive tokens, bypassing residency.
+	//
+	// RegionResolver resolves the serving region from the raw *http.Request
+	// (the same resolver the region middleware uses); ResidencyDecision is the
+	// server's context-free residency seam (*sso.Server.ResidencyDecision),
+	// returning (wireCode, denied) for a tenant + serving region. Set in cmd
+	// ONLY when a region resolver is configured. BOTH nil (the embedder /
+	// no-region default) ⇒ NO residency check ⇒ byte-identical to a
+	// pre-residency build (residency simply isn't enforced for WebAuthn).
+	RegionResolver    region.Resolver
+	ResidencyDecision func(ctx context.Context, tenantID string, servingRegion region.ID, isWrite bool) (string, bool)
 }
 
 // mountWebAuthnRoutes registers the four ceremony endpoints on the
@@ -422,6 +442,26 @@ var errWebAuthnIDToken = errors.New("webauthn: id_token issuance failed")
 // fails for a client that wanted offline_access. Surfaced as 500.
 var errWebAuthnRefreshToken = errors.New("webauthn: refresh_token issuance failed")
 
+// errWebAuthnResidency is the sentinel for a residency-denied WebAuthn mint
+// (the tenant's ResidencyPolicy forbids minting from this serving region).
+// Unlike the other errWebAuthn* sentinels its HTTP wire code is DYNAMIC —
+// region_not_allowed vs residency_violation, decided by the server's residency
+// engine — so it's wrapped in a webauthnResidencyError carrying that code; the
+// sentinel itself only lets webauthnIssueErrorStatus recognize the class.
+var errWebAuthnResidency = errors.New("webauthn: residency denied")
+
+// webauthnResidencyError carries the residency engine's dynamic wire code
+// (region_not_allowed / residency_violation) so webauthnIssueErrorStatus can
+// surface it on the 403 WITHOUT collapsing the two distinct governance codes
+// to a generic one — mirroring residencyGateLogin's authz-error shape on the
+// in-pipeline login path. Wraps errWebAuthnResidency for errors.Is.
+type webauthnResidencyError struct{ code string }
+
+func (e *webauthnResidencyError) Error() string {
+	return fmt.Sprintf("webauthn: residency denied: %s", e.code)
+}
+func (e *webauthnResidencyError) Unwrap() error { return errWebAuthnResidency }
+
 // webauthnIssueResult is the projection of every issuance the
 // /webauthn/login/finish handler can emit. Bringing access /
 // refresh / id together keeps the handler response shape stable
@@ -478,6 +518,22 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 	}
 	if !client.Active {
 		return nil, errWebAuthnClientInactive
+	}
+	// Data-residency write-gate. Reached ONLY post-assertion (the caller
+	// invokes issueWebAuthnToken after deps.Helper.FinishLogin verified the
+	// WebAuthn assertion — the user is authenticated), and now that the client
+	// is resolved its TenantID is known, so this mirrors residencyGateLogin
+	// EXACTLY: gate the MINT (isWrite=true) on the tenant's ResidencyPolicy.
+	// Both hooks must be wired (cmd sets them only when a region resolver is
+	// configured) — either nil ⇒ no check ⇒ byte-identical pre-residency
+	// behavior. FAIL-OPEN consistent with the region middleware's nonfatal
+	// contract: a resolver error yields an empty serving region, which
+	// ResidencyDecision (via checkTenantResidency) treats as unconstrained.
+	if deps.RegionResolver != nil && deps.ResidencyDecision != nil {
+		sr, _ := deps.RegionResolver.Resolve(r)
+		if code, denied := deps.ResidencyDecision(ctx, client.TenantID, sr, true); denied {
+			return nil, &webauthnResidencyError{code: code}
+		}
 	}
 	// Prefer the server's tenant-aware selector (tenant → client strategy →
 	// default) so a tenant client's WebAuthn access token is signed with the
@@ -629,6 +685,17 @@ func webauthnIssueErrorStatus(err error) (int, string) {
 	switch {
 	case errors.Is(err, errWebAuthnClientNotFound), errors.Is(err, errWebAuthnClientInactive):
 		return http.StatusBadRequest, "invalid_client"
+	case errors.Is(err, errWebAuthnResidency):
+		// Residency denial: 403 + the engine's DYNAMIC governance code
+		// (region_not_allowed / residency_violation), carried on the typed
+		// error so the two distinct codes aren't collapsed — same disposition
+		// residencyGateLogin gives the in-pipeline login path. Defensive
+		// fallback to access_denied if the typed wrapper isn't present.
+		var re *webauthnResidencyError
+		if errors.As(err, &re) && re.code != "" {
+			return http.StatusForbidden, re.code
+		}
+		return http.StatusForbidden, sso.ErrAccessDenied
 	case errors.Is(err, errWebAuthnNoIssuer),
 		errors.Is(err, errWebAuthnIDToken),
 		errors.Is(err, errWebAuthnRefreshToken):

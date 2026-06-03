@@ -295,6 +295,14 @@ type app struct {
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
 
+	// regionResolver is the serving-region resolver (nil when region is
+	// unconfigured). Held so buildHTTPHandler can plumb it — together with
+	// the server's context-free ResidencyDecision seam — into webauthnDeps,
+	// closing the data-residency hole on the WebAuthn login mint path (the
+	// ceremony is mounted as raw http handlers OUTSIDE the HandlerContext
+	// residency gate). Nil ⇒ WebAuthn residency check stays off (byte-identical).
+	regionResolver region.Resolver
+
 	// webauthnHelper is non-nil when webauthn.enabled. Ceremony routes
 	// hang off the same SSO router via Server.Handle. The helper holds
 	// references to the UserStore + SessionStore — Close lives on those
@@ -603,6 +611,17 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 			RefreshTokenTTL:   a.refreshTokenTTL,
 			IDTokenIssuer:     a.idTokenIssuer,
 			Metrics:           a.metrics,
+		}
+		// Data-residency on the WebAuthn login mint path: wire the region
+		// resolver + the server's context-free ResidencyDecision seam ONLY
+		// when region is configured (mirrors how WithRegionMiddleware /
+		// WithTenantResidencyCheck are conditionally wired in buildApp). Both
+		// left nil otherwise ⇒ no residency check for WebAuthn (byte-identical
+		// to a non-residency deployment). The /auth/login path is already
+		// residency-gated in-pipeline; this closes the raw-handler WebAuthn gap.
+		if a.regionResolver != nil {
+			deps.RegionResolver = a.regionResolver
+			deps.ResidencyDecision = a.server.ResidencyDecision
 		}
 		if err := mountWebAuthnRoutes(a.server, deps); err != nil {
 			return nil, fmt.Errorf("mount webauthn: %w", err)
@@ -2762,7 +2781,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	// (byte-identical). When configured, the middleware-level AllowedRegions
 	// backstop mirrors the header resolver's allowlist, and the residency
 	// engine is enabled so the login gate enforces the tenant's policy.
-	if regionResolver := buildRegionResolver(cfg); regionResolver != nil {
+	regionResolver := buildRegionResolver(cfg)
+	if regionResolver != nil {
 		var allowed []region.ID
 		if len(cfg.Region.AllowedRegions) > 0 {
 			allowed = make([]region.ID, len(cfg.Region.AllowedRegions))
@@ -3517,6 +3537,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		releaseRegistry:         releaseRegistry,
 		releaseStore:            releaseStore,
 		tenantStore:             tenantStore,
+		regionResolver:          regionResolver,
 		webauthnHelper:          webauthnHelper,
 		auditAsyncSink:          asyncSink,
 		auditRetentionCancel:    auditRetentionCancel,
