@@ -69,8 +69,9 @@ defaultimpl/   Default issuers (Ed25519/ECDSA/RSA) + Memory* stores + JWE
 kms/awskms/    SEPARATE nested module — concrete AWS KMS crypto.Signer peer
                for the cryptosigner bridge (aws-sdk-go-v2 stays OUT of core go.mod) (§3,§4)
 redis/         SEPARATE nested module — Redis hot-path store peers (session/
-               refresh/authcode/par/jti) for the >1k-QPS multi-replica scale
-               layer; Lua/GETDEL/SETNX atomics (go-redis stays OUT of core go.mod) (§4)
+               refresh/authcode/par/jti/ratelimit/device/mfa/ciba) for the
+               >1k-QPS multi-replica scale layer; Lua/GETDEL/SETNX/INCR atomics
+               (go-redis stays OUT of core go.mod) (§4)
 adapters/{echo,gin}/   Router adapters
 audit/         Recorder + Sinks + hash chain
 permissions/   Roles + menus + wildcard matcher
@@ -329,19 +330,29 @@ timestamps Unix-ns INTEGER.
 **Redis hot-path peer** (`redis/`, SEPARATE nested module — go-redis stays
 OUT of core go.mod, mirrors kms/awskms; `make ci` `ci-modules` builds +
 race-tests it against miniredis, NO real Redis). The >1k-QPS multi-replica
-scale layer; SQLite stays the embedded fallback. Redis peers for the
-hot-path stores (`SessionManager`; `RefreshTokenStore` + Inspector/Subject
+scale layer; SQLite stays the embedded fallback. Redis peers for the full
+hot-path set (`SessionManager`; `RefreshTokenStore` + Inspector/Subject
 Index/Counter/ClientPurger/FamilyTracker; `AuthCodeStore`; `PARStore`;
-`JTIReplayStore`), each mirroring its SQLite atomic EXACTLY: Consume =
-**GETDEL** (single-use, oracle-leak collapse, the analogue of `DELETE …
-RETURNING`); session Refresh = a **Lua script** (refuses expired/revoked
+`JTIReplayStore`; `ratelimit.Limiter`; `DeviceCodeStore`;
+`MFAChallengeStore`; `CIBAStore`), each mirroring its SQLite atomic
+EXACTLY: Consume = **GETDEL** (single-use, oracle-leak collapse, the
+analogue of `DELETE … RETURNING` — auth-code/PAR/MFA-challenge/device
+single-use); session Refresh = a **Lua script** (refuses expired/revoked
 before extending); JTI MarkSeen = **SET NX EX** (atomic first-sighting);
+rate-limit Allow = **Lua INCR + conditional EXPIRE** (fixed-window, the
+genuinely-hot per-request store, fails OPEN per §2); CIBA SetStatus = a
+**Lua read-check-rewrite KEEPTTL** (pending-only transition guard, the
+analogue of `UPDATE … WHERE status='pending'`; Get/poll collapse
+unknown/expired to one `ErrCIBARequestNotFound`); device user_code is a
+pointer key dereferenced to the canonical device_code record (shared TTL);
 refresh families ride a `consumed:<tok>` marker + family/subject/client SET
 indexes so reuse → `ErrRefreshTokenReused` → `DeleteFamily`. Wire via the
 same `WithSessionManager`/`WithRefreshTokenStore`/`WithAuthCodeStore`/
-`WithPARStore`/`WithJTIReplayStore`. Fail-closed on `/token` per §2;
+`WithPARStore`/`WithJTIReplayStore`/`WithDeviceCodeStore`/
+`WithMFAChallengeStore`/`WithCIBA`/`WithRateLimit`. Fail-closed on `/token`
+per §2 (rate-limit fails OPEN — defense layer, not correctness);
 cross-region replication-lag caveat (run single-use traffic on the
-primary). Rate-limit/device/MFA/CIBA are same-pattern follow-ups.
+primary).
 
 **Migrations** (`migrate/`, pure-Go). Backends declare
 `[]migrate.Migration` and route `New`/`NewWithDB` through `migrate.Run(ctx,

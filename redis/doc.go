@@ -1,7 +1,8 @@
 // Package redis provides Redis-backed implementations of the snaplink/sso
 // hot-path stores — the session, refresh-token, authorization-code, PAR,
-// and JTI-replay SPIs — for the throughput / multi-replica scale layer
-// (>1k QPS, many replicas sharing one logical store).
+// JTI-replay, rate-limit, device-code, MFA-challenge, and CIBA SPIs — for
+// the throughput / multi-replica scale layer (>1k QPS, many replicas
+// sharing one logical store).
 //
 // # Why a separate Go module
 //
@@ -39,6 +40,10 @@
 //	acs := redis.NewAuthCodeStore(rdb)
 //	par := redis.NewPARStore(rdb)
 //	jti := redis.NewJTIReplayStore(rdb)
+//	dcs := redis.NewDeviceCodeStore(rdb)
+//	mcs := redis.NewMFAChallengeStore(rdb)
+//	cba := redis.NewCIBAStore(rdb)
+//	lim := redis.NewLimiter(rdb, 10, time.Minute, "login")
 //
 //	srv := sso.NewServer(
 //	    sso.WithSessionManager(sm),
@@ -46,6 +51,10 @@
 //	    sso.WithAuthCodeStore(acs, 10*time.Minute),
 //	    sso.WithPARStore(par, oauth.DefaultPARTTL),
 //	    sso.WithJTIReplayStore(jti),
+//	    sso.WithDeviceCodeStore(dcs, 10*time.Minute),
+//	    sso.WithMFAChallengeStore(mcs),
+//	    sso.WithCIBA(cba, ...),
+//	    sso.WithRateLimit(lim, ...),
 //	)
 //
 // Each store also exposes Ping(ctx) so it can back sso.WithReadyCheck.
@@ -91,6 +100,35 @@
 //     expiry window. Identical first-sighting semantics to the SQLite
 //     INSERT ... ON CONFLICT DO NOTHING.
 //
+//   - Limiter.Allow is a fixed-window counter: a Lua script INCRs the
+//     per-(bucket,key) key and, on the first hit of a window, sets the
+//     window TTL — both in one server-side op so a crash between the INCR
+//     and the EXPIRE can't strand a key at its limit with no TTL (a
+//     permanent self-inflicted lockout). Fails OPEN on a Redis error, the
+//     §2 stance for the rate-limit defense layer (a partition must not
+//     503 real users). This is the genuinely-hot store — consulted on
+//     every middleware-gated request — and its window model differs from
+//     the token-bucket MemoryLimiter/SQLiteLimiter peers (same Allow wire
+//     contract, different smoothing); see ratelimit.go.
+//
+//   - MFAChallengeStore.Consume and DeviceCodeStore single-use are GETDEL
+//     (and Delete) — the same atomic get-and-delete as the auth-code /
+//     PAR stores. A replayed mfa_challenge / device_code finds nothing;
+//     unknown / expired / consumed collapse to one not-found sentinel
+//     (the §2 mfa_invalid + expired_token oracle patterns). The device
+//     flow's user_code lookup is a thin pointer key that dereferences to
+//     the canonical device_code record; both share one TTL so they evict
+//     together.
+//
+//   - CIBAStore.SetStatus advances pending → approved/denied via a Lua
+//     script that reads the record, enforces the pending-only transition
+//     guard, and rewrites it KEEPTTL — one atomic server-side unit, so two
+//     racing device callbacks can't both flip a pending request (the
+//     Redis analogue of the SQLite UPDATE ... WHERE status='pending'
+//     re-resolution guard). Get / poll collapse unknown / expired to one
+//     ErrCIBARequestNotFound (the §2 device-flow-like oracle-leak
+//     collapse).
+//
 // # Failover + cross-region semantics
 //
 // Per §2, /token fails CLOSED: if Redis is unreachable, refresh rotation
@@ -113,8 +151,8 @@
 //
 // Implemented here: SessionManager, RefreshTokenStore (+ Inspector,
 // SubjectIndex, SubjectCounter, ClientPurger, FamilyTracker), AuthCodeStore,
-// PARStore, JTIReplayStore. Rate-limit (ratelimit.Limiter), device-code,
-// MFA-challenge, and CIBA stores are the same single-use / TTL pattern and
-// are planned same-pattern follow-ups; until then those subsystems use
-// their memory or sqlite backends.
+// PARStore, JTIReplayStore, Limiter (ratelimit.Limiter), DeviceCodeStore,
+// MFAChallengeStore, CIBAStore — the full hot-path set the cluster roadmap
+// listed. SQLite (defaultimpl/sqlite) remains the embedded fallback for
+// every subsystem; Redis is the opt-in throughput layer.
 package redis
