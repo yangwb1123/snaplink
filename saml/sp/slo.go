@@ -10,8 +10,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"net/url"
 	"regexp"
+	"time"
 
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
@@ -47,34 +47,52 @@ type LogoutSubject struct {
 // few KiB; 1 MiB refuses a bomb without affecting any real request.
 const maxInflatedLogoutBytes = 1 << 20
 
+// logoutMaxClockSkew is the small future-skew allowance on a LogoutRequest's
+// IssueInstant (a request minted slightly ahead of this SP's clock is still
+// accepted; one further in the future is a clock-forward forgery and rejected).
+// Kept tiny — the freshness window absorbs ordinary drift on the past side.
+const logoutMaxClockSkew = 1 * time.Minute
+
 // idpSigCertRe strips whitespace out of a base64 cert blob (metadata pretty-
 // printing inserts newlines/indentation), mirroring crewjam's getIDPSigningCerts.
 var idpSigCertRe = regexp.MustCompile(`\s+`)
 
 // ProcessLogoutRequest validates an IdP-initiated LogoutRequest (as
 // redirected/POSTed to THIS SP's SLO endpoint) and returns the subject to log
-// out. redirectBinding selects raw-DEFLATE (GET) vs plain base64 (POST).
+// out. redirectBinding selects the HTTP-Redirect binding (raw-DEFLATE body +
+// DETACHED §3.4.4.1 query-param signature) vs HTTP-POST (plain base64 +
+// enveloped XML-DSig). rawQuery is the request's raw URL query string — REQUIRED
+// for the redirect binding (the detached signature is reconstructed from its raw
+// percent-encoded values); ignored for POST.
 //
 // SECURITY CRUX (no local session termination without a verified signature):
-// the LogoutRequest's enveloped XML-DSig is verified against the BOOT-PINNED
-// upstream IdP signing certificate — the SAME trust anchor ProcessAssertion
-// uses (from IDPMetadata; never a cert embedded in the request). An unsigned or
+// the LogoutRequest signature is verified against the BOOT-PINNED upstream IdP
+// signing certificate — the SAME trust anchor ProcessAssertion uses (from
+// IDPMetadata; never a cert embedded in the request). An unsigned or
 // attacker-signed LogoutRequest fails here and the caller terminates NOTHING.
-// The Issuer is additionally checked against the pinned IdP entity id so a
-// signature valid under a different (but somehow-trusted) cert still can't drive
-// a logout for the wrong IdP.
+// For the redirect binding the signature is the SAML-standard DETACHED
+// SigAlg+Signature query pair (SAML Bindings §3.4.4.1) — what every real IdP
+// sends; for POST it is the enveloped XML-DSig over the body. The Issuer is
+// additionally checked against the pinned IdP entity id so a signature valid
+// under a different (but somehow-trusted) cert still can't drive a logout for
+// the wrong IdP.
 //
 // Validation pipeline (ALL failures collapse to ErrLogoutInvalid):
 //
 //  1. base64-decode (+ bounded inflate for the redirect binding).
 //  2. XXE / round-trip safety check over the raw XML (same validator crewjam
 //     uses) BEFORE unmarshal.
-//  3. Verify the enveloped XML-DSig against the pinned IdP signing cert(s).
+//  3. Verify the signature: DETACHED query-param sig (redirect) or enveloped
+//     XML-DSig (POST) against the pinned IdP signing cert(s). Missing/invalid →
+//     reject (fail-closed).
 //  4. Unmarshal + check the Issuer matches the pinned IdP entity id, and that a
 //     non-empty NameID is present (a logout with no subject is meaningless).
+//  5. Freshness + replay (AFTER signature, so unsigned junk can't flood the
+//     store): reject a stale/far-future IssueInstant or a LogoutRequest ID seen
+//     within the freshness window (captured-signed-logout replay defense).
 //
 // relayState is opaque (echoed by the IdP); it is NOT a security input here.
-func (a *SPAuthenticator) ProcessLogoutRequest(samlRequestB64, relayState string, redirectBinding bool) (*LogoutSubject, error) {
+func (a *SPAuthenticator) ProcessLogoutRequest(samlRequestB64, relayState string, redirectBinding bool, rawQuery string) (*LogoutSubject, error) {
 	_ = relayState // opaque; echoed back on the LogoutResponse by the caller
 
 	raw, err := decodeSLORequest(samlRequestB64, redirectBinding)
@@ -87,11 +105,22 @@ func (a *SPAuthenticator) ProcessLogoutRequest(samlRequestB64, relayState string
 		return nil, ErrLogoutInvalid
 	}
 
-	// (3) Signature: verify the enveloped DSig against the PINNED IdP cert(s).
-	// This is the crux — an unsigned/forged request fails here, before the
-	// caller touches any session.
-	if err := a.verifyLogoutRequestSignature(raw); err != nil {
-		return nil, ErrLogoutInvalid
+	// (3) Signature: verify against the PINNED IdP cert(s). This is the crux — an
+	// unsigned/forged request fails here, before the caller touches any session.
+	// Redirect binding → DETACHED §3.4.4.1 query-param signature (real-IdP
+	// interop); POST binding → enveloped XML-DSig over the body.
+	if redirectBinding {
+		certs, err := a.pinnedIDPCerts()
+		if err != nil {
+			return nil, ErrLogoutInvalid
+		}
+		if err := verifyRedirectSignature(certs, rawQuery, "SAMLRequest"); err != nil {
+			return nil, ErrLogoutInvalid
+		}
+	} else {
+		if err := a.verifyLogoutRequestSignature(raw); err != nil {
+			return nil, ErrLogoutInvalid
+		}
 	}
 
 	// (4) Parse + content checks. Strict unmarshal (refuses malformed XML).
@@ -113,6 +142,14 @@ func (a *SPAuthenticator) ProcessLogoutRequest(samlRequestB64, relayState string
 	if req.NameID == nil || req.NameID.Value == "" {
 		return nil, ErrLogoutInvalid
 	}
+
+	// (5) Freshness + replay — AFTER signature verification (so an attacker can't
+	// flood the replay store with unsigned junk). A captured, validly-signed
+	// LogoutRequest would otherwise replay indefinitely (targeted-logout DoS).
+	if err := a.checkLogoutFreshnessAndReplay(req.ID, req.IssueInstant); err != nil {
+		return nil, ErrLogoutInvalid
+	}
+
 	sessionIndex := ""
 	if req.SessionIndex != nil {
 		sessionIndex = req.SessionIndex.Value
@@ -122,6 +159,58 @@ func (a *SPAuthenticator) ProcessLogoutRequest(samlRequestB64, relayState string
 		SessionIndex: sessionIndex,
 		RequestID:    req.ID,
 	}, nil
+}
+
+// checkLogoutFreshnessAndReplay enforces the LogoutRequest freshness window and
+// single-use ID dedup (Fix 2). It is called ONLY after the signature has been
+// verified. Returns a non-nil error (the caller collapses it to the one
+// oracle-safe code) when:
+//
+//   - IssueInstant is zero/absent (a logout with no timestamp can't be aged
+//     out and is non-conformant),
+//   - IssueInstant is older than the freshness window (a stale captured logout),
+//   - IssueInstant is further in the FUTURE than a small skew (clock-forward
+//     forgery / a request minted to outlive the window),
+//   - the LogoutRequest ID has already been seen within the window (a replay).
+//
+// The ID is recorded with a TTL equal to the freshness window, so the dedup
+// memory is naturally bounded: once a request is too old to be fresh, its ID
+// entry can be pruned (a later replay fails the freshness check anyway). An
+// empty ID is rejected (a request with no ID can't be deduped — and a
+// conformant LogoutRequest always carries one).
+func (a *SPAuthenticator) checkLogoutFreshnessAndReplay(id string, issueInstant time.Time) error {
+	now := a.clock()
+	window := a.logoutWindow()
+
+	if issueInstant.IsZero() {
+		return errors.New("saml/sp: logout request missing IssueInstant")
+	}
+	// Too old: outside the past freshness window.
+	if now.Sub(issueInstant) > window {
+		return errors.New("saml/sp: stale logout request")
+	}
+	// Too far in the future: beyond a small skew allowance.
+	if issueInstant.Sub(now) > logoutMaxClockSkew {
+		return errors.New("saml/sp: logout request IssueInstant in the future")
+	}
+	if id == "" {
+		return errors.New("saml/sp: logout request missing ID")
+	}
+	// Dedup: remember the ID until it can no longer be fresh (now+window).
+	if fresh := a.logoutReplay.checkAndRemember(id, issueInstant.Add(window), now); !fresh {
+		return errors.New("saml/sp: replayed logout request")
+	}
+	return nil
+}
+
+// logoutWindow returns the LogoutRequest freshness window (how far in the past
+// an IssueInstant may be and still be accepted). Configurable via
+// SPConfig.LogoutRequestWindow; <=0 ⇒ DefaultLogoutRequestWindow.
+func (a *SPAuthenticator) logoutWindow() time.Duration {
+	if a.cfg.LogoutRequestWindow > 0 {
+		return a.cfg.LogoutRequestWindow
+	}
+	return DefaultLogoutRequestWindow
 }
 
 // BuildLogoutResponseURL builds a SIGNED HTTP-Redirect LogoutResponse (Status
@@ -156,15 +245,9 @@ func (a *SPAuthenticator) BuildLogoutResponseURL(logoutRequestID, relayState str
 			StatusCode: saml.StatusCode{Value: saml.StatusSuccess},
 		},
 	}
-	signedEl, err := a.signEnveloped(resp.Element())
-	if err != nil {
-		return "", err
-	}
-	u, err := a.redirectURL(idpSLO, "SAMLResponse", signedEl, relayState)
-	if err != nil {
-		return "", err
-	}
-	return u, nil
+	// HTTP-Redirect binding: UNSIGNED XML body + DETACHED §3.4.4.1 signature in
+	// the SigAlg+Signature query params (not an enveloped XML-DSig).
+	return a.signedRedirect(idpSLO, "SAMLResponse", resp.Element(), relayState)
 }
 
 // LogoutURL builds a SIGNED HTTP-Redirect LogoutRequest the SP sends to the
@@ -201,11 +284,9 @@ func (a *SPAuthenticator) LogoutURL(nameID, sessionIndex, relayState string) str
 	if sessionIndex != "" {
 		req.SessionIndex = &saml.SessionIndex{Value: sessionIndex}
 	}
-	signedEl, err := a.signEnveloped(req.Element())
-	if err != nil {
-		return ""
-	}
-	u, err := a.redirectURL(idpSLO, "SAMLRequest", signedEl, relayState)
+	// HTTP-Redirect binding: UNSIGNED XML body + DETACHED §3.4.4.1 signature in
+	// the SigAlg+Signature query params (real-IdP interop).
+	u, err := a.signedRedirect(idpSLO, "SAMLRequest", req.Element(), relayState)
 	if err != nil {
 		return ""
 	}
@@ -283,55 +364,69 @@ func (a *SPAuthenticator) pinnedIDPCerts() ([]*x509.Certificate, error) {
 	return certs, nil
 }
 
-// signEnveloped enveloped-signs el with the SP signing key (RSA/ECDSA-SHA256,
-// exclusive-C14N empty-prefix — matching the IdP side + crewjam) and returns the
-// signed element (Signature as the last child). Used for both SP-initiated
-// LogoutRequests and the LogoutResponse acknowledgement.
-func (a *SPAuthenticator) signEnveloped(el *etree.Element) (*etree.Element, error) {
-	ctx, err := dsig.NewSigningContext(a.sloSigner, [][]byte{a.sloSigCert.Raw})
-	if err != nil {
-		return nil, err
-	}
-	ctx.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
-	if err := ctx.SetSignatureMethod(a.sloSigMethod); err != nil {
-		return nil, err
-	}
-	return ctx.SignEnveloped(el)
-}
-
-// redirectURL renders signedEl into a SAML HTTP-Redirect URL: the element is
-// serialized, raw-DEFLATEd, base64'd, and placed in the named query parameter
-// (SAMLRequest or SAMLResponse) on the destination URL, with the RelayState
-// appended verbatim when set.
-func (a *SPAuthenticator) redirectURL(destination, param string, signedEl *etree.Element, relayState string) (string, error) {
-	doc := etree.NewDocument()
-	doc.SetRoot(signedEl)
-	raw, err := doc.WriteToBytes()
+// signedRedirect serializes the (UNSIGNED) SAML element and renders a SIGNED
+// HTTP-Redirect URL carrying a DETACHED §3.4.4.1 signature: the XML is
+// raw-DEFLATEd + base64'd into the named query parameter (SAMLRequest or
+// SAMLResponse), and a SigAlg+Signature pair computed over the URL-encoded octet
+// string (in spec order, RelayState only when present) is appended. This is the
+// SAML-standard redirect-binding signature every real IdP/SP validates — NOT an
+// enveloped XML-DSig in the body (which was the prior, non-interoperable form).
+func (a *SPAuthenticator) signedRedirect(destination, param string, el *etree.Element, relayState string) (string, error) {
+	xmlBytes, err := serializeElement(el)
 	if err != nil {
 		return "", err
 	}
+	signCtx, sigAlg, err := a.redirectSigningContext()
+	if err != nil {
+		return "", err
+	}
+	return buildRedirectURL(signCtx, sigAlg, destination, param, xmlBytes, relayState)
+}
+
+// redirectSigningContext builds a goxmldsig SigningContext over the SP signing
+// key (the same key the enveloped POST path uses) plus the SigAlg URI for the
+// detached redirect signature. The SigningContext's SignString computes the
+// §3.4.4.1 signature over the octet string. The signature bytes are written
+// verbatim (RSA → PKCS#1 v1.5, ECDSA → ASN.1 DER), which the detached verifier
+// (cert.CheckSignature with the matching alg) accepts — the same DER convention
+// the enveloped path and the assertion signer use.
+func (a *SPAuthenticator) redirectSigningContext() (*dsig.SigningContext, string, error) {
+	sigAlg, ok := redirectSigAlgForMethod(a.sloSigMethod)
+	if !ok {
+		return nil, "", errors.New("saml/sp: unsupported SP signing method for redirect signature")
+	}
+	ctx, err := dsig.NewSigningContext(a.sloSigner, [][]byte{a.sloSigCert.Raw})
+	if err != nil {
+		return nil, "", err
+	}
+	if err := ctx.SetSignatureMethod(a.sloSigMethod); err != nil {
+		return nil, "", err
+	}
+	return ctx, sigAlg, nil
+}
+
+// serializeElement renders an etree element to its XML bytes.
+func serializeElement(el *etree.Element) ([]byte, error) {
+	doc := etree.NewDocument()
+	doc.SetRoot(el)
+	return doc.WriteToBytes()
+}
+
+// rawDeflate raw-DEFLATEs b (the SAML HTTP-Redirect binding body encoding — RFC:
+// no zlib header) at default compression.
+func rawDeflate(b []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	fw, err := flate.NewWriter(&buf, flate.DefaultCompression)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if _, err := fw.Write(raw); err != nil {
-		return "", err
+	if _, err := fw.Write(b); err != nil {
+		return nil, err
 	}
 	if err := fw.Close(); err != nil {
-		return "", err
+		return nil, err
 	}
-	u, err := url.Parse(destination)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set(param, base64.StdEncoding.EncodeToString(buf.Bytes()))
-	if relayState != "" {
-		q.Set("RelayState", relayState)
-	}
-	u.RawQuery = q.Encode()
-	return u.String(), nil
+	return buf.Bytes(), nil
 }
 
 // newSAMLID returns a crypto/rand-backed, XML-NCName-safe element ID

@@ -116,6 +116,17 @@ type Deps struct {
 	// AssertionTTL is the assertion validity window. <=0 ⇒ DefaultAssertionTTL.
 	AssertionTTL time.Duration
 
+	// LogoutRequestWindow is the freshness window for an inbound SP-initiated
+	// LogoutRequest: its IssueInstant must be within [now-window, now+skew], and
+	// a validated request's ID is deduped (replay-rejected) for this long. <=0 ⇒
+	// DefaultLogoutRequestWindow. (A captured, validly-signed LogoutRequest is
+	// otherwise replayable indefinitely for targeted-logout DoS.)
+	LogoutRequestWindow time.Duration
+
+	// LogoutReplayStoreSize bounds the in-memory LogoutRequest-ID dedup cache.
+	// <=0 ⇒ DefaultLogoutReplayStoreSize.
+	LogoutReplayStoreSize int
+
 	// Pending stores SP-initiated AuthnRequests between /saml/sso and
 	// /saml/sso/finish. Nil ⇒ a default in-memory store is created.
 	Pending *PendingStore
@@ -148,6 +159,12 @@ type Handlers struct {
 	// produces a new kid → a new cached signer → new metadata cert, naturally.
 	signerMu    sync.RWMutex
 	signerCache map[string]*AssertionSigner
+
+	// logoutReplay dedups inbound SP-initiated LogoutRequest IDs within the
+	// freshness window (Fix 2). A captured, validly-signed LogoutRequest replays
+	// here → rejected (targeted-logout DoS defense). Sized like the assertion
+	// replay store on the SP side.
+	logoutReplay *logoutReplayStore
 }
 
 // NewHandlers validates deps and returns the IdP handler set. A missing
@@ -182,10 +199,49 @@ func NewHandlers(deps Deps) (*Handlers, error) {
 		pending = NewPendingStore(0, 0)
 	}
 	return &Handlers{
-		deps:        deps,
-		pending:     pending,
-		signerCache: make(map[string]*AssertionSigner),
+		deps:         deps,
+		pending:      pending,
+		signerCache:  make(map[string]*AssertionSigner),
+		logoutReplay: newLogoutReplayStore(deps.LogoutReplayStoreSize),
 	}, nil
+}
+
+// logoutWindow returns the LogoutRequest freshness window. Configurable via
+// Deps.LogoutRequestWindow; <=0 ⇒ DefaultLogoutRequestWindow.
+func (h *Handlers) logoutWindow() time.Duration {
+	if h.deps.LogoutRequestWindow > 0 {
+		return h.deps.LogoutRequestWindow
+	}
+	return DefaultLogoutRequestWindow
+}
+
+// checkLogoutFreshnessAndReplay enforces the LogoutRequest freshness window +
+// single-use ID dedup (Fix 2). Called ONLY after the signature is verified (so
+// an attacker can't flood the replay store with unsigned junk). Returns a
+// non-nil error (the caller collapses it to the one oracle-safe code) when the
+// IssueInstant is zero/stale/far-future, the ID is empty, or the ID has been
+// seen within the window. The ID is recorded with a TTL of the freshness window
+// (a later replay fails the freshness check anyway, so the entry can be pruned).
+func (h *Handlers) checkLogoutFreshnessAndReplay(id string, issueInstant time.Time) error {
+	now := h.deps.now()
+	window := h.logoutWindow()
+
+	if issueInstant.IsZero() {
+		return errors.New("saml/idp: logout request missing IssueInstant")
+	}
+	if now.Sub(issueInstant) > window {
+		return errors.New("saml/idp: stale logout request")
+	}
+	if issueInstant.Sub(now) > logoutMaxClockSkew {
+		return errors.New("saml/idp: logout request IssueInstant in the future")
+	}
+	if id == "" {
+		return errors.New("saml/idp: logout request missing ID")
+	}
+	if fresh := h.logoutReplay.checkAndRemember(id, issueInstant.Add(window), now); !fresh {
+		return errors.New("saml/idp: replayed logout request")
+	}
+	return nil
 }
 
 // entityID returns this IdP's SAML entity identifier: Issuer + "/saml".

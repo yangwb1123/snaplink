@@ -46,6 +46,12 @@ type SPAuthenticator struct {
 	// now is the clock seam; nil ⇒ time.Now. Lets tests pin time deterministically.
 	now func() time.Time
 
+	// logoutReplay dedups inbound IdP-initiated LogoutRequest IDs within the
+	// freshness window (Fix 2). SEPARATE from the assertion replay store so the
+	// two distinct ID spaces (AssertionID vs LogoutRequest ID) never collide. A
+	// captured, validly-signed LogoutRequest replays here → rejected.
+	logoutReplay *replayStore
+
 	// sloSigner / sloSigMethod are the SP signing key + XML-DSig method used to
 	// sign SP-initiated LogoutRequests + the LogoutResponse this SP returns to
 	// the IdP. Set only when SPPrivateKey is configured (SLO signing is
@@ -161,6 +167,7 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 	a.cfg = cfg
 	a.sp = sp
 	a.replay = newReplayStore(cfg.ReplayStoreSize)
+	a.logoutReplay = newReplayStore(cfg.ReplayStoreSize)
 	a.attrMap = cfg.AttributeMapping
 	return a, nil
 }

@@ -19,6 +19,14 @@ import (
 // each is plenty for a single replica's dedup window without unbounded growth.
 const DefaultReplayStoreSize = 10000
 
+// DefaultLogoutRequestWindow is the freshness window for an inbound
+// IdP-initiated LogoutRequest when SPConfig.LogoutRequestWindow is unset: a
+// LogoutRequest whose IssueInstant is older than this is rejected, and a
+// validated request's ID is deduped for this long (replay defense, SAML
+// Bindings has no mandated value — 5m mirrors the OAuth/DPoP iat-window posture
+// and is the TTL for the replay store).
+const DefaultLogoutRequestWindow = 5 * time.Minute
+
 // DefaultTimeout caps the IdP-metadata fetch performed at construction when
 // SPConfig.Timeout is unset.
 const DefaultTimeout = 10 * time.Second
@@ -136,8 +144,16 @@ type SPConfig struct {
 	AllowIDPInitiated bool
 
 	// ReplayStoreSize bounds the in-memory AssertionID dedup cache. Zero ⇒
-	// DefaultReplayStoreSize.
+	// DefaultReplayStoreSize. The same bound sizes the separate LogoutRequest-ID
+	// dedup cache.
 	ReplayStoreSize int
+
+	// LogoutRequestWindow is the freshness window for an inbound IdP-initiated
+	// LogoutRequest: its IssueInstant must be within [now-window, now+skew], and
+	// a validated request's ID is deduped (replay-rejected) for this long. Zero ⇒
+	// DefaultLogoutRequestWindow. (A captured, validly-signed LogoutRequest is
+	// otherwise replayable indefinitely for targeted-logout DoS.)
+	LogoutRequestWindow time.Duration
 
 	// Timeout caps the IDPMetadataURL fetch at construction. Zero ⇒
 	// DefaultTimeout. Ignored for the inline / cert trust-anchor forms.

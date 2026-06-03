@@ -114,13 +114,29 @@ func (h *Handlers) SLO(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// (4) MANDATORY signature validation. A SLO request MUST carry a valid
-	// enveloped XML-DSig over the SP's registered cert. Missing cert, missing
-	// signature, or a signature that doesn't verify against the PINNED cert all
-	// reject here — BEFORE any session is touched. This is the crux: a
-	// forged/unsigned LogoutRequest can NOT terminate a session.
-	if err := verifyLogoutRequestSignature(rawXML, spClient.Attributes[AttrSPSigningCert]); err != nil {
-		writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
-		return
+	// signature over the SP's registered cert. Missing cert, missing signature,
+	// or a signature that doesn't verify against the PINNED cert all reject here —
+	// BEFORE any session is touched. This is the crux: a forged/unsigned
+	// LogoutRequest can NOT terminate a session.
+	//
+	// Binding-specific: the HTTP-Redirect binding (GET) carries the SAML-standard
+	// DETACHED §3.4.4.1 SigAlg+Signature query-param signature (what every real SP
+	// sends); the HTTP-POST binding carries an enveloped XML-DSig over the body.
+	if redirectBinding {
+		cert, err := parseSPSigningCert(spClient.Attributes[AttrSPSigningCert])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
+			return
+		}
+		if err := verifyRedirectSignature(cert, r.URL.RawQuery, "SAMLRequest"); err != nil {
+			writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
+			return
+		}
+	} else {
+		if err := verifyLogoutRequestSignature(rawXML, spClient.Attributes[AttrSPSigningCert]); err != nil {
+			writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
+			return
+		}
 	}
 
 	// (5) Terminate ONLY the matching subject session(s). NameID is the SSO
@@ -134,6 +150,15 @@ func (h *Handlers) SLO(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
 		return
 	}
+
+	// (5, cont.) Freshness + replay — AFTER signature verification (so unsigned
+	// junk can't flood the replay store). A captured, validly-signed
+	// LogoutRequest would otherwise replay indefinitely (targeted-logout DoS).
+	if err := h.checkLogoutFreshnessAndReplay(logoutReq.ID, logoutReq.IssueInstant); err != nil {
+		writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
+		return
+	}
+
 	sessionIndex := ""
 	if logoutReq.SessionIndex != nil {
 		sessionIndex = logoutReq.SessionIndex.Value
@@ -162,6 +187,22 @@ func (h *Handlers) SLO(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.deps.Logger.Error("saml/idp: SLO response signer resolution failed", "client_id", spClient.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, sso.ErrSAMLAssertionFailed)
+		return
+	}
+
+	// Respond using the SAME binding family the LogoutRequest arrived on:
+	//   - HTTP-Redirect (GET) → a 302 to the SP's registered SLO URL carrying a
+	//     DETACHED §3.4.4.1-signed LogoutResponse (the standard real-IdP form);
+	//   - HTTP-POST           → the enveloped-XML-DSig auto-POST form.
+	if redirectBinding {
+		respURL, err := buildLogoutResponseRedirect(h.entityID(), sloURL, logoutReq.ID, relayState, signer, h.deps.now())
+		if err != nil {
+			h.deps.Logger.Error("saml/idp: build LogoutResponse redirect failed", "client_id", spClient.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, sso.ErrSAMLAssertionFailed)
+			return
+		}
+		w.Header().Set("Location", respURL)
+		w.WriteHeader(http.StatusFound)
 		return
 	}
 
@@ -293,12 +334,77 @@ func verifyLogoutRequestSignature(rawXML []byte, certPEM string) error {
 	return nil
 }
 
+// parseSPSigningCert decodes the SP's REGISTERED PEM signing certificate (the
+// AttrSPSigningCert client attribute) into an *x509.Certificate — the pinned
+// trust anchor the detached redirect-binding LogoutRequest signature is verified
+// against. An empty/malformed cert is an error (a SAML SP that performs SLO MUST
+// register a signing cert); the caller collapses it to the one oracle-safe code.
+func parseSPSigningCert(certPEM string) (*x509.Certificate, error) {
+	if certPEM == "" {
+		return nil, errRequestInvalid
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, errRequestInvalid
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, errRequestInvalid
+	}
+	return cert, nil
+}
+
+// buildLogoutResponseRedirect builds a SIGNED HTTP-Redirect LogoutResponse URL
+// (Status Success) the IdP redirects the user-agent to, back to the SP's
+// REGISTERED SLO URL. The XML body is UNSIGNED; the signature is the
+// SAML-standard DETACHED §3.4.4.1 SigAlg+Signature query pair, computed with the
+// per-tenant signer (the SAME key published in metadata) — what a real SP
+// validates. destination is the registered SLO URL (never request-supplied);
+// inResponseTo binds the SP's LogoutRequest ID; relayState is echoed verbatim;
+// `now` is injected for deterministic tests. A signing failure aborts WITHOUT
+// emitting anything.
+func buildLogoutResponseRedirect(issuer, destination, inResponseTo, relayState string, signer *AssertionSigner, now time.Time) (string, error) {
+	if signer == nil {
+		return "", ErrUnsupportedSigningKey
+	}
+	sigAlg, ok := redirectSigAlgFor(signer.SignatureMethod())
+	if !ok {
+		return "", ErrUnsupportedSigningKey
+	}
+	signCtx, err := signer.SigningContext()
+	if err != nil {
+		return "", err
+	}
+	resp := &saml.LogoutResponse{
+		ID:           "id-" + randHex(),
+		InResponseTo: inResponseTo,
+		Version:      "2.0",
+		IssueInstant: now,
+		Destination:  destination,
+		Issuer: &saml.Issuer{
+			Format: "urn:oasis:names:tc:SAML:2.0:nameid-format:entity",
+			Value:  issuer,
+		},
+		Status: saml.Status{
+			StatusCode: saml.StatusCode{Value: saml.StatusSuccess},
+		},
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(resp.Element())
+	raw, err := doc.WriteToBytes()
+	if err != nil {
+		return "", fmt.Errorf("saml/idp: serialize logout response: %w", err)
+	}
+	return buildRedirectURL(signCtx, sigAlg, destination, "SAMLResponse", raw, relayState)
+}
+
 // buildLogoutResponse constructs a base64-encoded SAML LogoutResponse (Status
 // Success) whose root element is enveloped-XML-DSig signed with the per-tenant
 // key behind signer (the SAME key published in metadata + used for assertions).
 // destination is the SP's REGISTERED SLO URL (never request-supplied);
 // inResponseTo binds the response to the SP's LogoutRequest ID; `now` is injected
-// for deterministic tests.
+// for deterministic tests. Used for the HTTP-POST response binding (the redirect
+// binding uses buildLogoutResponseRedirect with a detached signature).
 //
 // The response is signed (not left bare) so the SP can authenticate that the
 // IdP — not an attacker — acknowledged the logout, mirroring the assertion

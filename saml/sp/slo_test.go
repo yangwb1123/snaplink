@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,39 +77,48 @@ func newSLOSP(t *testing.T, idpSigner *idpKeypair, now time.Time) *SPAuthenticat
 	return a
 }
 
-// buildIDPLogoutRequest builds an IdP-initiated LogoutRequest for nameID and,
-// when signer != nil, enveloped-signs it with the IdP key. Returns the base64
-// raw-DEFLATE redirect-binding encoding.
-func buildIDPLogoutRequest(t *testing.T, issuer, nameID, sessionIndex string, dest string, signer *idpKeypair) string {
+// logoutReq is the knobs for a test LogoutRequest (so freshness/replay tests can
+// pin the ID + IssueInstant). Zero IssueInstant ⇒ time.Now() at build.
+type logoutReq struct {
+	id           string
+	issuer       string
+	nameID       string
+	sessionIndex string
+	dest         string
+	issueInstant time.Time
+}
+
+// buildIDPLogoutRedirectQuery builds an IdP-initiated LogoutRequest per p and,
+// when signer != nil, signs it with the SAML-standard DETACHED §3.4.4.1
+// redirect-binding signature (UNSIGNED XML body + SigAlg+Signature query params
+// over the URL-encoded octet string) using the IdP key — exactly what a real IdP
+// (Okta/Azure/Shibboleth) sends. Returns the FULL raw query string (SAMLRequest
+// [+ RelayState] [+ SigAlg + Signature]) ready to drive ProcessLogoutRequest's
+// rawQuery param. An unsigned request (signer == nil) carries no SigAlg/Signature
+// (the fail-closed-rejection case).
+func buildIDPLogoutRedirectQuery(t *testing.T, p logoutReq, relayState string, signer *idpKeypair) string {
 	t.Helper()
+	id := p.id
+	if id == "" {
+		id = "id-lo-" + randHex()
+	}
+	issued := p.issueInstant
+	if issued.IsZero() {
+		issued = time.Now()
+	}
 	req := &saml.LogoutRequest{
-		ID:           "id-lo-" + randHex(),
+		ID:           id,
 		Version:      "2.0",
-		IssueInstant: time.Now(),
-		Destination:  dest,
-		Issuer:       &saml.Issuer{Value: issuer},
-		NameID:       &saml.NameID{Value: nameID},
+		IssueInstant: issued,
+		Destination:  p.dest,
+		Issuer:       &saml.Issuer{Value: p.issuer},
+		NameID:       &saml.NameID{Value: p.nameID},
 	}
-	if sessionIndex != "" {
-		req.SessionIndex = &saml.SessionIndex{Value: sessionIndex}
-	}
-	el := req.Element()
-	if signer != nil {
-		ctx, err := dsig.NewSigningContext(signer.key, [][]byte{signer.cert.Raw})
-		if err != nil {
-			t.Fatalf("signing context: %v", err)
-		}
-		ctx.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
-		if err := ctx.SetSignatureMethod(rsaSHA256); err != nil {
-			t.Fatalf("set signature method: %v", err)
-		}
-		el, err = ctx.SignEnveloped(req.Element())
-		if err != nil {
-			t.Fatalf("sign enveloped: %v", err)
-		}
+	if p.sessionIndex != "" {
+		req.SessionIndex = &saml.SessionIndex{Value: p.sessionIndex}
 	}
 	doc := etree.NewDocument()
-	doc.SetRoot(el)
+	doc.SetRoot(req.Element())
 	raw, err := doc.WriteToBytes()
 	if err != nil {
 		t.Fatalf("serialize logout request: %v", err)
@@ -117,18 +127,52 @@ func buildIDPLogoutRequest(t *testing.T, issuer, nameID, sessionIndex string, de
 	fw, _ := flate.NewWriter(&buf, flate.DefaultCompression)
 	_, _ = fw.Write(raw)
 	_ = fw.Close()
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
+	samlReq := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	// Octet string per §3.4.4.1: SAMLRequest=<v>[&RelayState=<v>]&SigAlg=<v>, all
+	// URL-encoded, in this exact order.
+	query := "SAMLRequest=" + url.QueryEscape(samlReq)
+	if relayState != "" {
+		query += "&RelayState=" + url.QueryEscape(relayState)
+	}
+	if signer == nil {
+		return query // unsigned: no SigAlg/Signature
+	}
+	query += "&SigAlg=" + url.QueryEscape(rsaSHA256)
+	ctx, err := dsig.NewSigningContext(signer.key, [][]byte{signer.cert.Raw})
+	if err != nil {
+		t.Fatalf("signing context: %v", err)
+	}
+	if err := ctx.SetSignatureMethod(rsaSHA256); err != nil {
+		t.Fatalf("set signature method: %v", err)
+	}
+	sig, err := ctx.SignString(query)
+	if err != nil {
+		t.Fatalf("sign detached: %v", err)
+	}
+	query += "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(sig))
+	return query
+}
+
+// processRedirectLogout drives ProcessLogoutRequest over the HTTP-Redirect
+// binding from a full raw query string: it extracts the SAMLRequest + RelayState
+// values and passes the raw query through (so the detached signature is
+// reconstructed from the exact wire bytes).
+func processRedirectLogout(a *SPAuthenticator, rawQuery string) (*LogoutSubject, error) {
+	vals, _ := url.ParseQuery(rawQuery)
+	return a.ProcessLogoutRequest(vals.Get("SAMLRequest"), vals.Get("RelayState"), true, rawQuery)
 }
 
 // TestSP_ProcessLogoutRequest_Signed_ReturnsSubject is the SP-side happy path: a
-// LogoutRequest signed by the PINNED IdP cert validates and yields the subject.
+// LogoutRequest carrying a DETACHED §3.4.4.1 signature under the PINNED IdP cert
+// validates and yields the subject.
 func TestSP_ProcessLogoutRequest_Signed_ReturnsSubject(t *testing.T) {
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
 
-	req := buildIDPLogoutRequest(t, tIDPEntity, "alice@example.com", "sess-1", tSPSLOURL, idp)
-	subj, err := a.ProcessLogoutRequest(req, "rs", true)
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", sessionIndex: "sess-1", dest: tSPSLOURL}, "rs", idp)
+	subj, err := processRedirectLogout(a, q)
 	if err != nil {
 		t.Fatalf("ProcessLogoutRequest valid signed = %v, want nil", err)
 	}
@@ -143,45 +187,70 @@ func TestSP_ProcessLogoutRequest_Signed_ReturnsSubject(t *testing.T) {
 	}
 }
 
-// TestSP_ProcessLogoutRequest_Unsigned_Rejected is the SP-side crux: an unsigned
-// IdP LogoutRequest is rejected (ErrLogoutInvalid) — the SP must not log out on
-// an unauthenticated request.
+// TestSP_ProcessLogoutRequest_Unsigned_Rejected is the SP-side crux: a redirect
+// LogoutRequest WITHOUT a detached signature (no SigAlg/Signature) is rejected
+// (ErrLogoutInvalid) — the SP must not log out on an unauthenticated request.
+// This is the fail-closed property preserved through the detached path.
 func TestSP_ProcessLogoutRequest_Unsigned_Rejected(t *testing.T) {
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
 
-	req := buildIDPLogoutRequest(t, tIDPEntity, "alice@example.com", "", tSPSLOURL, nil) // unsigned
-	_, err := a.ProcessLogoutRequest(req, "", true)
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "", nil) // unsigned
+	_, err := processRedirectLogout(a, q)
 	if !errors.Is(err, ErrLogoutInvalid) {
 		t.Fatalf("unsigned ProcessLogoutRequest err = %v, want ErrLogoutInvalid", err)
 	}
 }
 
-// TestSP_ProcessLogoutRequest_AttackerCert_Rejected: a LogoutRequest signed by a
-// DIFFERENT (attacker) key — not the pinned IdP cert — is rejected.
+// TestSP_ProcessLogoutRequest_AttackerCert_Rejected: a LogoutRequest detached-
+// signed by a DIFFERENT (attacker) key — not the pinned IdP cert — is rejected.
 func TestSP_ProcessLogoutRequest_AttackerCert_Rejected(t *testing.T) {
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
 
 	attacker := newIDPKeypair(t) // a different key the SP did NOT pin
-	req := buildIDPLogoutRequest(t, tIDPEntity, "alice@example.com", "", tSPSLOURL, attacker)
-	_, err := a.ProcessLogoutRequest(req, "", true)
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "", attacker)
+	_, err := processRedirectLogout(a, q)
 	if !errors.Is(err, ErrLogoutInvalid) {
 		t.Fatalf("attacker-signed ProcessLogoutRequest err = %v, want ErrLogoutInvalid", err)
 	}
 }
 
-// TestSP_ProcessLogoutRequest_WrongIssuer_Rejected: a request signed by the
-// pinned key but claiming a DIFFERENT Issuer is rejected (issuer-binding check).
+// TestSP_ProcessLogoutRequest_TamperedRequest_Rejected: a VALID detached
+// signature, but the SAMLRequest bytes are swapped for a different request after
+// signing — the reconstructed octet string no longer matches, so verification
+// fails (signature-over-different-bytes detection).
+func TestSP_ProcessLogoutRequest_TamperedRequest_Rejected(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now)
+
+	good := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "", idp)
+	// A DIFFERENT (unsigned) request whose SAMLRequest we splice in under the good
+	// SigAlg/Signature.
+	otherQ := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "mallory@example.com", dest: tSPSLOURL}, "", nil)
+	goodVals, _ := url.ParseQuery(good)
+	otherVals, _ := url.ParseQuery(otherQ)
+	tampered := "SAMLRequest=" + url.QueryEscape(otherVals.Get("SAMLRequest")) +
+		"&SigAlg=" + url.QueryEscape(goodVals.Get("SigAlg")) +
+		"&Signature=" + url.QueryEscape(goodVals.Get("Signature"))
+
+	if _, err := processRedirectLogout(a, tampered); !errors.Is(err, ErrLogoutInvalid) {
+		t.Fatalf("tampered SAMLRequest err = %v, want ErrLogoutInvalid", err)
+	}
+}
+
+// TestSP_ProcessLogoutRequest_WrongIssuer_Rejected: a request detached-signed by
+// the pinned key but claiming a DIFFERENT Issuer is rejected (issuer-binding).
 func TestSP_ProcessLogoutRequest_WrongIssuer_Rejected(t *testing.T) {
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
 
-	req := buildIDPLogoutRequest(t, "https://rogue-idp.example.com", "alice@example.com", "", tSPSLOURL, idp)
-	_, err := a.ProcessLogoutRequest(req, "", true)
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: "https://rogue-idp.example.com", nameID: "alice@example.com", dest: tSPSLOURL}, "", idp)
+	_, err := processRedirectLogout(a, q)
 	if !errors.Is(err, ErrLogoutInvalid) {
 		t.Fatalf("wrong-issuer ProcessLogoutRequest err = %v, want ErrLogoutInvalid", err)
 	}
@@ -194,15 +263,69 @@ func TestSP_ProcessLogoutRequest_Malformed_Rejected(t *testing.T) {
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
 
-	if _, err := a.ProcessLogoutRequest("not-base64-$$$", "", true); !errors.Is(err, ErrLogoutInvalid) {
+	if _, err := a.ProcessLogoutRequest("not-base64-$$$", "", true, "SAMLRequest=not-base64-%24%24%24"); !errors.Is(err, ErrLogoutInvalid) {
 		t.Fatalf("malformed err = %v, want ErrLogoutInvalid", err)
 	}
 }
 
-// TestSP_LogoutURL_BuildsSignedRedirect: SP-initiated logout builds a signed
-// LogoutRequest redirect to the IdP SLO endpoint that the IdP could validate
-// against the SP's cert.
-func TestSP_LogoutURL_BuildsSignedRedirect(t *testing.T) {
+// TestSP_ProcessLogoutRequest_Replay_Rejected: the SAME signed LogoutRequest
+// replayed is rejected (its ID is deduped within the freshness window), while a
+// fresh distinct request still succeeds.
+func TestSP_ProcessLogoutRequest_Replay_Rejected(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now)
+
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{id: "id-fixed-1", issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "", idp)
+	if _, err := processRedirectLogout(a, q); err != nil {
+		t.Fatalf("first (fresh) logout = %v, want nil", err)
+	}
+	// EXACT same request bytes again ⇒ replay ⇒ rejected.
+	if _, err := processRedirectLogout(a, q); !errors.Is(err, ErrLogoutInvalid) {
+		t.Fatalf("replayed logout err = %v, want ErrLogoutInvalid", err)
+	}
+	// A distinct fresh request still works (the store dedups by ID, not blanket).
+	q2 := buildIDPLogoutRedirectQuery(t, logoutReq{id: "id-fixed-2", issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "", idp)
+	if _, err := processRedirectLogout(a, q2); err != nil {
+		t.Fatalf("second distinct logout = %v, want nil", err)
+	}
+}
+
+// TestSP_ProcessLogoutRequest_StaleIssueInstant_Rejected: a validly-signed
+// LogoutRequest whose IssueInstant is older than the freshness window is
+// rejected (a captured-then-stale logout can't terminate a session).
+func TestSP_ProcessLogoutRequest_StaleIssueInstant_Rejected(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now)
+
+	stale := now.Add(-(DefaultLogoutRequestWindow + time.Minute))
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL, issueInstant: stale}, "", idp)
+	if _, err := processRedirectLogout(a, q); !errors.Is(err, ErrLogoutInvalid) {
+		t.Fatalf("stale-IssueInstant logout err = %v, want ErrLogoutInvalid", err)
+	}
+}
+
+// TestSP_ProcessLogoutRequest_FutureIssueInstant_Rejected: a validly-signed
+// LogoutRequest whose IssueInstant is far in the FUTURE (beyond skew) is
+// rejected (a clock-forward forgery minted to outlive the window).
+func TestSP_ProcessLogoutRequest_FutureIssueInstant_Rejected(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now)
+
+	future := now.Add(logoutMaxClockSkew + time.Minute)
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL, issueInstant: future}, "", idp)
+	if _, err := processRedirectLogout(a, q); !errors.Is(err, ErrLogoutInvalid) {
+		t.Fatalf("future-IssueInstant logout err = %v, want ErrLogoutInvalid", err)
+	}
+}
+
+// TestSP_LogoutURL_BuildsDetachedSignedRedirect: SP-initiated logout builds a
+// redirect to the IdP SLO endpoint carrying a DETACHED §3.4.4.1 signature
+// (SigAlg+Signature query params over the octet string), NOT an enveloped body
+// signature — the form a real IdP validates. The XML body is UNSIGNED.
+func TestSP_LogoutURL_BuildsDetachedSignedRedirect(t *testing.T) {
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -225,18 +348,31 @@ func TestSP_LogoutURL_BuildsSignedRedirect(t *testing.T) {
 	if samlReq == "" {
 		t.Fatal("LogoutURL missing SAMLRequest")
 	}
-	// The embedded LogoutRequest is SIGNED with the SP key (validates against the
-	// SP cert) and carries the subject.
+	// DETACHED signature present + carries the standard SigAlg URI.
+	if got := u.Query().Get("SigAlg"); got != rsaSHA256 {
+		t.Errorf("SigAlg = %q, want %q", got, rsaSHA256)
+	}
+	if u.Query().Get("Signature") == "" {
+		t.Fatal("LogoutURL missing detached Signature query param")
+	}
+	// The detached signature verifies against the SP's own signing cert over the
+	// exact octet string (the SP's verifier accepts what the SP signed).
+	assertDetachedSigVerifies(t, u.RawQuery, "SAMLRequest", a.sloSigCert)
+	// The XML body is UNSIGNED (no enveloped <Signature> child) and carries the
+	// subject.
 	el := inflateAndParse(t, samlReq)
-	verifySPSignedElement(t, el, a)
+	if sig := el.FindElement("//Signature"); sig != nil {
+		t.Error("redirect SAMLRequest body must be UNSIGNED (detached binding), found an enveloped Signature")
+	}
 	if got := el.FindElement("//NameID"); got == nil || got.Text() != "alice@example.com" {
 		t.Errorf("LogoutRequest NameID wrong; xml has no/incorrect NameID")
 	}
 }
 
-// TestSP_BuildLogoutResponseURL_BuildsSignedRedirect: the SP's acknowledgement
-// to an IdP-initiated logout is a signed LogoutResponse redirect to the IdP SLO.
-func TestSP_BuildLogoutResponseURL_BuildsSignedRedirect(t *testing.T) {
+// TestSP_BuildLogoutResponseURL_BuildsDetachedSignedRedirect: the SP's
+// acknowledgement to an IdP-initiated logout is a DETACHED-signed LogoutResponse
+// redirect to the IdP SLO.
+func TestSP_BuildLogoutResponseURL_BuildsDetachedSignedRedirect(t *testing.T) {
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -256,10 +392,40 @@ func TestSP_BuildLogoutResponseURL_BuildsSignedRedirect(t *testing.T) {
 	if samlResp == "" {
 		t.Fatal("missing SAMLResponse")
 	}
+	if u.Query().Get("Signature") == "" {
+		t.Fatal("BuildLogoutResponseURL missing detached Signature query param")
+	}
+	assertDetachedSigVerifies(t, u.RawQuery, "SAMLResponse", a.sloSigCert)
 	el := inflateAndParse(t, samlResp)
-	verifySPSignedElement(t, el, a)
+	if sig := el.FindElement("//Signature"); sig != nil {
+		t.Error("redirect SAMLResponse body must be UNSIGNED (detached binding), found an enveloped Signature")
+	}
 	if got := el.SelectAttrValue("InResponseTo", ""); got != "id-req-123" {
 		t.Errorf("InResponseTo = %q, want id-req-123", got)
+	}
+}
+
+// TestSP_RoundTrip_OwnDetachedSigVerifies: an SP-built outbound LogoutRequest's
+// detached signature is accepted by the module's own redirect verifier against
+// the SP cert (sign/verify symmetry within this module — the basis for SP↔IdP
+// interop since both sides share these helpers).
+func TestSP_RoundTrip_OwnDetachedSigVerifies(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now)
+
+	raw := a.LogoutURL("alice@example.com", "", "rs")
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := verifyRedirectSignature([]*x509.Certificate{a.sloSigCert}, u.RawQuery, "SAMLRequest"); err != nil {
+		t.Fatalf("SP's own detached LogoutRequest signature did not verify: %v", err)
+	}
+	// A missing-Signature query must fail closed (drop the Signature param).
+	stripped := stripQueryParam(u.RawQuery, "Signature")
+	if err := verifyRedirectSignature([]*x509.Certificate{a.sloSigCert}, stripped, "SAMLRequest"); err == nil {
+		t.Fatal("verifyRedirectSignature accepted a query with NO Signature (must fail closed)")
 	}
 }
 
@@ -312,17 +478,30 @@ func inflateAndParse(t *testing.T, b64 string) *etree.Element {
 	return doc.Root()
 }
 
-// verifySPSignedElement validates the enveloped signature on el against the SP's
-// own signing cert (proving the SP signed its outbound LogoutRequest/Response).
-func verifySPSignedElement(t *testing.T, el *etree.Element, a *SPAuthenticator) {
+// assertDetachedSigVerifies confirms the DETACHED §3.4.4.1 signature carried in
+// rawQuery (param = "SAMLRequest"/"SAMLResponse") verifies against cert — i.e.
+// the module's redirect verifier accepts what the SP signed.
+func assertDetachedSigVerifies(t *testing.T, rawQuery, param string, cert *x509.Certificate) {
 	t.Helper()
-	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{a.sloSigCert}}
-	ctx := dsig.NewDefaultValidationContext(store)
-	ctx.IdAttribute = "ID"
-	if a.now != nil {
-		ctx.Clock = dsig.NewFakeClockAt(a.now())
+	if err := verifyRedirectSignature([]*x509.Certificate{cert}, rawQuery, param); err != nil {
+		t.Fatalf("detached %s signature did not verify: %v", param, err)
 	}
-	if _, err := ctx.Validate(el); err != nil {
-		t.Fatalf("SP-signed element signature INVALID: %v", err)
+}
+
+// stripQueryParam removes the named parameter from a raw query string (for the
+// fail-closed "missing Signature" assertions).
+func stripQueryParam(rawQuery, key string) string {
+	parts := strings.Split(rawQuery, "&")
+	out := parts[:0]
+	for _, p := range parts {
+		name := p
+		if i := strings.IndexByte(p, '='); i >= 0 {
+			name = p[:i]
+		}
+		if name == key {
+			continue
+		}
+		out = append(out, p)
 	}
+	return strings.Join(out, "&")
 }

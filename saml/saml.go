@@ -394,10 +394,14 @@ func (h *sloSPHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The SPAuthenticator validates the LogoutRequest's enveloped signature
-	// against the PINNED IdP cert (the crux). A forged/unsigned request yields
-	// ErrLogoutInvalid → one collapsed code, NO session terminated.
-	subj, err := authn.ProcessLogoutRequest(samlRequest, relayState, redirectBinding)
+	// The SPAuthenticator validates the LogoutRequest signature against the
+	// PINNED IdP cert (the crux): the DETACHED §3.4.4.1 query-param signature for
+	// the HTTP-Redirect binding (reconstructed from the raw query), or the
+	// enveloped XML-DSig for HTTP-POST. A forged/unsigned request — or a replayed
+	// or stale one — yields ErrLogoutInvalid → one collapsed code, NO session
+	// terminated. r.URL.RawQuery carries the raw (still-encoded) redirect values
+	// the detached-signature octet string is rebuilt from.
+	subj, err := authn.ProcessLogoutRequest(samlRequest, relayState, redirectBinding, r.URL.RawQuery)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
 		return

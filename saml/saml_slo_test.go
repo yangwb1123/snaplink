@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -26,6 +27,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/defaultimpl"
 	samlmod "github.com/snaplink/sso/saml"
+	"github.com/snaplink/sso/saml/idp"
 	"github.com/snaplink/sso/saml/sp"
 )
 
@@ -94,8 +96,8 @@ func TestSPSLO_EndToEnd_SignedRequest_TerminatesLocalSession(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	samlReq := mintLogoutRequest(t, idp, idpEntity, nameID, "", spSLOURL)
-	rec := postSPSLO(handler, samlReq, "rs")
+	q := mintLogoutRedirectQuery(t, idp, idpEntity, nameID, "", spSLOURL, "rs")
+	rec := postSPSLO(handler, q)
 
 	// no-store on every SLO path.
 	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
@@ -135,8 +137,8 @@ func TestSPSLO_EndToEnd_UnsignedRequest_NoTermination(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	samlReq := mintLogoutRequest(t, nil, idpEntity, nameID, "", spSLOURL) // unsigned
-	rec := postSPSLO(handler, samlReq, "")
+	q := mintLogoutRedirectQuery(t, nil, idpEntity, nameID, "", spSLOURL, "") // unsigned
+	rec := postSPSLO(handler, q)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for unsigned logout; body=%s", rec.Code, rec.Body.String())
@@ -167,8 +169,8 @@ func TestSPSLO_EndToEnd_OnlySubjectTerminated(t *testing.T) {
 		t.Fatalf("create other session: %v", err)
 	}
 
-	samlReq := mintLogoutRequest(t, idp, idpEntity, "carol@example.com", "", spSLOURL)
-	if rec := postSPSLO(handler, samlReq, ""); rec.Code != http.StatusFound {
+	q := mintLogoutRedirectQuery(t, idp, idpEntity, "carol@example.com", "", spSLOURL, "")
+	if rec := postSPSLO(handler, q); rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302; body=%s", rec.Code, rec.Body.String())
 	}
 
@@ -180,18 +182,219 @@ func TestSPSLO_EndToEnd_OnlySubjectTerminated(t *testing.T) {
 	}
 }
 
+// TestSLO_SPtoIdPtoSP_RoundTrip is the full snaplink SP→IdP→SP interop proof on
+// the NEW detached §3.4.4.1 format: the repo's OWN SP side builds a SP-initiated
+// LogoutRequest redirect (detached-signed with the SP key), the repo's OWN IdP
+// side (pinned to that SP's cert) validates it, terminates the session, and
+// returns a detached-signed LogoutResponse redirect whose signature verifies
+// against the IdP's signing cert the SP pinned. Both halves speak §3.4.4.1.
+func TestSLO_SPtoIdPtoSP_RoundTrip(t *testing.T) {
+	const nameID = "roundtrip@example.com"
+	idpEntityID := asIssuer + "/saml"
+	idpSLOURL := asIssuer + sso.PathSAMLSLO
+
+	issuer, _ := newRSAIssuer(t)
+	clients := defaultimpl.NewMemoryClientStore()
+	sessions := defaultimpl.NewMemorySessionManager()
+
+	// The IdP's signing cert (wraps the issuer key) — what the SP pins as its IdP
+	// trust anchor. The detached signature verifies against the key, so a cert
+	// built independently over the same key validates the handler's signature.
+	idpCert := idpSigningCert(t, issuer, idpEntityID)
+
+	// The SP's signing material (the IdP pins its cert to authenticate the SP's
+	// LogoutRequest).
+	spKeyPEM, spCertPEM := newSPSLOKey(t)
+
+	// Register the SP at the IdP WITH its signing cert + SLO URL.
+	if err := clients.Add(context.Background(), &sso.Client{
+		ID:     "rt-sp",
+		Active: true,
+		Attributes: map[string]string{
+			idp.AttrSPEntityID:    spEntity,
+			idp.AttrSPACSURLs:     acsURL,
+			idp.AttrSPSigningCert: string(spCertPEM),
+			idp.AttrSPSLOUrls:     spSLOURL,
+		},
+	}); err != nil {
+		t.Fatalf("register SP: %v", err)
+	}
+
+	res, err := samlmod.Build(samlmod.Deps{
+		ClientStore:     clients,
+		SessionManager:  sessions,
+		UserProvider:    defaultimpl.NewMemoryUserProvider(),
+		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
+		Issuer:          asIssuer,
+	}, samlmod.Config{IdP: samlmod.IdPConfig{Enabled: true}})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	idpSLO := findHandler(t, res, http.MethodGet, sso.PathSAMLSLO)
+
+	// The SP, pinned to the IdP cert + entity id, with the IdP SLO URL.
+	spAuth, err := sp.NewSPAuthenticator(sp.SPConfig{
+		Name:         "rt-idp",
+		EntityID:     spEntity,
+		ACSURL:       acsURL,
+		IDPCert:      pemCert(idpCert),
+		IDPEntityID:  idpEntityID,
+		SPPrivateKey: spKeyPEM,
+		SPCert:       spCertPEM,
+		SPSLOURL:     spSLOURL,
+		IDPSLOURL:    idpSLOURL,
+	})
+	if err != nil {
+		t.Fatalf("NewSPAuthenticator: %v", err)
+	}
+
+	// A live session for the subject at the IdP.
+	sess, err := sessions.Create(context.Background(), nameID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// SP builds the SP-initiated LogoutRequest redirect (detached-signed).
+	logoutURL := spAuth.LogoutURL(nameID, "", "rs-roundtrip")
+	if logoutURL == "" {
+		t.Fatal("SP LogoutURL returned empty")
+	}
+	lu, err := url.Parse(logoutURL)
+	if err != nil {
+		t.Fatalf("parse LogoutURL: %v", err)
+	}
+	if lu.Scheme+"://"+lu.Host+lu.Path != idpSLOURL {
+		t.Fatalf("SP LogoutURL points at %q, want IdP SLO %q", lu.Scheme+"://"+lu.Host+lu.Path, idpSLOURL)
+	}
+
+	// Drive the IdP's /saml/slo with the SP's exact raw query (detached sig).
+	req := httptest.NewRequest(http.MethodGet, idpSLOURL+"?"+lu.RawQuery, nil)
+	rec := httptest.NewRecorder()
+	idpSLO(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("IdP SLO status = %d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	// The IdP terminated the session.
+	if _, err := sessions.Get(context.Background(), sess.ID); err == nil {
+		t.Fatalf("session %q should be terminated by the SP-initiated SLO", sess.ID)
+	}
+	// The IdP's LogoutResponse redirect goes back to the SP's registered SLO URL
+	// and its detached signature verifies against the IdP cert the SP pinned.
+	resp, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse IdP response Location: %v", err)
+	}
+	if resp.Scheme+"://"+resp.Host+resp.Path != spSLOURL {
+		t.Fatalf("IdP LogoutResponse redirect points at %q, want SP SLO %q", resp.Scheme+"://"+resp.Host+resp.Path, spSLOURL)
+	}
+	verifyDetachedAgainstCert(t, resp.RawQuery, "SAMLResponse", idpCert)
+}
+
 // --- helpers ---
 
-// postSPSLO drives the SP SLO handler over the HTTP-Redirect binding (GET): the
-// DEFLATEd base64 SAMLRequest rides as a query parameter, matching what an IdP
-// sends for SLO.
-func postSPSLO(handler http.HandlerFunc, samlRequest, relayState string) *httptest.ResponseRecorder {
-	q := url.Values{}
-	q.Set("SAMLRequest", samlRequest)
-	if relayState != "" {
-		q.Set("RelayState", relayState)
+// findHandler returns the mounted handler for the given method+path.
+func findHandler(t *testing.T, res *samlmod.BuildResult, method, path string) http.HandlerFunc {
+	t.Helper()
+	for i := range res.Handlers {
+		h := &res.Handlers[i]
+		if h.Path == path && h.Method == method {
+			return h.Handler
+		}
 	}
-	req := httptest.NewRequest(http.MethodGet, spSLOURL+"?"+q.Encode(), nil)
+	t.Fatalf("Build mounted no %s %s handler", method, path)
+	return nil
+}
+
+// idpSigningCert builds the IdP signing cert that wraps the issuer's key (the
+// trust anchor a downstream SP pins). It resolves the issuer's CryptoSigner the
+// same way the IdP handler does, then mints the self-signed cert via the
+// exported AssertionSigner — the detached signature verifies against the key, so
+// this independently-built cert validates the handler's LogoutResponse.
+func idpSigningCert(t *testing.T, issuer sso.TokenIssuer, idpEntityID string) *x509.Certificate {
+	t.Helper()
+	cs, ok := issuer.(interface {
+		CryptoSigner() (crypto.Signer, crypto.PublicKey, string)
+	})
+	if !ok {
+		t.Fatalf("issuer does not expose CryptoSigner")
+	}
+	signer, pub, kid := cs.CryptoSigner()
+	as, err := idp.NewAssertionSigner(signer, pub, kid, idpEntityID)
+	if err != nil {
+		t.Fatalf("NewAssertionSigner: %v", err)
+	}
+	cert, err := as.Certificate()
+	if err != nil {
+		t.Fatalf("AssertionSigner cert: %v", err)
+	}
+	return cert
+}
+
+// pemCert PEM-encodes a certificate (for SPConfig.IDPCert).
+func pemCert(cert *x509.Certificate) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+}
+
+// verifyDetachedAgainstCert verifies a DETACHED §3.4.4.1 signature in rawQuery
+// (param = "SAMLResponse"/"SAMLRequest") against cert via x509.CheckSignature —
+// the same primitive each side's verifier uses. Asserts the signature is present
+// and valid (and that a missing Signature fails).
+func verifyDetachedAgainstCert(t *testing.T, rawQuery, param string, cert *x509.Certificate) {
+	t.Helper()
+	vals, _ := url.ParseQuery(rawQuery)
+	sigB64 := vals.Get("Signature")
+	sigAlg := vals.Get("SigAlg")
+	if sigB64 == "" || sigAlg == "" {
+		t.Fatalf("detached signature missing (SigAlg=%q Signature present=%v)", sigAlg, sigB64 != "")
+	}
+	if sigAlg != "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" {
+		t.Fatalf("unexpected SigAlg %q", sigAlg)
+	}
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		t.Fatalf("decode Signature: %v", err)
+	}
+	// Reconstruct the signed octet string from the RAW values in §3.4.4.1 order.
+	octet := param + "=" + rawRedirectVal(rawQuery, param)
+	if rs, ok := rawRedirectValOK(rawQuery, "RelayState"); ok {
+		octet += "&RelayState=" + rs
+	}
+	octet += "&SigAlg=" + rawRedirectVal(rawQuery, "SigAlg")
+	if err := cert.CheckSignature(x509.SHA256WithRSA, []byte(octet), sig); err != nil {
+		t.Fatalf("detached %s signature did not verify against the pinned IdP cert: %v", param, err)
+	}
+}
+
+// rawRedirectVal / rawRedirectValOK extract a RAW (still-encoded) query value.
+func rawRedirectVal(rawQuery, key string) string {
+	v, _ := rawRedirectValOK(rawQuery, key)
+	return v
+}
+
+func rawRedirectValOK(rawQuery, key string) (string, bool) {
+	for _, pair := range strings.Split(rawQuery, "&") {
+		if pair == "" {
+			continue
+		}
+		name := pair
+		val := ""
+		if i := strings.IndexByte(pair, '='); i >= 0 {
+			name, val = pair[:i], pair[i+1:]
+		}
+		if name == key {
+			return val, true
+		}
+	}
+	return "", false
+}
+
+// postSPSLO drives the SP SLO handler over the HTTP-Redirect binding (GET) using
+// a FULL raw query string (so the detached §3.4.4.1 signature survives
+// byte-for-byte — re-encoding via url.Values would break it), matching what a
+// real IdP sends for SLO.
+func postSPSLO(handler http.HandlerFunc, rawQuery string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, spSLOURL+"?"+rawQuery, nil)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 	return rec
@@ -222,10 +425,13 @@ func newSPSLOKey(t *testing.T) (keyPEM, certPEM []byte) {
 	return keyPEM, certPEM
 }
 
-// mintLogoutRequest builds an IdP-initiated LogoutRequest for nameID and, when
-// signer != nil, enveloped-signs it with the IdP key (the cert the SP pins).
-// Returns the base64 raw-DEFLATE redirect-binding encoding.
-func mintLogoutRequest(t *testing.T, signer *idpKey, issuer, nameID, sessionIndex, dest string) string {
+// mintLogoutRedirectQuery builds an IdP-initiated LogoutRequest for nameID and,
+// when signer != nil, signs it with the SAML-standard DETACHED §3.4.4.1
+// redirect-binding signature (UNSIGNED XML body + SigAlg+Signature query params
+// over the URL-encoded octet string) using the IdP key (the cert the SP pins) —
+// exactly what a real IdP sends. Returns the FULL raw query string. An unsigned
+// request (signer == nil) carries no SigAlg/Signature.
+func mintLogoutRedirectQuery(t *testing.T, signer *idpKey, issuer, nameID, sessionIndex, dest, relayState string) string {
 	t.Helper()
 	req := &crewjam.LogoutRequest{
 		ID:           "id-lo-" + randHex(),
@@ -238,23 +444,8 @@ func mintLogoutRequest(t *testing.T, signer *idpKey, issuer, nameID, sessionInde
 	if sessionIndex != "" {
 		req.SessionIndex = &crewjam.SessionIndex{Value: sessionIndex}
 	}
-	el := req.Element()
-	if signer != nil {
-		ctx, err := dsig.NewSigningContext(signer.key, [][]byte{signer.cert.Raw})
-		if err != nil {
-			t.Fatalf("signing context: %v", err)
-		}
-		ctx.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
-		if err := ctx.SetSignatureMethod("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"); err != nil {
-			t.Fatalf("set sig method: %v", err)
-		}
-		el, err = ctx.SignEnveloped(req.Element())
-		if err != nil {
-			t.Fatalf("sign enveloped: %v", err)
-		}
-	}
 	doc := etree.NewDocument()
-	doc.SetRoot(el)
+	doc.SetRoot(req.Element())
 	raw, err := doc.WriteToBytes()
 	if err != nil {
 		t.Fatalf("serialize logout request: %v", err)
@@ -263,5 +454,28 @@ func mintLogoutRequest(t *testing.T, signer *idpKey, issuer, nameID, sessionInde
 	fw, _ := flate.NewWriter(&buf, flate.DefaultCompression)
 	_, _ = fw.Write(raw)
 	_ = fw.Close()
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
+	samlReq := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	query := "SAMLRequest=" + url.QueryEscape(samlReq)
+	if relayState != "" {
+		query += "&RelayState=" + url.QueryEscape(relayState)
+	}
+	if signer == nil {
+		return query
+	}
+	const rsaSHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+	query += "&SigAlg=" + url.QueryEscape(rsaSHA256)
+	ctx, err := dsig.NewSigningContext(signer.key, [][]byte{signer.cert.Raw})
+	if err != nil {
+		t.Fatalf("signing context: %v", err)
+	}
+	if err := ctx.SetSignatureMethod(rsaSHA256); err != nil {
+		t.Fatalf("set sig method: %v", err)
+	}
+	sig, err := ctx.SignString(query)
+	if err != nil {
+		t.Fatalf("sign detached: %v", err)
+	}
+	query += "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(sig))
+	return query
 }
