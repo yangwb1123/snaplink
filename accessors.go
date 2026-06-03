@@ -365,3 +365,27 @@ func (s *Server) JARMSignerForClient(c *Client) (oidc.JARMSigner, bool) {
 func (s *Server) RecordLoginSuccess(ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string) {
 	s.recordLoginSuccess(ctx, clientID, provider, strategy, userID, sessionID)
 }
+
+// AddReadyCheck registers a named /readyz dependency AFTER construction —
+// the post-Mount counterpart to WithReadyCheck (same merge-into-placeholder
+// semantics, same nil/empty guards). It exists for subsystems mounted from
+// cmd's buildHTTPHandler (e.g. an operator's SAML handler-set, whose
+// readiness probe is only built once the server's stores are resolved), so
+// their health surfaces on /readyz alongside the option-wired stores.
+//
+// MUST be called during startup wiring, BEFORE the server begins serving
+// /readyz — readyChecks is read lock-free at probe time, so a concurrent
+// append while serving would race. cmd's buildHTTPHandler runs inside
+// buildApp, before the listener starts, satisfying this.
+func (s *Server) AddReadyCheck(name string, check ReadyCheck) {
+	if check == nil || name == "" {
+		return
+	}
+	for i := range s.readyChecks {
+		if s.readyChecks[i].Name == name && s.readyChecks[i].Check == nil {
+			s.readyChecks[i].Check = check
+			return
+		}
+	}
+	s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Check: check})
+}

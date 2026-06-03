@@ -690,6 +690,56 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 		}
 		logger.Info("scim routes mounted", "base", scimBasePath, "groups", scimGroups != nil)
 	}
+	// SAML 2.0 (cluster: external/forked SAML module). When saml.handler
+	// names a registered SAMLHandlerFactory (the operator registered it from
+	// their forked main via RegisterSAMLHandlers — the SAML/XML/DSig deps
+	// live there, never in this module's go.mod), build the SAML surface and
+	// mount it on the SSO router. cfg.SAML.Handler == "" ⇒ this whole block
+	// is a no-op (byte-identical to a build without SAML): no lookup, no
+	// routes, no authenticator. The signing key is borrowed by the factory
+	// off the JWT issuer's CryptoSigner() accessor (a stdlib crypto.Signer
+	// for XML-DSig), reusing the JWKS key so SP metadata matches. SAML
+	// endpoints (e.g. /saml/metadata, the ACS callback) are SP/IdP-public,
+	// so — like the WebAuthn ceremony — they mount OUTSIDE the admin gate;
+	// the admin-middleware wrap below only intercepts admin-prefixed paths.
+	if cfg.SAML.Handler != "" {
+		factory, ok := lookupSAMLHandlerFactory(cfg.SAML.Handler)
+		if !ok {
+			return nil, fmt.Errorf("saml.handler %q is not registered (call RegisterSAMLHandlers from your forked main); registered: %v",
+				cfg.SAML.Handler, RegisteredSAMLHandlers())
+		}
+		set, err := factory(context.Background(), SAMLServerDeps{
+			IssuerForClient:       a.server.IssuerForClient,
+			ClientStore:           a.clientStore,
+			SessionManager:        a.sessionMgr,
+			UserProvider:          a.userProvider,
+			Issuer:                cfg.Server.Issuer,
+			AuditRecorder:         a.recorder,
+			Logger:                logger,
+			RegisterAuthenticator: a.server.RegisterAuthenticator,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("saml handler %q: %w", cfg.SAML.Handler, err)
+		}
+		if set != nil {
+			for _, h := range set.Handlers {
+				if err := a.server.Handle(h.Method, h.Path, h.Handler); err != nil {
+					return nil, fmt.Errorf("mount saml %s %s: %w", h.Method, h.Path, err)
+				}
+			}
+			for _, auth := range set.Authenticators {
+				a.server.RegisterAuthenticator(auth)
+			}
+			if set.ReadyCheck != nil {
+				a.server.AddReadyCheck("saml-"+cfg.SAML.Handler, set.ReadyCheck)
+			}
+			logger.Info("saml routes mounted",
+				"handler", cfg.SAML.Handler,
+				"routes", len(set.Handlers),
+				"authenticators", len(set.Authenticators),
+				"ready_check", set.ReadyCheck != nil)
+		}
+	}
 	// Wrap base with the admin middleware so /api/v1/audit/* and
 	// /api/v1/netpolicy/policies* + /classify get the same Bearer +
 	// scope gate as /api/v1/admin/*. isAdminProtectedPath inside

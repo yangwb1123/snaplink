@@ -59,6 +59,70 @@ type Config struct {
 	CAEP               CAEPConfig               `yaml:"caep"`
 	SPIFFE             SPIFFEConfig             `yaml:"spiffe"`
 	Mesh               MeshConfig               `yaml:"mesh"`
+	SAML               SAMLConfig               `yaml:"saml"`
+}
+
+// SAMLConfig opts into a SAML 2.0 capability supplied by an operator's
+// SEPARATE/forked SAML module (the SAML/XML/DSig dependency stays OUT of
+// this module's go.mod — the firm zero-external-dep invariant). The
+// operator registers a SAMLHandlerFactory by name from their forked main
+// (cmd RegisterSAMLHandlers, mirroring RegisterExternalSigner for KMS) and
+// selects it here via Handler; the factory builds the SAML SP/IdP HTTP
+// handlers + an optional SP-side authenticator, wired with the issuer's
+// signing key borrowed as a stdlib crypto.Signer (the CryptoSigner seam).
+//
+// Handler == "" (the default) ⇒ NO SAML handler is looked up, NO routes
+// mount, NO authenticator registers — byte-identical to a build without
+// SAML. All the protocol/XML fields below are plain stdlib-typed strings/
+// bools so this config struct (and the whole core module) carries no SAML
+// type; the forked module interprets them.
+type SAMLConfig struct {
+	// Handler selects the registered SAMLHandlerFactory (cmd
+	// RegisterSAMLHandlers) to build the SAML surface. Empty disables SAML
+	// entirely. cmd fails loud (listing registered handlers) when set to an
+	// unregistered name — a wiring mistake, not a runtime-recoverable state.
+	Handler string `yaml:"handler"`
+
+	// SPProviders lists the SAML Service Providers (or, for an SP-side
+	// deployment, the trusted IdPs) the handler should serve. The forked
+	// module owns the semantics; these stdlib-typed fields are the portable
+	// subset every SAML deployment needs.
+	SPProviders []SAMLSPProviderConfig `yaml:"sp_providers"`
+}
+
+// SAMLSPProviderConfig is one SAML peer entry — deliberately built from
+// stdlib types only (strings/bool), so it carries NO crewjam/SAML type and
+// the core module's go.mod stays SAML-free. The operator's forked SAML
+// module maps these onto its own SP/IdP descriptor types at boot.
+type SAMLSPProviderConfig struct {
+	// Name is the local identifier for this peer (used in URLs / logs /
+	// authenticator routing, e.g. ?provider=<name>).
+	Name string `yaml:"name"`
+
+	// EntityID is the SAML EntityID (issuer) of this peer.
+	EntityID string `yaml:"entity_id"`
+
+	// ACSURL is the Assertion Consumer Service URL the IdP POSTs the
+	// assertion back to (SP-side), or the SP's ACS this IdP serves.
+	ACSURL string `yaml:"acs_url"`
+
+	// IDPMetadataURL / IDPMetadataXML supply the IdP's metadata: a URL the
+	// module fetches at boot, or inline XML. Exactly one is typically set;
+	// the forked module validates. Inline XML keeps this config self-
+	// contained for air-gapped deployments.
+	IDPMetadataURL string `yaml:"idp_metadata_url"`
+	IDPMetadataXML string `yaml:"idp_metadata_xml"`
+
+	// NameIDFormat selects the SAML NameID format the peer expects (e.g.
+	// urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress). Empty ⇒ the
+	// module's default.
+	NameIDFormat string `yaml:"name_id_format"`
+
+	// AllowIDPInitiated permits unsolicited (IdP-initiated) SSO for this
+	// peer. Off by default — IdP-initiated SSO has no in-flight request to
+	// bind the assertion to, so it is the weaker, more replay-prone mode;
+	// enable only for peers that require it.
+	AllowIDPInitiated bool `yaml:"allow_idp_initiated"`
 }
 
 // MeshConfig opts into the service-mesh data-plane integrations

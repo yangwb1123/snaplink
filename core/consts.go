@@ -67,6 +67,20 @@ const (
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"
 	PathNetPolicyResolveMe = "/netpolicy/resolve-me"
+
+	// SAML 2.0 (cluster: external/forked SAML module). These name the
+	// canonical mount points an operator's SAML handler-set occupies when
+	// wired through the cmd samlHandlerRegistry. They are DEFAULTS exposed
+	// for docs / client code; the SAML module owns the actual handlers and
+	// may mount elsewhere. The core module ships NO SAML/XML dependency —
+	// these are plain path literals only (see AGENTS.md: zero-external-dep
+	// invariant). PathSAMLMetadata serves the IdP entity descriptor (SP
+	// metadata consumers fetch it); PathSAMLSSO is the IdP-side SSO
+	// receiver (AuthnRequest in); PathSAMLSSOCallback is the SP-side
+	// Assertion Consumer Service the IdP POSTs the assertion back to.
+	PathSAMLMetadata    = "/saml/metadata"
+	PathSAMLSSO         = "/saml/sso"
+	PathSAMLSSOCallback = "/auth/saml/callback"
 )
 
 // HTTP header names and well-known values.
@@ -231,6 +245,23 @@ const (
 	ErrRiskDenied             = "risk_denied"
 	ErrPayloadTooLarge        = "payload_too_large"
 
+	// SAML 2.0 wire codes (cluster: external/forked SAML module). Declared
+	// in core so the path/error literals stay centralized (AGENTS.md §8)
+	// even though the SAML protocol handlers live in an operator's nested
+	// module — the registry seam (cmd samlHandlerRegistry) hands the module
+	// these as its canonical error vocabulary so SP/IdP failures map to a
+	// stable shape. ErrSAMLAssertionInvalid = a returned assertion fails
+	// validation (bad signature, wrong audience/issuer, expired, replayed);
+	// ErrSAMLRequestInvalid = a malformed/forged AuthnRequest or relay
+	// state; ErrSAMLNotConfigured = a SAML endpoint hit when no handler is
+	// wired (cfg.saml.handler empty). The SAML module SHOULD collapse the
+	// distinct assertion-validation failure causes onto the single
+	// ErrSAMLAssertionInvalid to avoid an oracle (same hardening as the
+	// OAuth single-use paths, AGENTS.md §2).
+	ErrSAMLAssertionInvalid = "saml_assertion_invalid"
+	ErrSAMLRequestInvalid   = "saml_request_invalid"
+	ErrSAMLNotConfigured    = "saml_not_configured"
+
 	// MFA orchestration. ErrMFARequired is the pending status returned
 	// by /auth/login when the spi.RiskScorer decided RequireMFA and a
 	// spi.MFAProvider is wired — the response carries mfa_challenge_id +
@@ -340,6 +371,12 @@ const (
 // JWT-SVID, so a downstream service can tell the principal authenticated
 // as a mesh workload (not an interactive user).
 const AMRSpiffe = "spiffe"
+
+// AMRSaml is the AMR (RFC 8176) value placed on a token minted from a
+// validated SAML 2.0 assertion (an operator's forked SAML SP authenticator
+// completing the assertion-consumer flow), so a downstream service can tell
+// the principal authenticated via a SAML IdP federation.
+const AMRSaml = "saml"
 
 // Revocation tags returned by /logout.
 const (

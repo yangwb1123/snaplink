@@ -933,6 +933,30 @@ mesh:
     enabled: false
     path: ""                 # mount point; empty -> SDK default ("/mesh/ext-authz")
 
+# SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
+# dependency stays OUT of this binary's core go.mod, the firm
+# zero-external-dep invariant). Disabled by default: handler == "" mounts
+# NOTHING and is byte-identical to a build without SAML.
+#
+# To enable, an operator FORKS cmd, imports their SAML module, and calls
+# RegisterSAMLHandlers("<name>", factory) from main() (mirroring
+# RegisterExternalSigner for KMS signers). The factory builds the SAML
+# SP/IdP HTTP handlers + an optional SP-side authenticator; it borrows the
+# issuer's signing key as a stdlib crypto.Signer off the JWT issuer's
+# CryptoSigner() accessor (so SAML assertions are signed with the SAME key
+# published in JWKS -- SP metadata matches, and it works for both in-process
+# and external/KMS keys). Then set handler below to that registered name.
+saml:
+  handler: ""                # registered SAMLHandlerFactory name; "" disables SAML
+  sp_providers: []
+  # - name: "partner-idp"
+  #   entity_id: "https://idp.partner.example/metadata"
+  #   acs_url: "https://sso.example.com/auth/saml/callback"
+  #   idp_metadata_url: "https://idp.partner.example/metadata"
+  #   idp_metadata_xml: ""        # inline alternative to idp_metadata_url
+  #   name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+  #   allow_idp_initiated: false
+
 # OIDC response encryption (JWE). When enabled, clients that register
 # id_token_encrypted_response_alg / userinfo_encrypted_response_alg
 # receive a JWE(JWS(...)) nested response; the recipient public key is

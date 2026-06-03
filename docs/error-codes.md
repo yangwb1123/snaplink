@@ -186,6 +186,24 @@ recover from them, just surface to operations.
 
 ---
 
+## SAML 2.0 (`/saml/*`, `/auth/saml/callback`)
+
+SAML 2.0 is supplied by an operator's SEPARATE/forked module (the
+SAML/XML/DSig dependency stays out of the core go.mod). The codes below
+are the stable wire vocabulary that module SHOULD emit; the core ships
+the constants (`ErrSAML*` in `core/consts.go`) and the dep-free handler
+registry, not the protocol handlers. SAML is inert unless
+`saml.handler` names a registered factory — until then these codes
+never appear.
+
+| Code                     | HTTP | Emitted when                                                                 | Client should                          |
+|--------------------------|------|------------------------------------------------------------------------------|----------------------------------------|
+| `saml_assertion_invalid` | 400  | A returned SAML assertion fails validation — bad signature, wrong audience/issuer, expired, or replayed (causes SHOULD be collapsed onto this one code to avoid an oracle, AGENTS.md §2) | Restart the SAML SSO flow              |
+| `saml_request_invalid`   | 400  | A malformed/forged AuthnRequest or invalid relay state reached a SAML endpoint | Restart the SAML SSO flow              |
+| `saml_not_configured`    | 501  | A SAML endpoint was hit but no SAML handler is wired (`saml.handler` empty)   | Operator enables + registers SAML      |
+
+---
+
 ## Rate limiting + payload
 
 | Code                | HTTP | Emitted when                                          | Headers                  |

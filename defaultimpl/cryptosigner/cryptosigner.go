@@ -89,6 +89,18 @@ func Ed25519(s crypto.Signer) (defaultimpl.Ed25519Signer, ed25519.PublicKey, err
 
 type ed25519Bridge struct{ s crypto.Signer }
 
+// CryptoSigner returns the UNDERLYING out-of-process crypto.Signer (the
+// KMS/HSM key) this bridge wraps, satisfying defaultimpl's unexported
+// cryptoSignerProvider seam so the issuer's CryptoSigner() accessor hands
+// SAML 2.0 / XML-DSig the SAME key that's in JWKS — never the JWS-adapting
+// bridge. The bridge's Sign DOES JWS-specific work (DER->R‖S for ECDSA,
+// alg-aware padding for RSA) that the DSig pre-hashed-digest path must NOT
+// go through; exposing the raw crypto.Signer sidesteps that, letting the
+// DSig stack drive the key under its own signature method. The private key
+// material never crosses the process boundary either way — a crypto.Signer
+// only signs.
+func (b ed25519Bridge) CryptoSigner() crypto.Signer { return b.s }
+
 func (b ed25519Bridge) Sign(ctx context.Context, message []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -125,6 +137,13 @@ func ECDSA(s crypto.Signer) (defaultimpl.ECDSASigner, *ecdsa.PublicKey, error) {
 }
 
 type ecdsaBridge struct{ s crypto.Signer }
+
+// CryptoSigner returns the underlying out-of-process crypto.Signer (the
+// KMS/HSM key) for the SAML/XML-DSig seam — see ed25519Bridge.CryptoSigner.
+// Critically for ECDSA: the SAML/DSig consumer gets the raw signer whose
+// Sign returns ASN.1 DER (what KMS/HSM emit and what the XML-DSig stack
+// expects), NOT this bridge's JWS R‖S conversion.
+func (b ecdsaBridge) CryptoSigner() crypto.Signer { return b.s }
 
 func (b ecdsaBridge) Sign(ctx context.Context, message []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -199,6 +218,13 @@ type rsaBridge struct {
 	s   crypto.Signer
 	pss bool
 }
+
+// CryptoSigner returns the underlying out-of-process crypto.Signer (the
+// KMS/HSM key) for the SAML/XML-DSig seam — see ed25519Bridge.CryptoSigner.
+// The SAML/DSig consumer picks its own RSA signature method (PKCS1v15 vs
+// PSS) via crypto.SignerOpts at sign time, independent of this bridge's
+// configured JWS padding.
+func (b rsaBridge) CryptoSigner() crypto.Signer { return b.s }
 
 func (b rsaBridge) Sign(ctx context.Context, message []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {

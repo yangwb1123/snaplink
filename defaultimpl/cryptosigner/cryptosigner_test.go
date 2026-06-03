@@ -2,6 +2,7 @@ package cryptosigner_test
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -103,6 +104,85 @@ func assertIssueValidate(t *testing.T, iss tokenIssuer, val tokenValidator) {
 	}
 	if claims.Subject != "u1" {
 		t.Errorf("subject = %q, want u1", claims.Subject)
+	}
+}
+
+// cryptoSignerAccessor is the SAML/PKIX signing seam an issuer exposes: the
+// active key as a stdlib crypto.Signer (+ its public key + kid). Asserting it
+// here (in the cryptosigner package's external test) proves the bridge's
+// CryptoSigner() correctly surfaces the UNDERLYING out-of-process signer all
+// the way through the issuer accessor — the bridge-side half of the seam.
+type cryptoSignerAccessor interface {
+	CryptoSigner() (crypto.Signer, crypto.PublicKey, string)
+}
+
+// TestCryptoSigner_BridgeUnwrapsUnderlyingKey proves that for each algorithm,
+// an issuer wired with a cryptosigner BRIDGE exposes — via CryptoSigner() —
+// the UNDERLYING crypto.Signer (the stand-in KMS/HSM key), not the bridge.
+// The check is Public()-equality with the key the bridge wraps: SAML/XML-DSig
+// thus signs with the exact key published in JWKS, even for an external key.
+func TestCryptoSigner_BridgeUnwrapsUnderlyingKey(t *testing.T) {
+	edPub, edPriv, _ := ed25519.GenerateKey(rand.Reader)
+	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+	edSgn, edBridgePub, _ := cryptosigner.Ed25519(edPriv)
+	ecSgn, ecBridgePub, _ := cryptosigner.ECDSA(ecPriv)
+	rsaSgn, rsaBridgePub, _ := cryptosigner.RSA(rsaPriv, cryptosigner.AlgRS256)
+
+	cases := []struct {
+		name    string
+		iss     cryptoSignerAccessor
+		wantPub crypto.PublicKey
+		kid     string
+		// equal compares the accessor-returned signer's Public() to the
+		// underlying KMS key, per-alg (each public key type has its own Equal).
+		equal func(got crypto.PublicKey) bool
+	}{
+		{
+			name:    "ed25519",
+			iss:     defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519ExternalSigner(edSgn, edBridgePub, "kms-ed25519")),
+			wantPub: edPub,
+			kid:     "kms-ed25519",
+			equal:   func(got crypto.PublicKey) bool { p, ok := got.(ed25519.PublicKey); return ok && p.Equal(edPub) },
+		},
+		{
+			name:    "es256",
+			iss:     defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAExternalSigner(ecSgn, ecBridgePub, "kms-es256")),
+			wantPub: &ecPriv.PublicKey,
+			kid:     "kms-es256",
+			equal: func(got crypto.PublicKey) bool {
+				p, ok := got.(*ecdsa.PublicKey)
+				return ok && p.Equal(&ecPriv.PublicKey)
+			},
+		},
+		{
+			name:    "rs256",
+			iss:     defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAExternalSigner(rsaSgn, rsaBridgePub, "kms-rs256")),
+			wantPub: &rsaPriv.PublicKey,
+			kid:     "kms-rs256",
+			equal: func(got crypto.PublicKey) bool {
+				p, ok := got.(*rsa.PublicKey)
+				return ok && p.Equal(&rsaPriv.PublicKey)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer, pub, kid := tc.iss.CryptoSigner()
+			if signer == nil {
+				t.Fatal("issuer wired with a cryptosigner bridge returned a nil crypto.Signer")
+			}
+			if kid != tc.kid {
+				t.Errorf("kid = %q, want %q", kid, tc.kid)
+			}
+			if !tc.equal(signer.Public()) {
+				t.Error("CryptoSigner() did not unwrap to the underlying (KMS) key — SAML would sign with the wrong key")
+			}
+			if !tc.equal(pub) {
+				t.Error("accessor public key != underlying key (would mismatch JWKS)")
+			}
+		})
 	}
 }
 
