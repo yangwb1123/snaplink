@@ -199,7 +199,8 @@ never appear.
 | Code                     | HTTP | Emitted when                                                                 | Client should                          |
 |--------------------------|------|------------------------------------------------------------------------------|----------------------------------------|
 | `saml_assertion_invalid` | 400  | A returned SAML assertion fails validation — bad signature, wrong audience/issuer, expired, or replayed (causes SHOULD be collapsed onto this one code to avoid an oracle, AGENTS.md §2) | Restart the SAML SSO flow              |
-| `saml_request_invalid`   | 400  | A malformed/forged AuthnRequest or invalid relay state reached a SAML endpoint | Restart the SAML SSO flow              |
+| `saml_request_invalid`   | 400  | (IdP side) A malformed/forged AuthnRequest, an ACS URL not in the SP's registered allowlist, or an unknown/expired/consumed pending request / invalid session at `/saml/sso/finish` (all collapsed onto this one code — oracle-safe, AGENTS.md §2) | Restart the SAML SSO flow              |
+| `saml_assertion_failed`  | 500  | (IdP side) The server could not mint/sign an assertion — the per-tenant signing key can't drive XML-DSig (e.g. an Ed25519 issuer; goxmldsig has no EdDSA method) or the signing operation errored. Fails CLOSED (no cross-tenant key fallback) | Operator configures an RSA/ECDSA SAML signing key |
 | `saml_not_configured`    | 501  | A SAML endpoint was hit but no SAML handler is wired (`saml.handler` empty)   | Operator enables + registers SAML      |
 
 ---

@@ -1,0 +1,340 @@
+package idp
+
+import (
+	"context"
+	"crypto"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/crewjam/saml"
+
+	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/spi"
+)
+
+// Well-known sso.Client.Attributes keys that register a downstream SP with this
+// IdP. They are SERVER-SIDE config (set by the operator on the client record),
+// never request input — the same pattern CAEP uses for caep_receiver_endpoint.
+const (
+	// AttrSPEntityID is the SP's SAML entity identifier (the AuthnRequest
+	// Issuer). The SSO handler resolves the SP client by matching this. A
+	// client WITHOUT it is not a SAML SP and is skipped during resolution.
+	AttrSPEntityID = "saml_sp_entity_id"
+
+	// AttrSPACSURLs is the pipe-delimited ALLOWLIST of this SP's registered
+	// Assertion Consumer Service URLs. The AuthnRequest's ACS URL MUST be in
+	// this list (assertion-exfiltration defense); the assertion is POSTed only
+	// to the matched, registered URL — never a response-supplied one. REQUIRED
+	// for a SAML SP.
+	AttrSPACSURLs = "saml_sp_acs_urls"
+
+	// AttrSPRequireSignedRequest, when "true", requires the inbound
+	// AuthnRequest to carry a valid XML-DSig signature verified against
+	// AttrSPSigningCert. Default (absent/"false") accepts unsigned requests
+	// (TLS-protected, the common case).
+	AttrSPRequireSignedRequest = "saml_sp_require_signed_request"
+
+	// AttrSPSigningCert is the SP's PEM X.509 certificate used to verify a
+	// signed AuthnRequest (only consulted when AttrSPRequireSignedRequest is
+	// "true").
+	AttrSPSigningCert = "saml_sp_signing_cert"
+
+	// AttrSPNameIDFormat overrides the NameID format stamped into assertions
+	// for this SP (e.g. emailAddress / persistent). Empty = the IdP default
+	// (emailAddress).
+	AttrSPNameIDFormat = "saml_sp_nameid_format"
+)
+
+// acsURLDelimiter separates registered ACS URLs in AttrSPACSURLs.
+const acsURLDelimiter = "|"
+
+// cryptoSignerIssuer is the structural interface a per-tenant sso.TokenIssuer
+// must satisfy to lend its signing key for XML-DSig — the Phase A CryptoSigner
+// seam on defaultimpl's issuers. The IdP type-asserts the TokenIssuer that
+// deps.IssuerForClient returns to this; a non-conforming issuer (can't expose a
+// stdlib crypto.Signer) yields a fail-closed saml_assertion_failed, never a
+// fallback to another key.
+type cryptoSignerIssuer interface {
+	CryptoSigner() (crypto.Signer, crypto.PublicKey, string)
+}
+
+// Deps is the IdP handlers' dependency bundle. Every field is a stdlib /
+// root-module / spi type (no cmd package-main type — the saml/ module can't
+// import main). saml.Build constructs it from saml.Deps.
+type Deps struct {
+	// ClientStore is iterated to resolve the SP client by its registered
+	// saml_sp_entity_id (the AuthnRequest Issuer). REQUIRED.
+	ClientStore sso.ClientStore
+
+	// SessionManager validates the live login session at /saml/sso/finish (an
+	// invalid/expired/revoked session collapses to saml_request_invalid).
+	// REQUIRED.
+	SessionManager sso.SessionManager
+
+	// UserProvider loads the authenticated user whose attributes populate the
+	// assertion. REQUIRED.
+	UserProvider sso.UserProvider
+
+	// IssuerForClient is the server's per-tenant signing-issuer selector. The
+	// IdP resolves the SP client's issuer through it and borrows the signing
+	// key via CryptoSigner() — so the assertion is signed with the SAME
+	// per-tenant key published in that tenant's metadata. REQUIRED (the IdP
+	// cannot sign without it).
+	IssuerForClient func(c *sso.Client) (string, sso.TokenIssuer, error)
+
+	// Issuer is the AS issuer URL. The IdP entity ID is Issuer + "/saml"; it is
+	// the assertion Issuer + the NameQualifier + the metadata EntityID.
+	// REQUIRED.
+	Issuer string
+
+	// LoginPath is where /saml/sso redirects the user-agent to authenticate
+	// (with ?client_id=<sp>&state=<saml_request_id>). Empty ⇒ "/auth/login".
+	LoginPath string
+
+	// SSOURL is the absolute public URL of the /saml/sso endpoint, published as
+	// the metadata SingleSignOnService Location. Empty ⇒ Issuer + PathSAMLSSO.
+	SSOURL string
+
+	// MetadataTTL is the Cache-Control max-age on /saml/metadata. <=0 ⇒ 1h.
+	MetadataTTL time.Duration
+
+	// AssertionTTL is the assertion validity window. <=0 ⇒ DefaultAssertionTTL.
+	AssertionTTL time.Duration
+
+	// Pending stores SP-initiated AuthnRequests between /saml/sso and
+	// /saml/sso/finish. Nil ⇒ a default in-memory store is created.
+	Pending *PendingStore
+
+	// AuditRecorder records the login_success (provider "saml-idp") event when
+	// an assertion is issued. Nil ⇒ no audit (the rest of the flow is
+	// unchanged).
+	AuditRecorder *audit.Recorder
+
+	// Logger is the server logger. Nil ⇒ a no-op logger.
+	Logger spi.Logger
+
+	// now is a clock seam for deterministic tests. Nil ⇒ time.Now.
+	now func() time.Time
+}
+
+// Handlers bundles the three IdP HTTP handlers built from Deps.
+type Handlers struct {
+	deps    Deps
+	pending *PendingStore
+
+	// signerCache memoizes AssertionSigners by signing-key kid. The self-signed
+	// cert each AssertionSigner builds is NOT byte-stable across fresh instances
+	// (ECDSA cert signatures use a random nonce, and even an RSA cert carries a
+	// random serial), so metadata and the finish handler MUST share the SAME
+	// AssertionSigner per key — otherwise the cert an SP fetched from metadata
+	// wouldn't byte-match the cert in the assertion's KeyInfo, and goxmldsig's
+	// trusted-roots check would reject it. Caching by kid (a stable per-key
+	// fingerprint) guarantees one cert per key across every request. Rotation
+	// produces a new kid → a new cached signer → new metadata cert, naturally.
+	signerMu    sync.RWMutex
+	signerCache map[string]*AssertionSigner
+}
+
+// NewHandlers validates deps and returns the IdP handler set. A missing
+// required dep fails closed (returns an error) so the operator's boot stops
+// rather than mounting a half-wired IdP.
+func NewHandlers(deps Deps) (*Handlers, error) {
+	if deps.ClientStore == nil {
+		return nil, errors.New("saml/idp: ClientStore required")
+	}
+	if deps.SessionManager == nil {
+		return nil, errors.New("saml/idp: SessionManager required")
+	}
+	if deps.UserProvider == nil {
+		return nil, errors.New("saml/idp: UserProvider required")
+	}
+	if deps.IssuerForClient == nil {
+		return nil, errors.New("saml/idp: IssuerForClient required (the IdP signs assertions with the per-tenant key)")
+	}
+	if deps.Issuer == "" {
+		return nil, errors.New("saml/idp: Issuer required")
+	}
+	if deps.Logger == nil {
+		deps.Logger = spi.NopLogger{}
+	}
+	if deps.now == nil {
+		deps.now = time.Now
+	}
+	pending := deps.Pending
+	if pending == nil {
+		// Default in-memory store: 0 selects DefaultPendingTTL +
+		// DefaultPendingCapacity.
+		pending = NewPendingStore(0, 0)
+	}
+	return &Handlers{
+		deps:        deps,
+		pending:     pending,
+		signerCache: make(map[string]*AssertionSigner),
+	}, nil
+}
+
+// entityID returns this IdP's SAML entity identifier: Issuer + "/saml".
+func (h *Handlers) entityID() string { return strings.TrimRight(h.deps.Issuer, "/") + "/saml" }
+
+// ssoURL returns the absolute SingleSignOnService location for metadata.
+func (h *Handlers) ssoURL() string {
+	if h.deps.SSOURL != "" {
+		return h.deps.SSOURL
+	}
+	return strings.TrimRight(h.deps.Issuer, "/") + sso.PathSAMLSSO
+}
+
+// loginPath returns where /saml/sso redirects to authenticate.
+func (h *Handlers) loginPath() string {
+	if h.deps.LoginPath != "" {
+		return h.deps.LoginPath
+	}
+	return "/auth/login"
+}
+
+// resolveSPClient scans the ClientStore for the registered SP whose
+// saml_sp_entity_id matches issuer. O(n) over clients — noted; a SAML SP
+// directory is small, and an index can replace this if it ever isn't. Returns
+// errNoSPMatch when none matches (the caller collapses to saml_request_invalid,
+// no SP-enumeration oracle).
+func (h *Handlers) resolveSPClient(ctx context.Context, issuer string) (*sso.Client, error) {
+	if issuer == "" {
+		return nil, errNoSPMatch
+	}
+	clients, err := h.deps.ClientStore.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range clients {
+		if c.Attributes[AttrSPEntityID] == issuer {
+			return c, nil
+		}
+	}
+	return nil, errNoSPMatch
+}
+
+// signerForClient resolves the per-tenant signing key for spClient through the
+// SAME IssuerForClient path metadata uses, returning a CACHED AssertionSigner
+// (one per signing-key kid, so metadata + every assertion embed a byte-
+// identical self-signed cert — see the signerCache field doc). It FAILS CLOSED:
+// if the issuer can't be resolved, or its TokenIssuer can't expose a stdlib
+// crypto.Signer (or it's an Ed25519 key), the error propagates and the caller
+// returns saml_assertion_failed — NEVER a fallback to a different tenant's key
+// (per-tenant key isolation, AGENTS.md §2).
+func (h *Handlers) signerForClient(spClient *sso.Client) (*AssertionSigner, error) {
+	_, issuer, err := h.deps.IssuerForClient(spClient)
+	if err != nil {
+		return nil, err
+	}
+	cs, ok := issuer.(cryptoSignerIssuer)
+	if !ok {
+		return nil, ErrUnsupportedSigningKey
+	}
+	signer, pub, kid := cs.CryptoSigner()
+
+	// Cache hit: reuse the existing signer (and its already-built cert) for this
+	// key. The kid is a stable per-key fingerprint, so two clients in the same
+	// tenant (sharing a key) get the same cached signer, and a rotation (new
+	// kid) gets a fresh one.
+	if kid != "" {
+		h.signerMu.RLock()
+		cached := h.signerCache[kid]
+		h.signerMu.RUnlock()
+		if cached != nil {
+			return cached, nil
+		}
+	}
+
+	as, err := NewAssertionSigner(signer, pub, kid, h.entityID())
+	if err != nil {
+		return nil, err
+	}
+	if kid != "" {
+		h.signerMu.Lock()
+		// Re-check under the write lock (another goroutine may have populated
+		// it); first writer wins so the cert stays stable.
+		if existing := h.signerCache[kid]; existing != nil {
+			as = existing
+		} else {
+			h.signerCache[kid] = as
+		}
+		h.signerMu.Unlock()
+	}
+	return as, nil
+}
+
+// acsAllowed reports whether acsURL is in the SP client's registered ACS
+// allowlist (AttrSPACSURLs, pipe-delimited). An empty allowlist denies ALL —
+// a SAML SP MUST register at least one ACS, so a missing/empty list is a
+// misconfiguration that rejects (never an open redirect). Empty acsURL also
+// denies. Comparison is exact (no normalization — the registered value is the
+// source of truth; an SP must register the exact ACS it uses).
+func acsAllowed(spClient *sso.Client, acsURL string) bool {
+	if acsURL == "" {
+		return false
+	}
+	raw := spClient.Attributes[AttrSPACSURLs]
+	if raw == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(raw, acsURLDelimiter) {
+		if strings.TrimSpace(candidate) == acsURL {
+			return true
+		}
+	}
+	return false
+}
+
+// firstACS returns the SP's first registered ACS URL (used when an AuthnRequest
+// omits AssertionConsumerServiceURL — the SP delegates the choice to its
+// registered default). Empty when the SP registered none.
+func firstACS(spClient *sso.Client) string {
+	raw := spClient.Attributes[AttrSPACSURLs]
+	for _, candidate := range strings.Split(raw, acsURLDelimiter) {
+		if v := strings.TrimSpace(candidate); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// noStore stamps the credential-endpoint cache headers (RFC 6749 §5.1) on every
+// path of /saml/sso + /saml/sso/finish, BEFORE any branch — a cached cross-user
+// SAML response (success or error) would be catastrophic.
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+}
+
+// writeError emits ONLY {"error":<code>} as JSON (oracle-safe: no cause
+// detail). Used for the IdP's request/assertion failure paths.
+func writeError(w http.ResponseWriter, status int, code string) {
+	w.Header().Set(sso.HeaderContentType, sso.ContentTypeJSON)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{sso.KeyError: code})
+}
+
+// parseAuthnRequest decodes + XXE-validates + unmarshals a wire SAMLRequest
+// into a crewjam AuthnRequest. redirectBinding selects raw-DEFLATE (GET) vs
+// plain base64 (POST). Every failure returns errRequestInvalid (collapsed).
+func parseAuthnRequest(samlRequest string, redirectBinding bool) (*saml.AuthnRequest, []byte, error) {
+	raw, err := decodeAuthnRequest(samlRequest, redirectBinding)
+	if err != nil {
+		return nil, nil, errRequestInvalid
+	}
+	// XXE / entity-expansion / round-trip safety BEFORE unmarshal (the same
+	// validator crewjam runs).
+	if err := validateXMLRoundTrip(raw); err != nil {
+		return nil, nil, errRequestInvalid
+	}
+	var req saml.AuthnRequest
+	if err := xmlUnmarshalStrict(raw, &req); err != nil {
+		return nil, nil, errRequestInvalid
+	}
+	return &req, raw, nil
+}

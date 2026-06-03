@@ -258,9 +258,18 @@ const (
 	// distinct assertion-validation failure causes onto the single
 	// ErrSAMLAssertionInvalid to avoid an oracle (same hardening as the
 	// OAuth single-use paths, AGENTS.md §2).
+	//
+	// ErrSAMLAssertionFailed is the IdP-side INTERNAL failure (500): the
+	// server could not MINT/sign an assertion — e.g. the per-tenant signing
+	// key can't drive XML-DSig (an Ed25519 issuer; goxmldsig has no EdDSA
+	// method) or the signing operation errored. It is DISTINCT from
+	// ErrSAMLRequestInvalid (a 400 client/request fault) so an SP can tell
+	// "your request was bad" from "the IdP is misconfigured", and the IdP
+	// FAILS CLOSED on it (never falls back to another tenant's key).
 	ErrSAMLAssertionInvalid = "saml_assertion_invalid"
 	ErrSAMLRequestInvalid   = "saml_request_invalid"
 	ErrSAMLNotConfigured    = "saml_not_configured"
+	ErrSAMLAssertionFailed  = "saml_assertion_failed"
 
 	// MFA orchestration. ErrMFARequired is the pending status returned
 	// by /auth/login when the spi.RiskScorer decided RequireMFA and a

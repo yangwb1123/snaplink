@@ -176,6 +176,7 @@ const ErrRiskDenied = core.ErrRiskDenied
 const ErrSAMLAssertionInvalid = core.ErrSAMLAssertionInvalid
 const ErrSAMLRequestInvalid = core.ErrSAMLRequestInvalid
 const ErrSAMLNotConfigured = core.ErrSAMLNotConfigured
+const ErrSAMLAssertionFailed = core.ErrSAMLAssertionFailed
 const ErrSendFailed = core.ErrSendFailed
 const ErrServerMisconfigured = core.ErrServerMisconfigured
 const ErrSessionIDOrBearerRequired = core.ErrSessionIDOrBearerRequired

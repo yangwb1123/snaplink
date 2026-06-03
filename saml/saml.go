@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/saml/idp"
 	"github.com/snaplink/sso/saml/sp"
 	"github.com/snaplink/sso/spi"
 )
@@ -33,16 +36,23 @@ type Deps struct {
 	UserProvider   sso.UserProvider
 
 	// IssuerForClient is the server's per-tenant access-token issuer selector
-	// (tenant -> client strategy -> default), carried for parity with cmd's
-	// SAMLServerDeps. The SP side authenticates + creates a session; it does
-	// NOT mint an access token in this build (the blueprint's ACS returns a
-	// session id), so this is reserved for a token-minting extension and may be
-	// nil.
+	// (tenant -> client strategy -> default). The SP side does NOT use it (it
+	// returns a session id). The IdP side REQUIRES it: it resolves the SP
+	// client's per-tenant signing key through this path (then borrows the key
+	// via the issuer's CryptoSigner() seam) so an assertion is signed with the
+	// SAME key published in that tenant's metadata. REQUIRED when IdP is
+	// enabled; may be nil for an SP-only build.
 	IssuerForClient func(c *sso.Client) (string, sso.TokenIssuer, error)
 
-	// Issuer is the configured AS issuer URL (carried for parity; unused by the
-	// session-only ACS).
+	// Issuer is the configured AS issuer URL. REQUIRED when IdP is enabled (the
+	// IdP entity id is Issuer + "/saml", stamped into every assertion Issuer +
+	// the published metadata). Unused by the session-only SP ACS.
 	Issuer string
+
+	// AuditRecorder is the shared audit pipeline. The IdP records a
+	// login_success (provider "saml-idp") on it per issued assertion. Nil ⇒ the
+	// IdP issues without an audit event (the SP side never used it).
+	AuditRecorder *audit.Recorder
 
 	// Logger is the server logger. Nil ⇒ a no-op logger is used.
 	Logger spi.Logger
@@ -52,8 +62,45 @@ type Deps struct {
 // yields one SPAuthenticator; the ACS handler dispatches a POSTed assertion to
 // the right authenticator by a provider hint in RelayState (or the single SP
 // when only one is configured).
+//
+// IdP holds the IdP-side (this server ISSUES assertions to downstream SPs)
+// config. When IdP.Enabled is false (the default), Build produces ONLY the SP
+// side — byte-identical to the Phase B behavior. SP-CLIENT registration for the
+// IdP lives in sso.Client.Attributes (the idp.Attr* keys), NOT here — the IdP
+// reads the registered client store at request time:
+//
+//	saml_sp_entity_id           — the SP's SAML entity id (AuthnRequest Issuer)
+//	saml_sp_acs_urls            — pipe-delimited registered ACS allowlist
+//	saml_sp_signing_cert        — PEM cert for verifying a signed AuthnRequest
+//	saml_sp_require_signed_request — "true" to require a signed AuthnRequest
+//	saml_sp_nameid_format       — per-SP NameID format override
 type Config struct {
 	SPs []sp.SPConfig
+	IdP IdPConfig
+}
+
+// IdPConfig is the IdP-side configuration. The SP-client config (entity id, ACS
+// allowlist, signing cert) is per-client and lives on sso.Client.Attributes;
+// this struct holds only the IdP-wide knobs.
+type IdPConfig struct {
+	// Enabled gates the three IdP handlers (/saml/metadata, /saml/sso,
+	// /saml/sso/finish). False ⇒ Build appends NO IdP handlers (SP-only,
+	// byte-identical to Phase B).
+	Enabled bool
+
+	// MetadataTTL is the Cache-Control max-age on /saml/metadata. <=0 ⇒ 1h.
+	MetadataTTL time.Duration
+
+	// AssertionTTL is the minted-assertion validity window. <=0 ⇒ 5m.
+	AssertionTTL time.Duration
+
+	// LoginPath is where /saml/sso redirects to authenticate. Empty ⇒
+	// "/auth/login".
+	LoginPath string
+
+	// SSOURL is the absolute public URL of /saml/sso, published in metadata.
+	// Empty ⇒ Issuer + "/saml/sso".
+	SSOURL string
 }
 
 // HandlerSpec is one HTTP route saml.Build contributes. It mirrors cmd's
@@ -75,26 +122,32 @@ type BuildResult struct {
 	Handlers       []HandlerSpec
 }
 
-// Build constructs an SPAuthenticator per SPConfig and the single
-// POST /auth/saml/callback ACS handler, returning them as importable root-typed
+// Build constructs the SP side (an SPAuthenticator per SPConfig + the
+// POST /auth/saml/callback ACS handler) and, when cfg.IdP.Enabled, the IdP side
+// (the three /saml/{metadata,sso,sso/finish} handlers that ISSUE signed
+// assertions to downstream SPs), returning them as importable root-typed
 // results for the operator to wire. A construction error (bad SP config,
 // unresolved IdP trust anchor, missing required dep) fails the operator's boot
 // closed.
+//
+// At least one side MUST be requested: either ≥1 SP config, or IdP enabled.
 func Build(deps Deps, cfg Config) (*BuildResult, error) {
 	if deps.SessionManager == nil {
-		return nil, errors.New("saml: SessionManager required (the ACS handler creates the session)")
+		return nil, errors.New("saml: SessionManager required (the SP ACS creates the session; the IdP validates it)")
 	}
 	if deps.UserProvider == nil {
-		return nil, errors.New("saml: UserProvider required (the ACS handler upserts the user)")
+		return nil, errors.New("saml: UserProvider required (the SP ACS upserts the user; the IdP reads it)")
 	}
-	if len(cfg.SPs) == 0 {
-		return nil, errors.New("saml: at least one SP config required")
+	if len(cfg.SPs) == 0 && !cfg.IdP.Enabled {
+		return nil, errors.New("saml: nothing to build — set at least one SP config or enable the IdP")
 	}
 
 	logger := deps.Logger
 	if logger == nil {
 		logger = spi.NopLogger{}
 	}
+
+	handlers := make([]HandlerSpec, 0, 4)
 
 	authnsByName := make(map[string]*sp.SPAuthenticator, len(cfg.SPs))
 	authns := make([]sso.Authenticator, 0, len(cfg.SPs))
@@ -110,20 +163,52 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 		authns = append(authns, a)
 	}
 
-	acs := &acsHandler{
-		authnsByName: authnsByName,
-		sessions:     deps.SessionManager,
-		users:        deps.UserProvider,
-		logger:       logger,
+	// SP-side ACS handler is mounted whenever any SP is configured.
+	if len(cfg.SPs) > 0 {
+		acs := &acsHandler{
+			authnsByName: authnsByName,
+			sessions:     deps.SessionManager,
+			users:        deps.UserProvider,
+			logger:       logger,
+		}
+		handlers = append(handlers, HandlerSpec{
+			Method:  http.MethodPost,
+			Path:    sso.PathSAMLSSOCallback, // "/auth/saml/callback"
+			Handler: acs.serve,
+		})
+	}
+
+	// IdP side: append the three issuing handlers when enabled.
+	if cfg.IdP.Enabled {
+		idpHandlers, err := idp.NewHandlers(idp.Deps{
+			ClientStore:     deps.ClientStore,
+			SessionManager:  deps.SessionManager,
+			UserProvider:    deps.UserProvider,
+			IssuerForClient: deps.IssuerForClient,
+			Issuer:          deps.Issuer,
+			LoginPath:       cfg.IdP.LoginPath,
+			SSOURL:          cfg.IdP.SSOURL,
+			MetadataTTL:     cfg.IdP.MetadataTTL,
+			AssertionTTL:    cfg.IdP.AssertionTTL,
+			AuditRecorder:   deps.AuditRecorder,
+			Logger:          logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("saml: build IdP: %w", err)
+		}
+		handlers = append(handlers,
+			HandlerSpec{Method: http.MethodGet, Path: sso.PathSAMLMetadata, Handler: idpHandlers.Metadata},
+			// /saml/sso accepts both bindings: HTTP-Redirect (GET) +
+			// HTTP-POST (POST) AuthnRequests.
+			HandlerSpec{Method: http.MethodGet, Path: sso.PathSAMLSSO, Handler: idpHandlers.SSO},
+			HandlerSpec{Method: http.MethodPost, Path: sso.PathSAMLSSO, Handler: idpHandlers.SSO},
+			HandlerSpec{Method: http.MethodPost, Path: sso.PathSAMLSSO + "/finish", Handler: idpHandlers.Finish},
+		)
 	}
 
 	return &BuildResult{
 		Authenticators: authns,
-		Handlers: []HandlerSpec{{
-			Method:  http.MethodPost,
-			Path:    sso.PathSAMLSSOCallback, // "/auth/saml/callback"
-			Handler: acs.serve,
-		}},
+		Handlers:       handlers,
 	}, nil
 }
 

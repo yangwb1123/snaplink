@@ -112,4 +112,72 @@
 //     JTIReplayStore — a different protocol), pruned by assertion expiry.
 //   - The ACS handler stamps no-store cache headers and creates the session
 //     through the SessionManager (not a raw store).
+//
+// # IdP side (Phase C): this server ISSUES signed assertions
+//
+// With cfg.IdP.Enabled, saml.Build ALSO appends the three IdP handlers, so this
+// server acts as a SAML Identity Provider to downstream SPs:
+//
+//   - GET  /saml/metadata    — the IdP EntityDescriptor. The signing
+//     KeyDescriptor wraps a self-signed cert over the per-tenant JWKS public
+//     key (resolved through deps.IssuerForClient — the SAME key that signs
+//     assertions, so an SP validates against the metadata it fetched). Public +
+//     cacheable (Cache-Control: public, max-age + ETag + If-None-Match → 304).
+//     Per-tenant via ?client_id= / ?sp_entity_id=; default issuer otherwise.
+//   - GET/POST /saml/sso      — the SP-initiated AuthnRequest receiver. Decodes
+//     the SAMLRequest, resolves the SP by its registered saml_sp_entity_id,
+//     ENFORCES the ACS-URL allowlist (saml_sp_acs_urls — assertion-exfil
+//     defense), optionally verifies a signed AuthnRequest, stores a single-use
+//     pending request, and redirects to /auth/login to authenticate.
+//   - POST /saml/sso/finish   — resumes after login: consumes the pending
+//     request (single-use, oracle-safe), validates the live session, resolves
+//     the SP's per-tenant signing key (FAIL-CLOSED — no cross-tenant fallback),
+//     builds + enveloped-XML-DSig-signs the ASSERTION, and returns an
+//     auto-POST form to the REGISTERED ACS.
+//
+// SP-client registration for the IdP is per-client config on
+// sso.Client.Attributes (read at request time, never request input):
+//
+//	saml_sp_entity_id              — the SP's SAML entity id (AuthnRequest Issuer)
+//	saml_sp_acs_urls               — pipe-delimited registered ACS allowlist
+//	saml_sp_require_signed_request — "true" to require a signed AuthnRequest
+//	saml_sp_signing_cert           — PEM cert verifying that signed AuthnRequest
+//	saml_sp_nameid_format          — per-SP NameID format override
+//
+// The IdP signs with an RSA (RS256/PS256) or ECDSA (ES256) issuer key:
+// goxmldsig has NO Ed25519/EdDSA XML signature method, so an Ed25519 signing
+// key yields saml_assertion_failed (fail loud). The ECDSA signature is ASN.1
+// DER (NOT raw R‖S) because goxmldsig v1.4.0 signs and validates ECDSA via the
+// stdlib (x509.CheckSignature expects DER) — emitting R‖S would make crewjam's
+// own validation reject the assertion.
+//
+// Operator-fork wiring (adds the IdP to the SP example above):
+//
+//	res, err := samlmod.Build(samlmod.Deps{
+//		ClientStore:     d.ClientStore,
+//		SessionManager:  d.SessionManager,
+//		UserProvider:    d.UserProvider,
+//		IssuerForClient: d.IssuerForClient, // REQUIRED for the IdP (per-tenant signing)
+//		Issuer:          d.Issuer,          // REQUIRED for the IdP (entity id = Issuer + "/saml")
+//		AuditRecorder:   d.AuditRecorder,   // IdP records login_success (provider "saml-idp")
+//		Logger:          d.Logger,
+//	}, samlmod.Config{
+//		SPs: []sp.SPConfig{ /* ... optional SP federation ... */ },
+//		IdP: samlmod.IdPConfig{
+//			Enabled:      true,
+//			AssertionTTL: 5 * time.Minute,
+//			// LoginPath / SSOURL / MetadataTTL default sensibly.
+//		},
+//	})
+//	// res.Handlers now carries the SP ACS (if any SPs) PLUS the three IdP
+//	// routes; map them onto main.SAMLHandlerSet exactly as in the SP example.
+//
+// A downstream SP is registered as an ordinary client with the saml_sp_*
+// Attributes set, e.g.:
+//
+//	clients:
+//	  - id: acme-sp
+//	    attributes:
+//	      saml_sp_entity_id: "https://acme.example.com/saml/metadata"
+//	      saml_sp_acs_urls:  "https://acme.example.com/saml/acs"
 package saml
