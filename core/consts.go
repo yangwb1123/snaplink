@@ -124,10 +124,15 @@ const (
 	KeyTokenStrategy    = "token_strategy"
 	KeyRecommendedLang  = "recommended_language"
 	KeyCountryCode      = "country_code"
-	KeyCode             = "code"
-	KeyState            = "state"
-	KeyRedirectURI      = "redirect_uri"
-	KeyIssuedTokenType  = "issued_token_type" // RFC 8693 token-exchange response key
+	// KeyServingRegion names the region deployment that served the login
+	// response (multi-region / data-residency layer). DISTINCT from
+	// geo's "region" (an ISO 3166-2 client-IP subdivision) — this is WHICH
+	// deployment served, not WHERE the client is.
+	KeyServingRegion   = "serving_region"
+	KeyCode            = "code"
+	KeyState           = "state"
+	KeyRedirectURI     = "redirect_uri"
+	KeyIssuedTokenType = "issued_token_type" // RFC 8693 token-exchange response key
 
 	// RFC 7662 introspection response keys.
 	KeyActive    = "active"
@@ -210,11 +215,21 @@ const (
 	ErrAuthenticatorNotAllowed   = "authenticator_not_allowed_for_client"
 	ErrInactiveClient            = "inactive_client"
 	ErrTenantMismatch            = "tenant_mismatch"
-	ErrNoTokenStrategy           = "no_token_strategy"
-	ErrNetPolicyNotConfigured    = "netpolicy_not_configured"
-	ErrNetPolicyNotFound         = "netpolicy_not_found"
-	ErrRiskDenied                = "risk_denied"
-	ErrPayloadTooLarge           = "payload_too_large"
+	// Data-residency governance signals (multi-region layer). Like
+	// tenant_mismatch (the 403 that reveals a client's tenant binding),
+	// these are governance signals, NOT credential oracles: they reveal a
+	// tenant's data-residency binding, which the operator already controls,
+	// so they carry no anti-enumeration concern. region_not_allowed = the
+	// serving region is outside the tenant's AllowedRegions;
+	// residency_violation = a write would land outside the residency
+	// boundary. Enforcement that returns these is a later layer.
+	ErrRegionNotAllowed       = "region_not_allowed"
+	ErrResidencyViolation     = "residency_violation"
+	ErrNoTokenStrategy        = "no_token_strategy"
+	ErrNetPolicyNotConfigured = "netpolicy_not_configured"
+	ErrNetPolicyNotFound      = "netpolicy_not_found"
+	ErrRiskDenied             = "risk_denied"
+	ErrPayloadTooLarge        = "payload_too_large"
 
 	// MFA orchestration. ErrMFARequired is the pending status returned
 	// by /auth/login when the spi.RiskScorer decided RequireMFA and a

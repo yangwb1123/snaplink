@@ -32,6 +32,8 @@ exact emission site.
 | `invalid_client_secret`               | 401  | Token endpoint received a bad client secret                        | Rotate or correct the secret               |
 | `inactive_client`                     | 403  | Client exists but `Active: false` in config                        | Operator re-enables the client             |
 | `tenant_mismatch`                     | 403  | Client is bound to a tenant the request didn't resolve to          | Use the right hostname / tenant context    |
+| `region_not_allowed`                  | 403  | Serving region is outside the tenant's data-residency `AllowedRegions` | Route the request to an allowed region |
+| `residency_violation`                 | 403  | Operation would place tenant data outside its residency boundary   | Use a region within the tenant's policy    |
 | `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
 | `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
