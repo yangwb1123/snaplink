@@ -169,12 +169,25 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 	if interval <= 0 {
 		interval = DefaultCIBAPollInterval
 	}
+	// Scope authorization at backchannel-auth REQUEST time (not at /token
+	// redemption): the client is fully authenticated here and
+	// AllowedScopes is in scope, so an unapproved-scope CIBA request is
+	// rejected up front in this flow's own shape. The captured
+	// CIBARequest.Scopes is the GRANTED set (validated, or defaulted to
+	// the allowlist when empty), so the eventual token carries its
+	// entitled scope.
+	grantedScopes, err := GrantedScopes(SplitScope(req.Scope), client)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
+		return
+	}
+
 	now := time.Now()
 	authReqID, err := d.CIBAStore().Issue(ctx.Request().Context(), &CIBARequest{
 		ClientID:                req.ClientID,
 		SubjectID:               subjectID,
 		Provider:                provider,
-		Scopes:                  SplitScope(req.Scope),
+		Scopes:                  grantedScopes,
 		ACRValues:               req.ACRValues,
 		BindingMessage:          req.BindingMessage,
 		Resources:               req.Resource,

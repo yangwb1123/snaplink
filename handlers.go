@@ -429,6 +429,20 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		}
 		scopes = requested
 	}
+	// Additionally bound the exchanged scope to the DOWNSTREAM client's
+	// AllowedScopes (RFC 6749 §3.3) — intersection semantics: the result
+	// must be ⊆ subject_token scopes (checked above) AND ⊆ the requesting
+	// client's allowlist. Without this an exchange could mint a scope the
+	// requesting client is not entitled to merely because the inbound
+	// subject_token carried it. The client is authenticated above, so the
+	// gate is not a pre-auth probe; empty allowlist = unrestricted (the
+	// subject-subset check alone governs, byte-identical to before).
+	boundScopes, exScopeErr := oauth.GrantedScopes(scopes, client)
+	if exScopeErr != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+		return
+	}
+	scopes = boundScopes
 
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
@@ -1032,7 +1046,18 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 	if interval <= 0 {
 		interval = DefaultDevicePollMin
 	}
-	scopes := splitScope(req.Scope)
+	// Scope authorization at device-authorization REQUEST time (not at
+	// redemption): the client is fully authenticated here and
+	// AllowedScopes is in scope, so an unapproved-scope device request is
+	// rejected up front in the device flow's own shape — no double-check
+	// at /token. The captured DeviceCode.Scopes is the GRANTED set
+	// (validated, or defaulted to the client's allowlist when empty), so
+	// the eventual token carries its entitled scope.
+	scopes, err := oauth.GrantedScopes(splitScope(req.Scope), client)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+		return
+	}
 
 	// Store the normalized (dashless, uppercase) form as the lookup
 	// key so /device/verify accepts the user_code with OR without the

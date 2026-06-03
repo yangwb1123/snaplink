@@ -274,6 +274,18 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		if s.residencyGateLogin(ctx, c.ID, "silent_renewal", c.TenantID) {
 			return
 		}
+		// Scope authorization for the prompt=none silent-renewal mint —
+		// the same RFC 6749 §3.3 gate as the interactive finishLogin path,
+		// applied here because silent renewal mints a fresh access (and
+		// id) token from THIS request's `scope` param without funneling
+		// through finishLogin. Empty allowlist = unrestricted (unchanged).
+		srGranted, srScopeErr := oauth.GrantedScopes(req.Scope, c)
+		if srScopeErr != nil {
+			s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", ErrInvalidScope)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+			return
+		}
+		req.Scope = srGranted
 		if s.handleSilentRenewal(ctx, prompts, oidc.SilentRenewalRequest{
 			ClientID:             req.ClientID,
 			Scope:                req.Scope,
@@ -661,6 +673,26 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
 		return
 	}
+
+	// Scope authorization (RFC 6749 §3.3) — the access-control gate on
+	// what the issued token may carry. Run here, AFTER authentication and
+	// the tenant/residency gates, so it can never be a pre-auth probe and
+	// covers BOTH the authorization_code branch (the granted set is baked
+	// into the stored code) and the direct-mint branch below. Mirrors the
+	// tenant_mismatch / residency gates: record the failure + emit the
+	// authz error body carrying the RFC 9207 iss. req.Scope is replaced
+	// with the GRANTED set (validated, or defaulted to the client's
+	// AllowedScopes when the request named no scope) so every downstream
+	// consumer — auth code, direct mint, refresh, id_token gate — sees
+	// the authorized scope. Empty allowlist = unrestricted = req.Scope
+	// passes through unchanged (byte-identical for clients without one).
+	granted, scopeErr := oauth.GrantedScopes(req.Scope, client)
+	if scopeErr != nil {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidScope)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+		return
+	}
+	req.Scope = granted
 
 	// OAuth 2.0 authorization_code branch: instead of minting a token
 	// here, persist a short-lived code bound to (user, client, redirect_uri)
@@ -1669,6 +1701,18 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
 			return
 		}
+		// Scope authorization (RFC 6749 §3.3). The client is already
+		// authenticated above (HTTP Basic > body creds), so this gate is
+		// not a pre-auth probe. Reject an out-of-allowlist scope with a
+		// 400 invalid_scope (/token shape, not the authz body); default
+		// an empty request to the client's AllowedScopes so the token
+		// carries its entitled scope. Empty allowlist = unrestricted
+		// (byte-identical to the old pass-through).
+		grantCCScopes, ccScopeErr := oauth.GrantedScopes(scopes, client)
+		if ccScopeErr != nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+			return
+		}
 		// client_credentials: subject IS the client, so ClientID =
 		// Sub. No end-user auth event, hence no AuthTime/AMR.
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
@@ -1676,7 +1720,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			TTL:                 client.AccessTokenTTL,
 			ConfirmationJKT:     dpopJKT,
 			ConfirmationX5TS256: mtlsX5T,
-		}, scopes)
+		}, grantCCScopes)
 		if err != nil {
 			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
