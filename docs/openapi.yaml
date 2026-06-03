@@ -1075,6 +1075,20 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Data-residency denial (`region_not_allowed`): the bearer is VALID,
+            but the token's tenant constrains its serving regions and this
+            region is outside the allowed set, so its tenant data is not served
+            here. This is a policy denial, distinct from a `401 invalid_token`
+            (the token is not rejected as a credential). The access-side
+            counterpart to the `/auth/login` write-gate; only the
+            allowed-regions check fires on reads, so `residency_violation`
+            (write-only) cannot appear here. Carries `Cache-Control: no-store`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Token valid but subject id has no User record.
           content:

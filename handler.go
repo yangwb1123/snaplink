@@ -1765,6 +1765,22 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		return
 	}
 
+	// Data-residency READ-gate (the access-side counterpart to the login
+	// write-gate). The bearer is now fully validated AND any DPoP/mTLS
+	// sender-constraint enforced, so this runs ONLY for a holder of a valid
+	// token (no unauthenticated oracle). When the token's tenant constrains
+	// its serving regions and THIS region isn't allowed, deny with a 403
+	// carrying the residency wire code — NOT a 401 invalid_token: the token
+	// IS valid, this is a policy denial, a distinct condition that must not
+	// corrupt the invalid_token bearer path. tokenNoStoreHeaders already
+	// stamped at entry, so the 403 carries no-store too. Zero-cost +
+	// byte-identical when residency is disabled (residencyDeniedForAccess
+	// returns before any tenant lookup).
+	if code, denied := s.residencyDeniedForAccess(ctx, claims); denied {
+		ctx.JSON(http.StatusForbidden, errorBody(code))
+		return
+	}
+
 	// OIDC §8 pairwise: the inbound claims.Subject may be the per-
 	// sector opaque identifier rather than a local UserProvider key.
 	// Resolve to the local sub before the GetByID — but keep
@@ -1893,6 +1909,18 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
 		s.logger.Error("mesh ext_authz mtls bearer verification failed", "error", err, "subject", claims.Subject)
 		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
+		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	// Data-residency READ-gate. Same decision as /userinfo, but the mesh
+	// contract is binary ALLOW/DENY, so a residency-denied request takes the
+	// existing DENY path: a body-less 401, indistinguishable from an
+	// invalid-token DENY (oracle-safe — no detail leaks, no X-Auth-* stamped
+	// on a denied request). Runs only AFTER the bearer + sender-constraint
+	// are validated. Zero-cost + byte-identical when residency is disabled.
+	if _, denied := s.residencyDeniedForAccess(ctx, claims); denied {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Access denied")
 		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
 		return
 	}

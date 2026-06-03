@@ -2249,17 +2249,29 @@ func (c *residencyCache) invalidate(tenantID string) {
 // option keeps tenantResidencyCache nil and behaves byte-identically to a
 // pre-residency build.
 //
-// Coverage: checkTenantResidency is the WRITE-side residency gate, dominating
-// every token-MINTING exit of the interactive-login flow — the credential
-// path's /auth/login direct/code mint, the prompt=none silent-renewal branch,
-// and the /auth/mfa second leg — all via residencyGateLogin (handleLogin +
-// handleMFAComplete). The /token grant-side issuance (authorization_code
-// exchange, refresh rotation, token-exchange, CIBA, device) and the
-// resource-server READ side (validateAnyToken: userinfo / introspect / mesh
-// ext_authz / admin) are a documented follow-up: both take a bare
-// context.Context with no HandlerContext, so the serving region is not in
-// scope there without threading it through every grant + validate call site.
-// The interactive-login write-gate is the primary control.
+// Coverage: checkTenantResidency backs BOTH a WRITE-side and a READ-side gate.
+//
+//   - WRITE side (residencyGateLogin): every token-MINTING exit of the
+//     interactive-login flow — the credential path's /auth/login direct/code
+//     mint, the prompt=none silent-renewal branch, and the /auth/mfa second
+//     leg (handleLogin + handleMFAComplete). isWrite=true.
+//   - READ side (residencyDeniedForAccess): the resource-ACCESS bearer
+//     endpoints that serve tenant data — /userinfo (403 region_not_allowed)
+//     and the mesh ext_authz endpoint (oracle-safe DENY) — so a still-valid
+//     token for a region-constrained tenant cannot be USED from a disallowed
+//     serving region. isWrite=false, so only the AllowedRegions check fires.
+//     These HTTP handlers have the HandlerContext (hence the serving region)
+//     in scope.
+//
+// Still uncovered (documented follow-up): the /token grant-side issuance
+// (authorization_code exchange, refresh rotation, token-exchange, CIBA,
+// device) takes a bare context.Context with no HandlerContext, so the serving
+// region is not in scope there without threading it through every grant call
+// site. /token/introspect is deliberately NOT gated: it returns a token-status
+// answer to an authenticated RS client, not the data subject's tenant data,
+// and the calling RS's region is not the data-serving region — its own
+// {"active":false} anti-enumeration contract also makes a residency overlay a
+// poor fit. The interactive-login write-gate remains the primary control.
 func WithTenantResidencyCheck(ttl time.Duration) Option {
 	return func(s *Server) {
 		if ttl <= 0 {
@@ -2398,6 +2410,70 @@ func (s *Server) residencyGateLogin(ctx HandlerContext, clientID, provider, tena
 	s.recordLoginFailure(ctx, clientID, provider, code)
 	ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, code))
 	return true
+}
+
+// residencyDeniedForAccess is the data-residency READ-gate shared by the
+// resource-ACCESS bearer endpoints that serve tenant data (/userinfo + the
+// mesh ext_authz endpoint). It completes the read-side of data residency:
+// the login write-gate (residencyGateLogin) already blocks ISSUANCE in a
+// disallowed region; this rejects a still-valid token when it is USED from a
+// serving region the token's tenant doesn't allow.
+//
+// It returns the public wire code (region_not_allowed) when access must be
+// DENIED, or ("", false) when access may proceed. The caller — NOT this
+// helper — writes the denial, because the two endpoints have DIFFERENT
+// denial shapes: /userinfo answers a 403 JSON body carrying the code (the
+// token is valid, so NOT a 401 invalid_token bearer challenge — a policy
+// denial is a distinct condition), while mesh ext_authz answers a body-less
+// 401 DENY (the mesh contract is binary ALLOW/DENY; a residency-denied
+// request is just another DENY, kept indistinguishable from an invalid-token
+// DENY so no detail leaks). Centralizing the DECISION keeps both endpoints
+// enforcing residency identically while each owns its wire shape.
+//
+// ZERO-COST WHEN DISABLED: the tenantResidencyEnabled check is FIRST, so a
+// non-residency deployment returns before touching the HandlerContext, the
+// serving region, or — crucially — the ClientStore. The client/tenant lookup
+// (claims.ClientID -> Client.TenantID, the only path to the tenant since
+// TokenClaims carries no tenant) is reached ONLY when residency is enabled
+// AND the region middleware stashed a non-empty serving region. That keeps
+// the hot bearer path byte-identical for the overwhelmingly common
+// non-residency case (no extra store round-trip, no allocation).
+//
+// ORACLE-SAFE: this runs ONLY after the bearer is fully validated (token
+// valid + DPoP/mTLS sender-constraint already enforced by the caller), so an
+// unauthenticated caller can never reach it — it cannot be used to enumerate
+// tenants or probe residency bindings without a valid token. region_not_allowed
+// is a governance signal (like tenant_mismatch / tenant suspension), not a
+// credential oracle. isWrite=false, so only the AllowedRegions check can fire
+// here (ErrResidencyViolation is write-only); a read in a non-home but
+// allowed region is permitted.
+//
+// FAIL-OPEN: checkTenantResidency returns nil on a tenant-store outage, so an
+// availability blip never 4xx's tenant-bound reads.
+func (s *Server) residencyDeniedForAccess(hctx HandlerContext, claims *TokenClaims) (code string, denied bool) {
+	// Gate the whole block — including the ClientStore lookup — on the
+	// engine being wired, so a non-residency deployment pays nothing.
+	if !s.tenantResidencyEnabled {
+		return "", false
+	}
+	servingRegion, ok := region.FromHandlerContext(hctx)
+	if !ok || servingRegion == "" {
+		return "", false
+	}
+	if s.clientStore == nil || claims == nil || claims.ClientID == "" {
+		return "", false
+	}
+	// Resolve the token's tenant. TokenClaims carries no tenant, so the
+	// only binding is claims.ClientID -> Client.TenantID. An unknown or
+	// tenant-unbound client has nothing to gate on (unconstrained).
+	client, err := s.clientStore.Get(hctx.Request().Context(), claims.ClientID)
+	if err != nil || client == nil || client.TenantID == "" {
+		return "", false
+	}
+	if rerr := s.checkTenantResidency(hctx.Request().Context(), client.TenantID, servingRegion, false); rerr != nil {
+		return s.mapResidencyError(rerr), true
+	}
+	return "", false
 }
 
 // residencyPolicyFromTenant maps a tenant's plain-string residency fields
