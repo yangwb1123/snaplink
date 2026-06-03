@@ -142,7 +142,10 @@
 //	saml_sp_acs_urls               — pipe-delimited registered ACS allowlist
 //	saml_sp_require_signed_request — "true" to require a signed AuthnRequest
 //	saml_sp_signing_cert           — PEM cert verifying that signed AuthnRequest
+//	                                 AND a SP-initiated LogoutRequest (SLO)
 //	saml_sp_nameid_format          — per-SP NameID format override
+//	saml_sp_slo_url                — pipe-delimited registered SLO allowlist (the
+//	                                 LogoutResponse goes ONLY here; https)
 //
 // The IdP signs with an RSA (RS256/PS256) or ECDSA (ES256) issuer key:
 // goxmldsig has NO Ed25519/EdDSA XML signature method, so an Ed25519 signing
@@ -180,4 +183,68 @@
 //	    attributes:
 //	      saml_sp_entity_id: "https://acme.example.com/saml/metadata"
 //	      saml_sp_acs_urls:  "https://acme.example.com/saml/acs"
+//	      saml_sp_signing_cert: |          # MANDATORY for SP-initiated SLO
+//	        -----BEGIN CERTIFICATE----- ...
+//	      saml_sp_slo_url:   "https://acme.example.com/saml/slo"
+//
+// # Single Logout (SLO)
+//
+// SLO completes the SAML lifecycle: a logout at one party terminates the
+// federated session everywhere. saml.Build mounts BOTH directions.
+//
+// IdP side — this server logs out downstream SPs (mounted with the IdP, at
+// PathSAMLSLO = /saml/slo, GET+POST):
+//
+//   - A downstream SP redirects/POSTs a SIGNED LogoutRequest to /saml/slo.
+//   - The IdP resolves the SP by the LogoutRequest Issuer (registered
+//     saml_sp_entity_id) and MANDATORILY verifies the request's enveloped
+//     XML-DSig against the SP's registered saml_sp_signing_cert. A LogoutRequest
+//     is a destructive action: an unsigned or attacker-signed request is
+//     REJECTED and NO session is touched (the crux — unlike the AuthnRequest
+//     path where signing is opt-in, SLO signing is required).
+//   - It terminates ONLY the matching subject session(s) for the request's
+//     NameID (== the SSO user id this IdP minted into assertions), optionally
+//     narrowed to a SessionIndex that belongs to that subject — never a global
+//     wipe — via deps.SessionManager.
+//   - It returns a SIGNED LogoutResponse (Status Success) to the SP's REGISTERED
+//     saml_sp_slo_url (allowlist, exactly like the ACS allowlist) — never a
+//     request-supplied URL (logout-response-injection defense).
+//   - Oracle-safe: malformed / unknown-SP / missing-or-bad-signature / SLO-URL-
+//     not-registered all collapse to one saml_request_invalid; a logout of a
+//     non-existent session still returns a Success LogoutResponse, so SLO is not
+//     a session-enumeration oracle.
+//
+// IdP-INITIATED SLO fan-out (this server pushing logout to every SP a subject
+// has a session with) is DEFERRED: it needs a SAML session->SP index (the
+// analogue of the OIDC BCL subject-client index) to know which SPs to notify,
+// which the current Session model does not carry. The SP-INITIATED path above is
+// complete; the fan-out is a follow-up that adds that index — it is NOT
+// half-built here.
+//
+// SP side — this server is logged out by its UPSTREAM IdP (mounted with any SP,
+// at PathSAMLSPSLO = /auth/saml/slo, GET+POST):
+//
+//   - The upstream IdP redirects/POSTs a SIGNED LogoutRequest here.
+//   - The SPAuthenticator verifies its enveloped XML-DSig against the BOOT-
+//     PINNED IdP signing cert — the SAME trust anchor it validates assertions
+//     with, never a request-embedded cert — and checks the Issuer. An unsigned
+//     or attacker-signed request is rejected and the local session is NOT
+//     terminated.
+//   - It terminates the matching LOCAL session(s) for the NameID via
+//     deps.SessionManager (subject-scoped, never global) and returns a SIGNED
+//     LogoutResponse (302 redirect) to the IdP's SLO endpoint.
+//   - SP-initiated logout: SPAuthenticator.LogoutURL(nameID, sessionIndex,
+//     relayState) builds a SIGNED LogoutRequest redirect to the upstream IdP's
+//     SLO endpoint (the SLO analogue of LoginURL), so this server can ask the
+//     IdP to log a user out. It requires an SP signing key (SPPrivateKey) and a
+//     resolvable IdP SLO endpoint (IDPSLOURL, or one carried in the pinned IdP
+//     metadata) — without either it returns "" (no unsigned logout is ever
+//     emitted).
+//
+// SP-side SLO config (sp.SPConfig): SPSLOURL (this SP's own SLO endpoint),
+// IDPSLOURL (the upstream IdP's SLO endpoint when the pinned metadata lacks
+// one), and the existing SPPrivateKey/SPCert (SLO signing — RSA or ECDSA P-256;
+// goxmldsig has no Ed25519 method). The IdP signing cert pinned for assertions
+// is REUSED to validate inbound IdP LogoutRequests, so SLO adds no new trust
+// anchor.
 package saml

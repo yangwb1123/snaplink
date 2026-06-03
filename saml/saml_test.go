@@ -58,17 +58,32 @@ func buildTestServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, sso.Us
 	if err != nil {
 		t.Fatalf("saml.Build: %v", err)
 	}
-	if len(res.Handlers) != 1 {
-		t.Fatalf("Build produced %d handlers, want 1", len(res.Handlers))
+	// SP-only Build now mounts the ACS (POST /auth/saml/callback) PLUS the SP
+	// SLO receiver (GET+POST /auth/saml/slo) — three routes. Find the ACS by
+	// path (robust to route order) and assert the SLO routes are present.
+	var acs *samlmod.HandlerSpec
+	sloMethods := map[string]bool{}
+	for i := range res.Handlers {
+		h := &res.Handlers[i]
+		switch h.Path {
+		case sso.PathSAMLSSOCallback:
+			if h.Method == http.MethodPost {
+				acs = h
+			}
+		case sso.PathSAMLSPSLO:
+			sloMethods[h.Method] = true
+		}
 	}
-	h := res.Handlers[0]
-	if h.Method != http.MethodPost || h.Path != sso.PathSAMLSSOCallback {
-		t.Fatalf("handler = %s %s, want POST %s", h.Method, h.Path, sso.PathSAMLSSOCallback)
+	if acs == nil {
+		t.Fatalf("Build produced no POST %s handler; got %d handlers", sso.PathSAMLSSOCallback, len(res.Handlers))
+	}
+	if !sloMethods[http.MethodGet] || !sloMethods[http.MethodPost] {
+		t.Fatalf("Build did not mount GET+POST %s (got %v)", sso.PathSAMLSPSLO, sloMethods)
 	}
 	if len(res.Authenticators) != 1 || res.Authenticators[0].Name() != "test-idp" {
 		t.Fatalf("Build authenticators = %v, want one named test-idp", res.Authenticators)
 	}
-	return h.Handler, sessions, users, idp
+	return acs.Handler, sessions, users, idp
 }
 
 func TestACS_ValidAssertion_CreatesSession(t *testing.T) {

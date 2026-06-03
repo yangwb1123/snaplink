@@ -48,6 +48,16 @@ const (
 	// for this SP (e.g. emailAddress / persistent). Empty = the IdP default
 	// (emailAddress).
 	AttrSPNameIDFormat = "saml_sp_nameid_format"
+
+	// AttrSPSLOUrls is the pipe-delimited ALLOWLIST of this SP's registered
+	// Single Logout Service URLs. A LogoutResponse the IdP sends back after a
+	// SP-initiated SLO goes ONLY to a URL in this list — never a
+	// request-supplied one (logout-response-injection defense, the SLO analogue
+	// of AttrSPACSURLs). An SP that wants to RECEIVE a LogoutResponse MUST
+	// register at least one; absent ⇒ the IdP can validate + terminate but has
+	// nowhere to send the response (it returns 200 with no response — the
+	// session is still killed).
+	AttrSPSLOUrls = "saml_sp_slo_url"
 )
 
 // acsURLDelimiter separates registered ACS URLs in AttrSPACSURLs.
@@ -303,6 +313,42 @@ func firstACS(spClient *sso.Client) string {
 	return ""
 }
 
+// firstSLO returns the SP's first registered SLO URL (the destination for the
+// LogoutResponse the IdP returns after a SP-initiated SLO). It is taken from
+// the SP's REGISTERED AttrSPSLOUrls (server config), NEVER from the inbound
+// LogoutRequest — a request-supplied response destination would be a
+// logout-response-injection / open-redirect vector (the SLO analogue of the
+// ACS allowlist). Empty when the SP registered no SLO URL.
+func firstSLO(spClient *sso.Client) string {
+	raw := spClient.Attributes[AttrSPSLOUrls]
+	for _, candidate := range strings.Split(raw, acsURLDelimiter) {
+		if v := strings.TrimSpace(candidate); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// sloAllowed reports whether sloURL is in the SP client's registered SLO
+// allowlist (AttrSPSLOUrls, pipe-delimited). Mirrors acsAllowed exactly: an
+// empty allowlist or empty URL denies; comparison is exact. Used to refuse
+// sending a LogoutResponse to anywhere the SP did not pre-register.
+func sloAllowed(spClient *sso.Client, sloURL string) bool {
+	if sloURL == "" {
+		return false
+	}
+	raw := spClient.Attributes[AttrSPSLOUrls]
+	if raw == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(raw, acsURLDelimiter) {
+		if strings.TrimSpace(candidate) == sloURL {
+			return true
+		}
+	}
+	return false
+}
+
 // noStore stamps the credential-endpoint cache headers (RFC 6749 §5.1) on every
 // path of /saml/sso + /saml/sso/finish, BEFORE any branch — a cached cross-user
 // SAML response (success or error) would be catastrophic.
@@ -333,6 +379,28 @@ func parseAuthnRequest(samlRequest string, redirectBinding bool) (*saml.AuthnReq
 		return nil, nil, errRequestInvalid
 	}
 	var req saml.AuthnRequest
+	if err := xmlUnmarshalStrict(raw, &req); err != nil {
+		return nil, nil, errRequestInvalid
+	}
+	return &req, raw, nil
+}
+
+// parseLogoutRequest decodes + XXE-validates + unmarshals a wire SAMLRequest
+// into a crewjam LogoutRequest, returning the request struct AND the raw XML
+// (needed to validate the enveloped XML-DSig over the exact received bytes).
+// redirectBinding selects raw-DEFLATE (GET) vs plain base64 (POST). Every
+// failure returns errRequestInvalid (collapsed, oracle-safe). This is the SLO
+// analogue of parseAuthnRequest — crewjam v0.5.1 exposes no IdP-side
+// LogoutRequest parser, so we decode through the same hardened pipeline.
+func parseLogoutRequest(samlRequest string, redirectBinding bool) (*saml.LogoutRequest, []byte, error) {
+	raw, err := decodeAuthnRequest(samlRequest, redirectBinding)
+	if err != nil {
+		return nil, nil, errRequestInvalid
+	}
+	if err := validateXMLRoundTrip(raw); err != nil {
+		return nil, nil, errRequestInvalid
+	}
+	var req saml.LogoutRequest
 	if err := xmlUnmarshalStrict(raw, &req); err != nil {
 		return nil, nil, errRequestInvalid
 	}

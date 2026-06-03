@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
+	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/snaplink/sso"
 )
@@ -43,6 +45,16 @@ type SPAuthenticator struct {
 	attrMap map[string]string
 	// now is the clock seam; nil ⇒ time.Now. Lets tests pin time deterministically.
 	now func() time.Time
+
+	// sloSigner / sloSigMethod are the SP signing key + XML-DSig method used to
+	// sign SP-initiated LogoutRequests + the LogoutResponse this SP returns to
+	// the IdP. Set only when SPPrivateKey is configured (SLO signing is
+	// mandatory — an unsigned logout is meaningless). Kept SEPARATE from
+	// crewjam's sp.SignatureMethod so enabling SLO signing does NOT silently
+	// start signing AuthnRequests (that stays gated by cfg.SignAuthnRequests).
+	sloSigner    crypto.Signer
+	sloSigCert   *x509.Certificate
+	sloSigMethod string
 }
 
 // NewSPAuthenticator validates cfg, loads + PINS the upstream IdP signing
@@ -59,14 +71,37 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 		return nil, fmt.Errorf("saml/sp: parse ACSURL: %w", err)
 	}
 
+	// SPSLOURL (this SP's own SLO endpoint) is optional; when set it parses into
+	// the crewjam SloURL crewjam stamps as the LogoutRequest/Response Destination
+	// context and validates inbound LogoutResponses against.
+	var sloURL url.URL
+	if cfg.SPSLOURL != "" {
+		u, err := url.Parse(cfg.SPSLOURL)
+		if err != nil {
+			return nil, fmt.Errorf("saml/sp: parse SPSLOURL: %w", err)
+		}
+		sloURL = *u
+	}
+
 	idpMeta, err := loadIDPMetadata(cfg)
 	if err != nil {
 		return nil, err
 	}
 
+	// Inject the upstream IdP's SLO endpoint into the pinned metadata so
+	// crewjam's GetSLOBindingLocation can build SP-initiated LogoutRequests and
+	// the LogoutResponse destination. This NEVER touches the pinned SIGNING cert
+	// (the trust anchor) — it only adds an endpoint location. When the metadata
+	// already advertises one and IDPSLOURL is empty, the existing endpoint
+	// stands.
+	if cfg.IDPSLOURL != "" && idpMeta != nil {
+		ensureIDPSLOEndpoint(idpMeta, cfg.IDPSLOURL)
+	}
+
 	sp := &saml.ServiceProvider{
 		EntityID:    cfg.EntityID,
 		AcsURL:      *acsURL,
+		SloURL:      sloURL,
 		IDPMetadata: idpMeta,
 		// AuthnNameIDFormat shapes the NameIDPolicy on the outbound
 		// AuthnRequest. Empty leaves it unset (IdP chooses).
@@ -87,6 +122,8 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 		ValidateRequestID: requestIDValidator(cfg.AllowIDPInitiated),
 	}
 
+	a := &SPAuthenticator{}
+
 	// Optional SP key: signs AuthnRequests + decrypts EncryptedAssertions. We
 	// deliberately do NOT set IDPCertificateFingerprint — that crewjam code
 	// path would resolve the signing cert from the assertion-embedded
@@ -103,20 +140,29 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 		}
 		sp.Key = key
 		sp.Certificate = spCert
+
+		// XML-DSig method by SP key type: RSA-SHA256 (RSA keys) or ECDSA-SHA256
+		// (P-256 EC keys). Used for SLO signing (always, when a key is present)
+		// and AuthnRequest signing (only when cfg.SignAuthnRequests).
+		sigMethod, err := xmlSigMethodForKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("saml/sp: SP signing key: %w", err)
+		}
+		a.sloSigner = key
+		a.sloSigCert = spCert
+		a.sloSigMethod = sigMethod
+
 		if cfg.SignAuthnRequests {
 			// crewjam signs AuthnRequests iff SignatureMethod is non-empty.
-			// RSA-SHA256 is the modern baseline; EC keys would need an ECDSA
-			// method, but RSA SP keys are by far the common case.
-			sp.SignatureMethod = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+			sp.SignatureMethod = sigMethod
 		}
 	}
 
-	return &SPAuthenticator{
-		cfg:     cfg,
-		sp:      sp,
-		replay:  newReplayStore(cfg.ReplayStoreSize),
-		attrMap: cfg.AttributeMapping,
-	}, nil
+	a.cfg = cfg
+	a.sp = sp
+	a.replay = newReplayStore(cfg.ReplayStoreSize)
+	a.attrMap = cfg.AttributeMapping
+	return a, nil
 }
 
 func (a *SPAuthenticator) Name() string { return a.cfg.Name }
@@ -285,6 +331,30 @@ func metadataFromCert(cfg SPConfig) (*saml.EntityDescriptor, error) {
 	}, nil
 }
 
+// ensureIDPSLOEndpoint makes the IdP metadata advertise an HTTP-Redirect
+// SingleLogoutService at sloURL (so crewjam's GetSLOBindingLocation resolves
+// it), without disturbing the pinned signing certs. It is idempotent: if a
+// redirect SLO endpoint is already present it leaves it untouched (metadata is
+// authoritative when it carries one). Only the FIRST IDPSSODescriptor is
+// adjusted (crewjam reads SLO from the descriptors in order).
+func ensureIDPSLOEndpoint(meta *saml.EntityDescriptor, sloURL string) {
+	if len(meta.IDPSSODescriptors) == 0 {
+		meta.IDPSSODescriptors = []saml.IDPSSODescriptor{{}}
+	}
+	for i := range meta.IDPSSODescriptors {
+		for _, ep := range meta.IDPSSODescriptors[i].SingleLogoutServices {
+			if ep.Binding == saml.HTTPRedirectBinding {
+				return // metadata already advertises a redirect SLO endpoint
+			}
+		}
+	}
+	d := &meta.IDPSSODescriptors[0]
+	d.SingleLogoutServices = append(d.SingleLogoutServices, saml.Endpoint{
+		Binding:  saml.HTTPRedirectBinding,
+		Location: sloURL,
+	})
+}
+
 // parseCertificatePEM decodes a single PEM CERTIFICATE block.
 func parseCertificatePEM(pemBytes []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(pemBytes)
@@ -292,6 +362,25 @@ func parseCertificatePEM(pemBytes []byte) (*x509.Certificate, error) {
 		return nil, errors.New("no PEM CERTIFICATE block found")
 	}
 	return x509.ParseCertificate(block.Bytes)
+}
+
+// xmlSigMethodForKey returns the goxmldsig XML signature-method identifier for
+// an SP signing key: RSA-SHA256 for *rsa.PrivateKey, ECDSA-SHA256 for a P-256
+// *ecdsa.PrivateKey. Other key types (including non-P256 curves and Ed25519 —
+// goxmldsig has no EdDSA method) are rejected, mirroring the IdP-side
+// AssertionSigner classification so SP-initiated SLO signing stays consistent.
+func xmlSigMethodForKey(key crypto.Signer) (string, error) {
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		return dsig.RSASHA256SignatureMethod, nil
+	case *ecdsa.PrivateKey:
+		if k.Curve != elliptic.P256() {
+			return "", fmt.Errorf("unsupported ECDSA curve %s (need P-256)", k.Curve.Params().Name)
+		}
+		return dsig.ECDSASHA256SignatureMethod, nil
+	default:
+		return "", fmt.Errorf("unsupported SP key type %T (need RSA or ECDSA P-256)", key)
+	}
 }
 
 // parsePrivateKey decodes a PEM RSA/EC/PKCS8 private key into a crypto.Signer

@@ -78,9 +78,20 @@ const (
 	// metadata consumers fetch it); PathSAMLSSO is the IdP-side SSO
 	// receiver (AuthnRequest in); PathSAMLSSOCallback is the SP-side
 	// Assertion Consumer Service the IdP POSTs the assertion back to.
+	//
+	// Single Logout (SLO): PathSAMLSLO is the IdP-side SLO receiver — a
+	// downstream SP POSTs/redirects a (signed) LogoutRequest here and the
+	// IdP terminates the matching subject session, replying with a signed
+	// LogoutResponse to the SP's registered SLO URL. PathSAMLSPSLO is the
+	// SP-side SLO receiver — the UPSTREAM IdP redirects a (signed)
+	// LogoutRequest here and this server terminates its own local session,
+	// replying with a signed LogoutResponse to the IdP. Both are distinct
+	// from the SSO mounts so an operator can route them independently.
 	PathSAMLMetadata    = "/saml/metadata"
 	PathSAMLSSO         = "/saml/sso"
 	PathSAMLSSOCallback = "/auth/saml/callback"
+	PathSAMLSLO         = "/saml/slo"
+	PathSAMLSPSLO       = "/auth/saml/slo"
 )
 
 // HTTP header names and well-known values.

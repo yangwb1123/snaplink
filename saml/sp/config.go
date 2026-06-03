@@ -87,6 +87,24 @@ type SPConfig struct {
 	// outbound AuthnRequest (RFC: WantAuthnRequestsSigned IdPs). Default false.
 	SignAuthnRequests bool
 
+	// SPSLOURL is THIS SP's own Single Logout Service URL — where the upstream
+	// IdP redirects/POSTs a LogoutRequest to log this server out, and the
+	// Issuer/Destination context crewjam stamps when this SP builds an outbound
+	// LogoutRequest/LogoutResponse. OPTIONAL: empty disables the SLO helpers
+	// (LogoutURL / BuildLogoutResponse return ""/error). Set it to participate
+	// in Single Logout.
+	SPSLOURL string
+
+	// IDPSLOURL is the UPSTREAM IdP's Single Logout Service endpoint (HTTP-
+	// Redirect), where SP-initiated LogoutRequests and the LogoutResponse this
+	// SP returns are sent. When the IdP trust anchor is metadata that already
+	// advertises a SingleLogoutService, that endpoint is used and this may be
+	// left empty; with the bare-cert anchor (or metadata lacking an SLO
+	// endpoint) it MUST be set for SP-initiated logout. The IdP signing cert
+	// pinned for assertions is REUSED to validate inbound IdP LogoutRequests —
+	// SLO adds no second trust anchor.
+	IDPSLOURL string
+
 	// NameIDFormat is the requested NameIDPolicy format on the AuthnRequest
 	// (e.g. urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress). Empty =
 	// let the IdP choose.
