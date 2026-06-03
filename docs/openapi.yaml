@@ -182,7 +182,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Client inactive / tenant mismatch / authenticator not allowed.
+          description: |
+            Client inactive / tenant mismatch / authenticator not allowed /
+            data-residency violation (`region_not_allowed` when the serving
+            region is outside the tenant's allowed set, `residency_violation`
+            when a write would leave the home region under enforced writes).
           content:
             application/json:
               schema:
@@ -3535,6 +3539,13 @@ components:
         recommended_language:
           type: string
           description: BCP-47 tag; populated when geo middleware is wired.
+        serving_region:
+          type: string
+          description: |
+            Which regional deployment served this login (e.g. `eu-west-1`).
+            A UX/governance hint, not a security signal. Present only when the
+            region middleware is wired and resolved a non-empty serving region.
+          example: eu-west-1
         roles:
           type: array
           items:

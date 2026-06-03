@@ -6,6 +6,7 @@ import (
 
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/tenant"
 )
 
@@ -13,6 +14,14 @@ import (
 // into TraceID/SpanID for stamping on Event records. Stateless — safe
 // at package scope.
 var tracer = NewTracer()
+
+// metaKeyRegionServing is the Event.Metadata key for the serving region —
+// WHICH regional deployment handled the request. Deliberately a DIFFERENT
+// namespace from geo.region (the geo.* keys above describe WHERE THE CLIENT
+// IS, an ISO 3166-2 subdivision derived from the client IP); conflating them
+// would let a client-IP geo hint masquerade as a serving-region governance
+// signal. Lives here beside the geo.* metadata-key literals it parallels.
+const metaKeyRegionServing = "region.serving"
 
 // EventFromRequest builds an audit.Event pre-populated with HTTP +
 // transport metadata pulled from ctx: RequestID, TraceID/SpanID/
@@ -40,6 +49,7 @@ func EventFromRequest(ctx core.HandlerContext) *Event {
 	}
 	EnrichTenant(ctx, e)
 	EnrichGeo(ctx, e)
+	EnrichRegion(ctx, e)
 	return e
 }
 
@@ -74,6 +84,21 @@ func EnrichGeo(ctx core.HandlerContext, e *Event) {
 	SetMeta(e, "geo.region", info.Region)
 	SetMeta(e, "geo.city", info.City)
 	SetMeta(e, "geo.recommended_language", info.RecommendedLanguage)
+}
+
+// EnrichRegion lifts the resolved serving-region ID from HandlerContext onto
+// Event.Metadata under the region.serving key (NEVER geo.region — they are
+// distinct namespaces, see metaKeyRegionServing). No-op when the region
+// middleware didn't run or resolved no region (empty ID). SetMeta skips the
+// empty value, so an unconstrained request adds no key — audit consumers do a
+// presence check. SetMeta also guarantees this never clobbers the tenant.* /
+// geo.* keys already stamped by EnrichTenant / EnrichGeo.
+func EnrichRegion(ctx core.HandlerContext, e *Event) {
+	id, ok := region.FromHandlerContext(ctx)
+	if !ok {
+		return
+	}
+	SetMeta(e, metaKeyRegionServing, string(id))
 }
 
 // SetMeta writes key=val into e.Metadata, lazily allocating the map

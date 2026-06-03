@@ -37,6 +37,7 @@ type Config struct {
 	Snapshot           SnapshotConfig           `yaml:"snapshot"`
 	Releases           ReleasesConfig           `yaml:"releases"`
 	Geo                GeoConfig                `yaml:"geo"`
+	Region             RegionConfig             `yaml:"region"`
 	Tenant             TenantConfig             `yaml:"tenant"`
 	Security           SecurityConfig           `yaml:"security"`
 	Metrics            MetricsConfig            `yaml:"metrics"`
@@ -1321,6 +1322,27 @@ type GeoStaticEntry struct {
 	City                string `yaml:"city"`
 	TimeZone            string `yaml:"time_zone"`
 	RecommendedLanguage string `yaml:"recommended_language"` // BCP-47
+}
+
+// RegionConfig configures the serving-region resolution middleware + the
+// data-residency enforcement gate. It mirrors GeoConfig's discipline: when
+// neither ServingRegion nor HeaderName is set the middleware is NOT installed
+// and the residency check stays inert — byte-identical to a pre-region build.
+//
+// ServingRegion is this deployment's pinned region (e.g. "eu-west-1"): the
+// ConfigPinnedResolver fallback used when no trusted header supplies one.
+// HeaderName is the request header a regional edge/mesh sets to pin traffic
+// (empty → DefaultServingRegionHeader, "X-Serving-Region") — ONLY trust it
+// behind an edge that strips any client-supplied copy (the X-Forwarded-* /
+// X-Auth-* threat model). AllowedRegions is the anti-injection allowlist for
+// the header resolver (a header value outside it falls back to ServingRegion).
+// ResidencyCheckCacheTTL bounds how long a tenant's ResidencyPolicy is cached
+// (<= 0 → the SDK default, DefaultTenantResidencyCacheTTL).
+type RegionConfig struct {
+	ServingRegion          string        `yaml:"serving_region"`
+	HeaderName             string        `yaml:"header_name"`
+	AllowedRegions         []string      `yaml:"allowed_regions"`
+	ResidencyCheckCacheTTL time.Duration `yaml:"residency_check_cache_ttl"`
 }
 
 // TenantConfig configures the multi-tenant + multi-domain

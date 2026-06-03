@@ -27,6 +27,7 @@ import (
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/tenant"
 )
 
@@ -308,6 +309,24 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrTenantMismatch)
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
 		return
+	}
+	// Data-residency gate — a SECOND tenant-binding gate after tenant_mismatch,
+	// not a replacement. When the region middleware stashed a non-empty serving
+	// region AND WithTenantResidencyCheck is wired, reject a login whose serving
+	// region violates the tenant's ResidencyPolicy. Login MINTS tokens, so this
+	// is the write side (isWrite=true): a disallowed region → region_not_allowed,
+	// a write outside HomeRegion under EnforceWrites → residency_violation. Both
+	// are governance signals (like tenant_mismatch), surfaced via authzErrorBody
+	// so the RFC 9207 iss rides the error response. No resolver / no check wired
+	// → servingRegion=="" or the engine disabled → checkTenantResidency returns
+	// nil → byte-identical to a pre-residency build.
+	if servingRegion, ok := region.FromHandlerContext(ctx); ok && servingRegion != "" {
+		if err := s.checkTenantResidency(ctx.Request().Context(), client.TenantID, servingRegion, true); err != nil {
+			code := s.mapResidencyError(err)
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, code)
+			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, code))
+			return
+		}
 	}
 	// RFC 9126 §2.1 — clients with RequirePAR=true MUST push their
 	// authorization request via /par first. We check AFTER the PAR
@@ -868,6 +887,13 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	}
 	if result.RecommendedLanguage != "" {
 		resp[KeyRecommendedLang] = result.RecommendedLanguage
+	}
+	// serving_region surfaces WHICH regional deployment served this login —
+	// a UX/governance hint for the SPA, not a security signal. Only present
+	// when the region middleware resolved a non-empty region (no resolver
+	// wired → absent → response shape byte-identical to a pre-region build).
+	if servingRegion, ok := region.FromHandlerContext(ctx); ok && servingRegion != "" {
+		resp[KeyServingRegion] = string(servingRegion)
 	}
 	if s.embedPermissions {
 		roles, perms, menus := s.resolvePermissionsForLogin(ctx.Request().Context(), result.UserID, client.ID)

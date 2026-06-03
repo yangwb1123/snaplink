@@ -30,6 +30,7 @@ import (
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/ratelimit"
+	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/signingkeys"
 	"github.com/snaplink/sso/tenant"
@@ -65,6 +66,8 @@ type Server struct {
 	tenantSuspensionCache   *suspensionCache
 	tenantResidencyEnabled  bool
 	tenantResidencyCache    *residencyCache
+	regionResolver          region.Resolver
+	regionMiddlewareOpts    region.MiddlewareOptions
 	invalidationBus         cluster.Bus
 
 	// SPIFFE JWT-SVID acceptance (cluster C1, mesh-native service-to-
@@ -1124,6 +1127,25 @@ func WithGeoMiddlewareOptions(opts GeoMiddlewareOptions) Option {
 	return func(s *Server) { s.geoMiddlewareOpts = opts }
 }
 
+// WithRegionMiddleware installs the serving-region resolution middleware:
+// during Mount the Server runs region.Middleware(resolver, opts) immediately
+// after the geo middleware so the resolved serving-region ID is stashed on
+// the HandlerContext for the login residency gate + audit enrichment to read
+// via region.FromHandlerContext. opts carries the optional OnError reporter
+// and the middleware-level AllowedRegions backstop.
+//
+// A nil resolver is a no-op: Mount does NOT install the middleware (mirrors
+// WithGeoProvider's nil discipline), so a server that never wires a resolver
+// behaves byte-identically to a pre-residency build — no middleware runs, the
+// login gate sees servingRegion=="" and returns nil. Wire this alongside
+// WithTenantResidencyCheck to turn the resolved region into a hard gate.
+func WithRegionMiddleware(resolver region.Resolver, opts region.MiddlewareOptions) Option {
+	return func(s *Server) {
+		s.regionResolver = resolver
+		s.regionMiddlewareOpts = opts
+	}
+}
+
 // WithTenantStore enables multi-tenant + multi-domain routing.
 // During Mount, the Server installs TenantMiddleware ahead of all
 // routes so handlers (and audit enrichment) can read the resolved
@@ -1438,6 +1460,13 @@ func (s *Server) Mount() {
 	}
 	if s.geoProvider != nil {
 		s.router.Use(GeoMiddleware(s.geoProvider, s.geoMiddlewareOpts))
+	}
+	// Region resolves right after geo: serving region is a deployment-level
+	// routing/governance signal, independent of the client's geo. Gated on a
+	// wired resolver so a server without WithRegionMiddleware installs nothing
+	// (nil-default byte-identical, matching geo's discipline).
+	if s.regionResolver != nil {
+		s.router.Use(region.Middleware(s.regionResolver, s.regionMiddlewareOpts))
 	}
 
 	s.router.GET(PathHealth, s.handleHealth)
@@ -1873,6 +1902,16 @@ func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClai
 			if tsErr := s.checkTenantNotSuspended(ctx, claims); tsErr != nil {
 				return nil, "", tsErr
 			}
+			// TODO(region): read-side residency on validate needs serving-region
+			// plumbing. validateAnyToken takes a bare context.Context (no
+			// HandlerContext), and the serving region is stashed on the
+			// HandlerContext by region.Middleware — it is NOT in scope here.
+			// Threading it would change validateAnyToken + ValidateToken +
+			// every call site (userinfo / mesh ext_authz / introspect / admin /
+			// token-exchange) — too invasive for this commit. The login
+			// (write/mint) gate in handler.go is the primary residency control;
+			// the read-side check (isWrite=false, only region_not_allowed can
+			// fire) lands once the serving region is plumbed onto validate.
 			return claims, name, nil
 		}
 		lastErr = err

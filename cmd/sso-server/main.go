@@ -72,6 +72,7 @@ import (
 	"github.com/snaplink/sso/permissions"
 	permsqlite "github.com/snaplink/sso/permissions/sqlite"
 	"github.com/snaplink/sso/ratelimit"
+	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/registry"
 	registryetcd "github.com/snaplink/sso/registry/etcd"
 	"github.com/snaplink/sso/registry/memory"
@@ -2304,6 +2305,39 @@ func buildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, erro
 	}
 }
 
+// buildRegionResolver materialises the region.Resolver from RegionConfig.
+// Returns nil when NEITHER ServingRegion NOR HeaderName is configured so cmd
+// can skip WithRegionMiddleware entirely (the middleware is then NOT installed
+// → byte-identical to a pre-region build). Mirrors buildGeoProvider's
+// nil-when-disabled discipline.
+//
+// When configured it builds a ChainResolver that tries the trusted header
+// FIRST (a regional edge/mesh pins traffic via HeaderName, anti-injection
+// allowlisted by AllowedRegions), then falls back to the pinned ServingRegion.
+// The HeaderResolver's Default is the pinned region too, so a single-region
+// deployment that sets only ServingRegion still resolves every request to it.
+func buildRegionResolver(cfg *config.Config) region.Resolver {
+	servingRegion := region.ID(cfg.Region.ServingRegion)
+	if servingRegion == "" && cfg.Region.HeaderName == "" {
+		return nil
+	}
+	var allowed []region.ID
+	if len(cfg.Region.AllowedRegions) > 0 {
+		allowed = make([]region.ID, len(cfg.Region.AllowedRegions))
+		for i, r := range cfg.Region.AllowedRegions {
+			allowed[i] = region.ID(r)
+		}
+	}
+	return region.ChainResolver{Resolvers: []region.Resolver{
+		region.HeaderResolver{
+			Header:  cfg.Region.HeaderName,
+			Allowed: allowed,
+			Default: servingRegion,
+		},
+		region.ConfigPinnedResolver{Region: servingRegion},
+	}}
+}
+
 // bootstrapLogger adapts spi.Logger to bootstrap.Logger (Info/Error pair).
 type bootstrapLogger struct{ inner spi.Logger }
 
@@ -2718,6 +2752,31 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 				Timeout: cfg.Geo.LookupTimeout,
 			}))
 		}
+	}
+
+	// Serving-region resolution + residency enforcement, wired alongside geo.
+	// buildRegionResolver returns nil when region is unconfigured → the
+	// middleware is NOT installed and the residency check stays inert
+	// (byte-identical). When configured, the middleware-level AllowedRegions
+	// backstop mirrors the header resolver's allowlist, and the residency
+	// engine is enabled so the login gate enforces the tenant's policy.
+	if regionResolver := buildRegionResolver(cfg); regionResolver != nil {
+		var allowed []region.ID
+		if len(cfg.Region.AllowedRegions) > 0 {
+			allowed = make([]region.ID, len(cfg.Region.AllowedRegions))
+			for i, r := range cfg.Region.AllowedRegions {
+				allowed[i] = region.ID(r)
+			}
+		}
+		opts = append(opts, sso.WithRegionMiddleware(regionResolver, region.MiddlewareOptions{
+			AllowedRegions: allowed,
+		}))
+		opts = append(opts, sso.WithTenantResidencyCheck(cfg.Region.ResidencyCheckCacheTTL))
+		logger.Info("region residency: enabled",
+			"serving_region", cfg.Region.ServingRegion,
+			"header_name", cfg.Region.HeaderName,
+			"allowed_regions", cfg.Region.AllowedRegions,
+		)
 	}
 
 	// Risk scorer wired AFTER geo so country-based rules see the

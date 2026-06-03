@@ -2334,6 +2334,26 @@ func (s *Server) checkTenantResidency(ctx context.Context, tenantID string, serv
 	return nil
 }
 
+// mapResidencyError maps a checkTenantResidency sentinel onto its public
+// wire error code for the authorization-response body. The two residency
+// sentinels stay DISTINCT governance codes — region_not_allowed and
+// residency_violation reveal a tenant's data-residency binding exactly the
+// way tenant_mismatch reveals tenant binding, so collapsing them to a generic
+// access_denied would only blur an operator-facing governance signal, NOT
+// close any credential-oracle (these carry no anti-enumeration concern, §2).
+// An unexpected error falls back to access_denied (safe generic) rather than
+// leaking an unmapped internal string.
+func (s *Server) mapResidencyError(err error) string {
+	switch {
+	case errors.Is(err, region.ErrRegionNotAllowed):
+		return ErrRegionNotAllowed
+	case errors.Is(err, region.ErrResidencyViolation):
+		return ErrResidencyViolation
+	default:
+		return ErrAccessDenied
+	}
+}
+
 // residencyPolicyFromTenant maps a tenant's plain-string residency fields
 // into the region.ResidencyPolicy value the enforcement gate operates on.
 // tenant/ stays a lower-level package (plain strings); region/ owns the

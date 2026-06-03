@@ -1005,6 +1005,30 @@ geo:
     #   time_zone: "America/Los_Angeles"
     #   recommended_language: "en-US"
 
+# Serving-region resolution + data-residency enforcement. Disabled by
+# default: with neither serving_region nor header_name set, the region
+# middleware is NOT installed and the residency gate stays inert
+# (byte-identical to a build without it). When enabled, /auth/login
+# enforces the per-tenant ResidencyPolicy (tenant.home_region /
+# allowed_regions / enforce_writes): a serving region outside the
+# tenant's allowed set → region_not_allowed; a write outside the home
+# region under enforce_writes → residency_violation.
+#
+# serving_region: this deployment's pinned region (the fallback when no
+#   trusted header supplies one).
+# header_name: a regional edge/mesh sets this header to pin traffic
+#   (empty → X-Serving-Region). ONLY trust it behind an edge that strips
+#   any client-supplied copy (same threat model as X-Forwarded-*).
+# allowed_regions: anti-injection allowlist for the header value (a value
+#   outside it falls back to serving_region).
+# residency_check_cache_ttl: how long a tenant's policy is cached
+#   (0 → SDK default, 60s).
+region:
+  serving_region: ""
+  header_name: ""
+  allowed_regions: []
+  residency_check_cache_ttl: 0s
+
 # Admin-managed state export/restore. Snapshotter pulls every wired
 # backend's List(); Restorer applies in dependency order with three
 # modes (merge / overwrite / replace) and dry-run. Storage selects
