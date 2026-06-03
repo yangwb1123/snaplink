@@ -104,14 +104,28 @@ type SPConfig struct {
 	SPSLOURL string
 
 	// IDPSLOURL is the UPSTREAM IdP's Single Logout Service endpoint (HTTP-
-	// Redirect), where SP-initiated LogoutRequests and the LogoutResponse this
-	// SP returns are sent. When the IdP trust anchor is metadata that already
-	// advertises a SingleLogoutService, that endpoint is used and this may be
-	// left empty; with the bare-cert anchor (or metadata lacking an SLO
-	// endpoint) it MUST be set for SP-initiated logout. The IdP signing cert
-	// pinned for assertions is REUSED to validate inbound IdP LogoutRequests —
-	// SLO adds no second trust anchor.
+	// Redirect), where SP-initiated LogoutRequests and (by default) the
+	// LogoutResponse this SP returns are sent. When the IdP trust anchor is
+	// metadata that already advertises a SingleLogoutService, that endpoint is
+	// used and this may be left empty; with the bare-cert anchor (or metadata
+	// lacking an SLO endpoint) it MUST be set for SP-initiated logout. The IdP
+	// signing cert pinned for assertions is REUSED to validate inbound IdP
+	// LogoutRequests — SLO adds no second trust anchor.
 	IDPSLOURL string
+
+	// IDPSLOResponseURL is the UPSTREAM IdP's SLO RESPONSE endpoint (HTTP-Redirect)
+	// — where this SP redirects the LogoutResponse acknowledging an inbound
+	// LogoutRequest, when it differs from the REQUEST endpoint (IDPSLOURL). The
+	// SAML metadata SingleLogoutService.ResponseLocation analogue.
+	//
+	// It is REQUIRED to participate in the IdP's FRONT-CHANNEL browser-redirect SLO
+	// chain: there the IdP redirects the browser through this SP's SLO URL and
+	// expects the SP to redirect the LogoutResponse to the IdP's chain RESUME
+	// endpoint (the IdP's /saml/slo/continue), NOT its request-side /saml/slo.
+	// Set this to "<idp-base>/saml/slo/continue" for a front-channel SP. Empty ⇒
+	// the LogoutResponse goes to the request endpoint (IDPSLOURL /
+	// GetSLOBindingLocation) — the back-channel / IdP-initiated default (unchanged).
+	IDPSLOResponseURL string
 
 	// NameIDFormat is the requested NameIDPolicy format on the AuthnRequest
 	// (e.g. urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress). Empty =

@@ -207,6 +207,7 @@ func (h *Handlers) recordSessionIndex(ctx context.Context, spClient *sso.Client,
 		SPClientID:   spClient.ID,
 		SPSLOUrl:     sloURL,
 		SPBinding:    spSLOBinding(spClient),
+		SPChannel:    spSLOChannel(spClient),
 		NameID:       subject,
 		SessionIndex: "", // IdP emits no per-session SessionIndex (full-subject logout)
 	}); err != nil {

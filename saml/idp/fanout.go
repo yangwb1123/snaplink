@@ -120,17 +120,48 @@ func isHTTPSURL(raw string) bool {
 	return u.Scheme == "https" && u.Host != ""
 }
 
-// Fanout pushes a signed SAML LogoutRequest to every OTHER SP the subject has an
-// active SAML session with, EXCLUDING excludeSPEntityID (the SP that initiated
-// the logout; pass "" to notify all). It reads the SAMLSessionIndex, dispatches
-// async + best-effort + bounded, then RemoveAll(subject) so no stale subject->SP
-// rows leak.
+// partitionSLOTargets splits the index rows for a subject into the BACK-channel
+// and FRONT-channel target sets, EXCLUDING excludeSPEntityID (the initiating SP)
+// and any row with no registered SLO URL (nowhere to deliver). It is the shared
+// classifier both the exported Fanout (back-channel only, server-side) and the
+// SP-initiated /saml/slo handler (back-channel async + front-channel chain) use,
+// so the partition rule lives in ONE place. The split is by SPChannel:
+// ChannelFrontchannel rows go to front, everything else (the default
+// ChannelBackchannel) to back.
+func partitionSLOTargets(rows []SAMLSPSession, excludeSPEntityID string) (back, front []SAMLSPSession) {
+	for _, row := range rows {
+		if row.SPEntityID == "" || row.SPEntityID == excludeSPEntityID {
+			continue
+		}
+		if row.SPSLOUrl == "" {
+			// SP registered no SLO URL ⇒ nowhere to deliver; skip.
+			continue
+		}
+		if row.SPChannel == ChannelFrontchannel {
+			front = append(front, row)
+		} else {
+			back = append(back, row)
+		}
+	}
+	return back, front
+}
+
+// Fanout pushes a signed SAML LogoutRequest to every OTHER BACK-channel SP the
+// subject has an active SAML session with, EXCLUDING excludeSPEntityID (the SP
+// that initiated the logout; pass "" to notify all). It reads the
+// SAMLSessionIndex, dispatches async + best-effort + bounded, then
+// RemoveAll(subject) so no stale subject->SP rows leak.
 //
 // It is exported so an operator's forked main can drive IdP-INITIATED global
 // logout (e.g. from /end_session or an admin action) WITHOUT this module
 // invasively hooking the core SessionManager: the operator calls
 // handlers.Fanout(ctx, subject, "") from their own logout flow. The SP-initiated
-// /saml/slo path calls it internally with the initiating SP excluded.
+// /saml/slo path drives the back-channel + front-channel split itself (see SLO).
+//
+// FRONT-channel SPs are SKIPPED here (logged): the front-channel chain needs the
+// USER'S BROWSER to redirect through each SP, which a server-side IdP-initiated
+// call has no access to — those SP sessions lapse by their own session expiry.
+// Their rows are still cleaned by the RemoveAll below.
 //
 // Behavior:
 //   - nil index ⇒ no-op (fan-out disabled).
@@ -149,19 +180,14 @@ func (h *Handlers) Fanout(ctx context.Context, subject, excludeSPEntityID string
 		return
 	}
 
-	// Filter to the OTHER SPs (exclude the initiator) with a registered SLO URL.
-	// Done synchronously BEFORE spawning so the count of work is known and the
+	// Partition synchronously BEFORE spawning so the work is known and the
 	// initiating SP is never sent its own logout.
-	targets := make([]SAMLSPSession, 0, len(rows))
-	for _, row := range rows {
-		if row.SPEntityID == "" || row.SPEntityID == excludeSPEntityID {
-			continue
-		}
-		if row.SPSLOUrl == "" {
-			// SP registered no SLO URL ⇒ nowhere to deliver; skip.
-			continue
-		}
-		targets = append(targets, row)
+	back, front := partitionSLOTargets(rows, excludeSPEntityID)
+	if len(front) > 0 {
+		// IdP-initiated server-side logout cannot drive a browser-redirect chain;
+		// log + skip those SPs (their sessions lapse by expiry). The SP-initiated
+		// /saml/slo path drives the chain (it has the browser).
+		h.deps.Logger.Error("saml/idp: SLO fan-out skipping front-channel SPs (no browser for the redirect chain)", "subject", subject, "count", len(front))
 	}
 
 	// Clean the index NOW (the subject is being logged out everywhere). Done
@@ -171,6 +197,46 @@ func (h *Handlers) Fanout(ctx context.Context, subject, excludeSPEntityID string
 		h.deps.Logger.Error("saml/idp: SLO fan-out index cleanup failed", "error", err, "subject", subject)
 	}
 
+	h.dispatchBackchannel(subject, back)
+}
+
+// splitSLOTargets reads the SAMLSessionIndex for subject ONCE, partitions it into
+// the BACK-channel + FRONT-channel target sets (excluding excludeSPEntityID, the
+// initiator), and CLEANS the index (RemoveAll) — all synchronously. It is the
+// SP-initiated /saml/slo entry point's read: the caller dispatches the
+// back-channel set async (dispatchBackchannel) AND drives the front-channel set
+// through the browser chain (startFrontChannelChain). Cleaning the index here is
+// safe because the front-channel chain carries its SP list in its OWN single-use
+// chain state (it does not re-read the index). A nil index ⇒ (nil, nil): no
+// fan-out + no chain (byte-identical to the single-SP SLO). A blank subject or a
+// list error ⇒ (nil, nil) too.
+func (h *Handlers) splitSLOTargets(ctx context.Context, subject, excludeSPEntityID string) (back, front []SAMLSPSession) {
+	if h.deps.SessionIndex == nil || subject == "" {
+		return nil, nil
+	}
+	rows, err := h.deps.SessionIndex.ListBySubject(ctx, subject)
+	if err != nil {
+		h.deps.Logger.Error("saml/idp: SLO list sessions failed", "error", err, "subject", subject)
+		return nil, nil
+	}
+	back, front = partitionSLOTargets(rows, excludeSPEntityID)
+
+	// Clean the index NOW (the subject is being logged out everywhere). Done before
+	// either dispatch so a re-login during the (slow) back-channel dispatch / the
+	// (browser-paced) front-channel chain starts a fresh row set rather than racing
+	// the cleanup. Best-effort.
+	if err := h.deps.SessionIndex.RemoveAll(ctx, subject); err != nil {
+		h.deps.Logger.Error("saml/idp: SLO index cleanup failed", "error", err, "subject", subject)
+	}
+	return back, front
+}
+
+// dispatchBackchannel spawns the detached, supervised, bounded async delivery of
+// signed LogoutRequests to a back-channel target slice (already partitioned +
+// index-cleaned by the caller). A nil/empty slice is a no-op. It is shared by the
+// exported Fanout and the SP-initiated /saml/slo handler so both use the same
+// concurrency-ceiling + dispatch path.
+func (h *Handlers) dispatchBackchannel(subject string, targets []SAMLSPSession) {
 	if len(targets) == 0 {
 		return
 	}

@@ -170,19 +170,47 @@ func (h *Handlers) SLO(w http.ResponseWriter, r *http.Request) {
 	// attempt without the wire response leaking existence.
 	h.recordSLO(r, spClient.ID, issuer, nameID, terminated)
 
-	// (6, cont.) GLOBAL SINGLE LOGOUT FAN-OUT. The IdP session is terminated;
-	// now push a SIGNED LogoutRequest to every OTHER SP the subject has an active
-	// SAML session with (read from the SAMLSessionIndex), EXCLUDING the initiating
-	// SP (its `issuer` entity id) — the standard SLO chain, the SAML analogue of
-	// OIDC back-channel logout. This is async + best-effort + bounded inside
-	// Fanout (a detached supervised goroutine with a per-SP timeout + recover), so
-	// a slow/dead SP NEVER blocks the LogoutResponse returned to the initiator
-	// below. The index is read + cleaned (RemoveAll) synchronously inside Fanout
-	// before the dispatch goroutine is spawned. Nil index ⇒ Fanout is a no-op
-	// (byte-identical to the single-SP SLO). The subject NameID is the (already
-	// signature-verified) request's NameID — never request-influenceable beyond
-	// the value the SP signed.
-	h.Fanout(r.Context(), nameID, issuer)
+	// (6, cont.) GLOBAL SINGLE LOGOUT. The IdP session is terminated; now log the
+	// subject out at every OTHER SP it has an active SAML session with (read from
+	// the SAMLSessionIndex), EXCLUDING the initiating SP (its `issuer` entity id).
+	// SPs split by channel (saml_sp_slo_channel):
+	//
+	//   - BACK-channel SPs (the default): the IdP pushes a SIGNED LogoutRequest to
+	//     each SP's registered SLO URL DIRECTLY — async + best-effort + bounded (a
+	//     detached supervised goroutine), so a slow/dead SP NEVER blocks. This is
+	//     the SAML analogue of OIDC back-channel logout.
+	//   - FRONT-channel SPs: the IdP redirects the USER'S BROWSER sequentially
+	//     through each such SP's SLO endpoint (the traditional SLO mode for SPs not
+	//     reachable from the IdP) — driven by the single-use chain state machine
+	//     (frontchannel_slo.go). When ANY front-channel SP exists, the IdP 302s the
+	//     browser to the FIRST one and DEFERS the initiator's LogoutResponse to the
+	//     END of the chain (it returns to the initiator after the last SP).
+	//
+	// Both coexist: the back-channel set fans out async while the front-channel
+	// chain runs via the browser. The index is read ONCE here, partitioned, and
+	// cleaned (RemoveAll) BEFORE either dispatch — the front-channel chain carries
+	// its SP list in its own (single-use) chain state, so the index can be cleared
+	// immediately. Nil index ⇒ no fan-out + no chain (byte-identical to the
+	// single-SP SLO). The subject NameID is the (already signature-verified)
+	// request's NameID — never request-influenceable beyond the value the SP signed.
+	back, front := h.splitSLOTargets(r.Context(), nameID, issuer)
+	h.dispatchBackchannel(nameID, back)
+	if len(front) > 0 {
+		// Resolve the initiator's per-tenant signer EAGERLY so a key that can't
+		// drive XML-DSig fails closed exactly as the immediate-response path below
+		// would (no silent downgrade). The session is already terminated.
+		if _, err := h.signerForClient(spClient); err != nil {
+			h.deps.Logger.Error("saml/idp: SLO front-channel initiator signer failed", "client_id", spClient.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, sso.ErrSAMLAssertionFailed)
+			return
+		}
+		// The chain OWNS the response: it 302s the browser to the first
+		// front-channel SP (deferring the initiator's LogoutResponse to chain end),
+		// or — if every candidate fails to resolve — completes straight to the
+		// initiator. Either way it writes the response, so we return here.
+		h.startFrontChannelChain(w, front, spClient, logoutReq, nameID, relayState)
+		return
+	}
 
 	// (6, cont.) Reply with a SIGNED LogoutResponse to the SP's REGISTERED SLO
 	// URL only. If the SP registered no SLO URL there is nowhere to send the

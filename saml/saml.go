@@ -90,6 +90,12 @@ type Deps struct {
 //	saml_sp_nameid_format       — per-SP NameID format override
 //	saml_sp_slo_url             — pipe-delimited registered SLO allowlist; the
 //	                              LogoutResponse goes ONLY here (https; like ACS)
+//	saml_sp_slo_binding         — back-channel fan-out WIRE binding: redirect|post
+//	                              (default redirect)
+//	saml_sp_slo_channel         — SLO mode: backchannel (default; direct
+//	                              server-to-server fan-out) | frontchannel (the
+//	                              browser-redirect SLO chain via /saml/slo/continue,
+//	                              for SPs not reachable from the IdP)
 type Config struct {
 	SPs []sp.SPConfig
 	IdP IdPConfig
@@ -100,8 +106,9 @@ type Config struct {
 // this struct holds only the IdP-wide knobs.
 type IdPConfig struct {
 	// Enabled gates the IdP handlers (/saml/metadata, /saml/sso,
-	// /saml/sso/finish, and the SP-initiated /saml/slo Single Logout receiver).
-	// False ⇒ Build appends NO IdP handlers (SP-only, byte-identical to Phase B).
+	// /saml/sso/finish, the SP-initiated /saml/slo Single Logout receiver, and the
+	// front-channel chain resume endpoint /saml/slo/continue). False ⇒ Build
+	// appends NO IdP handlers (SP-only, byte-identical to Phase B).
 	Enabled bool
 
 	// MetadataTTL is the Cache-Control max-age on /saml/metadata. <=0 ⇒ 1h.
@@ -238,6 +245,11 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 			// HTTP-POST (POST) SP-initiated LogoutRequests.
 			HandlerSpec{Method: http.MethodGet, Path: sso.PathSAMLSLO, Handler: idpHandlers.SLO},
 			HandlerSpec{Method: http.MethodPost, Path: sso.PathSAMLSLO, Handler: idpHandlers.SLO},
+			// /saml/slo/continue resumes the FRONT-channel browser-redirect SLO
+			// chain: each front-channel SP redirects the browser HERE with a signed
+			// LogoutResponse after terminating its local session (GET only — the
+			// front-channel binding is HTTP-Redirect).
+			HandlerSpec{Method: http.MethodGet, Path: sso.PathSAMLSLOContinue, Handler: idpHandlers.SLOContinue},
 		)
 	}
 

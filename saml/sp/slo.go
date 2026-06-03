@@ -214,20 +214,28 @@ func (a *SPAuthenticator) logoutWindow() time.Duration {
 }
 
 // BuildLogoutResponseURL builds a SIGNED HTTP-Redirect LogoutResponse (Status
-// Success) the SP returns to the upstream IdP's SLO endpoint, acknowledging an
-// IdP-initiated logout. logoutRequestID is the inbound LogoutRequest's ID (binds
-// InResponseTo); relayState is echoed verbatim.
+// Success) the SP returns to the upstream IdP's SLO RESPONSE endpoint,
+// acknowledging an inbound LogoutRequest. logoutRequestID is the inbound
+// LogoutRequest's ID (binds InResponseTo); relayState is echoed VERBATIM (for the
+// IdP's front-channel chain it is the single-use chain-state id the IdP uses to
+// resume — the SP MUST return it unchanged).
 //
-// Requires an SP signing key (SPPrivateKey) AND a resolvable IdP SLO endpoint
-// (from IdP metadata or cfg.IDPSLOURL). Without either it returns "" so the
-// caller can fall back to a bare 200 (the local session is already dead; we just
-// can't acknowledge it). The response is SIGNED so the IdP can authenticate that
-// this SP — not an attacker — acknowledged the logout.
+// The response goes to idpSLOResponseEndpoint(): cfg.IDPSLOResponseURL when set
+// (the front-channel chain's /saml/slo/continue resume endpoint — the metadata
+// ResponseLocation analogue), else the request endpoint
+// (GetSLOBindingLocation / cfg.IDPSLOURL — the back-channel / IdP-initiated
+// default, unchanged).
+//
+// Requires an SP signing key (SPPrivateKey) AND a resolvable IdP SLO response
+// endpoint. Without either it returns "" so the caller can fall back to a bare
+// 200 (the local session is already dead; we just can't acknowledge it). The
+// response is SIGNED so the IdP can authenticate that this SP — not an attacker —
+// acknowledged the logout.
 func (a *SPAuthenticator) BuildLogoutResponseURL(logoutRequestID, relayState string) (string, error) {
 	if a.sloSigner == nil {
 		return "", ErrLogoutInvalid // SLO signing is mandatory; no key ⇒ no response
 	}
-	idpSLO := a.sp.GetSLOBindingLocation(saml.HTTPRedirectBinding)
+	idpSLO := a.idpSLOResponseEndpoint()
 	if idpSLO == "" {
 		return "", ErrLogoutInvalid
 	}
@@ -246,8 +254,24 @@ func (a *SPAuthenticator) BuildLogoutResponseURL(logoutRequestID, relayState str
 		},
 	}
 	// HTTP-Redirect binding: UNSIGNED XML body + DETACHED §3.4.4.1 signature in
-	// the SigAlg+Signature query params (not an enveloped XML-DSig).
+	// the SigAlg+Signature query params (not an enveloped XML-DSig). The relayState
+	// (chain id, for front-channel) is part of the signed octet string, so the IdP
+	// re-derives + trusts the exact id the chain issued.
 	return a.signedRedirect(idpSLO, "SAMLResponse", resp.Element(), relayState)
+}
+
+// idpSLOResponseEndpoint resolves where this SP redirects a LogoutResponse: the
+// explicitly-configured IdP SLO RESPONSE endpoint (cfg.IDPSLOResponseURL — the
+// front-channel chain's /saml/slo/continue, the metadata ResponseLocation
+// analogue) when set, else the IdP's SLO REQUEST endpoint
+// (GetSLOBindingLocation, fed by metadata / cfg.IDPSLOURL — the back-channel /
+// IdP-initiated default). Empty when neither resolves (the caller falls back to a
+// bare 200).
+func (a *SPAuthenticator) idpSLOResponseEndpoint() string {
+	if a.cfg.IDPSLOResponseURL != "" {
+		return a.cfg.IDPSLOResponseURL
+	}
+	return a.sp.GetSLOBindingLocation(saml.HTTPRedirectBinding)
 }
 
 // LogoutURL builds a SIGNED HTTP-Redirect LogoutRequest the SP sends to the

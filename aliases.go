@@ -286,6 +286,7 @@ const PathSAMLMetadata = core.PathSAMLMetadata
 const PathSAMLSSO = core.PathSAMLSSO
 const PathSAMLSSOCallback = core.PathSAMLSSOCallback
 const PathSAMLSLO = core.PathSAMLSLO
+const PathSAMLSLOContinue = core.PathSAMLSLOContinue
 const PathSAMLSPSLO = core.PathSAMLSPSLO
 const PathSendCode = core.PathSendCode
 const PathToken = core.PathToken

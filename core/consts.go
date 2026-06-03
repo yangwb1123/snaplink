@@ -87,10 +87,21 @@ const (
 	// LogoutRequest here and this server terminates its own local session,
 	// replying with a signed LogoutResponse to the IdP. Both are distinct
 	// from the SSO mounts so an operator can route them independently.
+	//
+	// PathSAMLSLOContinue is the IdP-side FRONT-channel SLO chain resume
+	// endpoint: in the browser-redirect SLO chain (SAML Bindings HTTP-Redirect)
+	// the IdP redirects the user-agent sequentially through each front-channel
+	// SP's SLO URL; each SP, after terminating its local session, redirects the
+	// browser BACK here with a signed LogoutResponse + the chain-state id as
+	// RelayState, and the IdP advances to the next SP (or returns to the
+	// initiator). It is the response-side counterpart to PathSAMLSLO (the
+	// request-side receiver) — a distinct path so the SP's LogoutResponse target
+	// is unambiguous (it is PathSAMLSLO + "/continue").
 	PathSAMLMetadata    = "/saml/metadata"
 	PathSAMLSSO         = "/saml/sso"
 	PathSAMLSSOCallback = "/auth/saml/callback"
 	PathSAMLSLO         = "/saml/slo"
+	PathSAMLSLOContinue = "/saml/slo/continue"
 	PathSAMLSPSLO       = "/auth/saml/slo"
 )
 

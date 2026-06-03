@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	tIDPSLOURL = "https://idp.example.com/saml/slo"
-	tSPSLOURL  = "https://sp.example.com/auth/saml/slo"
+	tIDPSLOURL         = "https://idp.example.com/saml/slo"
+	tIDPSLOContinueURL = "https://idp.example.com/saml/slo/continue"
+	tSPSLOURL          = "https://sp.example.com/auth/saml/slo"
 )
 
 // newSPSigner generates an RSA keypair + self-signed cert and returns them
@@ -402,6 +403,106 @@ func TestSP_BuildLogoutResponseURL_BuildsDetachedSignedRedirect(t *testing.T) {
 	}
 	if got := el.SelectAttrValue("InResponseTo", ""); got != "id-req-123" {
 		t.Errorf("InResponseTo = %q, want id-req-123", got)
+	}
+}
+
+// newFrontChannelSLOSP builds an SP like newSLOSP but ALSO configured for the
+// IdP's FRONT-channel chain: IDPSLOResponseURL points at the IdP's
+// /saml/slo/continue resume endpoint, so the SP redirects its LogoutResponse
+// THERE (not the request endpoint).
+func newFrontChannelSLOSP(t *testing.T, idpSigner *idpKeypair, now time.Time) *SPAuthenticator {
+	t.Helper()
+	keyPEM, certPEM := newSPSigner(t)
+	a, err := NewSPAuthenticator(SPConfig{
+		Name:              "test-idp-fc",
+		EntityID:          tSPEntity,
+		ACSURL:            tACSURL,
+		IDPCert:           idpSigner.certPEM(),
+		IDPEntityID:       tIDPEntity,
+		SPPrivateKey:      keyPEM,
+		SPCert:            certPEM,
+		SPSLOURL:          tSPSLOURL,
+		IDPSLOURL:         tIDPSLOURL,
+		IDPSLOResponseURL: tIDPSLOContinueURL,
+	})
+	if err != nil {
+		t.Fatalf("NewSPAuthenticator (front-channel): %v", err)
+	}
+	a.now = func() time.Time { return now }
+	return a
+}
+
+// TestSP_FrontChannel_ProcessRequest_RedirectsResponseToContinue is the SP-side
+// front-channel proof: an inbound front-channel (redirect-binding) IdP
+// LogoutRequest is validated + yields the subject, and the SP's LogoutResponse
+// (built for the chain) redirects to the IdP's /saml/slo/continue RESUME endpoint
+// (not the request endpoint), carrying a detached signature + the ECHOED
+// RelayState (the chain-state id the IdP resumes on) + the InResponseTo binding.
+func TestSP_FrontChannel_ProcessRequest_RedirectsResponseToContinue(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newFrontChannelSLOSP(t, idp, now)
+
+	const chainState = "chain-state-id-xyz"
+	// Inbound front-channel LogoutRequest (the IdP redirected the browser here),
+	// carrying the chain-state id as RelayState.
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, chainState, idp)
+	subj, err := processRedirectLogout(a, q)
+	if err != nil {
+		t.Fatalf("ProcessLogoutRequest (front-channel) = %v, want nil", err)
+	}
+
+	// The SP builds its LogoutResponse for the chain: echoing the RelayState
+	// verbatim so the IdP can resume.
+	raw, err := a.BuildLogoutResponseURL(subj.RequestID, chainState)
+	if err != nil {
+		t.Fatalf("BuildLogoutResponseURL (front-channel): %v", err)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse response URL: %v", err)
+	}
+	// Target is the IdP's /continue RESUME endpoint, NOT the request endpoint.
+	if got := u.Scheme + "://" + u.Host + u.Path; got != tIDPSLOContinueURL {
+		t.Fatalf("front-channel response target = %q, want the continue endpoint %q", got, tIDPSLOContinueURL)
+	}
+	// RelayState echoed VERBATIM (the chain id).
+	if rs := u.Query().Get("RelayState"); rs != chainState {
+		t.Errorf("response RelayState = %q, want the echoed chain id %q", rs, chainState)
+	}
+	// Detached signature present + verifies against the SP cert; body unsigned.
+	if u.Query().Get("Signature") == "" {
+		t.Fatal("front-channel LogoutResponse missing detached Signature")
+	}
+	assertDetachedSigVerifies(t, u.RawQuery, "SAMLResponse", a.sloSigCert)
+	el := inflateAndParse(t, u.Query().Get("SAMLResponse"))
+	if sig := el.FindElement("//Signature"); sig != nil {
+		t.Error("front-channel LogoutResponse body must be UNSIGNED (detached binding)")
+	}
+	if got := el.SelectAttrValue("InResponseTo", ""); got != subj.RequestID {
+		t.Errorf("InResponseTo = %q, want the inbound request id %q", got, subj.RequestID)
+	}
+}
+
+// TestSP_BackChannel_ResponseTargetsRequestEndpoint_Unchanged proves the
+// back-channel / IdP-initiated default is UNCHANGED: with NO IDPSLOResponseURL
+// configured, the SP's LogoutResponse still targets the IdP's request-side SLO
+// endpoint (the pre-front-channel behavior).
+func TestSP_BackChannel_ResponseTargetsRequestEndpoint_Unchanged(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now) // no IDPSLOResponseURL
+
+	raw, err := a.BuildLogoutResponseURL("id-req-1", "rs")
+	if err != nil {
+		t.Fatalf("BuildLogoutResponseURL: %v", err)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := u.Scheme + "://" + u.Host + u.Path; got != tIDPSLOURL {
+		t.Fatalf("back-channel response target = %q, want the request endpoint %q (unchanged)", got, tIDPSLOURL)
 	}
 }
 

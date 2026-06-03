@@ -65,9 +65,38 @@ const (
 	// SP's LogoutRequest over: "redirect" (HTTP-Redirect, a GET with a detached
 	// §3.4.4.1 signature — the default, and what saml/sp validates by default) or
 	// "post" (HTTP-POST, an enveloped-XML-DSig LogoutRequest form). Absent/unknown
-	// ⇒ redirect. It governs ONLY the outbound fan-out direction; the inbound
+	// ⇒ redirect. It governs ONLY the outbound fan-out WIRE binding; the inbound
 	// SP-initiated /saml/slo receiver accepts BOTH bindings regardless.
 	AttrSPSLOBinding = "saml_sp_slo_binding"
+
+	// AttrSPSLOChannel selects WHICH SLO mode an SP participates in:
+	//
+	//   "backchannel" (default, back-compat) — the IdP POSTs/GETs the
+	//                  LogoutRequest to the SP's SLO URL DIRECTLY (server-to-server,
+	//                  async fan-out). Requires the SP be reachable from the IdP.
+	//   "frontchannel" — the IdP redirects the USER'S BROWSER sequentially through
+	//                  each such SP's SLO endpoint (the traditional SAML SLO mode
+	//                  for SPs NOT reachable from the IdP). Driven by the
+	//                  single-use logout-chain state machine (frontchannel_slo.go).
+	//
+	// WHY a SEPARATE key from AttrSPSLOBinding: AttrSPSLOBinding already selects the
+	// WIRE binding (redirect|post) for the back-channel fan-out, a shipped + reviewed
+	// dimension; CHANNEL (front vs back) is ORTHOGONAL to it (a back-channel SP can
+	// be redirect OR post). Overloading saml_sp_slo_binding with frontchannel|
+	// backchannel would collide with that reviewed semantics, so the channel gets
+	// its own key. Front-channel always uses the HTTP-Redirect binding (the only one
+	// a browser-redirect chain can carry), so AttrSPSLOBinding does not apply to it.
+	// Absent/unknown ⇒ backchannel (byte-identical to the pre-front-channel
+	// behavior: every SP fans out async, no chain).
+	AttrSPSLOChannel = "saml_sp_slo_channel"
+)
+
+// SLO channel identifiers for AttrSPSLOChannel.
+const (
+	// ChannelBackchannel is the direct server-to-server fan-out (the default).
+	ChannelBackchannel = "backchannel"
+	// ChannelFrontchannel is the browser-redirect SLO chain.
+	ChannelFrontchannel = "frontchannel"
 )
 
 // acsURLDelimiter separates registered ACS URLs in AttrSPACSURLs.
@@ -137,6 +166,15 @@ type Deps struct {
 	// <=0 ⇒ DefaultLogoutReplayStoreSize.
 	LogoutReplayStoreSize int
 
+	// LogoutChainTTL bounds how long a FRONT-channel browser-redirect SLO chain
+	// stays resumable across its hops (frontchannel_slo.go). <=0 ⇒
+	// DefaultLogoutChainTTL (5m).
+	LogoutChainTTL time.Duration
+
+	// LogoutChainStoreSize bounds the in-memory front-channel logout-chain store.
+	// <=0 ⇒ DefaultLogoutChainCapacity.
+	LogoutChainStoreSize int
+
 	// Pending stores SP-initiated AuthnRequests between /saml/sso and
 	// /saml/sso/finish. Nil ⇒ a default in-memory store is created.
 	Pending *PendingStore
@@ -192,6 +230,14 @@ type Handlers struct {
 	// here → rejected (targeted-logout DoS defense). Sized like the assertion
 	// replay store on the SP side.
 	logoutReplay *logoutReplayStore
+
+	// chains holds in-flight FRONT-channel logout chains (frontchannel_slo.go),
+	// keyed by an unguessable single-use state id. It drives the browser-redirect
+	// SLO chain through each front-channel SP's SLO endpoint and back to the
+	// initiator. Always non-nil (a default bounded store); it is exercised ONLY
+	// when the session index is wired AND a subject has front-channel SPs, so a
+	// build with no front-channel SPs never touches it (byte-identical).
+	chains *logoutChainStore
 }
 
 // NewHandlers validates deps and returns the IdP handler set. A missing
@@ -230,6 +276,7 @@ func NewHandlers(deps Deps) (*Handlers, error) {
 		pending:      pending,
 		signerCache:  make(map[string]*AssertionSigner),
 		logoutReplay: newLogoutReplayStore(deps.LogoutReplayStoreSize),
+		chains:       newLogoutChainStore(deps.LogoutChainTTL, deps.LogoutChainStoreSize),
 	}, nil
 }
 
@@ -421,6 +468,20 @@ func spSLOBinding(spClient *sso.Client) string {
 		return BindingPost
 	default:
 		return BindingRedirect
+	}
+}
+
+// spSLOChannel returns the SP's registered SLO channel (AttrSPSLOChannel),
+// normalized to ChannelBackchannel (the default) or ChannelFrontchannel. An
+// unrecognized or absent value yields ChannelBackchannel — back-compat: every SP
+// fans out server-to-server unless it explicitly opts into the front-channel
+// browser-redirect chain.
+func spSLOChannel(spClient *sso.Client) string {
+	switch strings.ToLower(strings.TrimSpace(spClient.Attributes[AttrSPSLOChannel])) {
+	case ChannelFrontchannel:
+		return ChannelFrontchannel
+	default:
+		return ChannelBackchannel
 	}
 }
 

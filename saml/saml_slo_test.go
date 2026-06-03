@@ -182,6 +182,117 @@ func TestSPSLO_EndToEnd_OnlySubjectTerminated(t *testing.T) {
 	}
 }
 
+// TestBuild_MountsFrontChannelContinueRoute proves saml.Build mounts the IdP
+// front-channel chain RESUME endpoint (GET /saml/slo/continue) when the IdP is
+// enabled — the route the browser-redirect chain resumes on.
+func TestBuild_MountsFrontChannelContinueRoute(t *testing.T) {
+	res, err := samlmod.Build(samlmod.Deps{
+		SessionManager:  defaultimpl.NewMemorySessionManager(),
+		UserProvider:    defaultimpl.NewMemoryUserProvider(),
+		ClientStore:     defaultimpl.NewMemoryClientStore(),
+		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", nil, nil },
+		Issuer:          asIssuer,
+	}, samlmod.Config{
+		IdP: samlmod.IdPConfig{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	found := false
+	for i := range res.Handlers {
+		h := &res.Handlers[i]
+		if h.Path == sso.PathSAMLSLOContinue && h.Method == http.MethodGet {
+			found = true
+			if h.Handler == nil {
+				t.Fatalf("GET %s mounted with a nil handler", sso.PathSAMLSLOContinue)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("Build did not mount GET %s (front-channel chain resume)", sso.PathSAMLSLOContinue)
+	}
+}
+
+// TestSPSLO_FrontChannel_RedirectsResponseToContinue is the wired SP-side
+// front-channel proof: an SP configured with IDPSLOResponseURL = the IdP's
+// /saml/slo/continue endpoint, on receiving a front-channel (redirect) IdP
+// LogoutRequest, terminates the LOCAL session and 302s its signed LogoutResponse
+// to the CONTINUE endpoint (not the request endpoint), echoing the chain-state
+// RelayState so the IdP can resume.
+func TestSPSLO_FrontChannel_RedirectsResponseToContinue(t *testing.T) {
+	idpKp := newIDPKey(t)
+	spKeyPEM, spCertPEM := newSPSLOKey(t)
+	sessions := defaultimpl.NewMemorySessionManager()
+	const idpContinueURL = "https://idp.example.com/saml/slo/continue"
+
+	res, err := samlmod.Build(samlmod.Deps{
+		SessionManager: sessions,
+		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		ClientStore:    defaultimpl.NewMemoryClientStore(),
+	}, samlmod.Config{
+		SPs: []sp.SPConfig{{
+			Name:              "test-idp",
+			EntityID:          spEntity,
+			ACSURL:            acsURL,
+			IDPCert:           idpKp.certPEM(),
+			IDPEntityID:       idpEntity,
+			SPPrivateKey:      spKeyPEM,
+			SPCert:            spCertPEM,
+			SPSLOURL:          spSLOURL,
+			IDPSLOURL:         idpSLOURL,
+			IDPSLOResponseURL: idpContinueURL,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	var slo *samlmod.HandlerSpec
+	for i := range res.Handlers {
+		h := &res.Handlers[i]
+		if h.Path == sso.PathSAMLSPSLO && h.Method == http.MethodGet {
+			slo = h
+		}
+	}
+	if slo == nil {
+		t.Fatalf("Build mounted no GET %s handler", sso.PathSAMLSPSLO)
+	}
+
+	const nameID = "fc@example.com"
+	const chainState = "chain-state-abc"
+	sess, err := sessions.Create(context.Background(), nameID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// The IdP redirected the browser here with a signed front-channel LogoutRequest
+	// carrying the chain-state id as RelayState.
+	q := mintLogoutRedirectQuery(t, idpKp, idpEntity, nameID, "", spSLOURL, chainState)
+	rec := postSPSLO(slo.Handler, q)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	// The local session is GONE.
+	if s, err := sessions.Get(context.Background(), sess.ID); err == nil && s != nil {
+		t.Fatalf("local session %q should be terminated by the front-channel logout", sess.ID)
+	}
+	// The 302 LogoutResponse goes to the IdP's CONTINUE endpoint with the ECHOED
+	// chain-state RelayState (so the IdP resumes the chain).
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+	if got := u.Scheme + "://" + u.Host + u.Path; got != idpContinueURL {
+		t.Fatalf("front-channel response target = %q, want the continue endpoint %q", got, idpContinueURL)
+	}
+	if rs := u.Query().Get("RelayState"); rs != chainState {
+		t.Errorf("response RelayState = %q, want the echoed chain id %q", rs, chainState)
+	}
+	if u.Query().Get("SAMLResponse") == "" || u.Query().Get("Signature") == "" {
+		t.Errorf("front-channel LogoutResponse missing SAMLResponse/Signature: %q", u.RawQuery)
+	}
+}
+
 // TestSLO_SPtoIdPtoSP_RoundTrip is the full snaplink SP→IdP→SP interop proof on
 // the NEW detached §3.4.4.1 format: the repo's OWN SP side builds a SP-initiated
 // LogoutRequest redirect (detached-signed with the SP key), the repo's OWN IdP

@@ -243,7 +243,41 @@
 // invasively wired into the core SessionManager: an operator's forked main calls
 // handlers.Fanout(ctx, subject, "") (the exported method on the IdP handler set)
 // from wherever it terminates the subject's primary session. The SP-initiated
-// path calls the same Fanout internally with the initiating SP excluded.
+// path drives the back-channel + front-channel split internally with the
+// initiating SP excluded.
+//
+// SLO FRONT-CHANNEL CHAIN (the browser-redirect SLO mode, for SPs NOT reachable
+// from the IdP — the traditional/common SAML SLO mode the back-channel fan-out
+// can't serve). An SP opts in per-client via saml_sp_slo_channel: "frontchannel"
+// (default "backchannel" ⇒ the async fan-out above; the channel is ORTHOGONAL to
+// saml_sp_slo_binding, which still selects the back-channel WIRE binding). For
+// front-channel SPs, the IdP redirects the USER'S BROWSER sequentially through
+// each SP's SLO endpoint:
+//
+//		IdP /saml/slo ─(302 signed LogoutRequest)→ SP-A SLO URL ─(SP-A terminates)→
+//		  (302 signed LogoutResponse, RelayState=chain-state-id)→ IdP /saml/slo/continue
+//		  ─(302 signed LogoutRequest)→ SP-B SLO URL → ... → after the LAST SP →
+//		  (302 IdP LogoutResponse)→ the INITIATOR's registered SLO URL.
+//
+//	  - The chain is driven by an UNGUESSABLE, SINGLE-USE state id (crypto/rand,
+//	    256-bit) held in a bounded in-memory store; each /saml/slo/continue hop
+//	    ROTATES the id, so a consumed/unknown/expired id collapses to ONE
+//	    saml_request_invalid (no chain-state oracle, no replay, no step-skipping).
+//	  - Each outbound LogoutRequest is SIGNED (detached §3.4.4.1) with the TARGET
+//	    SP's per-tenant key (its own saml/sp ProcessLogoutRequest accepts it —
+//	    cross-validated in the tests); the inbound LogoutResponse at /continue is
+//	    signature-VALIDATED against THAT SP's registered cert BEFORE the chain
+//	    advances (peek → verify → consume), so a FORGED LogoutResponse neither
+//	    advances nor burns a legitimate chain.
+//	  - The chain ONLY visits SPs from the session index (registered SPs the
+//	    subject was actually logged into), with https-only SLO URLs (the same SSRF
+//	    gate as the fan-out); the final redirect target is the INITIATOR's
+//	    REGISTERED SLO URL, never request-supplied. no-store on every hop.
+//	  - Back-channel + front-channel COEXIST: back-channel SPs fan out async while
+//	    the front-channel chain runs via the browser. nil session index / no
+//	    front-channel SPs ⇒ no chain (byte-identical to the back-channel-only
+//	    behavior). Mounted with the IdP at PathSAMLSLOContinue = /saml/slo/continue
+//	    (GET).
 //
 // SP side — this server is logged out by its UPSTREAM IdP (mounted with any SP,
 // at PathSAMLSPSLO = /auth/saml/slo, GET+POST):
@@ -266,9 +300,14 @@
 //     emitted).
 //
 // SP-side SLO config (sp.SPConfig): SPSLOURL (this SP's own SLO endpoint),
-// IDPSLOURL (the upstream IdP's SLO endpoint when the pinned metadata lacks
-// one), and the existing SPPrivateKey/SPCert (SLO signing — RSA or ECDSA P-256;
-// goxmldsig has no Ed25519 method). The IdP signing cert pinned for assertions
-// is REUSED to validate inbound IdP LogoutRequests, so SLO adds no new trust
-// anchor.
+// IDPSLOURL (the upstream IdP's SLO REQUEST endpoint when the pinned metadata
+// lacks one), IDPSLOResponseURL (the upstream IdP's SLO RESPONSE endpoint when it
+// differs from the request endpoint — REQUIRED to participate in the IdP's
+// FRONT-channel chain: set it to "<idp>/saml/slo/continue" so this SP redirects
+// its LogoutResponse to the chain's resume endpoint, echoing the RelayState the
+// IdP resumes on; empty ⇒ the response goes to the request endpoint, the
+// back-channel/IdP-initiated default, unchanged), and the existing
+// SPPrivateKey/SPCert (SLO signing — RSA or ECDSA P-256; goxmldsig has no Ed25519
+// method). The IdP signing cert pinned for assertions is REUSED to validate
+// inbound IdP LogoutRequests, so SLO adds no new trust anchor.
 package saml

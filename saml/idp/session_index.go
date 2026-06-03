@@ -53,12 +53,23 @@ type SAMLSPSession struct {
 	// no SLO URL ⇒ it is skipped in the fan-out (nowhere to deliver).
 	SPSLOUrl string
 
-	// SPBinding selects how the LogoutRequest is delivered: BindingRedirect
-	// (HTTP-Redirect, a GET with a DETACHED §3.4.4.1 signature — the default and
-	// what saml/sp ProcessLogoutRequest validates) or BindingPost (HTTP-POST, an
-	// auto-submit form carrying an enveloped-XML-DSig LogoutRequest). Empty ⇒
-	// BindingRedirect.
+	// SPBinding selects how the back-channel LogoutRequest is delivered:
+	// BindingRedirect (HTTP-Redirect, a GET with a DETACHED §3.4.4.1 signature —
+	// the default and what saml/sp ProcessLogoutRequest validates) or BindingPost
+	// (HTTP-POST, an auto-submit form carrying an enveloped-XML-DSig
+	// LogoutRequest). Empty ⇒ BindingRedirect. Applies ONLY to the back-channel
+	// fan-out (front-channel always uses HTTP-Redirect).
 	SPBinding string
+
+	// SPChannel selects WHICH SLO mode this SP participates in:
+	// ChannelBackchannel (the default — the IdP delivers the LogoutRequest
+	// server-to-server via the async fan-out) or ChannelFrontchannel (the IdP
+	// redirects the user's BROWSER through this SP's SLO URL as part of the
+	// front-channel chain). Empty ⇒ ChannelBackchannel. The front-channel chain
+	// reads THIS to decide which SPs to visit via the browser; the back-channel
+	// fan-out handles the rest. Recorded server-side at issuance (from the
+	// registered client), never request-influenceable.
+	SPChannel string
 
 	// NameID is the assertion subject (== user.ID). The fan-out LogoutRequest's
 	// NameID — the SP terminates the matching local session(s) for it.
