@@ -4,6 +4,7 @@ import (
 	"context"
 	"html/template"
 	"net/http"
+	"net/url"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/audit"
@@ -178,14 +179,33 @@ func (h *Handlers) recordAssertion(r *http.Request, clientID, spEntityID, userID
 // the fan-out skips it (nowhere to deliver) — but recording it keeps the index a
 // faithful picture of the subject's SP sessions for RemoveAll. Best-effort: a
 // record error is logged, never surfaced.
+//
+// SSRF defense-in-depth (issuance-time gate): a registered SLO URL that is NOT
+// an absolute https URL is recorded as EMPTY (so it never enters the fan-out
+// target set), mirroring the dispatch-time https gate in dispatchOne. This
+// keeps a non-https SLO URL out of the index entirely — the dispatch gate is
+// the second line for a row that predates this check or was written directly.
+// The row itself is still recorded (with the empty SPSLOUrl) so RemoveAll keeps
+// a faithful subject->SP picture.
 func (h *Handlers) recordSessionIndex(ctx context.Context, spClient *sso.Client, spEntityID, subject string) {
 	if h.deps.SessionIndex == nil {
 		return
 	}
+	sloURL := firstSLO(spClient)
+	if sloURL != "" && !isHTTPSURL(sloURL) {
+		// Non-https SLO URL — drop it from the index (never a fan-out
+		// destination). Log the scheme only (never the full URL).
+		scheme := ""
+		if u, perr := url.Parse(sloURL); perr == nil {
+			scheme = u.Scheme
+		}
+		h.deps.Logger.Error("saml/idp: dropping non-https SP SLO URL from session index", "client_id", spClient.ID, "sp_entity_id", spEntityID, "scheme", scheme)
+		sloURL = ""
+	}
 	if err := h.deps.SessionIndex.Record(ctx, subject, SAMLSPSession{
 		SPEntityID:   spEntityID,
 		SPClientID:   spClient.ID,
-		SPSLOUrl:     firstSLO(spClient),
+		SPSLOUrl:     sloURL,
 		SPBinding:    spSLOBinding(spClient),
 		NameID:       subject,
 		SessionIndex: "", // IdP emits no per-session SessionIndex (full-subject logout)

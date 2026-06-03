@@ -2,10 +2,13 @@ package idp
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -43,13 +46,16 @@ func (c *capturedSLO) snapshot() (string, string, int) {
 	return c.gotRedirect, c.gotPostBody, c.hits
 }
 
-// newCapturingSP starts an httptest server standing in for a downstream SP's SLO
-// endpoint. It captures the inbound LogoutRequest (so the test can cross-validate
-// it) and returns 200. statusOverride, when non-zero, is returned instead (to
-// simulate a failing SP).
+// newCapturingSP starts an httptest TLS server standing in for a downstream SP's
+// SLO endpoint. It is HTTPS (httptest.NewTLSServer) because the fan-out is
+// https-only (the SSRF gate) — a plain-http server would be REFUSED at dispatch.
+// The test must trust this server's cert on the fan-out client via
+// trustFanoutServers. It captures the inbound LogoutRequest (so the test can
+// cross-validate it) and returns 200. statusOverride, when non-zero, is returned
+// instead (to simulate a failing SP).
 func newCapturingSP(t *testing.T, cap *capturedSLO, statusOverride int) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := ""
 		if r.Method == http.MethodPost {
 			_ = r.ParseForm()
@@ -64,6 +70,31 @@ func newCapturingSP(t *testing.T, cap *capturedSLO, statusOverride int) *httptes
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// trustFanoutServers wires the harness's fan-out HTTP client (the FanoutHTTPClient
+// Deps seam) to one that TRUSTS the given httptest TLS servers' self-signed certs
+// AND mirrors the production fan-out client's hardening (no redirect-following +
+// the per-SP timeout). The fan-out is https-only, so without this the dispatch's
+// TLS handshake to the test server would fail x509 verification. It pools EVERY
+// passed server's cert so one client can reach all of a test's target SPs.
+// Production leaves FanoutHTTPClient nil and uses the hardened package default;
+// this seam only swaps the transport's trust roots, never the https/SSRF gate.
+func trustFanoutServers(t *testing.T, hh *harness, srvs ...*httptest.Server) {
+	t.Helper()
+	pool := x509.NewCertPool()
+	for _, srv := range srvs {
+		pool.AddCert(srv.Certificate())
+	}
+	hh.h.deps.FanoutHTTPClient = &http.Client{
+		Timeout: fanoutPerSPTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		},
+	}
 }
 
 // newFanoutHarness builds a SLO harness (SP-A registered with its signing cert +
@@ -188,6 +219,9 @@ func TestFanout_SPInitiated_DispatchesToOtherSP(t *testing.T) {
 		t.Fatalf("re-register SP-A: %v", err)
 	}
 
+	// Trust both TLS servers' certs on the fan-out client (https-only fan-out).
+	trustFanoutServers(t, hh, srvA, srvB)
+
 	// Seed the index: the subject is logged into BOTH SP-A and SP-B.
 	ctx := context.Background()
 	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spEntityID, SPClientID: spClientID, SPSLOUrl: srvA.URL, SPBinding: BindingRedirect, NameID: nameID})
@@ -259,6 +293,7 @@ func TestFanout_DeadSP_DoesNotBlock(t *testing.T) {
 	srvC := newCapturingSP(t, capC, http.StatusInternalServerError)
 	const spCEntityID = "https://sp-c.example.com/saml/metadata"
 	registerExtraSP(t, hh.clients, "sp-c-client", spCEntityID, srvC.URL, BindingRedirect)
+	trustFanoutServers(t, hh, srvC)
 
 	ctx := context.Background()
 	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spCEntityID, SPClientID: "sp-c-client", SPSLOUrl: srvC.URL, SPBinding: BindingRedirect, NameID: nameID})
@@ -298,6 +333,7 @@ func TestFanout_POSTBinding_DispatchesEnvelopedRequest(t *testing.T) {
 	srvD := newCapturingSP(t, capD, 0)
 	const spDEntityID = "https://sp-d.example.com/saml/metadata"
 	registerExtraSP(t, hh.clients, "sp-d-client", spDEntityID, srvD.URL, BindingPost)
+	trustFanoutServers(t, hh, srvD)
 
 	ctx := context.Background()
 	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spDEntityID, SPClientID: "sp-d-client", SPSLOUrl: srvD.URL, SPBinding: BindingPost, NameID: nameID})
@@ -379,6 +415,7 @@ func TestFanout_IdPInitiated_Hook(t *testing.T) {
 	srvF := newCapturingSP(t, capF, 0)
 	const spFEntityID = "https://sp-f.example.com/saml/metadata"
 	registerExtraSP(t, hh.clients, "sp-f-client", spFEntityID, srvF.URL, BindingRedirect)
+	trustFanoutServers(t, hh, srvF)
 
 	ctx := context.Background()
 	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spFEntityID, SPClientID: "sp-f-client", SPSLOUrl: srvF.URL, SPBinding: BindingRedirect, NameID: nameID})
@@ -408,6 +445,205 @@ func TestFanout_SkipsSPWithNoSLOURL(t *testing.T) {
 	if rows, _ := idx.ListBySubject(ctx, nameID); len(rows) != 0 {
 		t.Fatalf("index not cleaned: %+v", rows)
 	}
+}
+
+// newPlainHTTPCapturingSP starts a PLAIN-HTTP (non-TLS) httptest server. It is
+// the SSRF target stand-in: a fan-out destination the https-only gate MUST
+// refuse BEFORE any outbound request. Any hit on it is a gate failure.
+func newPlainHTTPCapturingSP(t *testing.T, cap *capturedSLO) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := ""
+		if r.Method == http.MethodPost {
+			_ = r.ParseForm()
+			body = r.PostForm.Get("SAMLRequest")
+		}
+		cap.record(r.URL.RawQuery, body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestFanout_SSRF_RefusesNonHTTPSSLOURL is the LOAD-BEARING SSRF regression test
+// (Fix 1, dispatch-time gate). A registered SP carries a NON-https (http://) SLO
+// URL recorded directly in the index. The fan-out MUST refuse it: ZERO outbound
+// requests reach the http server, and a logout_notified FAILURE is audited with
+// the FIXED non-https reason. This locks the gate that stops the IdP becoming an
+// SSRF vector (an http:// / internal / IMDS saml_sp_slo_url).
+func TestFanout_SSRF_RefusesNonHTTPSSLOURL(t *testing.T) {
+	const nameID = "ssrf@example.com"
+	hh, _, _, idx, sink := newFanoutHarness(t, nameID)
+
+	// A PLAIN-HTTP SP (the SSRF target). Register + record it with its http:// URL.
+	capH := &capturedSLO{}
+	srvH := newPlainHTTPCapturingSP(t, capH)
+	if !strings.HasPrefix(srvH.URL, "http://") {
+		t.Fatalf("precondition: plain-http server URL = %q, want http:// prefix", srvH.URL)
+	}
+	const spHEntityID = "https://sp-h.example.com/saml/metadata"
+	registerExtraSP(t, hh.clients, "sp-h-client", spHEntityID, srvH.URL, BindingRedirect)
+	// NOTE: deliberately do NOT call trustFanoutServers — even if a request WERE
+	// sent (the bug we guard against), this proves the gate, not TLS trust. The
+	// http target needs no trust anyway.
+
+	ctx := context.Background()
+	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spHEntityID, SPClientID: "sp-h-client", SPSLOUrl: srvH.URL, SPBinding: BindingRedirect, NameID: nameID})
+
+	hh.h.Fanout(ctx, nameID, "")
+
+	// The fan-out must record a FAILURE (the refusal) — wait for it.
+	if !waitForFanoutAudit(t, sink, audit.OutcomeFailure) {
+		t.Fatalf("expected a logout_notified FAILURE audit for the refused non-https SLO URL")
+	}
+
+	// THE load-bearing assertion: the http SSRF target received ZERO requests.
+	if _, _, hits := capH.snapshot(); hits != 0 {
+		t.Fatalf("SSRF: non-https SLO URL was contacted %d time(s) — the https gate FAILED", hits)
+	}
+
+	// The audited failure reason is the FIXED non-https reason — NOT a raw error
+	// (which would embed the URL).
+	events, _ := sink.Query(ctx, audit.Query{})
+	var sawReason bool
+	for _, e := range events {
+		if e.Type == audit.EventLogoutNotified && e.Outcome == audit.OutcomeFailure {
+			sawReason = true
+			if e.Reason != fanoutReasonNonHTTPSSLOURL {
+				t.Fatalf("fan-out failure Reason = %q, want fixed %q", e.Reason, fanoutReasonNonHTTPSSLOURL)
+			}
+			if strings.Contains(e.Reason, "://") || strings.Contains(e.Reason, srvH.URL) {
+				t.Fatalf("fan-out failure Reason leaks a URL: %q", e.Reason)
+			}
+		}
+	}
+	if !sawReason {
+		t.Fatalf("no logout_notified failure event found")
+	}
+
+	// The index is still cleaned (the subject was logged out).
+	if rows, _ := idx.ListBySubject(ctx, nameID); len(rows) != 0 {
+		t.Fatalf("index not cleaned after refused fan-out: %+v", rows)
+	}
+}
+
+// TestRecordSessionIndex_DropsNonHTTPSSLOURL proves the issuance-time gate (Fix
+// 1, defense-in-depth): recordSessionIndex stores an EMPTY SPSLOUrl for an SP
+// whose registered saml_sp_slo_url is non-https, so a non-https SP never enters
+// the fan-out target set. The row itself is still recorded (RemoveAll fidelity).
+func TestRecordSessionIndex_DropsNonHTTPSSLOURL(t *testing.T) {
+	const nameID = "issuance@example.com"
+	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
+
+	// An SP registered with an http:// SLO URL.
+	const spIEntityID = "https://sp-i.example.com/saml/metadata"
+	registerExtraSP(t, hh.clients, "sp-i-client", spIEntityID, "http://sp-i.internal/slo", BindingRedirect)
+	spI, err := hh.clients.Get(context.Background(), "sp-i-client")
+	if err != nil {
+		t.Fatalf("get sp-i: %v", err)
+	}
+
+	hh.h.recordSessionIndex(context.Background(), spI, spIEntityID, nameID)
+
+	rows, _ := idx.ListBySubject(context.Background(), nameID)
+	var found bool
+	for _, r := range rows {
+		if r.SPEntityID == spIEntityID {
+			found = true
+			if r.SPSLOUrl != "" {
+				t.Fatalf("issuance-time gate: SPSLOUrl = %q, want empty (non-https dropped)", r.SPSLOUrl)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the SP row was not recorded at all (should be, with empty SLO URL): %+v", rows)
+	}
+}
+
+// TestRecordSessionIndex_KeepsHTTPSSLOURL is the positive control: an https SLO
+// URL is recorded intact (the gate only drops non-https).
+func TestRecordSessionIndex_KeepsHTTPSSLOURL(t *testing.T) {
+	const nameID = "issuance-ok@example.com"
+	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
+
+	const spJEntityID = "https://sp-j.example.com/saml/metadata"
+	const httpsSLO = "https://sp-j.example.com/saml/slo"
+	registerExtraSP(t, hh.clients, "sp-j-client", spJEntityID, httpsSLO, BindingRedirect)
+	spJ, err := hh.clients.Get(context.Background(), "sp-j-client")
+	if err != nil {
+		t.Fatalf("get sp-j: %v", err)
+	}
+
+	hh.h.recordSessionIndex(context.Background(), spJ, spJEntityID, nameID)
+
+	rows, _ := idx.ListBySubject(context.Background(), nameID)
+	for _, r := range rows {
+		if r.SPEntityID == spJEntityID {
+			if r.SPSLOUrl != httpsSLO {
+				t.Fatalf("https SLO URL = %q, want kept %q", r.SPSLOUrl, httpsSLO)
+			}
+			return
+		}
+	}
+	t.Fatalf("https SP row not recorded: %+v", rows)
+}
+
+// TestFanout_DeliveryFailure_FixedReason proves the audit Reason for a real
+// DELIVERY failure (an SP that 500s) is the FIXED "delivery failed" string and
+// NEVER embeds the destination URL (Fix 3 — the raw transport error would leak
+// it). Complements TestFanout_DeadSP_DoesNotBlock (which only checks the outcome).
+func TestFanout_DeliveryFailure_FixedReason(t *testing.T) {
+	const nameID = "leak@example.com"
+	hh, _, _, idx, sink := newFanoutHarness(t, nameID)
+
+	capK := &capturedSLO{}
+	srvK := newCapturingSP(t, capK, http.StatusInternalServerError)
+	const spKEntityID = "https://sp-k.example.com/saml/metadata"
+	registerExtraSP(t, hh.clients, "sp-k-client", spKEntityID, srvK.URL, BindingRedirect)
+	trustFanoutServers(t, hh, srvK)
+
+	ctx := context.Background()
+	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spKEntityID, SPClientID: "sp-k-client", SPSLOUrl: srvK.URL, SPBinding: BindingRedirect, NameID: nameID})
+
+	hh.h.Fanout(ctx, nameID, "")
+	waitForHits(t, capK, 1)
+	if !waitForFanoutAudit(t, sink, audit.OutcomeFailure) {
+		t.Fatalf("expected a delivery-failure audit")
+	}
+
+	events, _ := sink.Query(ctx, audit.Query{})
+	for _, e := range events {
+		if e.Type == audit.EventLogoutNotified && e.Outcome == audit.OutcomeFailure {
+			if e.Reason != fanoutReasonDeliveryFailed {
+				t.Fatalf("delivery-failure Reason = %q, want fixed %q", e.Reason, fanoutReasonDeliveryFailed)
+			}
+			// The host:port of the destination must NOT appear in the reason.
+			if u, perr := url.Parse(srvK.URL); perr == nil && strings.Contains(e.Reason, u.Host) {
+				t.Fatalf("delivery-failure Reason leaks the destination host %q: %q", u.Host, e.Reason)
+			}
+		}
+	}
+}
+
+// TestFanout_DispatchSemaphore_NormalOperationDispatches confirms the global
+// dispatch semaphore (Fix 2) does not break normal operation: a single fan-out
+// still dispatches. (Saturation-drop is covered structurally by the non-blocking
+// acquire; this guards the common path.)
+func TestFanout_DispatchSemaphore_NormalOperationDispatches(t *testing.T) {
+	const nameID = "sem@example.com"
+	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
+
+	capL := &capturedSLO{}
+	srvL := newCapturingSP(t, capL, 0)
+	const spLEntityID = "https://sp-l.example.com/saml/metadata"
+	registerExtraSP(t, hh.clients, "sp-l-client", spLEntityID, srvL.URL, BindingRedirect)
+	trustFanoutServers(t, hh, srvL)
+
+	ctx := context.Background()
+	_ = idx.Record(ctx, nameID, SAMLSPSession{SPEntityID: spLEntityID, SPClientID: "sp-l-client", SPSLOUrl: srvL.URL, SPBinding: BindingRedirect, NameID: nameID})
+
+	hh.h.Fanout(ctx, nameID, "")
+	waitForHits(t, capL, 1)
 }
 
 // --- helpers ---

@@ -57,6 +57,40 @@ const fanoutPerSPTimeout = 5 * time.Second
 // roughly timeout × ceil(N/max).
 const fanoutMaxConcurrent = 8
 
+// fanoutMaxInflightDispatches caps the number of CONCURRENT fan-out dispatch
+// goroutines across ALL in-flight logouts (each Fanout() spawns one
+// fanoutDispatch, which itself fans out to up to fanoutMaxConcurrent SPs, each
+// up to fanoutPerSPTimeout). Without a global ceiling, O(concurrent-logouts)
+// dispatch goroutines accumulate under sustained logout pressure. The semaphore
+// is acquired NON-BLOCKING before spawning; when full, the dispatch is DROPPED
+// (logged) rather than spawned — best-effort, mirroring the rest of the fan-out
+// posture (the initiator has already logged out locally; a dropped fan-out only
+// delays remote SP termination until their own session expiry). 64 ≈ 8× the
+// per-dispatch SP concurrency, so the steady-state worst case is bounded at
+// fanoutMaxInflightDispatches × fanoutMaxConcurrent outbound connections.
+const fanoutMaxInflightDispatches = 64
+
+// fanoutDispatchSem is the package-level global ceiling on concurrent fan-out
+// dispatch goroutines (see fanoutMaxInflightDispatches). A buffered channel used
+// as a counting semaphore: a non-blocking send acquires a slot, a receive
+// (in fanoutDispatch's defer) releases it.
+var fanoutDispatchSem = make(chan struct{}, fanoutMaxInflightDispatches)
+
+// fanout failure reasons are a SMALL FIXED set recorded in the logout_notified
+// audit event's Reason. They MUST NOT embed the destination URL or a raw
+// transport error: an HTTP error string is `Post "https://host/...": ...`,
+// which would leak the fan-out target (and confirm an SSRF probe) into the audit
+// sink. The full error is logged via the logger (operator diagnostics) — only
+// these bounded strings reach the audit record.
+const (
+	fanoutReasonSPClientNotFound = "sp client not found"
+	fanoutReasonNoRegisteredSLO  = "no registered slo url"
+	fanoutReasonNonHTTPSSLOURL   = "non-https slo url"
+	fanoutReasonSignFailed       = "sign failed"
+	fanoutReasonDeliveryFailed   = "delivery failed"
+	fanoutReasonPanic            = "dispatch panic"
+)
+
 // fanoutHTTPClient is the bounded HTTP client the fan-out dispatches with. The
 // per-request deadline is enforced via the request context (fanoutPerSPTimeout);
 // this client-level Timeout is a belt-and-suspenders ceiling on the whole
@@ -68,6 +102,22 @@ var fanoutHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+}
+
+// isHTTPSURL reports whether raw is an absolute https URL with a host. This is
+// the SSRF gate on the fan-out destination: a registered SP's saml_sp_slo_url is
+// operator config, but a non-https value (http:// internal/IMDS target,
+// file://, a scheme-relative or hostless garbage URL) would turn the IdP's
+// signed-LogoutRequest dispatch into a server-side request to an
+// attacker/internal endpoint. Mirrors caep.ValidateReceiverEndpoint exactly
+// (the CAEP receiver-endpoint https policy). Enforced at dispatch (runtime gate)
+// AND at issuance (recordSessionIndex never indexes a non-https SLO URL).
+func isHTTPSURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && u.Host != ""
 }
 
 // Fanout pushes a signed SAML LogoutRequest to every OTHER SP the subject has an
@@ -125,6 +175,17 @@ func (h *Handlers) Fanout(ctx context.Context, subject, excludeSPEntityID string
 		return
 	}
 
+	// Global ceiling on concurrent dispatch goroutines. Acquire NON-BLOCKING:
+	// when the semaphore is saturated (too many in-flight logouts), DROP this
+	// dispatch (best-effort, mirroring the dead-SP posture) rather than spawn an
+	// unbounded goroutine. The slot is released in fanoutDispatch's defer.
+	select {
+	case fanoutDispatchSem <- struct{}{}:
+	default:
+		h.deps.Logger.Error("saml/idp: SLO fan-out dispatch dropped (concurrency ceiling reached)", "subject", subject, "targets", len(targets))
+		return
+	}
+
 	// Detached supervised dispatch: the request that triggered the logout has
 	// returned, so context.Background() is the correct PARENT (inheriting the
 	// request ctx would cancel the dispatch the instant the response is written).
@@ -137,6 +198,10 @@ func (h *Handlers) Fanout(ctx context.Context, subject, excludeSPEntityID string
 // (e.g. a signer edge case) can't crash the process from a bare goroutine, and a
 // bounded worker pool over the targets.
 func (h *Handlers) fanoutDispatch(targets []SAMLSPSession) {
+	// Release the global dispatch slot when this goroutine exits (acquired
+	// non-blocking in Fanout). Separate defer so it runs even if the dispatch
+	// panics (the recover below is unrelated to slot accounting).
+	defer func() { <-fanoutDispatchSem }()
 	defer func() {
 		if r := recover(); r != nil {
 			h.deps.Logger.Error("saml/idp: SLO fan-out dispatch panicked", "panic", r)
@@ -185,9 +250,8 @@ func (h *Handlers) dispatchOne(t SAMLSPSession) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			reason := fmt.Sprintf("panic: %v", r)
 			h.deps.Logger.Error("saml/idp: SLO fan-out to SP panicked", "sp_entity_id", t.SPEntityID, "panic", r)
-			h.recordFanoutFailure(ctx, t, reason)
+			h.recordFanoutFailure(ctx, t, fanoutReasonPanic)
 		}
 	}()
 
@@ -196,7 +260,7 @@ func (h *Handlers) dispatchOne(t SAMLSPSession) {
 	spClient, err := h.deps.ClientStore.Get(ctx, t.SPClientID)
 	if err != nil || spClient == nil {
 		h.deps.Logger.Error("saml/idp: SLO fan-out SP client not found", "sp_client_id", t.SPClientID, "sp_entity_id", t.SPEntityID, "error", err)
-		h.recordFanoutFailure(ctx, t, "sp client not found")
+		h.recordFanoutFailure(ctx, t, fanoutReasonSPClientNotFound)
 		return
 	}
 
@@ -211,7 +275,28 @@ func (h *Handlers) dispatchOne(t SAMLSPSession) {
 	}
 	if sloURL == "" || !sloAllowed(spClient, sloURL) {
 		h.deps.Logger.Error("saml/idp: SLO fan-out no registered SLO URL", "sp_entity_id", t.SPEntityID)
-		h.recordFanoutFailure(ctx, t, "no registered slo url")
+		h.recordFanoutFailure(ctx, t, fanoutReasonNoRegisteredSLO)
+		return
+	}
+
+	// SSRF gate (CRITICAL): the destination MUST be https. Even an allowlisted,
+	// registered SLO URL is refused if it is not an absolute https URL — an
+	// http:// / internal / IMDS (169.254.169.254) / file:// target would turn the
+	// IdP's signed-LogoutRequest dispatch into a server-side request to an
+	// attacker/internal endpoint (signed-SAML SSRF amplification). Mirrors the
+	// CAEP receiver-endpoint https policy (caep.ValidateReceiverEndpoint). The
+	// full URL is NEVER logged here (only the scheme), so a probe can't confirm a
+	// target via the operator log either. Defense-in-depth: a non-https SLO URL
+	// also never enters the session index (recordSessionIndex), so this gate is
+	// the second line.
+	parsed, perr := url.Parse(sloURL)
+	if perr != nil || parsed.Scheme != "https" {
+		scheme := ""
+		if parsed != nil {
+			scheme = parsed.Scheme
+		}
+		h.deps.Logger.Error("saml/idp: SLO fan-out refused non-https SLO URL", "sp_entity_id", t.SPEntityID, "scheme", scheme)
+		h.recordFanoutFailure(ctx, t, fanoutReasonNonHTTPSSLOURL)
 		return
 	}
 
@@ -220,13 +305,16 @@ func (h *Handlers) dispatchOne(t SAMLSPSession) {
 	signer, err := h.signerForClient(spClient)
 	if err != nil {
 		h.deps.Logger.Error("saml/idp: SLO fan-out signer resolution failed", "sp_entity_id", t.SPEntityID, "error", err)
-		h.recordFanoutFailure(ctx, t, "signer resolution failed")
+		h.recordFanoutFailure(ctx, t, fanoutReasonSignFailed)
 		return
 	}
 
 	if err := h.deliverLogoutRequest(ctx, sloURL, t, signer); err != nil {
+		// Log the FULL error (with the URL) for operator diagnostics; the audit
+		// record gets only the fixed reason (the raw err embeds the destination
+		// URL — see fanoutReasonDeliveryFailed).
 		h.deps.Logger.Error("saml/idp: SLO fan-out delivery failed", "sp_entity_id", t.SPEntityID, "url", sloURL, "error", err)
-		h.recordFanoutFailure(ctx, t, err.Error())
+		h.recordFanoutFailure(ctx, t, fanoutReasonDeliveryFailed)
 		return
 	}
 	h.recordFanoutSuccess(ctx, spClient.ID, t)
@@ -246,6 +334,7 @@ func (h *Handlers) dispatchOne(t SAMLSPSession) {
 // is still considered logged out best-effort, but the failure is recorded).
 func (h *Handlers) deliverLogoutRequest(ctx context.Context, sloURL string, t SAMLSPSession, signer *AssertionSigner) error {
 	now := h.deps.now()
+	client := h.fanoutClient()
 
 	switch normalizeBinding(t.SPBinding) {
 	case BindingPost:
@@ -253,14 +342,30 @@ func (h *Handlers) deliverLogoutRequest(ctx context.Context, sloURL string, t SA
 		if err != nil {
 			return fmt.Errorf("build POST logout request: %w", err)
 		}
-		return postSLOForm(ctx, sloURL, body)
+		return postSLOForm(ctx, client, sloURL, body)
 	default: // BindingRedirect
 		reqURL, err := buildLogoutRequestRedirect(h.entityID(), sloURL, t.NameID, t.SessionIndex, signer, now)
 		if err != nil {
 			return fmt.Errorf("build redirect logout request: %w", err)
 		}
-		return getSLO(ctx, reqURL)
+		return getSLO(ctx, client, reqURL)
 	}
+}
+
+// fanoutClient returns the HTTP client the fan-out dispatches with: the optional
+// Deps.FanoutHTTPClient test/operator seam when set, else the package-default
+// bounded fanoutHTTPClient (5s timeout, no redirects). The seam exists so a test
+// can inject httptest.NewTLSServer().Client() (which trusts the test cert) to
+// exercise the now-https-only fan-out over TLS; production leaves it nil and
+// gets the hardened default. A non-nil override is still subject to the same
+// https destination gate (isHTTPSURL / the dispatchOne scheme check) and the
+// per-SP timeout context — the seam only swaps the transport's trust roots, not
+// the SSRF policy.
+func (h *Handlers) fanoutClient() *http.Client {
+	if h.deps.FanoutHTTPClient != nil {
+		return h.deps.FanoutHTTPClient
+	}
+	return fanoutHTTPClient
 }
 
 // normalizeBinding maps a recorded SPBinding to a known binding (defaulting to
@@ -370,13 +475,14 @@ func signLogoutRequest(req *saml.LogoutRequest, signer *AssertionSigner) (*etree
 
 // getSLO issues the redirect-binding LogoutRequest as a GET to the SP's SLO URL
 // (the URL already carries the signed SAMLRequest + SigAlg + Signature query
-// params). A non-2xx is a delivery failure.
-func getSLO(ctx context.Context, reqURL string) error {
+// params). A non-2xx is a delivery failure. client is the bounded fan-out client
+// (the package default, or the test-injected one — see Handlers.fanoutClient).
+func getSLO(ctx context.Context, client *http.Client, reqURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := fanoutHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -389,14 +495,14 @@ func getSLO(ctx context.Context, reqURL string) error {
 
 // postSLOForm POSTs the POST-binding LogoutRequest (base64 SAMLRequest in a
 // form-urlencoded body) to the SP's SLO URL. A non-2xx is a delivery failure.
-func postSLOForm(ctx context.Context, sloURL, samlRequestB64 string) error {
+func postSLOForm(ctx context.Context, client *http.Client, sloURL, samlRequestB64 string) error {
 	form := url.Values{"SAMLRequest": {samlRequestB64}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sloURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := fanoutHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -414,6 +520,12 @@ func postSLOForm(ctx context.Context, sloURL, samlRequestB64 string) error {
 // id. Nil recorder ⇒ no-op. These run on the detached goroutine over a
 // background context (there is no live request ctx), so the Event is built
 // directly (mirrors recordSLO) rather than via EventFromRequest.
+//
+// The failure Reason is ALWAYS one of the fixed fanoutReason* constants — NEVER
+// a raw err.Error(). A transport error string embeds the destination URL
+// (`Post "https://host/...": ...`), which would leak the fan-out target (and
+// confirm an SSRF probe) into the audit sink. The full error is logged via the
+// logger only (dispatchOne). Callers MUST pass a fanoutReason* constant.
 func (h *Handlers) recordFanoutSuccess(ctx context.Context, clientID string, t SAMLSPSession) {
 	if h.deps.AuditRecorder == nil {
 		return

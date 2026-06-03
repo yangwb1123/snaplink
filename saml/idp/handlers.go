@@ -155,6 +155,14 @@ type Deps struct {
 	// unchanged).
 	AuditRecorder *audit.Recorder
 
+	// FanoutHTTPClient OPTIONALLY overrides the bounded HTTP client the SLO
+	// fan-out dispatches LogoutRequests with. Nil ⇒ the package-default
+	// fanoutHTTPClient (5s timeout, no redirect-following). It exists as a
+	// test/operator seam (e.g. to inject an httptest TLS client that trusts a
+	// test cert, since the fan-out destination is https-only). It does NOT relax
+	// the https destination gate — that runs independently in dispatchOne.
+	FanoutHTTPClient *http.Client
+
 	// Logger is the server logger. Nil ⇒ a no-op logger.
 	Logger spi.Logger
 
