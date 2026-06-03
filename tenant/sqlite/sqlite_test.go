@@ -68,6 +68,60 @@ func TestStore_TenantRoundtrip(t *testing.T) {
 	}
 }
 
+func TestStore_TenantRegionFieldsRoundtrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	want := &tenant.Tenant{
+		ID:             "t1",
+		Slug:           "acme",
+		Name:           "Acme",
+		Status:         tenant.StatusActive,
+		HomeRegion:     "eu-west-1",
+		AllowedRegions: []string{"eu-west-1", "eu-central-1"},
+	}
+	if err := s.PutTenant(ctx, want); err != nil {
+		t.Fatalf("PutTenant: %v", err)
+	}
+
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTenant: %v", err)
+	}
+	if got.HomeRegion != "eu-west-1" {
+		t.Errorf("HomeRegion=%q", got.HomeRegion)
+	}
+	if len(got.AllowedRegions) != 2 || got.AllowedRegions[0] != "eu-west-1" || got.AllowedRegions[1] != "eu-central-1" {
+		t.Errorf("AllowedRegions=%v", got.AllowedRegions)
+	}
+
+	// ListTenants must surface the same fields (separate SELECT path).
+	list, err := s.ListTenants(ctx)
+	if err != nil {
+		t.Fatalf("ListTenants: %v", err)
+	}
+	if len(list) != 1 || list[0].HomeRegion != "eu-west-1" || len(list[0].AllowedRegions) != 2 {
+		t.Errorf("list region fields mismatch: %+v", list)
+	}
+}
+
+func TestStore_TenantRegionFieldsZeroIsUnconstrained(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	// A tenant persisted without region fields must round-trip to the zero
+	// value: home_region '' (DEFAULT) and allowed_regions_json '[]' decode
+	// back to "" / nil (backward-compatible with pre-residency rows).
+	if err := s.PutTenant(ctx, &tenant.Tenant{ID: "t1", Slug: "acme", Name: "Acme", Status: tenant.StatusActive}); err != nil {
+		t.Fatalf("PutTenant: %v", err)
+	}
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTenant: %v", err)
+	}
+	if got.HomeRegion != "" || got.AllowedRegions != nil {
+		t.Errorf("region fields not zero-valued: home=%q allowed=%v", got.HomeRegion, got.AllowedRegions)
+	}
+}
+
 func TestStore_GetTenantMissingReturnsErr(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.GetTenant(context.Background(), "ghost")

@@ -196,6 +196,12 @@ func cloneTenant(t *tenant.Tenant) *tenant.Tenant {
 		cp.Settings = make(map[string]string, len(t.Settings))
 		maps.Copy(cp.Settings, t.Settings)
 	}
+	if t.AllowedRegions != nil {
+		// Deep-copy the residency slice for the same reason Settings is
+		// copied: a stored Tenant must not alias the caller's slice.
+		cp.AllowedRegions = make([]string, len(t.AllowedRegions))
+		copy(cp.AllowedRegions, t.AllowedRegions)
+	}
 	return &cp
 }
 

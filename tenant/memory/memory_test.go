@@ -42,6 +42,49 @@ func TestPutGetTenant_Roundtrip(t *testing.T) {
 	}
 }
 
+func TestPutGetTenant_RegionFieldsRoundtrip(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	want := &tenant.Tenant{
+		ID:             "t1",
+		Slug:           "acme",
+		Name:           "acme",
+		HomeRegion:     "eu-west-1",
+		AllowedRegions: []string{"eu-west-1", "eu-central-1"},
+	}
+	if err := s.PutTenant(ctx, want); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.HomeRegion != "eu-west-1" {
+		t.Errorf("HomeRegion=%q", got.HomeRegion)
+	}
+	if len(got.AllowedRegions) != 2 || got.AllowedRegions[0] != "eu-west-1" || got.AllowedRegions[1] != "eu-central-1" {
+		t.Errorf("AllowedRegions=%v", got.AllowedRegions)
+	}
+	// Mutating the caller's slice must not reach the stored tenant.
+	want.AllowedRegions[0] = "us-east-1"
+	again, _ := s.GetTenant(ctx, "t1")
+	if again.AllowedRegions[0] != "eu-west-1" {
+		t.Errorf("stored tenant aliased caller slice: %v", again.AllowedRegions)
+	}
+}
+
+func TestPutGetTenant_RegionFieldsZeroIsUnconstrained(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	if err := s.PutTenant(ctx, mkTenant("t1", "acme")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, _ := s.GetTenant(ctx, "t1")
+	if got.HomeRegion != "" || got.AllowedRegions != nil {
+		t.Errorf("region fields not zero-valued: home=%q allowed=%v", got.HomeRegion, got.AllowedRegions)
+	}
+}
+
 func TestGetTenant_MissingIsErrTenantNotFound(t *testing.T) {
 	s := memory.New()
 	if _, err := s.GetTenant(context.Background(), "ghost"); !errors.Is(err, tenant.ErrTenantNotFound) {

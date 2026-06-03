@@ -26,13 +26,24 @@ import (
 // per-tenant feature flags, default locale, branding tokens —
 // without forcing a wide table for every new toggle.
 type Tenant struct {
-	ID        string            `json:"id"`
-	Slug      string            `json:"slug"`
-	Name      string            `json:"name"`
-	Status    Status            `json:"status"`
-	Settings  map[string]string `json:"settings,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at,omitzero"`
+	ID       string            `json:"id"`
+	Slug     string            `json:"slug"`
+	Name     string            `json:"name"`
+	Status   Status            `json:"status"`
+	Settings map[string]string `json:"settings,omitempty"`
+
+	// HomeRegion + AllowedRegions are the data-residency anchor consumed by
+	// the multi-region layer (region.ResidencyPolicy). HomeRegion names the
+	// region this tenant's data primarily lives in; AllowedRegions is the
+	// set a request may be served from. Plain strings (not region.ID) keep
+	// tenant/ a lower-level package that region/ depends on — region/ maps
+	// these to region.ID, not the reverse. Zero value ("" / nil) =
+	// unconstrained, so tenants predating this field are byte-compatible.
+	HomeRegion     string   `json:"home_region,omitempty"`
+	AllowedRegions []string `json:"allowed_regions,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // Status enumerates the operational states an operator can flip.

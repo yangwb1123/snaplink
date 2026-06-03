@@ -32,6 +32,15 @@ import (
 // and get stamped v1.
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_tenants", SQL: schema},
+	// v2 pins data-residency on a tenant. Forward-only ALTER ADD COLUMN
+	// with NOT NULL DEFAULT so existing rows backfill to the unconstrained
+	// zero value ('' / '[]') — byte-compatible with pre-residency tenants.
+	// A v1-populated DB applies this once and stamps v2; a fresh DB gets it
+	// in the same run after the baseline.
+	{Version: 2, Name: "tenant_residency_regions", SQL: `
+ALTER TABLE tenants ADD COLUMN home_region TEXT NOT NULL DEFAULT '';
+ALTER TABLE tenants ADD COLUMN allowed_regions_json TEXT NOT NULL DEFAULT '[]';
+`},
 }
 
 const schema = `
@@ -129,7 +138,7 @@ func (s *Store) Ping(ctx context.Context) error {
 
 func (s *Store) GetTenant(ctx context.Context, id string) (*tenant.Tenant, error) {
 	row := s.db.QueryRowContext(ctx, `
-        SELECT slug, name, status, settings_json, created_at, updated_at
+        SELECT slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at
         FROM tenants WHERE id = ?`, id)
 	t, err := scanTenant(id, row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -143,7 +152,7 @@ func (s *Store) GetTenant(ctx context.Context, id string) (*tenant.Tenant, error
 
 func (s *Store) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, slug, name, status, settings_json, created_at, updated_at
+        SELECT id, slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at
         FROM tenants ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: list tenants: %w", err)
@@ -152,23 +161,27 @@ func (s *Store) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
 	var out []*tenant.Tenant
 	for rows.Next() {
 		var id string
-		var slug, name, status, settingsJSON string
+		var slug, name, status, settingsJSON, homeRegion, allowedRegionsJSON string
 		var createdNs, updatedNs int64
-		if err := rows.Scan(&id, &slug, &name, &status, &settingsJSON, &createdNs, &updatedNs); err != nil {
+		if err := rows.Scan(&id, &slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &createdNs, &updatedNs); err != nil {
 			return nil, fmt.Errorf("tenant/sqlite: scan tenant: %w", err)
 		}
 		t := &tenant.Tenant{
-			ID:        id,
-			Slug:      slug,
-			Name:      name,
-			Status:    tenant.Status(status),
-			CreatedAt: time.Unix(0, createdNs).UTC(),
-			UpdatedAt: time.Unix(0, updatedNs).UTC(),
+			ID:         id,
+			Slug:       slug,
+			Name:       name,
+			Status:     tenant.Status(status),
+			HomeRegion: homeRegion,
+			CreatedAt:  time.Unix(0, createdNs).UTC(),
+			UpdatedAt:  time.Unix(0, updatedNs).UTC(),
 		}
 		if settingsJSON != "" {
 			if err := json.Unmarshal([]byte(settingsJSON), &t.Settings); err != nil {
 				return nil, fmt.Errorf("tenant/sqlite: unmarshal settings: %w", err)
 			}
+		}
+		if err := unmarshalRegions(allowedRegionsJSON, &t.AllowedRegions); err != nil {
+			return nil, err
 		}
 		out = append(out, t)
 	}
@@ -196,6 +209,11 @@ func (s *Store) PutTenant(ctx context.Context, t *tenant.Tenant) error {
 		settingsJSON = string(raw)
 	}
 
+	allowedRegionsJSON, err := marshalRegions(t.AllowedRegions)
+	if err != nil {
+		return err
+	}
+
 	createdAt := now
 	if !t.CreatedAt.IsZero() {
 		createdAt = t.CreatedAt.UnixNano()
@@ -203,16 +221,18 @@ func (s *Store) PutTenant(ctx context.Context, t *tenant.Tenant) error {
 	// UPSERT: on conflict by id, preserve CREATED_AT (matches the
 	// memory peer's behavior — operator updates don't reset the
 	// creation timestamp).
-	_, err := s.db.ExecContext(ctx, `
-        INSERT INTO tenants (id, slug, name, status, settings_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, err = s.db.ExecContext(ctx, `
+        INSERT INTO tenants (id, slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             slug = excluded.slug,
             name = excluded.name,
             status = excluded.status,
             settings_json = excluded.settings_json,
+            home_region = excluded.home_region,
+            allowed_regions_json = excluded.allowed_regions_json,
             updated_at = excluded.updated_at`,
-		t.ID, t.Slug, t.Name, string(t.Status), settingsJSON, createdAt, now,
+		t.ID, t.Slug, t.Name, string(t.Status), settingsJSON, t.HomeRegion, allowedRegionsJSON, createdAt, now,
 	)
 	if err != nil {
 		// Slug collisions surface as UNIQUE constraint violations;
@@ -359,25 +379,62 @@ func (s *Store) DeleteDomain(ctx context.Context, hostname string) error {
 // --- helpers ---
 
 func scanTenant(id string, row interface{ Scan(...any) error }) (*tenant.Tenant, error) {
-	var slug, name, status, settingsJSON string
+	var slug, name, status, settingsJSON, homeRegion, allowedRegionsJSON string
 	var createdNs, updatedNs int64
-	if err := row.Scan(&slug, &name, &status, &settingsJSON, &createdNs, &updatedNs); err != nil {
+	if err := row.Scan(&slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &createdNs, &updatedNs); err != nil {
 		return nil, err
 	}
 	t := &tenant.Tenant{
-		ID:        id,
-		Slug:      slug,
-		Name:      name,
-		Status:    tenant.Status(status),
-		CreatedAt: time.Unix(0, createdNs).UTC(),
-		UpdatedAt: time.Unix(0, updatedNs).UTC(),
+		ID:         id,
+		Slug:       slug,
+		Name:       name,
+		Status:     tenant.Status(status),
+		HomeRegion: homeRegion,
+		CreatedAt:  time.Unix(0, createdNs).UTC(),
+		UpdatedAt:  time.Unix(0, updatedNs).UTC(),
 	}
 	if settingsJSON != "" {
 		if err := json.Unmarshal([]byte(settingsJSON), &t.Settings); err != nil {
 			return nil, fmt.Errorf("tenant/sqlite: unmarshal settings: %w", err)
 		}
 	}
+	if err := unmarshalRegions(allowedRegionsJSON, &t.AllowedRegions); err != nil {
+		return nil, err
+	}
 	return t, nil
+}
+
+// unmarshalRegions decodes the allowed_regions_json TEXT column into a
+// []string. The column's NOT NULL DEFAULT '[]' means a backfilled v1 row
+// decodes to an empty non-nil slice; we normalize that back to nil so a
+// round-trip of an unconstrained tenant stays the zero value (matches the
+// settings_json "" -> nil map handling).
+func unmarshalRegions(raw string, dst *[]string) error {
+	if raw == "" || raw == "[]" {
+		*dst = nil
+		return nil
+	}
+	if err := json.Unmarshal([]byte(raw), dst); err != nil {
+		return fmt.Errorf("tenant/sqlite: unmarshal allowed_regions: %w", err)
+	}
+	if len(*dst) == 0 {
+		*dst = nil
+	}
+	return nil
+}
+
+// marshalRegions encodes AllowedRegions for the allowed_regions_json
+// column. Nil/empty marshals to '[]' so the column's NOT NULL invariant
+// holds (mirrors the column DEFAULT).
+func marshalRegions(regions []string) (string, error) {
+	if len(regions) == 0 {
+		return "[]", nil
+	}
+	raw, err := json.Marshal(regions)
+	if err != nil {
+		return "", fmt.Errorf("tenant/sqlite: marshal allowed_regions: %w", err)
+	}
+	return string(raw), nil
 }
 
 func scanDomain(host string, row interface{ Scan(...any) error }) (*tenant.Domain, error) {
