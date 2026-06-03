@@ -372,6 +372,52 @@ func TestIssueWebAuthnToken_HappyPath(t *testing.T) {
 	}
 }
 
+func TestIssueWebAuthnToken_ScopeGate(t *testing.T) {
+	// WebAuthn requests the client's full AllowedScopes through oauth.GrantedScopes
+	// (the shared scope-authorization gate). openid is preserved so an OIDC client
+	// still gets an id_token; a non-openid client gets only its allowed scopes and
+	// no id_token even with an issuer wired -- locks the gate routing against the
+	// openid-auto-inject concern without regressing the WebAuthn id_token.
+	issue := func(allowed []string) *webauthnIssueResult {
+		t.Helper()
+		store := defaultimpl.NewMemoryClientStore()
+		_ = store.Add(context.Background(), &sso.Client{
+			ID: "wa-app", Active: true, TokenStrategy: "jwt", AllowedScopes: allowed,
+		})
+		issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
+		deps := &webauthnDeps{
+			ClientStore:   store,
+			TokenIssuers:  map[string]sso.TokenIssuer{"jwt": issuer},
+			DefaultStrat:  "jwt",
+			IDTokenIssuer: issuer,
+		}
+		req, _ := http.NewRequest("POST", "http://x/", nil)
+		res, err := issueWebAuthnToken(req, deps, "wa-app", "alice")
+		if err != nil {
+			t.Fatalf("issue(%v): %v", allowed, err)
+		}
+		return res
+	}
+
+	// OIDC client: scope carries the full allowance incl. openid -> id_token issued.
+	oidcRes := issue([]string{"openid", "profile"})
+	if !strings.Contains(oidcRes.Scope, "openid") || !strings.Contains(oidcRes.Scope, "profile") {
+		t.Fatalf("oidc scope = %q want openid+profile", oidcRes.Scope)
+	}
+	if oidcRes.IDToken == "" {
+		t.Fatal("oidc client: expected an id_token (openid in allowance)")
+	}
+
+	// Non-OIDC client: scope is exactly the allowance, no openid -> no id_token.
+	plainRes := issue([]string{"profile"})
+	if plainRes.Scope != "profile" {
+		t.Fatalf("non-oidc scope = %q want %q", plainRes.Scope, "profile")
+	}
+	if plainRes.IDToken != "" {
+		t.Fatal("non-oidc client: id_token must be omitted (no openid)")
+	}
+}
+
 func TestIssueWebAuthnToken_DefaultStrategyFallback(t *testing.T) {
 	// Client.TokenStrategy empty → fall back to deps.DefaultStrat.
 	store := defaultimpl.NewMemoryClientStore()

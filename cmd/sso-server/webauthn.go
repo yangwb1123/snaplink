@@ -457,9 +457,12 @@ func idTokenIssuerForWebAuthn(deps *webauthnDeps, client *sso.Client) (oidc.IDTo
 // issueWebAuthnToken builds a sso.Subject for the WebAuthn-
 // authenticated user + mints an access token via the client's
 // configured TokenIssuer. AMR carries "webauthn" so resource
-// servers can branch on auth strength. Scopes default to the
-// client's full AllowedScopes — the WebAuthn ceremony has no
-// scope-selection step.
+// servers can branch on auth strength. The WebAuthn ceremony has no
+// scope-selection step, so it requests the client's full AllowedScopes
+// through the shared oauth.GrantedScopes gate (the same scope-
+// authorization seam as /auth/login + /token) — a full-allowance request
+// never narrows or errors, but routing it through the gate keeps EVERY
+// token-minting path on one seam rather than special-casing WebAuthn.
 //
 // When the client's scopes include `offline_access` AND deps.
 // oauth.RefreshTokenStore is wired, a refresh_token rides along; when
@@ -500,7 +503,14 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 			return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
 		}
 	}
-	scopes := client.AllowedScopes
+	scopes, err := oauth.GrantedScopes(client.AllowedScopes, client)
+	if err != nil {
+		// Unreachable for a full-allowance request (every scope is in the
+		// allowlist; openid is always permitted), but handled for parity
+		// with the device/CIBA callers so WebAuthn can never silently skip
+		// the gate if GrantedScopes' contract changes.
+		return nil, fmt.Errorf("webauthn: scope authorization: %w", err)
+	}
 	authTime := time.Now()
 	subject := &sso.Subject{
 		ID:       userID,
