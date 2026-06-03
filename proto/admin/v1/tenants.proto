@@ -67,12 +67,22 @@ service TenantAdminService {
 
 // Tenant mirrors tenant.Tenant. Status uses the same string values the
 // SDK defines ("active", "suspended").
+//
+// home_region/allowed_regions/enforce_writes are the data-residency
+// policy consumed by the multi-region layer. Carried on the Tenant
+// message itself so CreateTenant/UpdateTenant (both wrap a Tenant) set
+// them and GetTenant/ListTenants read them back without a separate RPC.
+// Zero value ("" / empty / false) = unconstrained + fail-open, so
+// tenants predating these fields stay wire-compatible.
 message Tenant {
   string id     = 1;
   string slug   = 2;
   string name   = 3;
   string status = 4;
   map<string, string> settings = 5;
+  string home_region            = 6;
+  repeated string allowed_regions = 7;
+  bool   enforce_writes         = 8;
 }
 
 // Domain mirrors tenant.Domain.

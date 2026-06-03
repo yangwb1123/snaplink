@@ -4583,6 +4583,22 @@ components:
         settings:
           type: object
           additionalProperties: { type: string }
+        # Data-residency policy. Set on create/update, read back on get/list.
+        # Empty/false = unconstrained + fail-open. A successful update
+        # invalidates the per-tenant residency cache so changes take effect
+        # immediately.
+        home_region:
+          type: string
+          description: Region this tenant's data primarily lives in.
+        allowed_regions:
+          type: array
+          items: { type: string }
+          description: Regions a request for this tenant may be served from.
+        enforce_writes:
+          type: boolean
+          description: >-
+            When true, a write served outside home_region is rejected at the
+            enforcement layer (hard gate); when false, residency is advisory.
 
     Domain:
       type: object

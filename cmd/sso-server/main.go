@@ -577,6 +577,7 @@ func newGRPCServer(a *app) *grpc.Server {
 		if a.tenantStore != nil {
 			adminv1.RegisterTenantAdminServiceServer(s, grpcserver.NewTenantAdminService(
 				a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
+				a.server.InvalidateTenantResidencyCache,
 				func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) }))
 		}
 	}
@@ -721,6 +722,7 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	if a.tenantStore != nil {
 		if err := adminv1.RegisterTenantAdminServiceHandlerServer(ctx, gw, grpcserver.NewTenantAdminService(
 			a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
+			a.server.InvalidateTenantResidencyCache,
 			func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) })); err != nil {
 			return nil, fmt.Errorf("gateway tenants: %w", err)
 		}

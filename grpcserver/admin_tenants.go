@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/snaplink/sso/audit"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
@@ -25,6 +26,13 @@ type TenantAdminService struct {
 	store                     tenant.Store
 	recorder                  *audit.Recorder
 	invalidateSuspensionCache func(tenantID string)
+	// invalidateResidencyCache drops the cached data-residency policy for a
+	// tenant after Create/Update writes new home_region/allowed_regions/
+	// enforce_writes (wired to (*sso.Server).InvalidateTenantResidencyCache),
+	// so a policy change takes effect on the next request instead of waiting
+	// out the residency cache TTL. Optional — nil is a no-op (byte-identical
+	// for non-residency deployments). Mirrors invalidateSuspensionCache.
+	invalidateResidencyCache func(tenantID string)
 	// revokeTenantTokens proactively purges the tenant's refresh tokens
 	// when it is suspended (wired to (*sso.Server).RevokeTenantRefreshTokens).
 	// Optional — nil is a no-op.
@@ -32,12 +40,16 @@ type TenantAdminService struct {
 }
 
 // NewTenantAdminService wires the store, audit recorder, the suspension-cache
-// invalidation callback, and the active token-revocation hook fired on
-// suspend. Pass nil for either callback when the SSO server doesn't have the
-// corresponding feature enabled (the call is a no-op then).
-func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalidateCache func(string), revokeTokens func(context.Context, string)) *TenantAdminService {
+// invalidation callback, the residency-cache invalidation callback, and the
+// active token-revocation hook fired on suspend. Pass nil for any callback
+// when the SSO server doesn't have the corresponding feature enabled (the
+// call is a no-op then).
+func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalidateCache func(string), invalidateResidency func(string), revokeTokens func(context.Context, string)) *TenantAdminService {
 	if invalidateCache == nil {
 		invalidateCache = func(string) {}
+	}
+	if invalidateResidency == nil {
+		invalidateResidency = func(string) {}
 	}
 	if revokeTokens == nil {
 		revokeTokens = func(context.Context, string) {}
@@ -46,6 +58,7 @@ func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalid
 		store:                     store,
 		recorder:                  recorder,
 		invalidateSuspensionCache: invalidateCache,
+		invalidateResidencyCache:  invalidateResidency,
 		revokeTenantTokens:        revokeTokens,
 	}
 }
@@ -106,6 +119,12 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, in *adminv1.Creat
 		return nil, status.Errorf(codes.Internal, "create tenant: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminTenantCreated, t.ID)
+	// A fresh id has nothing cached, but a delete-then-recreate could leave a
+	// stale residency entry; evict it when Create actually sets a policy. Guard
+	// on hasResidency so the common no-residency create stays a strict no-op.
+	if hasResidency(t) {
+		s.invalidateResidencyCache(t.ID)
+	}
 	// Re-fetch so the response carries the server-applied timestamps
 	// and default Status.
 	fresh, _ := s.store.GetTenant(ctx, t.ID)
@@ -141,6 +160,13 @@ func (s *TenantAdminService) UpdateTenant(ctx context.Context, in *adminv1.Updat
 		return nil, status.Errorf(codes.Internal, "update tenant: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminTenantUpdated, t.ID)
+	// Update carries the data-residency policy (home_region/allowed_regions/
+	// enforce_writes), so flush the per-tenant residency cache — mirroring how
+	// SetTenantStatus flushes the suspension cache — so the new policy applies
+	// on the next request instead of waiting out the residency cache TTL.
+	// Unconditional: an Update that clears residency back to unconstrained must
+	// also evict a stale cached policy. Nil-safe (no-op when unwired).
+	s.invalidateResidencyCache(t.ID)
 	fresh, _ := s.store.GetTenant(ctx, t.ID)
 	if fresh == nil {
 		fresh = t
@@ -331,6 +357,13 @@ func (s *TenantAdminService) DeleteDomain(ctx context.Context, in *adminv1.Delet
 	return &adminv1.DeleteDomainResponse{}, nil
 }
 
+// hasResidency reports whether a tenant carries any non-zero data-residency
+// policy field. Used to keep CreateTenant's residency-cache eviction a no-op
+// for the common (no-residency) create.
+func hasResidency(t *tenant.Tenant) bool {
+	return t != nil && (t.HomeRegion != "" || len(t.AllowedRegions) > 0 || t.EnforceWrites)
+}
+
 // ---------- proto <-> SDK conversion ----------
 
 func tenantToProto(t *tenant.Tenant) *adminv1.Tenant {
@@ -338,11 +371,14 @@ func tenantToProto(t *tenant.Tenant) *adminv1.Tenant {
 		return nil
 	}
 	return &adminv1.Tenant{
-		Id:       t.ID,
-		Slug:     t.Slug,
-		Name:     t.Name,
-		Status:   string(t.Status),
-		Settings: t.Settings,
+		Id:             t.ID,
+		Slug:           t.Slug,
+		Name:           t.Name,
+		Status:         string(t.Status),
+		Settings:       t.Settings,
+		HomeRegion:     t.HomeRegion,
+		AllowedRegions: t.AllowedRegions,
+		EnforceWrites:  t.EnforceWrites,
 	}
 }
 
@@ -351,12 +387,37 @@ func protoToTenant(p *adminv1.Tenant) *tenant.Tenant {
 		return nil
 	}
 	return &tenant.Tenant{
-		ID:       p.Id,
-		Slug:     p.Slug,
-		Name:     p.Name,
-		Status:   tenant.Status(p.Status),
-		Settings: p.Settings,
+		ID:             p.Id,
+		Slug:           p.Slug,
+		Name:           p.Name,
+		Status:         tenant.Status(p.Status),
+		Settings:       p.Settings,
+		HomeRegion:     strings.TrimSpace(p.HomeRegion),
+		AllowedRegions: trimRegions(p.AllowedRegions),
+		EnforceWrites:  p.EnforceWrites,
 	}
+}
+
+// trimRegions normalizes the inbound allowed-regions list: trims surrounding
+// whitespace on each entry and drops empties, mirroring the light HomeRegion
+// trim. It does NOT validate region identity (the tenant store doesn't), so
+// an unknown region is accepted here and enforced/ignored downstream by the
+// residency layer — keeping admin write semantics aligned with config-seeded
+// tenants. nil/empty in -> nil out (zero value = unconstrained).
+func trimRegions(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, r := range in {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func domainToProto(d *tenant.Domain) *adminv1.Domain {

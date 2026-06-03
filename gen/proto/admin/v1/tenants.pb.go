@@ -24,15 +24,25 @@ const (
 
 // Tenant mirrors tenant.Tenant. Status uses the same string values the
 // SDK defines ("active", "suspended").
+//
+// home_region/allowed_regions/enforce_writes are the data-residency
+// policy consumed by the multi-region layer. Carried on the Tenant
+// message itself so CreateTenant/UpdateTenant (both wrap a Tenant) set
+// them and GetTenant/ListTenants read them back without a separate RPC.
+// Zero value ("" / empty / false) = unconstrained + fail-open, so
+// tenants predating these fields stay wire-compatible.
 type Tenant struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Slug          string                 `protobuf:"bytes,2,opt,name=slug,proto3" json:"slug,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
-	Settings      map[string]string      `protobuf:"bytes,5,rep,name=settings,proto3" json:"settings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Slug           string                 `protobuf:"bytes,2,opt,name=slug,proto3" json:"slug,omitempty"`
+	Name           string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Status         string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	Settings       map[string]string      `protobuf:"bytes,5,rep,name=settings,proto3" json:"settings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	HomeRegion     string                 `protobuf:"bytes,6,opt,name=home_region,json=homeRegion,proto3" json:"home_region,omitempty"`
+	AllowedRegions []string               `protobuf:"bytes,7,rep,name=allowed_regions,json=allowedRegions,proto3" json:"allowed_regions,omitempty"`
+	EnforceWrites  bool                   `protobuf:"varint,8,opt,name=enforce_writes,json=enforceWrites,proto3" json:"enforce_writes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Tenant) Reset() {
@@ -98,6 +108,27 @@ func (x *Tenant) GetSettings() map[string]string {
 		return x.Settings
 	}
 	return nil
+}
+
+func (x *Tenant) GetHomeRegion() string {
+	if x != nil {
+		return x.HomeRegion
+	}
+	return ""
+}
+
+func (x *Tenant) GetAllowedRegions() []string {
+	if x != nil {
+		return x.AllowedRegions
+	}
+	return nil
+}
+
+func (x *Tenant) GetEnforceWrites() bool {
+	if x != nil {
+		return x.EnforceWrites
+	}
+	return false
 }
 
 // Domain mirrors tenant.Domain.
@@ -1133,13 +1164,17 @@ var File_admin_v1_tenants_proto protoreflect.FileDescriptor
 
 const file_admin_v1_tenants_proto_rawDesc = "" +
 	"\n" +
-	"\x16admin/v1/tenants.proto\x12\x11snaplink.admin.v1\x1a\x1cgoogle/api/annotations.proto\"\xda\x01\n" +
+	"\x16admin/v1/tenants.proto\x12\x11snaplink.admin.v1\x1a\x1cgoogle/api/annotations.proto\"\xcb\x02\n" +
 	"\x06Tenant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04slug\x18\x02 \x01(\tR\x04slug\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x16\n" +
 	"\x06status\x18\x04 \x01(\tR\x06status\x12C\n" +
-	"\bsettings\x18\x05 \x03(\v2'.snaplink.admin.v1.Tenant.SettingsEntryR\bsettings\x1a;\n" +
+	"\bsettings\x18\x05 \x03(\v2'.snaplink.admin.v1.Tenant.SettingsEntryR\bsettings\x12\x1f\n" +
+	"\vhome_region\x18\x06 \x01(\tR\n" +
+	"homeRegion\x12'\n" +
+	"\x0fallowed_regions\x18\a \x03(\tR\x0eallowedRegions\x12%\n" +
+	"\x0eenforce_writes\x18\b \x01(\bR\renforceWrites\x1a;\n" +
 	"\rSettingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x88\x02\n" +
