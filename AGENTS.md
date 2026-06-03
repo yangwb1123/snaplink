@@ -68,6 +68,9 @@ defaultimpl/   Default issuers (Ed25519/ECDSA/RSA) + Memory* stores + JWE
                (RSA/ECDH/Multi) + cryptosigner KMS bridge; /sqlite (pure-Go); /detectors
 kms/awskms/    SEPARATE nested module — concrete AWS KMS crypto.Signer peer
                for the cryptosigner bridge (aws-sdk-go-v2 stays OUT of core go.mod) (§3,§4)
+redis/         SEPARATE nested module — Redis hot-path store peers (session/
+               refresh/authcode/par/jti) for the >1k-QPS multi-replica scale
+               layer; Lua/GETDEL/SETNX atomics (go-redis stays OUT of core go.mod) (§4)
 adapters/{echo,gin}/   Router adapters
 audit/         Recorder + Sinks + hash chain
 permissions/   Roles + menus + wildcard matcher
@@ -322,6 +325,23 @@ refresh), `INSERT … ON CONFLICT` (JTI/index upserts), `BEGIN IMMEDIATE`
 (lockout RMW). Prod DSN `file:/var/lib/sso/sso.db?_journal=WAL`; tests
 `file::memory:?cache=shared`. `sql.ErrNoRows` → typed `ErrNoSuchX`;
 timestamps Unix-ns INTEGER.
+
+**Redis hot-path peer** (`redis/`, SEPARATE nested module — go-redis stays
+OUT of core go.mod, mirrors kms/awskms; `make ci` `ci-modules` builds +
+race-tests it against miniredis, NO real Redis). The >1k-QPS multi-replica
+scale layer; SQLite stays the embedded fallback. Redis peers for the
+hot-path stores (`SessionManager`; `RefreshTokenStore` + Inspector/Subject
+Index/Counter/ClientPurger/FamilyTracker; `AuthCodeStore`; `PARStore`;
+`JTIReplayStore`), each mirroring its SQLite atomic EXACTLY: Consume =
+**GETDEL** (single-use, oracle-leak collapse, the analogue of `DELETE …
+RETURNING`); session Refresh = a **Lua script** (refuses expired/revoked
+before extending); JTI MarkSeen = **SET NX EX** (atomic first-sighting);
+refresh families ride a `consumed:<tok>` marker + family/subject/client SET
+indexes so reuse → `ErrRefreshTokenReused` → `DeleteFamily`. Wire via the
+same `WithSessionManager`/`WithRefreshTokenStore`/`WithAuthCodeStore`/
+`WithPARStore`/`WithJTIReplayStore`. Fail-closed on `/token` per §2;
+cross-region replication-lag caveat (run single-use traffic on the
+primary). Rate-limit/device/MFA/CIBA are same-pattern follow-ups.
 
 **Migrations** (`migrate/`, pure-Go). Backends declare
 `[]migrate.Migration` and route `New`/`NewWithDB` through `migrate.Run(ctx,
