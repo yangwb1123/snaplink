@@ -357,13 +357,23 @@ func TestFrontChannel_ExpiredState_Rejected(t *testing.T) {
 	recordFC(t, idx, nameID, spA)
 	recordFC(t, idx, nameID, spB)
 
-	q := buildSPLogoutRedirectQuery(t, spLogoutReq{issuer: spA.entityID, nameID: nameID, issueInstant: time.Now()}, "", spA.key)
+	// Capture the harness's REAL clock base (newFrontChannelHarness deliberately
+	// uses the default time.Now, and the SP-side cross-validator below also runs on
+	// the real clock) so we can advance PAST the TTL relative to the time the chain
+	// is actually created. Using fixedNow here was a time-of-day bug: the chain is
+	// created on the real wall clock, so a fixedNow-based advance only "expired" it
+	// while the real time was still before fixedNow+1min (passed in the morning,
+	// failed after 12:01 UTC); pinning everything to fixedNow instead makes the
+	// chain's own LogoutRequest look stale to the real-clock cross-validator.
+	base := time.Now()
+	q := buildSPLogoutRedirectQuery(t, spLogoutReq{issuer: spA.entityID, nameID: nameID, issueInstant: base}, "", spA.key)
 	u, _ := redirectTarget(t, hh.getSLO(q))
 	stateB := u.Query().Get("RelayState")
 	subjB := hh.crossValidateLogoutRequest(t, spB.entityID, u.RawQuery)
 
-	// Advance the IdP clock past the chain TTL so the stored chain is expired.
-	hh.h.deps.now = func() time.Time { return fixedNow.Add(DefaultLogoutChainTTL + time.Minute) }
+	// Advance the IdP clock past the chain TTL relative to the real base above so
+	// the stored chain is expired (deterministic, independent of wall-clock time).
+	hh.h.deps.now = func() time.Time { return base.Add(DefaultLogoutChainTTL + time.Minute) }
 
 	respQ := buildSPLogoutResponseRedirectQuery(t, spB.entityID, subjB.RequestID, stateB, spB.key)
 	rec := hh.getContinue(respQ)
