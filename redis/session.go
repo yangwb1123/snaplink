@@ -84,10 +84,18 @@ func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Sessio
 	// TTL) so Get/Refresh can read the deadline without trusting Redis'
 	// eviction timing — an expired-but-not-yet-evicted key still reads
 	// as expired. EXPIRE on the key plus a small grace bounds memory.
+	//
+	// Timestamps are stored as Unix MILLISECONDS, not nanoseconds: the
+	// refresh script compares expires_at via Lua tonumber(), and Lua 5.1
+	// numbers are IEEE-754 float64 (exact only for integers <= 2^53 ~=
+	// 9e15). A Unix-ns value (~1.7e18) overflows that range by ~190x, so a
+	// near-boundary comparison can be off by ~190ns and resurrect a just-
+	// expired session (violates §2). Unix-ms (~1.7e12) sits well inside the
+	// exact range; millisecond granularity is ample for session expiry.
 	if err := s.rdb.HSet(ctx, sessionKey(id),
 		"user_id", userID,
-		"created_at", strconv.FormatInt(now.UnixNano(), 10),
-		"expires_at", strconv.FormatInt(session.ExpiresAt.UnixNano(), 10),
+		"created_at", strconv.FormatInt(now.UnixMilli(), 10),
+		"expires_at", strconv.FormatInt(session.ExpiresAt.UnixMilli(), 10),
 		"revoked", "0",
 	).Err(); err != nil {
 		return nil, fmt.Errorf("redis: create session: %w", err)
@@ -152,7 +160,9 @@ func (s *SessionManager) Destroy(ctx context.Context, sessionID string) error {
 // is the "captured expired session id resurrected" regression §2 forbids.
 //
 // KEYS[1] = session hash key
-// ARGV[1] = now (unix-ns)  ARGV[2] = new expires_at (unix-ns)  ARGV[3] = ttl seconds
+// ARGV[1] = now (unix-ms)  ARGV[2] = new expires_at (unix-ms)  ARGV[3] = ttl seconds
+// Unix-MS (not ns): tonumber() yields a float64 that holds ms exactly but
+// not ns (see Create) — so the <= boundary comparison is precise.
 // Returns the new expires_at on success, -1 on refuse/missing.
 var refreshScript = goredis.NewScript(`
 local h = redis.call('HMGET', KEYS[1], 'revoked', 'expires_at')
@@ -179,7 +189,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 	ttlSecs := int64(s.ttl/time.Second) + 1 // +1s grace so the explicit field, not eviction, governs
 	res, err := refreshScript.Run(ctx, s.rdb,
 		[]string{sessionKey(sessionID)},
-		now.UnixNano(), newExp.UnixNano(), ttlSecs,
+		now.UnixMilli(), newExp.UnixMilli(), ttlSecs,
 	).Int64()
 	if err != nil {
 		return nil, fmt.Errorf("redis: refresh session: %w", err)
@@ -229,19 +239,21 @@ func (s *SessionManager) collect(ctx context.Context, indexKey string, ids []str
 }
 
 func sessionFromHash(id string, vals map[string]string) (*sso.Session, error) {
-	createdNs, err := strconv.ParseInt(vals["created_at"], 10, 64)
+	// Timestamps are Unix MILLISECONDS (see Create — ms stays in float64's
+	// exact range so the refresh script's tonumber() comparison is precise).
+	createdMs, err := strconv.ParseInt(vals["created_at"], 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("redis: parse created_at: %w", err)
 	}
-	expiresNs, err := strconv.ParseInt(vals["expires_at"], 10, 64)
+	expiresMs, err := strconv.ParseInt(vals["expires_at"], 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("redis: parse expires_at: %w", err)
 	}
 	return &sso.Session{
 		ID:        id,
 		UserID:    vals["user_id"],
-		CreatedAt: time.Unix(0, createdNs).UTC(),
-		ExpiresAt: time.Unix(0, expiresNs).UTC(),
+		CreatedAt: time.UnixMilli(createdMs).UTC(),
+		ExpiresAt: time.UnixMilli(expiresMs).UTC(),
 		Revoked:   vals["revoked"] != "0" && vals["revoked"] != "",
 	}, nil
 }

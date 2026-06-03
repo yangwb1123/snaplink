@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -113,6 +114,114 @@ func TestSessionRefreshRefusesRevoked(t *testing.T) {
 	}
 	if _, err := sm.Get(ctx, sess.ID); !errors.Is(err, sso.ErrSessionNotFound) {
 		t.Fatalf("get of revoked: want ErrSessionNotFound, got %v", err)
+	}
+}
+
+// TestSessionRefreshMillisBoundary is the precision proof for the §2
+// "captured expired session id can't be resurrected" invariant at the
+// EXACT expiry boundary. expires_at is stored + compared as Unix
+// MILLISECONDS; the refresh script's `tonumber(expires_at) <= tonumber(now)`
+// runs in Lua float64, which holds a ~1.7e12 ms value EXACTLY — so a now of
+// expires_at-1ms is allowed (live) and expires_at+1ms is refused (expired),
+// to single-millisecond resolution.
+//
+// The pre-fix code stored Unix NANOSECONDS (~1.7e18), which overflows
+// float64's 53-bit exact-integer range (2^53 ~= 9e15) by ~190x: the last
+// ~8 bits round, so two ns timestamps 1ns (or even ~190ns) apart can compare
+// EQUAL, blurring the boundary and potentially extending a just-expired
+// session. We drive the script directly with controlled ARGV (Refresh reads
+// wall-clock time.Now() internally, so direct invocation is the only way to
+// pin `now` to the boundary deterministically).
+func TestSessionRefreshMillisBoundary(t *testing.T) {
+	_, rdb := newTestClient(t)
+	ctx := context.Background()
+
+	// A session whose deadline is a precise, large (realistic) Unix-ms value
+	// — large enough that the ns-encoded equivalent would lose precision.
+	const expiresMs = int64(1_700_000_000_123) // ~2023-11-14, .123s
+	key := sessionKey("boundary")
+	if err := rdb.HSet(ctx, key,
+		"user_id", "erin",
+		"created_at", strconv.FormatInt(expiresMs-3600_000, 10),
+		"expires_at", strconv.FormatInt(expiresMs, 10),
+		"revoked", "0",
+	).Err(); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ttlSecs := int64(3600)
+
+	// now = expires_at - 1ms: still live -> script extends (returns new exp).
+	res, err := refreshScript.Run(ctx, rdb, []string{key},
+		expiresMs-1, expiresMs+ttlSecs*1000, ttlSecs).Int64()
+	if err != nil {
+		t.Fatalf("refresh at -1ms: %v", err)
+	}
+	if res < 0 {
+		t.Fatalf("at expires_at-1ms: want allowed (live), got refused (%d)", res)
+	}
+
+	// Reset the deadline (the prior run advanced it) and probe +1ms.
+	if err := rdb.HSet(ctx, key, "expires_at", strconv.FormatInt(expiresMs, 10)).Err(); err != nil {
+		t.Fatalf("reset exp: %v", err)
+	}
+	res, err = refreshScript.Run(ctx, rdb, []string{key},
+		expiresMs+1, expiresMs+ttlSecs*1000, ttlSecs).Int64()
+	if err != nil {
+		t.Fatalf("refresh at +1ms: %v", err)
+	}
+	if res >= 0 {
+		t.Fatalf("at expires_at+1ms: want refused (expired), got allowed (%d)", res)
+	}
+
+	// And exactly AT the boundary: `<=` means now==expires_at is refused.
+	if err := rdb.HSet(ctx, key, "expires_at", strconv.FormatInt(expiresMs, 10)).Err(); err != nil {
+		t.Fatalf("reset exp: %v", err)
+	}
+	res, err = refreshScript.Run(ctx, rdb, []string{key},
+		expiresMs, expiresMs+ttlSecs*1000, ttlSecs).Int64()
+	if err != nil {
+		t.Fatalf("refresh at boundary: %v", err)
+	}
+	if res >= 0 {
+		t.Fatalf("at expires_at exactly: want refused, got allowed (%d)", res)
+	}
+}
+
+// TestSessionRefreshNearExpiryPublicAPI exercises the same boundary through
+// the public Refresh API (not the raw script): a session whose stored
+// expires_at is a hair in the FUTURE refreshes; a hair in the PAST is
+// refused as ErrSessionNotFound. Uses a comfortable margin (50ms) so the
+// wall-clock read inside Refresh can't straddle the boundary and flake,
+// while still proving millis round-trips correctly end to end.
+func TestSessionRefreshNearExpiryPublicAPI(t *testing.T) {
+	_, rdb := newTestClient(t)
+	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
+	ctx := context.Background()
+
+	sess, err := sm.Create(ctx, "frank")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Pin expires_at just AFTER now -> Refresh must extend.
+	future := time.Now().Add(50 * time.Millisecond)
+	if err := rdb.HSet(ctx, sessionKey(sess.ID),
+		"expires_at", strconv.FormatInt(future.UnixMilli(), 10)).Err(); err != nil {
+		t.Fatalf("set future exp: %v", err)
+	}
+	if _, err := sm.Refresh(ctx, sess.ID); err != nil {
+		t.Fatalf("refresh of just-live session: want ok, got %v", err)
+	}
+
+	// Pin expires_at just BEFORE now -> Refresh must refuse.
+	past := time.Now().Add(-50 * time.Millisecond)
+	if err := rdb.HSet(ctx, sessionKey(sess.ID),
+		"expires_at", strconv.FormatInt(past.UnixMilli(), 10)).Err(); err != nil {
+		t.Fatalf("set past exp: %v", err)
+	}
+	if _, err := sm.Refresh(ctx, sess.ID); !errors.Is(err, sso.ErrSessionNotFound) {
+		t.Fatalf("refresh of just-expired session: want ErrSessionNotFound, got %v", err)
 	}
 }
 

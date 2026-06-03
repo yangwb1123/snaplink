@@ -12,17 +12,20 @@ import (
 )
 
 // Key layout. The active token is a JSON string with a TTL. Three
-// auxiliary SETs index it for bulk operations, and a per-token consumed
-// marker preserves the family link after the active key is deleted so a
-// presented-after-rotation token can be recognized as a replay (OAuth
-// Security BCP §4.13/§4.14) — the Redis analogue of SQLite's
-// refresh_token_families ledger.
+// auxiliary SETs index it for bulk operations, and a per-token family
+// membership marker — written at ISSUE time, mirroring SQLite's
+// refresh_token_families ledger — preserves the (token -> family_id) link
+// after the active key is gone (Consume'd OR TTL-evicted) so a presented-
+// after-rotation token can be recognized as a replay (OAuth Security BCP
+// §4.13/§4.14). Writing it at Issue (not only at Consume) means even an
+// active-key-evicted-but-never-consumed token still triggers family-kill,
+// matching the SQLite peer exactly.
 const (
-	rtKeyPrefix         = "sso:rt:"          // sso:rt:<token> -> JSON (active)
-	rtConsumedKeyPrefix = "sso:rt:consumed:" // sso:rt:consumed:<token> -> family_id (post-rotation marker)
-	rtFamilyKeyPrefix   = "sso:rt:family:"   // sso:rt:family:<fid> -> SET of token ids
-	rtSubjectKeyPrefix  = "sso:rt:subject:"  // sso:rt:subject:<uid>\x00<client> -> SET of token ids
-	rtClientKeyPrefix   = "sso:rt:client:"   // sso:rt:client:<client> -> SET of token ids
+	rtKeyPrefix        = "sso:rt:"         // sso:rt:<token> -> JSON (active)
+	rtFamilyMemPrefix  = "sso:rt:famof:"   // sso:rt:famof:<token> -> family_id (issue-time ledger; reuse detection)
+	rtFamilyKeyPrefix  = "sso:rt:family:"  // sso:rt:family:<fid> -> SET of token ids
+	rtSubjectKeyPrefix = "sso:rt:subject:" // sso:rt:subject:<uid>\x00<client> -> SET of token ids
+	rtClientKeyPrefix  = "sso:rt:client:"  // sso:rt:client:<client> -> SET of token ids
 )
 
 // RefreshTokenStore is the Redis-backed implementation of
@@ -31,9 +34,9 @@ const (
 // surface the SQLite peer exposes.
 type RefreshTokenStore struct {
 	rdb goredis.Cmdable
-	// familyTTL bounds how long the consumed-marker + family index live
-	// past a token's own TTL so reuse detection has a window. Defaults to
-	// the longest refresh TTL the operator expects; a marker older than
+	// familyTTL bounds how long the family-membership marker + family index
+	// live past a token's own TTL so reuse detection has a window. Defaults
+	// to the longest refresh TTL the operator expects; a marker older than
 	// this self-evicts (a replay that old can't redeem anyway).
 	familyTTL time.Duration
 }
@@ -41,9 +44,9 @@ type RefreshTokenStore struct {
 // RefreshTokenOption configures the RefreshTokenStore.
 type RefreshTokenOption func(*RefreshTokenStore)
 
-// WithFamilyTTL sets how long reuse-detection bookkeeping (the consumed
-// marker + family index entries) survives. SHOULD be >= the refresh
-// token TTL; longer is better for audit. Default 30 days.
+// WithFamilyTTL sets how long reuse-detection bookkeeping (the family
+// membership marker + family index entries) survives. SHOULD be >= the
+// refresh token TTL; longer is better for audit. Default 30 days.
 func WithFamilyTTL(ttl time.Duration) RefreshTokenOption {
 	return func(s *RefreshTokenStore) { s.familyTTL = ttl }
 }
@@ -68,10 +71,10 @@ func (s *RefreshTokenStore) Ping(ctx context.Context) error {
 	return s.rdb.Ping(ctx).Err()
 }
 
-func rtKey(t string) string         { return rtKeyPrefix + t }
-func rtConsumedKey(t string) string { return rtConsumedKeyPrefix + t }
-func rtFamilyKey(f string) string   { return rtFamilyKeyPrefix + f }
-func rtClientKey(c string) string   { return rtClientKeyPrefix + c }
+func rtKey(t string) string          { return rtKeyPrefix + t }
+func rtFamilyMemKey(t string) string { return rtFamilyMemPrefix + t }
+func rtFamilyKey(f string) string    { return rtFamilyKeyPrefix + f }
+func rtClientKey(c string) string    { return rtClientKeyPrefix + c }
 
 // rtSubjectKey joins user + client with a NUL so two distinct (uid,
 // client) pairs can never collide via concatenation.
@@ -110,40 +113,69 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	s.indexAdd(ctx, rtClientKey(info.ClientID), token, idxTTL)
 	if info.FamilyID != "" {
 		s.indexAdd(ctx, rtFamilyKey(info.FamilyID), token, s.familyTTL)
+		// Write the (token -> family_id) membership marker NOW, at Issue,
+		// mirroring SQLite's refresh_token_families ledger. Because it
+		// outlives the active key by familyTTL, a token whose active key is
+		// later GETDEL-consumed OR silently TTL-evicted still resolves to its
+		// family on replay — so reuse detection (family-kill) covers the
+		// evicted-never-consumed class too, matching the SQLite peer. Empty
+		// FamilyID opts out (no marker; replay degrades to vanilla not-found).
+		_ = s.rdb.Set(ctx, rtFamilyMemKey(token), info.FamilyID, s.familyTTL).Err()
 	}
 	return nil
 }
 
-// indexAdd adds member to a SET index and (re)sets its TTL so the index
-// can't outlive its usefulness unboundedly.
+// indexAddScript is the atomic SADD + only-EXTEND EXPIRE. SADD and EXPIRE
+// as two separate client ops race: concurrent Issues to the SAME index
+// (same subject/client/family) can interleave so a SHORTER Expire lands
+// last and wins, GC-ing the index early — DeleteAllForSubject /
+// DeleteAllForClient would then MISS still-active tokens whose ids were in
+// the prematurely-evicted SET, silently breaking bulk revocation and the
+// compliance Eraser. Running both in one server-side script makes them
+// atomic, and the TTL is only ever EXTENDED (never shortened) so the index
+// always outlives its longest-lived member token. miniredis supports
+// SADD/TTL/EXPIRE/EVAL, so this runs identically under test and real Redis.
+//
+// KEYS[1] = index SET key   ARGV[1] = member   ARGV[2] = ttl seconds
+var indexAddScript = goredis.NewScript(`
+redis.call('SADD', KEYS[1], ARGV[1])
+local cur = redis.call('TTL', KEYS[1])
+if cur < 0 or cur < tonumber(ARGV[2]) then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 1
+`)
+
+// indexAdd adds member to a SET index and atomically sets its TTL, only
+// ever extending it (never shortening) — see indexAddScript.
 func (s *RefreshTokenStore) indexAdd(ctx context.Context, key, member string, ttl time.Duration) {
-	_ = s.rdb.SAdd(ctx, key, member).Err()
-	_ = s.rdb.Expire(ctx, key, ttl).Err()
+	ttlSecs := int64(ttl / time.Second)
+	if ttlSecs < 1 {
+		ttlSecs = 1
+	}
+	_ = indexAddScript.Run(ctx, s.rdb, []string{key}, member, ttlSecs).Err()
 }
 
 // Consume atomically removes + returns the active token via GETDEL — one
 // server-side get-and-delete (Redis 6.2+), the analogue of SQLite's
 // DELETE ... RETURNING. The DEL is the single-use gate: a second Consume
 // of the same token finds the active key gone and so cannot succeed,
-// race-free regardless of concurrency.
+// race-free regardless of concurrency. The family-membership marker is
+// reuse-detection bookkeeping ONLY and is never a second-redeem path —
+// GETDEL remains the sole single-use gate.
 //
-// On a miss it consults the consumed marker: a token known there but not
-// active is a reuse-after-rotation — return ErrRefreshTokenReused with the
-// FamilyID stamped so the handler kills the whole family (BCP §4.13).
-// Unknown / expired / already-consumed-without-a-family all collapse to
-// ErrRefreshTokenNotFound (oracle-resistance §2).
-//
-// The consumed marker is written AFTER the atomic GETDEL, from the
-// family_id we just decoded (the value carries it, so it can't be known
-// before the read). This ordering is safe: the GETDEL already enforces
-// single-use, so even a crash between the delete and the marker write only
-// weakens reuse detection on THIS token to "vanilla invalid_grant" — it
-// can never let a second redeem through.
+// On a miss it consults the family-membership marker (written at Issue, so
+// it survives both Consume AND a silent TTL eviction of the active key): a
+// token known there but no longer active is a reuse-after-rotation — return
+// ErrRefreshTokenReused with the FamilyID stamped so the handler kills the
+// whole family (BCP §4.13). This matches SQLite, whose ledger is likewise
+// written at Issue. Unknown / expired / opted-out (no marker) all collapse
+// to ErrRefreshTokenNotFound (oracle-resistance §2).
 func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
 	blob, err := s.rdb.GetDel(ctx, rtKey(token)).Bytes()
 	if errors.Is(err, goredis.Nil) {
 		// Active key gone — reuse-detection path.
-		fid, ferr := s.rdb.Get(ctx, rtConsumedKey(token)).Result()
+		fid, ferr := s.rdb.Get(ctx, rtFamilyMemKey(token)).Result()
 		if errors.Is(ferr, goredis.Nil) {
 			return nil, oauth.ErrRefreshTokenNotFound
 		}
@@ -159,13 +191,10 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
 	if err := json.Unmarshal(blob, &out); err != nil {
 		return nil, fmt.Errorf("redis: unmarshal refresh_token: %w", err)
 	}
-	// Stamp the consumed marker so a later replay of THIS token is caught
-	// as reuse. Empty FamilyID = caller opted out of family tracking; skip
-	// the marker (a replay then degrades to vanilla not-found, the
-	// documented opt-out, identical to the SQLite peer).
-	if out.FamilyID != "" {
-		_ = s.rdb.Set(ctx, rtConsumedKey(token), out.FamilyID, s.familyTTL).Err()
-	}
+	// The family-membership marker was already written at Issue (mirroring
+	// SQLite's ledger-at-Issue) and intentionally outlives this delete, so a
+	// later replay of THIS token resolves to its family above. Nothing to
+	// write here — Consume only removes the active key.
 	if out.IsExpired() {
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
@@ -186,18 +215,22 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 		return nil, fmt.Errorf("redis: unmarshal refresh_token: %w", err)
 	}
 	if out.IsExpired() {
-		_ = s.rdb.Del(ctx, rtKey(token)).Err()
+		// Opportunistic GC of both the active key and its family-membership
+		// marker, mirroring the SQLite peer (which deletes the row + ledger
+		// on Inspect expiry) so an expired token can't later surface a stale
+		// reuse event.
+		_ = s.rdb.Del(ctx, rtKey(token), rtFamilyMemKey(token)).Err()
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return &out, nil
 }
 
 // Delete implements [oauth.RefreshTokenInspector] — idempotent per RFC
-// 7009 §2.2 (unknown token returns nil). Wipes the consumed marker too so
-// an explicit revoke can't later mis-trigger a reuse event on the same
-// token.
+// 7009 §2.2 (unknown token returns nil). Wipes the family-membership marker
+// too so an explicit revoke can't later mis-trigger a reuse event on the
+// same token.
 func (s *RefreshTokenStore) Delete(ctx context.Context, token string) error {
-	if err := s.rdb.Del(ctx, rtKey(token), rtConsumedKey(token)).Err(); err != nil {
+	if err := s.rdb.Del(ctx, rtKey(token), rtFamilyMemKey(token)).Err(); err != nil {
 		return fmt.Errorf("redis: delete refresh_token: %w", err)
 	}
 	return nil
@@ -253,8 +286,10 @@ func (s *RefreshTokenStore) subjectIndexKeysForUser(ctx context.Context, userID 
 }
 
 // deleteTokensInIndex removes every active token referenced by an index
-// SET (plus the SET itself + each token's consumed marker), returning the
-// count of active tokens that actually existed.
+// SET (plus the SET itself + each token's family-membership marker),
+// returning the count of active tokens that actually existed. Wiping the
+// marker keeps future presentations of those tokens as vanilla not-found
+// rather than stale reuse events (mirrors the SQLite ledger wipe).
 func (s *RefreshTokenStore) deleteTokensInIndex(ctx context.Context, indexKey string) (int, error) {
 	tokens, err := s.rdb.SMembers(ctx, indexKey).Result()
 	if err != nil {
@@ -267,7 +302,7 @@ func (s *RefreshTokenStore) deleteTokensInIndex(ctx context.Context, indexKey st
 			return deleted, fmt.Errorf("redis: delete token: %w", err)
 		}
 		deleted += int(n)
-		_ = s.rdb.Del(ctx, rtConsumedKey(t)).Err()
+		_ = s.rdb.Del(ctx, rtFamilyMemKey(t)).Err()
 	}
 	_ = s.rdb.Del(ctx, indexKey).Err()
 	return deleted, nil
@@ -319,8 +354,9 @@ func (s *RefreshTokenStore) DeleteAllForClient(ctx context.Context, clientID str
 
 // DeleteFamily implements [oauth.RefreshTokenFamilyTracker] — kills every
 // active token sharing the FamilyID and wipes its reuse-detection
-// bookkeeping. Returns the count of ACTIVE tokens removed; consumed-only
-// markers are bookkeeping and don't add to the count. Idempotent.
+// bookkeeping. Returns the count of ACTIVE tokens removed; already-rotated
+// tokens (membership marker present, active key gone) are bookkeeping and
+// don't add to the count. Idempotent.
 func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (int, error) {
 	if familyID == "" {
 		return 0, nil
@@ -336,7 +372,7 @@ func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (
 			return deleted, fmt.Errorf("redis: delete family token: %w", err)
 		}
 		deleted += int(n)
-		_ = s.rdb.Del(ctx, rtConsumedKey(t)).Err()
+		_ = s.rdb.Del(ctx, rtFamilyMemKey(t)).Err()
 	}
 	_ = s.rdb.Del(ctx, rtFamilyKey(familyID)).Err()
 	return deleted, nil

@@ -3,6 +3,8 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,6 +147,127 @@ func TestRefreshFamilyRotationAndReuse(t *testing.T) {
 		t.Fatalf("rt-c after DeleteFamily: should be plain not-found, got reuse")
 	} else if !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Fatalf("rt-c after DeleteFamily: want ErrRefreshTokenNotFound, got %v", err)
+	}
+}
+
+// TestRefreshConcurrentIssueBulkRevoke guards FIX 2: indexAdd's SADD +
+// EXPIRE must be atomic AND only-extending. Many tokens with VARYING TTLs
+// are issued to the SAME (subject, client) concurrently; the per-subject
+// index TTL must end up >= the LONGEST token TTL, never shortened by a
+// racing shorter Expire. Then DeleteAllForSubject must find + remove EVERY
+// still-active token — a shortened index TTL would GC the index early and
+// silently miss some, breaking bulk revocation + the compliance Eraser.
+//
+// Pre-fix (SADD then Expire as two ops) this could flake: a short-TTL
+// Issue's Expire landing last would clamp the index, dropping ids and
+// returning < N from DeleteAllForSubject.
+func TestRefreshConcurrentIssueBulkRevoke(t *testing.T) {
+	_, rdb := newTestClient(t)
+	// Small familyTTL so the index TTL is governed by the token TTLs, not a
+	// large floor — that's what makes a shortened-TTL race observable.
+	s := NewRefreshTokenStore(rdb, WithFamilyTTL(time.Second))
+	ctx := context.Background()
+
+	const n = 60
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			info := newRTInfo("zoe", "app", fmt.Sprintf("F%d", i))
+			// Varying TTLs: a spread from short to long, issued concurrently.
+			info.ExpiresAt = time.Now().Add(time.Duration(i+1) * time.Minute)
+			if err := s.Issue(ctx, fmt.Sprintf("tok-%d", i), info); err != nil {
+				t.Errorf("issue %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// The per-subject index TTL must be at least the longest token TTL
+	// (~n minutes). If a racing shorter Expire had won, this would be far
+	// smaller (down toward 1 minute / familyTTL).
+	idxKey := rtSubjectKey("zoe", "app")
+	ttl, err := rdb.TTL(ctx, idxKey).Result()
+	if err != nil {
+		t.Fatalf("index ttl: %v", err)
+	}
+	if ttl < (n-1)*time.Minute {
+		t.Fatalf("index TTL was shortened: got %v, want >= %v", ttl, (n-1)*time.Minute)
+	}
+
+	// Bulk revocation must find + remove ALL n active tokens.
+	removed, err := s.DeleteAllForSubject(ctx, "zoe", "app")
+	if err != nil {
+		t.Fatalf("delete all for subject: %v", err)
+	}
+	if removed != n {
+		t.Fatalf("bulk revoke missed tokens: removed %d, want %d", removed, n)
+	}
+	// Confirm every token is actually gone.
+	for i := 0; i < n; i++ {
+		if _, err := s.Consume(ctx, fmt.Sprintf("tok-%d", i)); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+			t.Fatalf("tok-%d survived bulk revoke: %v", i, err)
+		}
+	}
+}
+
+// TestRefreshFamilyReuseNeverConsumed guards FIX 3: the family-membership
+// ledger is written at ISSUE (mirroring SQLite), so a token whose active
+// key is GONE WITHOUT EVER BEING CONSUMED (e.g. TTL-evicted) is still
+// recognized as a family member on replay and triggers ErrRefreshTokenReused
+// + the FamilyID — matching the SQLite peer. Pre-fix the Redis marker was
+// only written at Consume, so an evicted-never-consumed token lost reuse
+// detection (degraded to plain not-found), weakening BCP §4.13 family-kill
+// for that class.
+//
+// We simulate the active key vanishing without a Consume by DELeting just
+// rtKey(token) while leaving the issue-time membership marker intact (the
+// realistic case is a silent TTL eviction of the active key, whose marker
+// outlives it by familyTTL).
+func TestRefreshFamilyReuseNeverConsumed(t *testing.T) {
+	_, rdb := newTestClient(t)
+	s := NewRefreshTokenStore(rdb)
+	ctx := context.Background()
+
+	// Issue with a family; do NOT Consume it.
+	if err := s.Issue(ctx, "ghost-tok", newRTInfo("alice", "app", "FAM")); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	// Active key disappears without a Consume (TTL eviction analogue): the
+	// issue-time membership marker remains.
+	if err := rdb.Del(ctx, rtKey("ghost-tok")).Err(); err != nil {
+		t.Fatalf("evict active key: %v", err)
+	}
+
+	// First presentation after the active key is gone: must be detected as
+	// reuse with the family, NOT plain not-found.
+	got, err := s.Consume(ctx, "ghost-tok")
+	if !errors.Is(err, oauth.ErrRefreshTokenReused) {
+		t.Fatalf("evicted-never-consumed replay: want ErrRefreshTokenReused, got %v", err)
+	}
+	if got == nil || got.FamilyID != "FAM" {
+		t.Fatalf("reuse must carry FamilyID FAM, got %+v", got)
+	}
+
+	// A second presentation is likewise reuse (the marker is a stable ledger,
+	// not a single-use gate) — matches SQLite, and never a redeem path.
+	got2, err := s.Consume(ctx, "ghost-tok")
+	if !errors.Is(err, oauth.ErrRefreshTokenReused) || got2 == nil || got2.FamilyID != "FAM" {
+		t.Fatalf("second replay: want reuse+FAM, got %+v err=%v", got2, err)
+	}
+
+	// The empty-FamilyID opt-out still degrades to plain not-found even when
+	// the active key vanishes without a Consume (no marker was written).
+	if err := s.Issue(ctx, "ghost-nofam", newRTInfo("alice", "app", "")); err != nil {
+		t.Fatalf("issue nofam: %v", err)
+	}
+	if err := rdb.Del(ctx, rtKey("ghost-nofam")).Err(); err != nil {
+		t.Fatalf("evict nofam: %v", err)
+	}
+	if _, err := s.Consume(ctx, "ghost-nofam"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Fatalf("opt-out evicted replay: want ErrRefreshTokenNotFound, got %v", err)
 	}
 }
 

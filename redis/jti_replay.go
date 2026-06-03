@@ -49,13 +49,11 @@ func (s *JTIReplayStore) MarkSeen(ctx context.Context, jti string, expiresAt tim
 	if jti == "" {
 		return true, nil
 	}
-	now := time.Now()
 	ttl := time.Until(expiresAt)
 	if ttl <= 0 {
 		// An expiry already past gets a 1s floor so an immediate replay
 		// is still caught — mirrors the SQLite + memory backends.
 		ttl = time.Second
-		_ = now
 	}
 	ok, err := s.rdb.SetNX(ctx, jtiKey(jti), "1", ttl).Result()
 	if err != nil {
