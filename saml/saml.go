@@ -123,6 +123,17 @@ type IdPConfig struct {
 	// MetadataTTL is the Cache-Control max-age on /saml/metadata. <=0 ⇒ 1h.
 	MetadataTTL time.Duration
 
+	// SignMetadata opts the /saml/metadata EntityDescriptor into an enveloped
+	// XML-DSig (exclusive C14N, SHA-256) signed with the SAME per-tenant key the
+	// IdP publishes in that document's KeyDescriptor (reusing the AssertionSigner
+	// path — no new dependency), so a consumer doing automated metadata refresh
+	// (Shibboleth federations, strict SPs) validates the signature with no extra
+	// trust anchor. Default false ⇒ the metadata is UNSIGNED and byte-identical
+	// to the historical output. An Ed25519 signing key (goxmldsig has no EdDSA
+	// signature method) gracefully falls back to UNSIGNED metadata + a log,
+	// never a 500.
+	SignMetadata bool
+
 	// AssertionTTL is the minted-assertion validity window. <=0 ⇒ 5m.
 	AssertionTTL time.Duration
 
@@ -235,6 +246,7 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 			LoginPath:         cfg.IdP.LoginPath,
 			SSOURL:            cfg.IdP.SSOURL,
 			MetadataTTL:       cfg.IdP.MetadataTTL,
+			SignMetadata:      cfg.IdP.SignMetadata,
 			AssertionTTL:      cfg.IdP.AssertionTTL,
 			AuditRecorder:     deps.AuditRecorder,
 			Logger:            logger,

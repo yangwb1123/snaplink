@@ -173,6 +173,31 @@ func NewAssertionSigner(signer crypto.Signer, pub crypto.PublicKey, kid, issuerN
 	}, nil
 }
 
+// newCertOnlyAssertionSigner builds an AssertionSigner that can produce the
+// self-signed Certificate() (and report KeyID()) but CANNOT XML-DSig-sign:
+// sigMethod is left empty, so SigningContext() fails loud if ever called. It is
+// used ONLY by the metadata endpoint's graceful Ed25519 fallback — to publish
+// the KeyDescriptor cert of an Ed25519 issuer while serving the metadata
+// UNSIGNED (goxmldsig has no EdDSA signature method). It does NOT relax the
+// assertion path: NewAssertionSigner (and signerForClient, which the assertion /
+// SLO paths use) still rejects Ed25519, so an assertion is NEVER signed with a
+// non-XML-DSig key. A nil signer still errors. x509 can self-sign an Ed25519 key
+// (buildCert delegates to CreateCertificate), so the cert builds for any key
+// type here.
+func newCertOnlyAssertionSigner(signer crypto.Signer, pub crypto.PublicKey, kid, issuerName string) (*AssertionSigner, error) {
+	if signer == nil {
+		return nil, ErrUnsupportedSigningKey
+	}
+	return &AssertionSigner{
+		signer:     signer,
+		pub:        pub,
+		kid:        kid,
+		sigMethod:  "", // no XML-DSig method: cert-only
+		issuerName: issuerName,
+		notAfter:   time.Now().Add(10 * 365 * 24 * time.Hour),
+	}, nil
+}
+
 // Public implements crypto.Signer: it returns the issuer's public key so
 // goxmldsig's getPublicKeyAlgorithm classifies the key (RSA/ECDSA) and the
 // SignatureMethod is consistent with what an SP verifies against the cert.
@@ -218,6 +243,13 @@ func (s *AssertionSigner) Certificate() (*x509.Certificate, error) {
 // signature method. The cert bytes go into the context so the produced
 // Signature carries the KeyInfo/X509Certificate an SP pins.
 func (s *AssertionSigner) SigningContext() (*dsig.SigningContext, error) {
+	// A cert-only signer (newCertOnlyAssertionSigner, the metadata Ed25519
+	// fallback) has no XML-DSig method — refuse loudly rather than emit an
+	// unsigned/invalid context. Callers gate the signed path on SignatureMethod()
+	// != "" so this is defense-in-depth.
+	if s.sigMethod == "" {
+		return nil, ErrUnsupportedSigningKey
+	}
 	cert, err := s.Certificate()
 	if err != nil {
 		return nil, err

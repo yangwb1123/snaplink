@@ -3,6 +3,7 @@ package idp
 import (
 	"context"
 	"crypto"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -152,6 +153,18 @@ type Deps struct {
 	// MetadataTTL is the Cache-Control max-age on /saml/metadata. <=0 ⇒ 1h.
 	MetadataTTL time.Duration
 
+	// SignMetadata opts the /saml/metadata EntityDescriptor into an enveloped
+	// XML-DSig (exclusive C14N, SHA-256) produced through the resolved per-tenant
+	// AssertionSigner — the SAME key + path that signs assertions, so a consumer
+	// doing automated metadata refresh (Shibboleth federations, strict SPs)
+	// validates the metadata signature against the cert in this document's OWN
+	// KeyDescriptor (no extra trust anchor). Default false ⇒ the metadata is
+	// UNSIGNED and byte-identical to the historical output. An Ed25519 issuer
+	// (goxmldsig has no EdDSA signature method) gracefully falls back to UNSIGNED
+	// metadata + a log, never a 500 — mirroring that the assertion path simply
+	// cannot use such a key, but the metadata endpoint stays available.
+	SignMetadata bool
+
 	// AssertionTTL is the assertion validity window. <=0 ⇒ DefaultAssertionTTL.
 	AssertionTTL time.Duration
 
@@ -234,6 +247,18 @@ type Handlers struct {
 	signerMu    sync.RWMutex
 	signerCache map[string]*AssertionSigner
 
+	// metadataCache memoizes the rendered metadata document per (kid, signed)
+	// key. Caching is REQUIRED for the signed path: an ECDSA XML-DSig
+	// SignatureValue is non-deterministic (random k), so signing the same
+	// EntityDescriptor twice yields different bytes — without a cache the body
+	// (and its ETag) would change on every request, defeating the
+	// If-None-Match → 304 conditional-request path. The cert is stable per kid
+	// (the AssertionSigner caches it) and the entity id / SSO URL are
+	// server-constants, so the rendered doc is stable per (kid, signed) and the
+	// cache key is sound. A rotation (new kid) naturally produces a fresh entry.
+	metadataMu    sync.RWMutex
+	metadataCache map[string]*MetadataDoc
+
 	// logoutReplay dedups inbound SP-initiated LogoutRequest IDs within the
 	// freshness window (Fix 2). A captured, validly-signed LogoutRequest replays
 	// here → rejected (targeted-logout DoS defense). Sized like the assertion
@@ -289,11 +314,12 @@ func NewHandlers(deps Deps) (*Handlers, error) {
 		logoutReplay = newLogoutReplayStore(deps.LogoutReplayStoreSize)
 	}
 	return &Handlers{
-		deps:         deps,
-		pending:      pending,
-		signerCache:  make(map[string]*AssertionSigner),
-		logoutReplay: logoutReplay,
-		chains:       newLogoutChainStore(deps.LogoutChainTTL, deps.LogoutChainStoreSize),
+		deps:          deps,
+		pending:       pending,
+		signerCache:   make(map[string]*AssertionSigner),
+		metadataCache: make(map[string]*MetadataDoc),
+		logoutReplay:  logoutReplay,
+		chains:        newLogoutChainStore(deps.LogoutChainTTL, deps.LogoutChainStoreSize),
 	}, nil
 }
 
@@ -423,6 +449,59 @@ func (h *Handlers) signerForClient(spClient *sso.Client) (*AssertionSigner, erro
 		h.signerMu.Unlock()
 	}
 	return as, nil
+}
+
+// metadataSigner resolves the signer the /saml/metadata endpoint publishes the
+// KeyDescriptor cert from, returning whether that key can drive XML-DSig
+// (canSign). It is a SUPERSET of signerForClient that tolerates an Ed25519
+// issuer for the cert ONLY:
+//
+//   - RSA / ECDSA → the SAME cached XML-DSig-capable AssertionSigner
+//     signerForClient returns (so the metadata cert byte-matches assertions and
+//     the cache stays shared), canSign=true.
+//   - Ed25519 → a cert-only AssertionSigner (canSign=false), so the metadata
+//     endpoint can still publish the key + serve UNSIGNED metadata instead of
+//     500ing. The assertion / SLO paths keep using signerForClient, which still
+//     fails closed for Ed25519 — this does NOT let an Ed25519 key sign anything.
+//
+// A resolution failure other than the Ed25519 case (unresolvable issuer, a
+// TokenIssuer that can't expose a stdlib crypto.Signer, a non-P256 ECDSA curve)
+// still propagates an error (the caller 500s), preserving fail-closed behavior.
+func (h *Handlers) metadataSigner(spClient *sso.Client) (signer *AssertionSigner, canSign bool, err error) {
+	// Try the XML-DSig-capable path first (RSA/ECDSA). On success the cert
+	// matches what assertions embed.
+	if as, serrr := h.signerForClient(spClient); serrr == nil {
+		return as, true, nil
+	} else if !errors.Is(serrr, ErrUnsupportedSigningKey) {
+		// A genuine resolution failure (unresolvable issuer, wrong curve, no
+		// crypto.Signer) — fail closed, do NOT silently fall back.
+		return nil, false, serrr
+	}
+
+	// ErrUnsupportedSigningKey: the key can't XML-DSig. Distinguish an Ed25519
+	// issuer (publish cert + serve unsigned) from a truly unresolvable signer.
+	_, issuer, ierr := h.deps.IssuerForClient(spClient)
+	if ierr != nil {
+		return nil, false, ierr
+	}
+	cs, ok := issuer.(cryptoSignerIssuer)
+	if !ok {
+		return nil, false, ErrUnsupportedSigningKey
+	}
+	sgn, pub, kid := cs.CryptoSigner()
+	if sgn == nil {
+		return nil, false, ErrUnsupportedSigningKey
+	}
+	if _, isEd := pub.(ed25519.PublicKey); !isEd {
+		// Not Ed25519 yet still unsupported (e.g. a non-P256 ECDSA curve): fail
+		// closed rather than publish a cert we'd never sign assertions with.
+		return nil, false, ErrUnsupportedSigningKey
+	}
+	certOnly, cerr := newCertOnlyAssertionSigner(sgn, pub, kid, h.entityID())
+	if cerr != nil {
+		return nil, false, cerr
+	}
+	return certOnly, false, nil
 }
 
 // acsAllowed reports whether acsURL is in the SP client's registered ACS

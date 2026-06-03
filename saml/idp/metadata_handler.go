@@ -38,17 +38,28 @@ func (h *Handlers) Metadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signer, err := h.signerForClient(client)
+	signer, canSign, err := h.metadataSigner(client)
 	if err != nil {
-		// The resolved tenant's key can't drive XML-DSig (e.g. Ed25519) or is
-		// unresolvable — the IdP can't publish a usable signing cert. Fail
-		// closed with the IdP-internal code (NOT a request fault).
+		// The resolved tenant's key is unresolvable / unusable for the
+		// KeyDescriptor cert (and is not the Ed25519 graceful-fallback case the
+		// resolver handles internally) — the IdP can't publish usable metadata.
+		// Fail closed with the IdP-internal code (NOT a request fault).
 		h.deps.Logger.Error("saml/idp: metadata signer resolution failed", "error", err)
 		writeError(w, http.StatusInternalServerError, sso.ErrSAMLAssertionFailed)
 		return
 	}
 
-	doc, err := GenerateMetadata(signer, h.entityID(), h.ssoURL())
+	// Sign the metadata only when (a) the operator opted in AND (b) the resolved
+	// key can drive XML-DSig. An Ed25519 issuer (goxmldsig has no EdDSA method)
+	// gracefully falls back to UNSIGNED metadata + a log — the endpoint stays
+	// available rather than 500ing, mirroring that the assertion path simply
+	// cannot use such a key.
+	sign := h.deps.SignMetadata && canSign
+	if h.deps.SignMetadata && !canSign {
+		h.deps.Logger.Info("saml/idp: SignMetadata requested but signing key cannot drive XML-DSig (Ed25519); serving UNSIGNED metadata", "kid", signer.KeyID())
+	}
+
+	doc, err := h.metadataDoc(signer, sign)
 	if err != nil {
 		h.deps.Logger.Error("saml/idp: generate metadata failed", "error", err)
 		writeError(w, http.StatusInternalServerError, sso.ErrSAMLAssertionFailed)
@@ -70,6 +81,54 @@ func (h *Handlers) Metadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(sso.HeaderContentType, "application/samlmetadata+xml")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(doc.XML)
+}
+
+// metadataDoc renders the EntityDescriptor for signer, memoized per (kid, sign).
+// The signed render is non-deterministic for ECDSA (random k), so caching keeps
+// the served bytes — and thus the ETag — STABLE across requests (preserving the
+// If-None-Match → 304 path); see the metadataCache field doc. A rotation (new
+// kid) misses the cache and renders fresh. An empty kid (an issuer that exposes
+// none) is rendered fresh each call rather than risk colliding distinct keys
+// under one empty cache key — mirroring the signerCache's `if kid != ""`
+// discipline.
+func (h *Handlers) metadataDoc(signer *AssertionSigner, sign bool) (*MetadataDoc, error) {
+	kid := signer.KeyID()
+	key := metadataCacheKey(kid, sign)
+	if kid != "" {
+		h.metadataMu.RLock()
+		cached := h.metadataCache[key]
+		h.metadataMu.RUnlock()
+		if cached != nil {
+			return cached, nil
+		}
+	}
+
+	doc, err := GenerateMetadata(signer, h.entityID(), h.ssoURL(), sign)
+	if err != nil {
+		return nil, err
+	}
+
+	if kid != "" {
+		h.metadataMu.Lock()
+		// First writer wins so the cached bytes (and the non-deterministic ECDSA
+		// signature) stay stable for this key.
+		if existing := h.metadataCache[key]; existing != nil {
+			doc = existing
+		} else {
+			h.metadataCache[key] = doc
+		}
+		h.metadataMu.Unlock()
+	}
+	return doc, nil
+}
+
+// metadataCacheKey composes the (kid, signed) cache key. The signed flag is part
+// of the key so the signed + unsigned renders of the same key never alias.
+func metadataCacheKey(kid string, sign bool) string {
+	if sign {
+		return kid + "|signed"
+	}
+	return kid + "|unsigned"
 }
 
 // metadataClient resolves the SP client whose tenant key metadata should
