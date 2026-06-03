@@ -40,6 +40,20 @@ func keyIDOf(t *testing.T, iss signingIssuer) string {
 	return k.KeyID()
 }
 
+// registerExternalSignerForTest registers a signer factory and unregisters it
+// when the test ends, keeping the package-global registry clean across subtests
+// and -count>1 runs. RegisterExternalSigner panics on a duplicate name by design
+// (a production wiring guard), so tests must clean up rather than relax it.
+func registerExternalSignerForTest(t *testing.T, name string, f ExternalSignerFactory) {
+	t.Helper()
+	RegisterExternalSigner(name, f)
+	t.Cleanup(func() {
+		externalSignerRegistry.mu.Lock()
+		defer externalSignerRegistry.mu.Unlock()
+		delete(externalSignerRegistry.factories, name)
+	})
+}
+
 func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -57,7 +71,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.alg, func(t *testing.T) {
 			name := "ext-" + tc.alg
-			RegisterExternalSigner(name, staticSigner(tc.signer))
+			registerExternalSignerForTest(t, name, staticSigner(tc.signer))
 
 			iss, _, _, err := buildSigningIssuer(
 				config.SigningConfig{Alg: tc.alg, External: name},
@@ -91,7 +105,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 	// es256 alg but an Ed25519 signer — the bridge must reject it at
 	// startup rather than minting tokens no verifier accepts.
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
-	RegisterExternalSigner("ext-mismatch", staticSigner(edPriv))
+	registerExternalSignerForTest(t, "ext-mismatch", staticSigner(edPriv))
 	_, _, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-mismatch"},
 		config.ServerConfig{Issuer: "https://sso.test"},
@@ -131,7 +145,7 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 func TestExternalSignerMetrics(t *testing.T) {
 	m := metrics.New()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	RegisterExternalSigner("ext-metrics", staticSigner(ecPriv))
+	registerExternalSignerForTest(t, "ext-metrics", staticSigner(ecPriv))
 
 	iss, _, _, err := buildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-metrics"},
@@ -196,7 +210,7 @@ func TestRegisterExternalSigner_RejectsBadInput(t *testing.T) {
 	assertPanic(t, "empty name", func() { RegisterExternalSigner("", staticSigner(nil)) })
 	assertPanic(t, "nil factory", func() { RegisterExternalSigner("ext-nilfac", nil) })
 
-	RegisterExternalSigner("ext-dup", staticSigner(nil))
+	registerExternalSignerForTest(t, "ext-dup", staticSigner(nil))
 	assertPanic(t, "duplicate", func() { RegisterExternalSigner("ext-dup", staticSigner(nil)) })
 }
 
