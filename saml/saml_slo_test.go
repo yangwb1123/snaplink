@@ -293,6 +293,196 @@ func TestSPSLO_FrontChannel_RedirectsResponseToContinue(t *testing.T) {
 	}
 }
 
+// twoIdPEntityIDs are two DISTINCT upstream-IdP entity ids for the
+// multi-SPConfig SP-side SLO dispatch tests (each SPConfig pins a different IdP).
+const (
+	idpAEntity = "https://idp-a.example.com"
+	idpBEntity = "https://idp-b.example.com"
+)
+
+// buildMultiSPSLOServer wires saml.Build with TWO cert-pinned SPConfigs — one per
+// upstream IdP (idp-A, idp-B), each with its OWN distinct pinned cert + entity id
+// + front-channel continue endpoint. It returns the mounted SP-SLO GET handler,
+// the shared session manager, and both IdP keypairs. This is the fixture for the
+// Issuer-based dispatch tests: with two SPConfigs the RelayState (a chain-state id)
+// carries no provider hint, so dispatch must select by the LogoutRequest Issuer.
+func buildMultiSPSLOServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, *idpKey, *idpKey) {
+	t.Helper()
+	idpA := newIDPKey(t)
+	idpB := newIDPKey(t)
+	spKeyPEM, spCertPEM := newSPSLOKey(t)
+	sessions := defaultimpl.NewMemorySessionManager()
+
+	res, err := samlmod.Build(samlmod.Deps{
+		SessionManager: sessions,
+		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		ClientStore:    defaultimpl.NewMemoryClientStore(),
+	}, samlmod.Config{
+		SPs: []sp.SPConfig{
+			{
+				Name:              "idp-a",
+				EntityID:          spEntity,
+				ACSURL:            acsURL,
+				IDPCert:           idpA.certPEM(),
+				IDPEntityID:       idpAEntity,
+				SPPrivateKey:      spKeyPEM,
+				SPCert:            spCertPEM,
+				SPSLOURL:          spSLOURL,
+				IDPSLOURL:         "https://idp-a.example.com/saml/slo",
+				IDPSLOResponseURL: "https://idp-a.example.com/saml/slo/continue",
+			},
+			{
+				Name:              "idp-b",
+				EntityID:          spEntity,
+				ACSURL:            acsURL,
+				IDPCert:           idpB.certPEM(),
+				IDPEntityID:       idpBEntity,
+				SPPrivateKey:      spKeyPEM,
+				SPCert:            spCertPEM,
+				SPSLOURL:          spSLOURL,
+				IDPSLOURL:         "https://idp-b.example.com/saml/slo",
+				IDPSLOResponseURL: "https://idp-b.example.com/saml/slo/continue",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("saml.Build (multi-SP): %v", err)
+	}
+	return findHandler(t, res, http.MethodGet, sso.PathSAMLSPSLO), sessions, idpA, idpB
+}
+
+// TestSPSLO_MultiSP_FrontChannel_DispatchesByIssuer is the FIX-1 proof: an SP with
+// TWO SPConfigs receives a FRONT-channel LogoutRequest whose RelayState is the
+// IdP's unguessable chain-state id (NO provider hint). It is dispatched to the
+// idp-A authenticator BY ITS ISSUER, the idp-A signature validates, the LOCAL
+// session is terminated, and the LogoutResponse 302s back to idp-A's CONTINUE
+// endpoint with the chain-state RelayState ECHOED verbatim (so the IdP chain
+// resumes). Under the old RelayState-name dispatch this would 400 and silently
+// leave the session alive.
+func TestSPSLO_MultiSP_FrontChannel_DispatchesByIssuer(t *testing.T) {
+	handler, sessions, idpA, _ := buildMultiSPSLOServer(t)
+
+	const nameID = "multi-a@example.com"
+	const chainState = "unguessable-chain-state-id-A"
+	sess, err := sessions.Create(context.Background(), nameID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Front-channel LogoutRequest issued by idp-A (Issuer = idpAEntity), signed by
+	// idp-A's key, carrying the chain-state id as RelayState (no provider hint).
+	q := mintLogoutRedirectQuery(t, idpA, idpAEntity, nameID, "", spSLOURL, chainState)
+	rec := postSPSLO(handler, q)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (Issuer-dispatched + terminated); body=%s", rec.Code, rec.Body.String())
+	}
+	// The LOCAL session is GONE — the logout actually terminated it.
+	if s, err := sessions.Get(context.Background(), sess.ID); err == nil && s != nil {
+		t.Fatalf("local session %q should be terminated by the front-channel logout dispatched by Issuer", sess.ID)
+	}
+	// The 302 LogoutResponse goes to idp-A's CONTINUE endpoint (proving the idp-A
+	// authenticator handled it) with the chain-state RelayState echoed verbatim.
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+	if got := u.Scheme + "://" + u.Host + u.Path; got != "https://idp-a.example.com/saml/slo/continue" {
+		t.Fatalf("response target = %q, want idp-A's continue endpoint (Issuer-dispatched)", got)
+	}
+	if rs := u.Query().Get("RelayState"); rs != chainState {
+		t.Errorf("response RelayState = %q, want the echoed chain id %q", rs, chainState)
+	}
+}
+
+// TestSPSLO_MultiSP_IssuerSaysBSignedByA_Rejected proves the Issuer is a LOOKUP
+// KEY ONLY, not a trust bypass: a LogoutRequest whose Issuer names idp-B (so the
+// dispatcher selects the idp-B authenticator) but is SIGNED by idp-A's key is
+// REJECTED — idp-B's pinned cert can't validate idp-A's signature. The session
+// SURVIVES. This is the security crux of dispatching by an unverified Issuer.
+func TestSPSLO_MultiSP_IssuerSaysBSignedByA_Rejected(t *testing.T) {
+	handler, sessions, idpA, _ := buildMultiSPSLOServer(t)
+
+	const nameID = "multi-mismatch@example.com"
+	sess, err := sessions.Create(context.Background(), nameID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Issuer = idp-B (selects the idp-B authenticator) but SIGNED with idp-A's key.
+	q := mintLogoutRedirectQuery(t, idpA, idpBEntity, nameID, "", spSLOURL, "chain-state-mismatch")
+	rec := postSPSLO(handler, q)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (Issuer-selected idp-B cert must not validate idp-A's signature); body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body[sso.KeyError] != sso.ErrSAMLRequestInvalid {
+		t.Errorf("error = %q, want %q", body[sso.KeyError], sso.ErrSAMLRequestInvalid)
+	}
+	// The session MUST survive: the Issuer chose a trust anchor whose cert rejects
+	// the signature, so no trust was bypassed.
+	if _, err := sessions.Get(context.Background(), sess.ID); err != nil {
+		t.Fatalf("session %q terminated despite an Issuer/key mismatch (trust-bypass via forged Issuer): %v", sess.ID, err)
+	}
+}
+
+// TestSPSLO_MultiSP_UnknownIssuer_Rejected: a LogoutRequest whose Issuer matches
+// NO configured upstream IdP yields 400 saml_request_invalid (oracle-safe, same
+// as a single-SP unknown request).
+func TestSPSLO_MultiSP_UnknownIssuer_Rejected(t *testing.T) {
+	handler, sessions, idpA, _ := buildMultiSPSLOServer(t)
+
+	const nameID = "multi-unknown@example.com"
+	sess, err := sessions.Create(context.Background(), nameID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Issuer names an entity the SP pins for NEITHER SPConfig (signed by idp-A so
+	// the only failure under test is the unknown-Issuer dispatch miss).
+	q := mintLogoutRedirectQuery(t, idpA, "https://unknown-idp.example.com", nameID, "", spSLOURL, "rs")
+	rec := postSPSLO(handler, q)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for an unknown Issuer; body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body[sso.KeyError] != sso.ErrSAMLRequestInvalid {
+		t.Errorf("error = %q, want %q", body[sso.KeyError], sso.ErrSAMLRequestInvalid)
+	}
+	if _, err := sessions.Get(context.Background(), sess.ID); err != nil {
+		t.Fatalf("session %q terminated by an unknown-Issuer logout: %v", sess.ID, err)
+	}
+}
+
+// TestSPSLO_SingleSP_DispatchUnchanged proves the single-SPConfig fast path is
+// unchanged: with exactly one authenticator the inbound LogoutRequest is handled
+// directly (no Issuer lookup needed), terminating the session — byte-identical to
+// the prior behavior. (buildSLOServer wires exactly one SP.)
+func TestSPSLO_SingleSP_DispatchUnchanged(t *testing.T) {
+	handler, sessions, idp := buildSLOServer(t)
+
+	const nameID = "single-sp@example.com"
+	sess, err := sessions.Create(context.Background(), nameID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	// RelayState is an opaque chain-state id with no provider hint — the single-SP
+	// path must still work without any Issuer lookup.
+	q := mintLogoutRedirectQuery(t, idp, idpEntity, nameID, "", spSLOURL, "opaque-chain-state")
+	rec := postSPSLO(handler, q)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (single-SP fast path); body=%s", rec.Code, rec.Body.String())
+	}
+	if s, err := sessions.Get(context.Background(), sess.ID); err == nil && s != nil {
+		t.Fatalf("single-SP local session %q should be terminated", sess.ID)
+	}
+}
+
 // TestSLO_SPtoIdPtoSP_RoundTrip is the full snaplink SP→IdP→SP interop proof on
 // the NEW detached §3.4.4.1 format: the repo's OWN SP side builds a SP-initiated
 // LogoutRequest redirect (detached-signed with the SP key), the repo's OWN IdP

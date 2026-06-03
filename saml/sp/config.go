@@ -11,6 +11,8 @@ package sp
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -221,5 +223,29 @@ func (c *SPConfig) Validate() error {
 	if len(c.SPPrivateKey) > 0 && len(c.SPCert) == 0 {
 		return fmt.Errorf("saml/sp: SPCert required alongside SPPrivateKey for %q", c.Name)
 	}
+
+	// IDPSLOResponseURL is embedded VERBATIM as a 302 Location (BuildLogoutResponseURL
+	// redirects the LogoutResponse there). The project applies an https-only gate to
+	// EVERY redirect destination (the isHTTPSURL gate the IdP fan-out / front-channel
+	// chain uses); a misconfigured http://, file://, or relative value would issue a
+	// 302 to a non-https/garbage target at runtime. It is operator config (not request
+	// input, so not an external open-redirect), but we reject a non-absolute-https
+	// value at BOOT instead. Empty stays allowed (the default — the LogoutResponse then
+	// targets the request endpoint).
+	if c.IDPSLOResponseURL != "" && !isHTTPSURL(c.IDPSLOResponseURL) {
+		return fmt.Errorf("saml/sp: IDPSLOResponseURL must be an absolute https URL with a host, got %q", c.IDPSLOResponseURL)
+	}
 	return nil
+}
+
+// isHTTPSURL reports whether raw is an absolute https URL with a host. Mirrors
+// the idp package's identically-named SSRF/redirect-destination gate (which is
+// unexported there, so this sp-module-local equivalent applies the SAME policy
+// to SPConfig.IDPSLOResponseURL — the SP's only operator-config redirect target).
+func isHTTPSURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && u.Host != ""
 }

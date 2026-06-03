@@ -556,6 +556,50 @@ func TestSP_LogoutURL_NoKey_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+// TestSP_PeekLogoutRequestIssuer_ReadsIssuer proves PeekLogoutRequestIssuer
+// decodes the Issuer from a wire (redirect-binding) LogoutRequest WITHOUT
+// verifying the signature — the lookup key the SP-side multi-IdP SLO dispatcher
+// uses. It reads the Issuer off an UNSIGNED request (peeking is signature-free).
+func TestSP_PeekLogoutRequestIssuer_ReadsIssuer(t *testing.T) {
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "rs", nil)
+	vals, _ := url.ParseQuery(q)
+	got, err := PeekLogoutRequestIssuer(vals.Get("SAMLRequest"), true)
+	if err != nil {
+		t.Fatalf("PeekLogoutRequestIssuer = %v, want nil", err)
+	}
+	if got != tIDPEntity {
+		t.Errorf("peeked Issuer = %q, want %q", got, tIDPEntity)
+	}
+}
+
+// TestSP_PeekLogoutRequestIssuer_Rejects covers the decode-failure + missing-Issuer
+// cases — all collapse to ErrLogoutInvalid (oracle-safe), the same code the
+// dispatcher maps to a 400.
+func TestSP_PeekLogoutRequestIssuer_Rejects(t *testing.T) {
+	// Garbage base64.
+	if _, err := PeekLogoutRequestIssuer("not-base64-$$$", true); !errors.Is(err, ErrLogoutInvalid) {
+		t.Fatalf("malformed peek err = %v, want ErrLogoutInvalid", err)
+	}
+	// A well-formed LogoutRequest with an EMPTY Issuer value.
+	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: "", nameID: "alice@example.com", dest: tSPSLOURL}, "", nil)
+	vals, _ := url.ParseQuery(q)
+	if _, err := PeekLogoutRequestIssuer(vals.Get("SAMLRequest"), true); !errors.Is(err, ErrLogoutInvalid) {
+		t.Fatalf("empty-Issuer peek err = %v, want ErrLogoutInvalid", err)
+	}
+}
+
+// TestSP_IDPEntityID_ReturnsPinnedEntity proves the accessor returns the pinned
+// upstream-IdP entity id (the value the dispatcher matches the inbound Issuer
+// against, and the same one ProcessLogoutRequest checks the Issuer against).
+func TestSP_IDPEntityID_ReturnsPinnedEntity(t *testing.T) {
+	now := time.Now()
+	idp := newIDPKeypair(t)
+	a := newSLOSP(t, idp, now)
+	if got := a.IDPEntityID(); got != tIDPEntity {
+		t.Errorf("IDPEntityID() = %q, want the pinned IdP entity id %q", got, tIDPEntity)
+	}
+}
+
 // --- helpers ---
 
 // inflateAndParse base64-decodes + raw-inflates a redirect-binding SAML message

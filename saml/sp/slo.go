@@ -161,6 +161,45 @@ func (a *SPAuthenticator) ProcessLogoutRequest(samlRequestB64, relayState string
 	}, nil
 }
 
+// PeekLogoutRequestIssuer decodes an inbound SLO LogoutRequest just far enough
+// to read its Issuer element, WITHOUT verifying the signature. It exists for the
+// SP-side multi-IdP SLO dispatcher: with several SPConfigs wired, the front-channel
+// RelayState is the IdP's unguessable chain-state id (no provider hint), so the
+// dispatcher must select the right authenticator by the request's Issuer instead.
+//
+// SECURITY: the returned Issuer is a LOOKUP KEY ONLY — it selects which
+// authenticator's pinned trust anchor to use; it is NEVER itself a trust decision.
+// The selected authenticator's ProcessLogoutRequest STILL fully validates the
+// signature against that IdP's pinned cert (and re-checks the Issuer == pinned
+// entity id) immediately after. A forged/wrong Issuer merely picks an authenticator
+// whose cert won't validate the signature → the request is rejected. Decoding runs
+// the SAME XXE-safe / decompression-bomb-bounded path ProcessLogoutRequest uses
+// (decodeSLORequest → xrv round-trip check → strict unmarshal), so peeking adds no
+// new parse exposure. Returns ErrLogoutInvalid (the one oracle-safe code) on any
+// decode failure or a missing/empty Issuer.
+func PeekLogoutRequestIssuer(samlRequestB64 string, redirectBinding bool) (string, error) {
+	raw, err := decodeSLORequest(samlRequestB64, redirectBinding)
+	if err != nil {
+		return "", ErrLogoutInvalid
+	}
+	// XXE / round-trip safety BEFORE any parse (same gate as ProcessLogoutRequest).
+	if err := xrv.Validate(bytes.NewReader(raw)); err != nil {
+		return "", ErrLogoutInvalid
+	}
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(raw); err != nil {
+		return "", ErrLogoutInvalid
+	}
+	var req saml.LogoutRequest
+	if err := unmarshalElement(doc.Root(), &req); err != nil {
+		return "", ErrLogoutInvalid
+	}
+	if req.Issuer == nil || req.Issuer.Value == "" {
+		return "", ErrLogoutInvalid
+	}
+	return req.Issuer.Value, nil
+}
+
 // checkLogoutFreshnessAndReplay enforces the LogoutRequest freshness window and
 // single-use ID dedup (Fix 2). It is called ONLY after the signature has been
 // verified. Returns a non-nil error (the caller collapses it to the one

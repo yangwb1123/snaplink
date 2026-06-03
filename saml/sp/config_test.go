@@ -37,6 +37,13 @@ func TestSPConfig_Validate(t *testing.T) {
 		{"cert_without_idp_entityid", func(c *SPConfig) { c.IDPEntityID = "" }, "IDPEntityID required"},
 		{"sign_without_key", func(c *SPConfig) { c.SignAuthnRequests = true }, "SignAuthnRequests requires SPPrivateKey"},
 		{"key_without_cert", func(c *SPConfig) { c.SPPrivateKey = []byte("k") }, "SPCert required"},
+		// IDPSLOResponseURL: embedded as a 302 Location, so it must be absolute https.
+		{"slo_response_url_https_ok", func(c *SPConfig) { c.IDPSLOResponseURL = "https://idp/saml/slo/continue" }, ""},
+		{"slo_response_url_empty_ok", func(c *SPConfig) { c.IDPSLOResponseURL = "" }, ""},
+		{"slo_response_url_http_rejected", func(c *SPConfig) { c.IDPSLOResponseURL = "http://idp/saml/slo/continue" }, "absolute https URL"},
+		{"slo_response_url_file_rejected", func(c *SPConfig) { c.IDPSLOResponseURL = "file:///etc/passwd" }, "absolute https URL"},
+		{"slo_response_url_relative_rejected", func(c *SPConfig) { c.IDPSLOResponseURL = "/saml/slo/continue" }, "absolute https URL"},
+		{"slo_response_url_hostless_rejected", func(c *SPConfig) { c.IDPSLOResponseURL = "https:///nohost" }, "absolute https URL"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

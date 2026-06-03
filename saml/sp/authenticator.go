@@ -174,6 +174,21 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 
 func (a *SPAuthenticator) Name() string { return a.cfg.Name }
 
+// IDPEntityID returns the pinned UPSTREAM IdP's SAML entity id — the value the
+// IdP stamps as the assertion/LogoutRequest Issuer. It is read from the
+// boot-pinned IDPMetadata (the trust anchor), so it is the SAME id
+// ProcessLogoutRequest checks the inbound Issuer against. The SP-side SLO
+// dispatcher uses it to select WHICH authenticator (which upstream IdP) handles
+// an inbound LogoutRequest by the request's Issuer — a LOOKUP KEY only, never a
+// trust decision (the selected authenticator's ProcessLogoutRequest still fully
+// validates the signature against this IdP's pinned cert).
+func (a *SPAuthenticator) IDPEntityID() string {
+	if a.sp == nil || a.sp.IDPMetadata == nil {
+		return ""
+	}
+	return a.sp.IDPMetadata.EntityID
+}
+
 // LoginURL builds the IdP's HTTP-Redirect SSO URL carrying a deflated, base64,
 // urlencoded SAMLRequest with RelayState=state. The SDK's /auth/login
 // orchestrator redirects the user-agent there (the same non-empty-LoginURL

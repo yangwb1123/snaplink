@@ -413,7 +413,7 @@ func (h *sloSPHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authn, err := h.dispatch(relayState)
+	authn, err := h.dispatch(samlRequest, redirectBinding)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
 		return
@@ -475,24 +475,41 @@ func (h *sloSPHandler) terminateLocalSessions(ctx context.Context, nameID, sessi
 	}
 }
 
-// dispatch selects the SPAuthenticator for this SLO request. Mirrors
-// acsHandler.dispatch: a single SP is unambiguous; with several, the RelayState
-// carries the provider hint (the SP Name, optionally "<provider>:<state>").
-func (h *sloSPHandler) dispatch(relayState string) (*sp.SPAuthenticator, error) {
+// dispatch selects the SPAuthenticator (which upstream-IdP config) that handles
+// this inbound SP-side LogoutRequest, BY ITS ISSUER — NOT by RelayState. In a
+// FRONT-channel chain the RelayState is the IdP's unguessable chain-state id (no
+// provider hint), so a RelayState-name lookup would miss with multiple SPConfigs
+// wired and silently fail to terminate the session while the IdP chain still
+// completes Success. Selecting by Issuer fixes that.
+//
+// SECURITY: the Issuer is decoded from the (as-yet-unverified) LogoutRequest and
+// used ONLY as a LOOKUP KEY to pick the trust anchor. It is NEVER a trust
+// decision: the chosen authenticator's ProcessLogoutRequest still fully validates
+// the signature against that IdP's PINNED cert (and re-checks Issuer == pinned
+// entity id). A forged/wrong Issuer just selects an authenticator whose cert won't
+// validate the signature → rejected. The decode runs the same XXE-safe /
+// bomb-bounded path ProcessLogoutRequest uses.
+//
+// Single-SPConfig is the fast path: exactly one authenticator is unambiguous, so
+// it is used directly with no Issuer lookup (byte-identical to the prior behavior).
+// No authenticator's pinned IdP entity id matching the Issuer → an error the
+// caller maps to the one oracle-safe code (same 400 as today).
+func (h *sloSPHandler) dispatch(samlRequest string, redirectBinding bool) (*sp.SPAuthenticator, error) {
 	if len(h.authnsByName) == 1 {
 		for _, a := range h.authnsByName {
 			return a, nil
 		}
 	}
-	if a, ok := h.authnsByName[relayState]; ok {
-		return a, nil
+	issuer, err := sp.PeekLogoutRequestIssuer(samlRequest, redirectBinding)
+	if err != nil {
+		return nil, err
 	}
-	if i := strings.IndexByte(relayState, ':'); i > 0 {
-		if a, ok := h.authnsByName[relayState[:i]]; ok {
+	for _, a := range h.authnsByName {
+		if a.IDPEntityID() == issuer {
 			return a, nil
 		}
 	}
-	return nil, errors.New("saml: no SP matched relay state")
+	return nil, errors.New("saml: no SP matched the LogoutRequest Issuer")
 }
 
 func writeError(w http.ResponseWriter, status int, code string) {
