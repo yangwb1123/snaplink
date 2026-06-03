@@ -417,18 +417,34 @@ authenticators:
     #   bcrypt_hash_file: /etc/sso/users/alice.bcrypt
     #   subject_id: user-alice
     # Optional login-time credential-health signal. When enabled, a
-    # successful password login whose plaintext matches a weak-password
-    # dictionary emits a `password_weak` audit event (Outcome=success —
-    # login is NEVER blocked) + the sso_credential_health_signals_total
+    # successful password login that the checker flags emits a
+    # `password_weak` / `password_compromised` audit event (Outcome=success
+    # — login is NEVER blocked) + the sso_credential_health_signals_total
     # metric. This server has no register / change-password endpoint, so
     # login is the only moment it sees plaintext; this is a fail-open
     # advisory operators use to drive an out-of-band rotation nudge.
-    # weak_password_file optionally extends the built-in set (newline-
-    # delimited; blank lines + '#' comments skipped; a missing file fails
-    # the boot loudly).
+    #
+    # kind selects the checker:
+    #   "dictionary" (default) — fully offline exact-match against the
+    #     built-in weak-password set, optionally extended by
+    #     weak_password_file (newline-delimited; blank lines + '#' comments
+    #     skipped; a missing file fails the boot loudly).
+    #   "hibp" — online Have I Been Pwned k-anonymity breach lookup. ONLY a
+    #     5-hex-char SHA-1 prefix of the password ever leaves the process
+    #     (with Add-Padding for extra privacy); the suffix match is local.
+    #     Fail-open: any HIBP outage/timeout/error yields no signal and
+    #     never blocks the login.
     health:
       enabled: false
+      kind: dictionary
       weak_password_file: ""
+      # Only consulted when kind: hibp. All fields optional (zero = SDK
+      # defaults: public API, 5s timeout, flag any appearance).
+      hibp:
+        # base_url: "https://api.pwnedpasswords.com/range/"  # trailing slash required; point at a self-hosted mirror to keep prefixes in-network
+        # timeout: 5s        # caps a single range request (login is synchronous)
+        # min_count: 1       # only flag when breach count >= this
+        # user_agent: ""     # override the request User-Agent
 
   phone:
     enabled: true

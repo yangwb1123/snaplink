@@ -1965,20 +1965,52 @@ type PasswordConfig struct {
 }
 
 // PasswordHealthConfig wires the optional login-time credential-health
-// signal. When Enabled, cmd attaches a DictionaryPasswordHealthChecker to
-// the password authenticator. The check runs only AFTER a password
-// verifies, NEVER blocks login, and surfaces purely as a
+// signal. When Enabled, cmd attaches a PasswordHealthChecker to the
+// password authenticator. The check runs only AFTER a password verifies,
+// NEVER blocks login, and surfaces purely as a
 // password_weak / password_compromised audit event (plus the
 // sso_credential_health_signals_total metric). This server has no
 // register / change-password endpoint, so login is the only moment it
 // sees plaintext — this is the only place such a signal can be derived.
+//
+// Kind selects the checker: "dictionary" (default, fully offline,
+// DictionaryPasswordHealthChecker) or "hibp" (online Have I Been Pwned
+// k-anonymity breach lookup — only a 5-char SHA-1 prefix ever leaves the
+// process; fail-open so an HIBP outage never blocks login).
 type PasswordHealthConfig struct {
 	Enabled bool `yaml:"enabled"`
+	// Kind selects the checker implementation: "" / "dictionary" (offline,
+	// the default) or "hibp" (online breach lookup). An unknown value fails
+	// the boot loudly.
+	Kind string `yaml:"kind,omitempty"`
 	// WeakPasswordFile optionally extends the built-in weak-password set
 	// with a newline-delimited file (blank lines + '#' comments skipped).
 	// A read error fails the boot loudly rather than silently shrinking
-	// coverage.
+	// coverage. Only consulted for the dictionary checker.
 	WeakPasswordFile string `yaml:"weak_password_file"`
+	// HIBP holds the Have I Been Pwned checker tunables; only consulted
+	// when Kind is "hibp".
+	HIBP *HIBPHealthConfig `yaml:"hibp,omitempty"`
+}
+
+// HIBPHealthConfig tunes the "hibp" credential-health checker. All fields
+// are optional — zero values fall back to the SDK defaults (the public
+// HIBP range API, a 5s timeout, MinCount 1).
+type HIBPHealthConfig struct {
+	// BaseURL overrides the range-API base (default
+	// https://api.pwnedpasswords.com/range/, trailing slash required).
+	// Point at a self-hosted mirror to keep prefixes inside your network.
+	BaseURL string `yaml:"base_url,omitempty"`
+	// Timeout caps a single range request (default 5s). The lookup is on
+	// the synchronous login path, so this bounds how long a slow HIBP
+	// endpoint can delay a login before the fail-open path engages.
+	Timeout time.Duration `yaml:"timeout,omitempty"`
+	// MinCount only flags a password whose breach count is >= MinCount
+	// (default 1 = flag any appearance).
+	MinCount int `yaml:"min_count,omitempty"`
+	// UserAgent overrides the request User-Agent (default a descriptive
+	// snaplink UA). Some mirrors require a non-empty UA.
+	UserAgent string `yaml:"user_agent,omitempty"`
 }
 
 // PasswordUserConfig seeds one known user into cmd's bcrypt

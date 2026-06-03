@@ -4024,6 +4024,58 @@ func loadBcryptHashFile(path string) ([]byte, error) {
 	return []byte(s), nil
 }
 
+// buildPasswordHealthChecker constructs the configured login-time
+// credential-health checker. Kind selects the implementation: "" /
+// "dictionary" is the fully-offline DictionaryPasswordHealthChecker
+// (default, back-compatible); "hibp" is the online Have I Been Pwned
+// k-anonymity breach checker (only a 5-char SHA-1 prefix ever leaves the
+// process; fail-open so an outage never blocks login). An unknown Kind is
+// a loud boot error rather than a silent fallback.
+func buildPasswordHealthChecker(h *config.PasswordHealthConfig, logger spi.Logger) (spi.PasswordHealthChecker, error) {
+	switch h.Kind {
+	case "", "dictionary":
+		checker, err := defaultimpl.NewDictionaryPasswordHealthChecker(defaultimpl.DictionaryPasswordHealthConfig{
+			WeakPasswordFile: h.WeakPasswordFile,
+		})
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("password health checker enabled", "kind", "dictionary", "weak_password_file", h.WeakPasswordFile)
+		return checker, nil
+	case "hibp":
+		opts := []defaultimpl.HIBPOption{
+			// Surface fail-open HIBP outages in production; the check still
+			// never blocks a login (the checker swallows the error itself).
+			defaultimpl.WithHIBPLogger(logger),
+		}
+		var baseURL string
+		if hc := h.HIBP; hc != nil {
+			baseURL = hc.BaseURL
+			if hc.BaseURL != "" {
+				opts = append(opts, defaultimpl.WithHIBPBaseURL(hc.BaseURL))
+			}
+			if hc.Timeout > 0 {
+				opts = append(opts, defaultimpl.WithHIBPTimeout(hc.Timeout))
+			}
+			if hc.MinCount > 0 {
+				opts = append(opts, defaultimpl.WithHIBPMinCount(hc.MinCount))
+			}
+			if hc.UserAgent != "" {
+				opts = append(opts, defaultimpl.WithHIBPUserAgent(hc.UserAgent))
+			}
+		}
+		checker, err := defaultimpl.NewHIBPPasswordHealthChecker(opts...)
+		if err != nil {
+			return nil, err
+		}
+		// Log only the (non-secret) base URL — never a password or hash.
+		logger.Info("password health checker enabled", "kind", "hibp", "base_url", baseURL)
+		return checker, nil
+	default:
+		return nil, fmt.Errorf("unknown password health kind %q (want \"dictionary\" or \"hibp\")", h.Kind)
+	}
+}
+
 // buildAuthenticators returns the configured authenticators, the temp
 // token store (when wired), and the *TOTPAuthenticator handle (when
 // TOTP is enabled). Both ancillary returns are separated so admin /
@@ -4046,9 +4098,7 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authentic
 		verifier, seeded := buildBcryptPasswordVerifier(a.Users, logger)
 		var pwOpts []authenticators.PasswordOption
 		if h := a.Health; h != nil && h.Enabled {
-			checker, err := defaultimpl.NewDictionaryPasswordHealthChecker(defaultimpl.DictionaryPasswordHealthConfig{
-				WeakPasswordFile: h.WeakPasswordFile,
-			})
+			checker, err := buildPasswordHealthChecker(h, logger)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("password health checker: %w", err)
 			}
@@ -4056,7 +4106,6 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authentic
 			// custom checker (e.g. an HIBP lookup) is observable in
 			// production; the health check stays fail-open regardless.
 			pwOpts = append(pwOpts, authenticators.WithPasswordHealthChecker(checker), authenticators.WithPasswordLogger(logger))
-			logger.Info("password health checker enabled", "weak_password_file", h.WeakPasswordFile)
 		}
 		auths = append(auths, authenticators.NewPasswordAuthenticator(verifier, pwOpts...))
 		logger.Info("password authenticator enabled", "seeded_users", seeded)
