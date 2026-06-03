@@ -104,6 +104,41 @@ func TestStore_TenantRegionFieldsRoundtrip(t *testing.T) {
 	}
 }
 
+func TestStore_TenantEnforceWritesRoundtrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.PutTenant(ctx, &tenant.Tenant{
+		ID: "t1", Slug: "acme", Name: "Acme", Status: tenant.StatusActive,
+		HomeRegion: "eu-west-1", EnforceWrites: true,
+	}); err != nil {
+		t.Fatalf("PutTenant: %v", err)
+	}
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTenant: %v", err)
+	}
+	if !got.EnforceWrites {
+		t.Error("EnforceWrites did not round-trip true via GetTenant")
+	}
+	// ListTenants is a separate SELECT/Scan path — verify it too.
+	list, err := s.ListTenants(ctx)
+	if err != nil {
+		t.Fatalf("ListTenants: %v", err)
+	}
+	if len(list) != 1 || !list[0].EnforceWrites {
+		t.Errorf("EnforceWrites did not round-trip via ListTenants: %+v", list)
+	}
+
+	// The zero value (false) round-trips too — the fail-open default.
+	if err := s.PutTenant(ctx, &tenant.Tenant{ID: "t2", Slug: "beta", Status: tenant.StatusActive}); err != nil {
+		t.Fatalf("PutTenant t2: %v", err)
+	}
+	got2, _ := s.GetTenant(ctx, "t2")
+	if got2.EnforceWrites {
+		t.Error("EnforceWrites zero value not false")
+	}
+}
+
 func TestStore_TenantRegionFieldsZeroIsUnconstrained(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

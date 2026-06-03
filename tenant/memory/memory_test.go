@@ -73,6 +73,31 @@ func TestPutGetTenant_RegionFieldsRoundtrip(t *testing.T) {
 	}
 }
 
+func TestPutGetTenant_EnforceWritesRoundtrip(t *testing.T) {
+	s := memory.New()
+	ctx := context.Background()
+	if err := s.PutTenant(ctx, &tenant.Tenant{
+		ID: "t1", Slug: "acme", HomeRegion: "eu-west-1", EnforceWrites: true,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := s.GetTenant(ctx, "t1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.EnforceWrites {
+		t.Error("EnforceWrites did not round-trip true")
+	}
+	// And the zero value (false) round-trips too — the fail-open default.
+	if err := s.PutTenant(ctx, &tenant.Tenant{ID: "t2", Slug: "beta"}); err != nil {
+		t.Fatalf("Put t2: %v", err)
+	}
+	got2, _ := s.GetTenant(ctx, "t2")
+	if got2.EnforceWrites {
+		t.Error("EnforceWrites zero value not false")
+	}
+}
+
 func TestPutGetTenant_RegionFieldsZeroIsUnconstrained(t *testing.T) {
 	s := memory.New()
 	ctx := context.Background()

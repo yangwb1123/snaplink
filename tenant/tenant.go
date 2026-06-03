@@ -32,15 +32,19 @@ type Tenant struct {
 	Status   Status            `json:"status"`
 	Settings map[string]string `json:"settings,omitempty"`
 
-	// HomeRegion + AllowedRegions are the data-residency anchor consumed by
-	// the multi-region layer (region.ResidencyPolicy). HomeRegion names the
-	// region this tenant's data primarily lives in; AllowedRegions is the
-	// set a request may be served from. Plain strings (not region.ID) keep
-	// tenant/ a lower-level package that region/ depends on — region/ maps
-	// these to region.ID, not the reverse. Zero value ("" / nil) =
-	// unconstrained, so tenants predating this field are byte-compatible.
+	// HomeRegion + AllowedRegions + EnforceWrites are the data-residency
+	// anchor consumed by the multi-region layer (region.ResidencyPolicy).
+	// HomeRegion names the region this tenant's data primarily lives in;
+	// AllowedRegions is the set a request may be served from; EnforceWrites
+	// flips residency from an advisory signal into a hard write-routing gate
+	// (a write served outside HomeRegion is rejected at the enforcement
+	// layer). Plain strings (not region.ID) keep tenant/ a lower-level
+	// package that region/ depends on — region/ maps these to region.ID, not
+	// the reverse. Zero value ("" / nil / false) = unconstrained and
+	// fail-open, so tenants predating these fields are byte-compatible.
 	HomeRegion     string   `json:"home_region,omitempty"`
 	AllowedRegions []string `json:"allowed_regions,omitempty"`
+	EnforceWrites  bool     `json:"enforce_writes,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`

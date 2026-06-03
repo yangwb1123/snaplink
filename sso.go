@@ -63,6 +63,8 @@ type Server struct {
 	tenantMiddlewareOpts    TenantMiddlewareOptions
 	tenantSuspensionEnabled bool
 	tenantSuspensionCache   *suspensionCache
+	tenantResidencyEnabled  bool
+	tenantResidencyCache    *residencyCache
 	invalidationBus         cluster.Bus
 
 	// SPIFFE JWT-SVID acceptance (cluster C1, mesh-native service-to-

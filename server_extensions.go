@@ -29,6 +29,7 @@ import (
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
+	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/tenant"
 )
@@ -2117,6 +2118,10 @@ func (s *Server) applyInvalidation(evt cluster.Event) {
 		if s.tenantSuspensionCache != nil {
 			s.tenantSuspensionCache.invalidate(evt.Key)
 		}
+	case cluster.KindTenantResidency:
+		if s.tenantResidencyCache != nil {
+			s.tenantResidencyCache.invalidate(evt.Key)
+		}
 	case cluster.KindDiscoveryReload:
 		s.invalidateDiscoveryCaches()
 	case cluster.KindAuthzPolicyChange:
@@ -2169,6 +2174,210 @@ func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaim
 		return ErrTenantSuspended
 	}
 	return nil
+}
+
+// DefaultTenantResidencyCacheTTL bounds how long a tenant's resolved
+// ResidencyPolicy may be cached between lookups. Mirrors the
+// suspension-cache TTL rationale: short enough that a policy edit
+// (HomeRegion / AllowedRegions / EnforceWrites) propagates promptly across
+// the fleet, long enough that hot-path enforcement doesn't hammer the
+// tenant store on every request.
+const DefaultTenantResidencyCacheTTL = 60 * time.Second
+
+// residencyCacheEntry pairs a tenant's resolved residency policy with its
+// freshness deadline. Caching the value-typed policy lets the enforcement
+// path skip the tenant.Store round-trip on every check.
+type residencyCacheEntry struct {
+	policy    region.ResidencyPolicy
+	expiresAt time.Time
+}
+
+// residencyCache is a tiny TTL map indexed by tenant ID, sized for the
+// typical tens-to-low-thousands of tenants (swap to an LRU if you need
+// more). Reads take RLock so they don't contend on the enforcement path.
+// Mirrors suspensionCache exactly, caching a ResidencyPolicy instead of a
+// suspended bool.
+type residencyCache struct {
+	mu      sync.RWMutex
+	entries map[string]*residencyCacheEntry
+	ttl     time.Duration
+}
+
+func (c *residencyCache) get(tenantID string) (region.ResidencyPolicy, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.entries[tenantID]
+	if !ok {
+		return region.ResidencyPolicy{}, false
+	}
+	if time.Now().After(e.expiresAt) {
+		return region.ResidencyPolicy{}, false
+	}
+	return e.policy, true
+}
+
+func (c *residencyCache) put(tenantID string, policy region.ResidencyPolicy) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[tenantID] = &residencyCacheEntry{
+		policy:    policy,
+		expiresAt: time.Now().Add(c.ttl),
+	}
+}
+
+func (c *residencyCache) invalidate(tenantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, tenantID)
+}
+
+// WithTenantResidencyCheck enables the data-residency enforcement engine:
+// a tenant's ResidencyPolicy (derived from its HomeRegion / AllowedRegions
+// / EnforceWrites fields) is consulted via [Server.checkTenantResidency] to
+// decide whether the serving region may handle a given tenant-bound
+// request. A serving region outside the tenant's AllowedRegions yields
+// region.ErrRegionNotAllowed; a write that would land outside HomeRegion
+// under EnforceWrites yields region.ErrResidencyViolation.
+//
+// Lookups are cached per tenant ID for ttl (default
+// DefaultTenantResidencyCacheTTL when ttl <= 0). Like the suspension
+// check, a tenant store outage is treated as FAIL-OPEN — residency is an
+// AP/governance control, not a security CP invariant, so a store partition
+// must not block the world.
+//
+// The cache is allocated ONLY here, so a server that never calls this
+// option keeps tenantResidencyCache nil and behaves byte-identically to a
+// pre-residency build. checkTenantResidency is not yet wired into any
+// handler in this commit — the middleware + login gate that call it land
+// in a follow-up; until then the engine is defined-but-inert.
+func WithTenantResidencyCheck(ttl time.Duration) Option {
+	return func(s *Server) {
+		if ttl <= 0 {
+			ttl = DefaultTenantResidencyCacheTTL
+		}
+		s.tenantResidencyEnabled = true
+		s.tenantResidencyCache = &residencyCache{
+			entries: make(map[string]*residencyCacheEntry),
+			ttl:     ttl,
+		}
+	}
+}
+
+// checkTenantResidency is the data-residency enforcement gate. It decides
+// whether servingRegion may handle a request for tenantID (a write when
+// isWrite). Returns nil when the request is allowed, region.ErrRegionNotAllowed
+// when the serving region is outside the tenant's AllowedRegions, or
+// region.ErrResidencyViolation when a write would leave the home region
+// under EnforceWrites.
+//
+// Decision order (each early-return is its own "unconstrained" gate):
+//
+//  1. not enabled / no serving region / no tenant → nil (byte-identical,
+//     unconstrained — region is a routing signal, absence means anywhere).
+//  2. tenant store outage → nil (FAIL-OPEN — see below).
+//  3. empty HomeRegion → nil (tenant set no residency anchor).
+//  4. servingRegion == HomeRegion → nil (home is always allowed).
+//  5. AllowedRegions non-empty AND servingRegion not in it →
+//     ErrRegionNotAllowed.
+//  6. isWrite AND EnforceWrites AND servingRegion != HomeRegion →
+//     ErrResidencyViolation.
+//  7. else → nil.
+//
+// FAIL-OPEN rationale: residency is an AP/governance control, NOT a
+// security CP invariant. A tenant-store partition must not 4xx every
+// tenant-bound request across the fleet — we'd rather serve a request in a
+// possibly-non-home region for the brief outage window than take the
+// service down. This mirrors checkTenantNotSuspended's fail-open exactly
+// (an unreachable tenant store, or a not-found tenant, allows the request).
+func (s *Server) checkTenantResidency(ctx context.Context, tenantID string, servingRegion region.ID, isWrite bool) error {
+	if !s.tenantResidencyEnabled || servingRegion == "" || tenantID == "" {
+		return nil
+	}
+
+	policy, ok := region.ResidencyPolicy{}, false
+	if s.tenantResidencyCache != nil {
+		policy, ok = s.tenantResidencyCache.get(tenantID)
+	}
+	if !ok {
+		if s.tenantStore == nil {
+			return nil
+		}
+		t, err := s.tenantStore.GetTenant(ctx, tenantID)
+		if err != nil || t == nil {
+			// Fail open on store outage (or not-found tenant) — don't 4xx the
+			// world during a tenant store partition. Matches
+			// checkTenantNotSuspended.
+			if err != nil && s.logger != nil {
+				s.logger.Error("tenant residency check: tenant store lookup failed; failing open",
+					"error", err, "tenant", tenantID)
+			}
+			return nil
+		}
+		policy = residencyPolicyFromTenant(t)
+		if s.tenantResidencyCache != nil {
+			s.tenantResidencyCache.put(tenantID, policy)
+		}
+	}
+
+	if policy.HomeRegion == "" {
+		return nil
+	}
+	if servingRegion == policy.HomeRegion {
+		return nil
+	}
+	if len(policy.AllowedRegions) > 0 && !slices.Contains(policy.AllowedRegions, servingRegion) {
+		return region.ErrRegionNotAllowed
+	}
+	if isWrite && policy.EnforceWrites && servingRegion != policy.HomeRegion {
+		return region.ErrResidencyViolation
+	}
+	return nil
+}
+
+// residencyPolicyFromTenant maps a tenant's plain-string residency fields
+// into the region.ResidencyPolicy value the enforcement gate operates on.
+// tenant/ stays a lower-level package (plain strings); region/ owns the
+// typed mapping. Kept separate so it's unit-testable and the cached value
+// is the already-typed policy.
+func residencyPolicyFromTenant(t *tenant.Tenant) region.ResidencyPolicy {
+	var allowed []region.ID
+	if len(t.AllowedRegions) > 0 {
+		allowed = make([]region.ID, len(t.AllowedRegions))
+		for i, r := range t.AllowedRegions {
+			allowed[i] = region.ID(r)
+		}
+	}
+	return region.ResidencyPolicy{
+		HomeRegion:     region.ID(t.HomeRegion),
+		AllowedRegions: allowed,
+		EnforceWrites:  t.EnforceWrites,
+	}
+}
+
+// InvalidateTenantResidencyCache clears the cached residency policy for
+// tenantID. Wire this into admin handlers that mutate a tenant's
+// HomeRegion / AllowedRegions / EnforceWrites so the change takes effect on
+// the next enforcement check, not after the TTL expires.
+//
+// When an invalidation bus is wired ([WithInvalidationBus]), this also
+// publishes the change so every other replica clears its local cache too —
+// closing the cross-replica window where a stale residency policy is still
+// honored elsewhere until that node's TTL elapses. Publish failures are
+// logged, not propagated: the local invalidation already succeeded and
+// peers fall back to their TTL, matching the residency check's fail-open
+// design. Mirrors InvalidateTenantSuspensionCache exactly.
+//
+// Safe to call when no cache is configured (no-op).
+func (s *Server) InvalidateTenantResidencyCache(tenantID string) {
+	if s.tenantResidencyCache != nil {
+		s.tenantResidencyCache.invalidate(tenantID)
+	}
+	if s.invalidationBus != nil {
+		evt := cluster.Event{Kind: cluster.KindTenantResidency, Key: tenantID}
+		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", tenantID, "error", err)
+		}
+	}
 }
 
 // maybeEncryptIDToken applies OIDC ID Token encryption when the client

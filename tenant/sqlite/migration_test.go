@@ -80,16 +80,19 @@ func TestMigration_V2NoOpsOnV1PopulatedDB(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	// Reopen via the store, which runs the FULL migration set (v1 + v2).
-	// v1 is already recorded so the runner skips it and applies only v2.
+	// Reopen via the store, which runs the FULL migration set. v1 is already
+	// recorded so the runner skips it and applies the rest forward (v2 — the
+	// residency backfill this test asserts — plus any later migrations),
+	// stamping to head.
 	s, err := New(dsn)
 	if err != nil {
 		t.Fatalf("New (upgrade): %v", err)
 	}
 	defer s.Close()
 
-	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != 2 {
-		t.Errorf("post-upgrade version = %d, want 2", v)
+	head := migrations[len(migrations)-1].Version
+	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != head {
+		t.Errorf("post-upgrade version = %d, want %d", v, head)
 	}
 
 	// The pre-existing row survives + backfills to the unconstrained zero
@@ -112,6 +115,80 @@ func TestMigration_V2NoOpsOnV1PopulatedDB(t *testing.T) {
 	upd, _ := s.GetTenant(ctx, "legacy")
 	if upd.HomeRegion != "eu-west-1" || len(upd.AllowedRegions) != 1 {
 		t.Errorf("region write post-upgrade failed: %+v", upd)
+	}
+}
+
+// TestMigration_V3NoOpsOnV2PopulatedDB proves the v3 enforce_writes
+// migration applies forward on a database already carrying v1+v2 schema +
+// data, without disturbing the existing row, and backfills the new column to
+// its fail-open zero value (false). Mirrors the v2 no-op test: a v2
+// deployment upgrading to a v3 binary gains the column, existing tenants stay
+// byte-compatible (EnforceWrites false), and the version stamps to 3.
+func TestMigration_V3NoOpsOnV2PopulatedDB(t *testing.T) {
+	ctx := context.Background()
+	dsn := "file:" + filepath.Join(t.TempDir(), "v2.db")
+
+	// Stand up a DB at v1+v2 ONLY (baseline + residency regions), seed a
+	// tenant with region fields but no enforce_writes column, then close.
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	v1v2 := []migrate.Migration{migrations[0], migrations[1]} // baseline + v2
+	if err := migrate.Run(ctx, db, "tenant", v1v2); err != nil {
+		t.Fatalf("v1+v2 migrate: %v", err)
+	}
+	if v, _ := migrate.CurrentVersion(ctx, db, "tenant"); v != 2 {
+		t.Fatalf("pre-upgrade version = %d, want 2", v)
+	}
+	now := int64(1)
+	if _, err := db.ExecContext(ctx, `
+        INSERT INTO tenants (id, slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at)
+        VALUES ('legacy', 'legacy', 'Legacy', 'active', '', 'eu-west-1', '["eu-west-1"]', ?, ?)`, now, now); err != nil {
+		t.Fatalf("seed v2 tenant: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen via the store, which runs the FULL migration set (v1+v2+v3).
+	// v1+v2 are already recorded so the runner applies only v3.
+	s, err := New(dsn)
+	if err != nil {
+		t.Fatalf("New (upgrade): %v", err)
+	}
+	defer s.Close()
+
+	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != 3 {
+		t.Errorf("post-upgrade version = %d, want 3", v)
+	}
+
+	// The pre-existing row survives, keeps its v2 region fields, and
+	// backfills enforce_writes to the fail-open zero value (false).
+	got, err := s.GetTenant(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("GetTenant(legacy): %v", err)
+	}
+	if got.HomeRegion != "eu-west-1" || len(got.AllowedRegions) != 1 {
+		t.Errorf("v2 region fields disturbed by v3: %+v", got)
+	}
+	if got.EnforceWrites {
+		t.Errorf("backfilled legacy tenant not fail-open: EnforceWrites=true")
+	}
+
+	// And the new column is writable post-upgrade.
+	if err := s.PutTenant(ctx, &tenant.Tenant{
+		ID: "legacy", Slug: "legacy", Name: "Legacy", Status: tenant.StatusActive,
+		HomeRegion: "eu-west-1", AllowedRegions: []string{"eu-west-1"}, EnforceWrites: true,
+	}); err != nil {
+		t.Fatalf("PutTenant post-upgrade: %v", err)
+	}
+	upd, _ := s.GetTenant(ctx, "legacy")
+	if !upd.EnforceWrites {
+		t.Errorf("enforce_writes write post-upgrade failed: %+v", upd)
 	}
 }
 

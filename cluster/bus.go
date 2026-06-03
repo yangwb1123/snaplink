@@ -46,6 +46,14 @@ const (
 	// provider on the next sidecar pull. Best-effort like every kind: a
 	// dropped Event only degrades a replica to its bundle-cache TTL.
 	KindAuthzPolicyChange EventKind = "authz_policy_change"
+
+	// KindTenantResidency signals that a tenant's data-residency policy
+	// (HomeRegion / AllowedRegions / EnforceWrites) changed; subscribers
+	// drop the cached residency policy for Event.Key (the tenant ID) so the
+	// next enforcement check re-reads the tenant store. Mirrors
+	// KindTenantSuspension: best-effort, a dropped Event only degrades a
+	// replica to its residency-cache TTL.
+	KindTenantResidency EventKind = "tenant.residency"
 )
 
 // Event is one coordination signal. Key identifies the affected entity

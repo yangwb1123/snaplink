@@ -41,6 +41,14 @@ var migrations = []migrate.Migration{
 ALTER TABLE tenants ADD COLUMN home_region TEXT NOT NULL DEFAULT '';
 ALTER TABLE tenants ADD COLUMN allowed_regions_json TEXT NOT NULL DEFAULT '[]';
 `},
+	// v3 adds the EnforceWrites residency toggle. INTEGER 0/1 (SQLite has no
+	// native bool) with NOT NULL DEFAULT 0 so existing rows backfill to the
+	// fail-open zero value (false) — byte-compatible with v2 tenants. A
+	// v2-populated DB applies this once and stamps v3; a fresh DB gets it in
+	// the same run after the baseline + v2.
+	{Version: 3, Name: "tenant_residency_enforce_writes", SQL: `
+ALTER TABLE tenants ADD COLUMN enforce_writes INTEGER NOT NULL DEFAULT 0;
+`},
 }
 
 const schema = `
@@ -138,7 +146,7 @@ func (s *Store) Ping(ctx context.Context) error {
 
 func (s *Store) GetTenant(ctx context.Context, id string) (*tenant.Tenant, error) {
 	row := s.db.QueryRowContext(ctx, `
-        SELECT slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at
+        SELECT slug, name, status, settings_json, home_region, allowed_regions_json, enforce_writes, created_at, updated_at
         FROM tenants WHERE id = ?`, id)
 	t, err := scanTenant(id, row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -152,7 +160,7 @@ func (s *Store) GetTenant(ctx context.Context, id string) (*tenant.Tenant, error
 
 func (s *Store) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at
+        SELECT id, slug, name, status, settings_json, home_region, allowed_regions_json, enforce_writes, created_at, updated_at
         FROM tenants ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: list tenants: %w", err)
@@ -162,18 +170,20 @@ func (s *Store) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
 	for rows.Next() {
 		var id string
 		var slug, name, status, settingsJSON, homeRegion, allowedRegionsJSON string
+		var enforceWrites int
 		var createdNs, updatedNs int64
-		if err := rows.Scan(&id, &slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &createdNs, &updatedNs); err != nil {
+		if err := rows.Scan(&id, &slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &enforceWrites, &createdNs, &updatedNs); err != nil {
 			return nil, fmt.Errorf("tenant/sqlite: scan tenant: %w", err)
 		}
 		t := &tenant.Tenant{
-			ID:         id,
-			Slug:       slug,
-			Name:       name,
-			Status:     tenant.Status(status),
-			HomeRegion: homeRegion,
-			CreatedAt:  time.Unix(0, createdNs).UTC(),
-			UpdatedAt:  time.Unix(0, updatedNs).UTC(),
+			ID:            id,
+			Slug:          slug,
+			Name:          name,
+			Status:        tenant.Status(status),
+			HomeRegion:    homeRegion,
+			EnforceWrites: enforceWrites == 1,
+			CreatedAt:     time.Unix(0, createdNs).UTC(),
+			UpdatedAt:     time.Unix(0, updatedNs).UTC(),
 		}
 		if settingsJSON != "" {
 			if err := json.Unmarshal([]byte(settingsJSON), &t.Settings); err != nil {
@@ -218,12 +228,16 @@ func (s *Store) PutTenant(ctx context.Context, t *tenant.Tenant) error {
 	if !t.CreatedAt.IsZero() {
 		createdAt = t.CreatedAt.UnixNano()
 	}
+	enforceWrites := 0
+	if t.EnforceWrites {
+		enforceWrites = 1
+	}
 	// UPSERT: on conflict by id, preserve CREATED_AT (matches the
 	// memory peer's behavior — operator updates don't reset the
 	// creation timestamp).
 	_, err = s.db.ExecContext(ctx, `
-        INSERT INTO tenants (id, slug, name, status, settings_json, home_region, allowed_regions_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tenants (id, slug, name, status, settings_json, home_region, allowed_regions_json, enforce_writes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             slug = excluded.slug,
             name = excluded.name,
@@ -231,8 +245,9 @@ func (s *Store) PutTenant(ctx context.Context, t *tenant.Tenant) error {
             settings_json = excluded.settings_json,
             home_region = excluded.home_region,
             allowed_regions_json = excluded.allowed_regions_json,
+            enforce_writes = excluded.enforce_writes,
             updated_at = excluded.updated_at`,
-		t.ID, t.Slug, t.Name, string(t.Status), settingsJSON, t.HomeRegion, allowedRegionsJSON, createdAt, now,
+		t.ID, t.Slug, t.Name, string(t.Status), settingsJSON, t.HomeRegion, allowedRegionsJSON, enforceWrites, createdAt, now,
 	)
 	if err != nil {
 		// Slug collisions surface as UNIQUE constraint violations;
@@ -380,18 +395,20 @@ func (s *Store) DeleteDomain(ctx context.Context, hostname string) error {
 
 func scanTenant(id string, row interface{ Scan(...any) error }) (*tenant.Tenant, error) {
 	var slug, name, status, settingsJSON, homeRegion, allowedRegionsJSON string
+	var enforceWrites int
 	var createdNs, updatedNs int64
-	if err := row.Scan(&slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &createdNs, &updatedNs); err != nil {
+	if err := row.Scan(&slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &enforceWrites, &createdNs, &updatedNs); err != nil {
 		return nil, err
 	}
 	t := &tenant.Tenant{
-		ID:         id,
-		Slug:       slug,
-		Name:       name,
-		Status:     tenant.Status(status),
-		HomeRegion: homeRegion,
-		CreatedAt:  time.Unix(0, createdNs).UTC(),
-		UpdatedAt:  time.Unix(0, updatedNs).UTC(),
+		ID:            id,
+		Slug:          slug,
+		Name:          name,
+		Status:        tenant.Status(status),
+		HomeRegion:    homeRegion,
+		EnforceWrites: enforceWrites == 1,
+		CreatedAt:     time.Unix(0, createdNs).UTC(),
+		UpdatedAt:     time.Unix(0, updatedNs).UTC(),
 	}
 	if settingsJSON != "" {
 		if err := json.Unmarshal([]byte(settingsJSON), &t.Settings); err != nil {
