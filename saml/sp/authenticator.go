@@ -41,7 +41,7 @@ import (
 type SPAuthenticator struct {
 	cfg     SPConfig
 	sp      *saml.ServiceProvider
-	replay  *replayStore
+	replay  ReplayStore
 	attrMap map[string]string
 	// now is the clock seam; nil ⇒ time.Now. Lets tests pin time deterministically.
 	now func() time.Time
@@ -50,7 +50,7 @@ type SPAuthenticator struct {
 	// freshness window (Fix 2). SEPARATE from the assertion replay store so the
 	// two distinct ID spaces (AssertionID vs LogoutRequest ID) never collide. A
 	// captured, validly-signed LogoutRequest replays here → rejected.
-	logoutReplay *replayStore
+	logoutReplay ReplayStore
 
 	// sloSigner / sloSigMethod are the SP signing key + XML-DSig method used to
 	// sign SP-initiated LogoutRequests + the LogoutResponse this SP returns to
@@ -166,8 +166,21 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 
 	a.cfg = cfg
 	a.sp = sp
-	a.replay = newReplayStore(cfg.ReplayStoreSize)
-	a.logoutReplay = newReplayStore(cfg.ReplayStoreSize)
+	// Replay stores: opt-in SHARED backends (cfg.AssertionReplayStore /
+	// cfg.LogoutReplayStore — e.g. the sqlite peer for a multi-replica SP) take
+	// precedence; nil ⇒ the bounded per-replica in-memory default (byte-identical
+	// to the pre-seam behavior). The two ID spaces (AssertionID vs LogoutRequest
+	// ID) stay in SEPARATE stores so they never collide.
+	if cfg.AssertionReplayStore != nil {
+		a.replay = cfg.AssertionReplayStore
+	} else {
+		a.replay = newReplayStore(cfg.ReplayStoreSize)
+	}
+	if cfg.LogoutReplayStore != nil {
+		a.logoutReplay = cfg.LogoutReplayStore
+	} else {
+		a.logoutReplay = newReplayStore(cfg.ReplayStoreSize)
+	}
 	a.attrMap = cfg.AttributeMapping
 	return a, nil
 }

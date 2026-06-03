@@ -6,6 +6,29 @@ import (
 	"time"
 )
 
+// ReplayStore is the SAML replay-dedup seam: it atomically reports whether a
+// replay token (an AssertionID on the assertion path, a LogoutRequest ID on the
+// SP-side SLO path) is FRESH (not previously seen within its validity window)
+// and, if so, records it. It returns true when fresh and false when it is a
+// REPLAY (or — for a shared backend — when freshness CANNOT be confirmed; see
+// the sqlite impl, which fails CLOSED).
+//
+// The default is the bounded in-memory replayStore below (per-replica). A
+// multi-replica SP deployment can plug a SHARED backend (e.g. the sqlite peer in
+// saml/sp/sqlite) via SPConfig.AssertionReplayStore / SPConfig.LogoutReplayStore
+// so an assertion/LogoutRequest replayed to a DIFFERENT replica is still caught
+// — closing the replay-across-replicas gap the per-replica store leaves open.
+// The gate still runs AFTER full signature/audience/recipient/expiry validation
+// (the callers are unchanged), so the shared store is a hardening layer over
+// those bounds, exactly like the memory default.
+//
+// now is passed in (not read from the clock) so the caller shares one consistent
+// timestamp across all of an assertion's checks and tests stay deterministic;
+// the sqlite peer derives its own wall clock only for opportunistic TTL pruning.
+type ReplayStore interface {
+	CheckAndRemember(id string, expires, now time.Time) bool
+}
+
 // replayStore is a bounded, in-memory dedup cache of SAML AssertionIDs seen on
 // this replica, keyed by the assertion ID, valued by the assertion's
 // NotOnOrAfter (so an entry can be pruned once the assertion it guards can no
@@ -53,7 +76,10 @@ func newReplayStore(capacity int) *replayStore {
 	}
 }
 
-// checkAndRemember atomically reports whether id has been seen before (within
+// interface guard.
+var _ ReplayStore = (*replayStore)(nil)
+
+// CheckAndRemember atomically reports whether id has been seen before (within
 // its validity window) and, if not, records it with the given expiry. It
 // returns true when the id is FRESH (not a replay) and false when it is a
 // REPLAY. Expired entries are pruned first, so an id whose previous sighting
@@ -62,7 +88,7 @@ func newReplayStore(capacity int) *replayStore {
 //
 // now is passed in (not read from the clock) so callers share one consistent
 // timestamp across all of an assertion's checks and tests stay deterministic.
-func (s *replayStore) checkAndRemember(id string, expires, now time.Time) bool {
+func (s *replayStore) CheckAndRemember(id string, expires, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

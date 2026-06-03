@@ -161,8 +161,24 @@ type SPConfig struct {
 
 	// ReplayStoreSize bounds the in-memory AssertionID dedup cache. Zero ⇒
 	// DefaultReplayStoreSize. The same bound sizes the separate LogoutRequest-ID
-	// dedup cache.
+	// dedup cache. Ignored when AssertionReplayStore / LogoutReplayStore is wired
+	// (a shared backend owns its own sizing/TTL).
 	ReplayStoreSize int
+
+	// AssertionReplayStore OPTIONALLY overrides the per-replica in-memory
+	// AssertionID dedup cache with a SHARED ReplayStore (e.g. the sqlite peer in
+	// saml/sp/sqlite) so a multi-replica SP catches an assertion replayed to a
+	// DIFFERENT replica. Nil ⇒ the bounded in-memory default (byte-identical to
+	// the pre-seam behavior). The gate still runs AFTER full assertion validation,
+	// so the shared store is a hardening layer, never the only defense.
+	AssertionReplayStore ReplayStore
+
+	// LogoutReplayStore OPTIONALLY overrides the per-replica in-memory
+	// LogoutRequest-ID dedup cache with a SHARED ReplayStore. Kept SEPARATE from
+	// AssertionReplayStore because the two ID spaces (AssertionID vs LogoutRequest
+	// ID) must not collide — wire each to its OWN backend/namespace. Nil ⇒ the
+	// bounded in-memory default.
+	LogoutReplayStore ReplayStore
 
 	// LogoutRequestWindow is the freshness window for an inbound IdP-initiated
 	// LogoutRequest: its IssueInstant must be within [now-window, now+skew], and

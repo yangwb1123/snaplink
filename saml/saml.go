@@ -69,6 +69,15 @@ type Deps struct {
 	// a shared sqlite/redis SAMLSessionIndex for a multi-replica IdP. IdP-only;
 	// the SP side does not use it.
 	SAMLSessionIndex idp.SAMLSessionIndex
+
+	// SAMLLogoutReplayStore OPTIONALLY overrides the IdP's per-replica in-memory
+	// LogoutRequest-ID replay-dedup cache with a SHARED idp.LogoutReplayStore (the
+	// sqlite peer in saml/idp/sqlite) so a multi-replica IdP catches a captured,
+	// validly-signed LogoutRequest replayed to a DIFFERENT replica. OPTIONAL: nil
+	// ⇒ the bounded in-memory default (byte-identical). IdP-only. (The SP-side
+	// replay stores are wired per-SP on sp.SPConfig.AssertionReplayStore /
+	// LogoutReplayStore, since each upstream IdP federation has its own.)
+	SAMLLogoutReplayStore idp.LogoutReplayStore
 }
 
 // Config wraps the per-IdP SP configs the operator wants to wire. One SPConfig
@@ -218,18 +227,19 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 	// IdP side: append the three issuing handlers when enabled.
 	if cfg.IdP.Enabled {
 		idpHandlers, err := idp.NewHandlers(idp.Deps{
-			ClientStore:     deps.ClientStore,
-			SessionManager:  deps.SessionManager,
-			UserProvider:    deps.UserProvider,
-			IssuerForClient: deps.IssuerForClient,
-			Issuer:          deps.Issuer,
-			LoginPath:       cfg.IdP.LoginPath,
-			SSOURL:          cfg.IdP.SSOURL,
-			MetadataTTL:     cfg.IdP.MetadataTTL,
-			AssertionTTL:    cfg.IdP.AssertionTTL,
-			AuditRecorder:   deps.AuditRecorder,
-			Logger:          logger,
-			SessionIndex:    deps.SAMLSessionIndex,
+			ClientStore:       deps.ClientStore,
+			SessionManager:    deps.SessionManager,
+			UserProvider:      deps.UserProvider,
+			IssuerForClient:   deps.IssuerForClient,
+			Issuer:            deps.Issuer,
+			LoginPath:         cfg.IdP.LoginPath,
+			SSOURL:            cfg.IdP.SSOURL,
+			MetadataTTL:       cfg.IdP.MetadataTTL,
+			AssertionTTL:      cfg.IdP.AssertionTTL,
+			AuditRecorder:     deps.AuditRecorder,
+			Logger:            logger,
+			SessionIndex:      deps.SAMLSessionIndex,
+			LogoutReplayStore: deps.SAMLLogoutReplayStore,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("saml: build IdP: %w", err)

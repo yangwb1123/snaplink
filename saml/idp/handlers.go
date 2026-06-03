@@ -163,8 +163,17 @@ type Deps struct {
 	LogoutRequestWindow time.Duration
 
 	// LogoutReplayStoreSize bounds the in-memory LogoutRequest-ID dedup cache.
-	// <=0 ⇒ DefaultLogoutReplayStoreSize.
+	// <=0 ⇒ DefaultLogoutReplayStoreSize. Ignored when LogoutReplayStore is wired
+	// (a shared backend owns its own sizing/TTL).
 	LogoutReplayStoreSize int
+
+	// LogoutReplayStore OPTIONALLY overrides the per-replica in-memory
+	// LogoutRequest-ID dedup cache with a SHARED LogoutReplayStore (the sqlite peer
+	// in saml/idp/sqlite) so a multi-replica IdP catches a LogoutRequest replayed
+	// to a DIFFERENT replica. Nil ⇒ the bounded in-memory default (byte-identical
+	// to the pre-seam behavior). The gate still runs AFTER signature + freshness
+	// validation, so the shared store is a hardening layer.
+	LogoutReplayStore LogoutReplayStore
 
 	// LogoutChainTTL bounds how long a FRONT-channel browser-redirect SLO chain
 	// stays resumable across its hops (frontchannel_slo.go). <=0 ⇒
@@ -228,8 +237,9 @@ type Handlers struct {
 	// logoutReplay dedups inbound SP-initiated LogoutRequest IDs within the
 	// freshness window (Fix 2). A captured, validly-signed LogoutRequest replays
 	// here → rejected (targeted-logout DoS defense). Sized like the assertion
-	// replay store on the SP side.
-	logoutReplay *logoutReplayStore
+	// replay store on the SP side. A SHARED backend (Deps.LogoutReplayStore, e.g.
+	// the sqlite peer) makes the dedup cross-replica.
+	logoutReplay LogoutReplayStore
 
 	// chains holds in-flight FRONT-channel logout chains (frontchannel_slo.go),
 	// keyed by an unguessable single-use state id. It drives the browser-redirect
@@ -271,11 +281,18 @@ func NewHandlers(deps Deps) (*Handlers, error) {
 		// DefaultPendingCapacity.
 		pending = NewPendingStore(0, 0)
 	}
+	// Logout-replay store: an opt-in SHARED backend (Deps.LogoutReplayStore — the
+	// sqlite peer for a multi-replica IdP) takes precedence; nil ⇒ the bounded
+	// per-replica in-memory default (byte-identical to the pre-seam behavior).
+	logoutReplay := deps.LogoutReplayStore
+	if logoutReplay == nil {
+		logoutReplay = newLogoutReplayStore(deps.LogoutReplayStoreSize)
+	}
 	return &Handlers{
 		deps:         deps,
 		pending:      pending,
 		signerCache:  make(map[string]*AssertionSigner),
-		logoutReplay: newLogoutReplayStore(deps.LogoutReplayStoreSize),
+		logoutReplay: logoutReplay,
 		chains:       newLogoutChainStore(deps.LogoutChainTTL, deps.LogoutChainStoreSize),
 	}, nil
 }
@@ -312,7 +329,7 @@ func (h *Handlers) checkLogoutFreshnessAndReplay(id string, issueInstant time.Ti
 	if id == "" {
 		return errors.New("saml/idp: logout request missing ID")
 	}
-	if fresh := h.logoutReplay.checkAndRemember(id, issueInstant.Add(window), now); !fresh {
+	if fresh := h.logoutReplay.CheckAndRemember(id, issueInstant.Add(window), now); !fresh {
 		return errors.New("saml/idp: replayed logout request")
 	}
 	return nil

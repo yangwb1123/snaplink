@@ -13,14 +13,14 @@ func TestReplayStore_FirstSeenThenReplay(t *testing.T) {
 	now := time.Now()
 	exp := now.Add(time.Hour)
 
-	if !s.checkAndRemember("id-1", exp, now) {
+	if !s.CheckAndRemember("id-1", exp, now) {
 		t.Fatal("first sighting of id-1 reported as replay")
 	}
-	if s.checkAndRemember("id-1", exp, now) {
+	if s.CheckAndRemember("id-1", exp, now) {
 		t.Fatal("second sighting of id-1 NOT reported as replay")
 	}
 	// A distinct ID is fresh.
-	if !s.checkAndRemember("id-2", exp, now) {
+	if !s.CheckAndRemember("id-2", exp, now) {
 		t.Fatal("first sighting of id-2 reported as replay")
 	}
 }
@@ -30,17 +30,17 @@ func TestReplayStore_ExpiredEntryPrunedThenFreshAgain(t *testing.T) {
 	t0 := time.Now()
 
 	// Insert id-1 with a short validity.
-	if !s.checkAndRemember("id-1", t0.Add(10*time.Second), t0) {
+	if !s.CheckAndRemember("id-1", t0.Add(10*time.Second), t0) {
 		t.Fatal("first sighting reported as replay")
 	}
 	// Still within window: replay.
-	if s.checkAndRemember("id-1", t0.Add(10*time.Second), t0.Add(5*time.Second)) {
+	if s.CheckAndRemember("id-1", t0.Add(10*time.Second), t0.Add(5*time.Second)) {
 		t.Fatal("within-window re-presentation NOT detected as replay")
 	}
 	// After expiry: the prune drops it, so it reads as fresh again (by which
 	// point the assertion's own expiry check rejects it anyway — this just
 	// proves the store doesn't leak entries forever).
-	if !s.checkAndRemember("id-1", t0.Add(10*time.Second), t0.Add(20*time.Second)) {
+	if !s.CheckAndRemember("id-1", t0.Add(10*time.Second), t0.Add(20*time.Second)) {
 		t.Fatal("post-expiry presentation should read fresh after prune")
 	}
 	// Pruning means the store shouldn't be holding the lapsed original twice.
@@ -57,18 +57,18 @@ func TestReplayStore_CapacityEviction(t *testing.T) {
 
 	// Insert 4x capacity distinct, still-valid IDs.
 	for i := 0; i < cap*4; i++ {
-		s.checkAndRemember(fmt.Sprintf("id-%d", i), exp, now)
+		s.CheckAndRemember(fmt.Sprintf("id-%d", i), exp, now)
 	}
 	if got := s.len(); got != cap {
 		t.Fatalf("len = %d, want capped at %d", got, cap)
 	}
 	// The OLDEST inserts were evicted (LRU by insert order): id-0 should be gone
 	// (treated as fresh again), id-(last) should still be a replay.
-	if !s.checkAndRemember("id-0", exp, now) {
+	if !s.CheckAndRemember("id-0", exp, now) {
 		t.Error("id-0 should have been evicted (oldest), but read as replay")
 	}
 	last := fmt.Sprintf("id-%d", cap*4-1)
-	if s.checkAndRemember(last, exp, now) {
+	if s.CheckAndRemember(last, exp, now) {
 		t.Errorf("%s (newest) should still be present, but read as fresh", last)
 	}
 }
@@ -98,9 +98,9 @@ func TestReplayStore_ConcurrentAccess(t *testing.T) {
 			for i := 0; i < perWorker; i++ {
 				// Mix of contended (shared) and unique keys.
 				shared := fmt.Sprintf("shared-%d", i%16)
-				s.checkAndRemember(shared, exp, now)
+				s.CheckAndRemember(shared, exp, now)
 				uniq := fmt.Sprintf("w%d-i%d", w, i)
-				s.checkAndRemember(uniq, exp, now)
+				s.CheckAndRemember(uniq, exp, now)
 			}
 		}(w)
 	}
@@ -112,7 +112,7 @@ func TestReplayStore_ConcurrentAccess(t *testing.T) {
 	}
 
 	// A shared key inserted during the run is deterministically a replay now.
-	if s.checkAndRemember("shared-0", exp, now) {
+	if s.CheckAndRemember("shared-0", exp, now) {
 		// shared-0 may have been evicted under capacity pressure; that's allowed.
 		// We only assert no panic/race occurred (the race detector does the
 		// heavy lifting); this branch is informational, not a failure.

@@ -113,7 +113,7 @@ func (a *SPAuthenticator) ProcessAssertion(ctx context.Context, samlResponseB64,
 	// validly presented. Use the SubjectConfirmation NotOnOrAfter (the bearer
 	// presentation deadline) when present, else the Conditions NotOnOrAfter.
 	if id := assertion.ID; id != "" {
-		if fresh := a.replay.checkAndRemember(id, replayExpiry(assertion, now), now); !fresh {
+		if fresh := a.replay.CheckAndRemember(id, replayExpiry(assertion, now), now); !fresh {
 			return nil, ErrAssertionInvalid
 		}
 	}

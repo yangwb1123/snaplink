@@ -16,6 +16,7 @@ require (
 	github.com/crewjam/saml v0.5.1
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/russellhaering/goxmldsig v1.4.0
+	modernc.org/sqlite v1.50.1
 )
 
 require (
@@ -61,7 +62,6 @@ require (
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.50.1 // indirect
 )
 
 replace github.com/snaplink/sso => ../

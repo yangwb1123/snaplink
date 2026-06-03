@@ -14,13 +14,13 @@ func TestLogoutReplayStore_FirstSeenThenReplay(t *testing.T) {
 	now := time.Now()
 	exp := now.Add(time.Hour)
 
-	if !s.checkAndRemember("id-1", exp, now) {
+	if !s.CheckAndRemember("id-1", exp, now) {
 		t.Fatal("first sighting of id-1 reported as replay")
 	}
-	if s.checkAndRemember("id-1", exp, now) {
+	if s.CheckAndRemember("id-1", exp, now) {
 		t.Fatal("second sighting of id-1 NOT reported as replay")
 	}
-	if !s.checkAndRemember("id-2", exp, now) {
+	if !s.CheckAndRemember("id-2", exp, now) {
 		t.Fatal("first sighting of id-2 reported as replay")
 	}
 }
@@ -32,13 +32,13 @@ func TestLogoutReplayStore_ExpiredPrunedThenFreshAgain(t *testing.T) {
 	s := newLogoutReplayStore(100)
 	t0 := time.Now()
 
-	if !s.checkAndRemember("id-1", t0.Add(10*time.Second), t0) {
+	if !s.CheckAndRemember("id-1", t0.Add(10*time.Second), t0) {
 		t.Fatal("first sighting reported as replay")
 	}
-	if s.checkAndRemember("id-1", t0.Add(10*time.Second), t0.Add(5*time.Second)) {
+	if s.CheckAndRemember("id-1", t0.Add(10*time.Second), t0.Add(5*time.Second)) {
 		t.Fatal("within-window re-presentation NOT detected as replay")
 	}
-	if !s.checkAndRemember("id-1", t0.Add(10*time.Second), t0.Add(20*time.Second)) {
+	if !s.CheckAndRemember("id-1", t0.Add(10*time.Second), t0.Add(20*time.Second)) {
 		t.Fatal("post-expiry presentation should read fresh after prune")
 	}
 	if got := s.len(); got != 1 {
@@ -55,16 +55,16 @@ func TestLogoutReplayStore_CapacityEviction(t *testing.T) {
 	exp := now.Add(time.Hour)
 
 	for i := 0; i < capacity*4; i++ {
-		s.checkAndRemember(fmt.Sprintf("id-%d", i), exp, now)
+		s.CheckAndRemember(fmt.Sprintf("id-%d", i), exp, now)
 	}
 	if got := s.len(); got != capacity {
 		t.Fatalf("len = %d, want capped at %d", got, capacity)
 	}
-	if !s.checkAndRemember("id-0", exp, now) {
+	if !s.CheckAndRemember("id-0", exp, now) {
 		t.Error("id-0 should have been evicted (oldest), but read as replay")
 	}
 	last := fmt.Sprintf("id-%d", capacity*4-1)
-	if s.checkAndRemember(last, exp, now) {
+	if s.CheckAndRemember(last, exp, now) {
 		t.Errorf("%s (newest) should still be present, but read as fresh", last)
 	}
 }
@@ -95,9 +95,9 @@ func TestLogoutReplayStore_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < perWorker; i++ {
 				shared := fmt.Sprintf("shared-%d", i%16)
-				s.checkAndRemember(shared, exp, now)
+				s.CheckAndRemember(shared, exp, now)
 				uniq := fmt.Sprintf("w%d-i%d", w, i)
-				s.checkAndRemember(uniq, exp, now)
+				s.CheckAndRemember(uniq, exp, now)
 			}
 		}(w)
 	}

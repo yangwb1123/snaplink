@@ -23,6 +23,23 @@ const DefaultLogoutRequestWindow = 5 * time.Minute
 // IssueInstant (one further in the future is a clock-forward forgery, rejected).
 const logoutMaxClockSkew = 1 * time.Minute
 
+// LogoutReplayStore is the IdP-side replay-dedup seam for inbound SP-initiated
+// LogoutRequest IDs. It atomically reports whether a request ID is FRESH (not
+// previously seen within its freshness window) and, if so, records it: true ⇒
+// fresh, false ⇒ a REPLAY (or — for a shared backend — when freshness CANNOT be
+// confirmed; the sqlite peer fails CLOSED, the security-correct posture for a
+// destructive logout request). It MIRRORS the SP-side ReplayStore exactly.
+//
+// The default is the bounded in-memory logoutReplayStore below (per-replica). A
+// multi-replica IdP can plug a SHARED backend (the sqlite peer in
+// saml/idp/sqlite) via Deps.LogoutReplayStore so a captured, validly-signed
+// LogoutRequest replayed to a DIFFERENT replica is still rejected. The gate runs
+// AFTER the signature + IssueInstant-freshness validation (the caller is
+// unchanged), so the shared store is a hardening layer over those bounds.
+type LogoutReplayStore interface {
+	CheckAndRemember(id string, expires, now time.Time) bool
+}
+
 // logoutReplayStore is a bounded, in-memory dedup cache of SAML LogoutRequest
 // IDs seen on this replica, keyed by the request ID, valued by the time after
 // which the request can no longer be fresh (so the entry is safe to prune). It
@@ -69,12 +86,15 @@ func newLogoutReplayStore(capacity int) *logoutReplayStore {
 	}
 }
 
-// checkAndRemember atomically reports whether id is FRESH (not previously seen
+// interface guard.
+var _ LogoutReplayStore = (*logoutReplayStore)(nil)
+
+// CheckAndRemember atomically reports whether id is FRESH (not previously seen
 // within its validity window) and, if so, records it with the given expiry. It
 // returns true when fresh and false when it is a REPLAY. Expired entries are
 // pruned first. now is passed in so callers share one consistent timestamp and
 // tests stay deterministic.
-func (s *logoutReplayStore) checkAndRemember(id string, expires, now time.Time) bool {
+func (s *logoutReplayStore) CheckAndRemember(id string, expires, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

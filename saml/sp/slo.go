@@ -236,7 +236,7 @@ func (a *SPAuthenticator) checkLogoutFreshnessAndReplay(id string, issueInstant 
 		return errors.New("saml/sp: logout request missing ID")
 	}
 	// Dedup: remember the ID until it can no longer be fresh (now+window).
-	if fresh := a.logoutReplay.checkAndRemember(id, issueInstant.Add(window), now); !fresh {
+	if fresh := a.logoutReplay.CheckAndRemember(id, issueInstant.Add(window), now); !fresh {
 		return errors.New("saml/sp: replayed logout request")
 	}
 	return nil

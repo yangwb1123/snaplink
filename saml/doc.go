@@ -310,4 +310,49 @@
 // SPPrivateKey/SPCert (SLO signing — RSA or ECDSA P-256; goxmldsig has no Ed25519
 // method). The IdP signing cert pinned for assertions is REUSED to validate
 // inbound IdP LogoutRequests, so SLO adds no new trust anchor.
+//
+// # Multi-replica storage (sqlite peers)
+//
+// SAML follows the SDK's §4 "every store gets a memory + sqlite impl" convention
+// for the stores whose CORRECTNESS genuinely needs cross-replica sharing. Each
+// store is an interface with the bounded in-memory default; the OPT-IN sqlite
+// peer (pure-Go modernc.org/sqlite, in saml/sp/sqlite + saml/idp/sqlite) is wired
+// via the existing seams. Unwired, the in-memory defaults are byte-identical, so
+// a single-replica deployment pays nothing.
+//
+//   - SP assertion-replay dedup — sp.ReplayStore; sqlite peer
+//     sqlite.AssertionReplayStore; wire via sp.SPConfig.AssertionReplayStore.
+//     Cross-replica so an AssertionID replayed to a DIFFERENT replica is caught.
+//   - SP-side logout-replay dedup — sp.ReplayStore; sqlite peer
+//     sqlite.LogoutReplayStore; wire via sp.SPConfig.LogoutReplayStore. SEPARATE
+//     namespace from the assertion store so the two ID spaces never collide.
+//   - IdP logout-replay dedup — idp.LogoutReplayStore; sqlite peer
+//     idp/sqlite.LogoutReplayStore; wire via saml.Deps.SAMLLogoutReplayStore.
+//   - IdP session index — idp.SAMLSessionIndex; sqlite peer
+//     idp/sqlite.SessionIndex; wire via saml.Deps.SAMLSessionIndex. Cross-replica
+//     so the SLO fan-out reaches EVERY SP a subject federated to across the
+//     cluster, not just those whose assertion-issuance landed on the logout
+//     replica.
+//
+// Each replay peer dedups via an INSERT ... ON CONFLICT DO NOTHING in a single
+// BEGIN IMMEDIATE transaction (race-free first-seen-vs-replay, the analogue of
+// the SDK JTI store), bounded by an expires_at TTL with opportunistic prune; the
+// session index upserts via ON CONFLICT DO UPDATE (idempotent re-record) +
+// DELETE for Remove/RemoveAll, bounded by a per-subject SP cap + age pruning. The
+// replay peers FAIL CLOSED on a store error (an unconfirmable freshness check
+// rejects — a SAML replay dedup guards an auth/destructive action, unlike the
+// availability-first JTI store), and each gate still runs AFTER full signature +
+// freshness validation (the callers are unchanged), so the shared store is a
+// hardening layer, never the only defense. Memory==sqlite is locked by the
+// conformance suites in saml/samltest (+ samltest/sessionindextest).
+//
+// DELIBERATELY memory-only (NOT given a sqlite peer): the two SHORT-LIVED
+// browser-flow stores — the IdP pending-AuthnRequest store (idp.PendingStore,
+// the /saml/sso → /saml/sso/finish handoff) and the front-channel SLO chain-state
+// store (the /saml/slo → /saml/slo/continue hops). Both are sticky-session-
+// covered: the AuthnRequest→finish round-trip and every SLO-chain hop ride the
+// SAME replica via the user's session/RelayState cookie, so cross-replica sharing
+// buys nothing while adding a hot-path DB write to a single-use, seconds-lived,
+// unguessable-id record. Their bounded in-memory stores are the right shape; the
+// omission is by design, not an oversight.
 package saml
