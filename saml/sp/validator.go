@@ -113,7 +113,7 @@ func (a *SPAuthenticator) ProcessAssertion(ctx context.Context, samlResponseB64,
 	// validly presented. Use the SubjectConfirmation NotOnOrAfter (the bearer
 	// presentation deadline) when present, else the Conditions NotOnOrAfter.
 	if id := assertion.ID; id != "" {
-		if fresh := a.replay.checkAndRemember(id, replayExpiry(assertion), now); !fresh {
+		if fresh := a.replay.checkAndRemember(id, replayExpiry(assertion, now), now); !fresh {
 			return nil, ErrAssertionInvalid
 		}
 	}
@@ -292,7 +292,7 @@ func expired(assertion *saml.Assertion, now time.Time) bool {
 // validly replayed — the earliest of its SubjectConfirmation NotOnOrAfter and
 // Conditions NotOnOrAfter. The replay store prunes the AssertionID at that
 // point (by then any later presentation fails the expiry check anyway).
-func replayExpiry(assertion *saml.Assertion) time.Time {
+func replayExpiry(assertion *saml.Assertion, now time.Time) time.Time {
 	var exp time.Time
 	consider := func(t time.Time) {
 		if t.IsZero() {
@@ -314,8 +314,10 @@ func replayExpiry(assertion *saml.Assertion) time.Time {
 	}
 	if exp.IsZero() {
 		// No explicit deadline: keep the ID for a conservative bounded window so
-		// it still dedups; the LRU cap evicts it eventually regardless.
-		exp = time.Now().Add(5 * time.Minute)
+		// it still dedups; the LRU cap evicts it eventually regardless. Use the
+		// caller's clock seam (not time.Now()) so the prune stays deterministic
+		// under a pinned test clock and never mixes wall-clock with a pinned now.
+		exp = now.Add(5 * time.Minute)
 	}
 	return exp
 }
