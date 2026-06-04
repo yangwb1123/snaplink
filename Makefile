@@ -66,8 +66,9 @@ playground: ## Run the interactive Web UI playground on localhost:8090.
 
 # ci-modules builds + tests each NESTED module separately. They are
 # excluded from the root `go ... ./...` on purpose (kms/awskms carries
-# aws-sdk-go-v2, kms/gcpkms carries cloud.google.com/go/kms, kms/pkcs11
-# carries github.com/miekg/pkcs11 [cgo], redis carries go-redis, saml carries
+# aws-sdk-go-v2, kms/gcpkms carries cloud.google.com/go/kms, kms/azurekeyvault
+# carries github.com/Azure/azure-sdk-for-go, kms/pkcs11 carries
+# github.com/miekg/pkcs11 [cgo], redis carries go-redis, saml carries
 # github.com/crewjam/saml [XML/DSig], ldap carries github.com/go-ldap/ldap/v3,
 # extauthz carries github.com/envoyproxy/go-control-plane [Envoy ext_authz
 # gRPC API], kerberos carries github.com/jcmturner/gokrb5/v8 [SPNEGO/Kerberos]
@@ -77,9 +78,10 @@ playground: ## Run the interactive Web UI playground on localhost:8090.
 # in the root module graph (`go list -m all`), blurring the core's
 # zero-external-SDK invariant. Each submodule resolves the core module via
 # its own `replace => ../` (or ../../).
-ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms/pkcs11, redis, saml, ldap, extauthz, kerberos).
+ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms/azurekeyvault, kms/pkcs11, redis, saml, ldap, extauthz, kerberos).
 	cd kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/gcpkms && $(GO) build ./... && $(GO) test -race -count=1 ./...
+	cd kms/azurekeyvault && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/pkcs11 && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd redis && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd saml && $(GO) build ./... && $(GO) test -race -count=1 ./...
