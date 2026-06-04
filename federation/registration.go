@@ -185,6 +185,34 @@ type RegistrationClientStore struct {
 	// resolves once, not N times.
 	cache       sync.Map // entityID(string) -> *federationClientEntry
 	resolveLock keyedMutex
+
+	// negCache is the short-TTL NEGATIVE (failure) cache. WHY: the resolution
+	// trigger is UNAUTHENTICATED — an /auth/login with a fake-but-HTTPS
+	// client_id that misses the wrapped store fires a full ResolveTrustChain.
+	// Caching the FAILURE (keyed by entity ID, short TTL) blunts a repeated
+	// fake-id flood without re-fetching, while the SHORT TTL means a legit RP
+	// whose superior was transiently down re-attempts soon — never permanently
+	// pinned out. It is a plain map + mutex (not the lock-free positive cache):
+	// writes happen only on resolution FAILURE (already bounded by the
+	// semaphore) and lookups sit on the miss/failure path, not the success hot
+	// path — and a plain map gives clean size accounting + oldest-eviction for
+	// the cap. negTTL/negMax bound it (lazy-expiry + a hard entry cap so the
+	// negative cache cannot itself become an unbounded-memory DoS).
+	negMu    sync.Mutex
+	negCache map[string]time.Time // entityID -> negative-entry expiry
+	negTTL   time.Duration
+	negMax   int
+
+	// resolveSem is the GLOBAL bounded-concurrency semaphore (a stdlib counting
+	// semaphore — a buffered channel of capacity N). WHY: the per-entity
+	// resolveLock only coalesces a burst for ONE id; it does nothing against an
+	// attacker wielding MANY distinct fake ids, each forcing a fresh parallel
+	// resolution. This caps DISTINCT-id parallelism so the outbound-fetch /
+	// socket / goroutine fan-out is bounded regardless of distinct-id count. A
+	// non-blocking acquire that FAILS CLOSED when saturated (returns the same
+	// unknown-client error as any miss — oracle-safe; a legit RP simply
+	// retries). nil ⇒ no bound (never constructed that way; defensive).
+	resolveSem chan struct{}
 }
 
 // compile-time proof the decorator satisfies the SPI it wraps.
@@ -219,6 +247,40 @@ func WithRegistrationTenantID(tenantID string) RegistrationOption {
 	return func(s *RegistrationClientStore) { s.defaultTenantID = tenantID }
 }
 
+// WithRegistrationNegativeCacheTTL sets how long a FAILED on-the-fly resolution
+// is remembered so a repeated fake-but-HTTPS client_id does not re-trigger a
+// fresh resolution. Kept short (it only DELAYS re-attempts). <=0 ⇒
+// DefaultResolutionNegativeCacheTTL.
+func WithRegistrationNegativeCacheTTL(ttl time.Duration) RegistrationOption {
+	return func(s *RegistrationClientStore) {
+		if ttl > 0 {
+			s.negTTL = ttl
+		}
+	}
+}
+
+// WithRegistrationNegativeCacheMaxSize caps the negative cache's entry count so
+// it cannot itself become an unbounded-memory DoS. <=0 ⇒
+// DefaultResolutionNegativeCacheMaxSize.
+func WithRegistrationNegativeCacheMaxSize(n int) RegistrationOption {
+	return func(s *RegistrationClientStore) {
+		if n > 0 {
+			s.negMax = n
+		}
+	}
+}
+
+// WithRegistrationMaxConcurrency bounds the number of CONCURRENT in-flight
+// trust-chain resolutions across all distinct entity IDs (fail-closed when
+// saturated). <=0 ⇒ DefaultMaxConcurrentResolutions.
+func WithRegistrationMaxConcurrency(n int) RegistrationOption {
+	return func(s *RegistrationClientStore) {
+		if n > 0 {
+			s.resolveSem = make(chan struct{}, n)
+		}
+	}
+}
+
 // NewRegistrationClientStore wraps inner with federation automatic
 // registration backed by resolver. A nil resolver (or one with no configured
 // trust anchors) yields a TRANSPARENT pass-through — Get behaves exactly like
@@ -231,6 +293,14 @@ func NewRegistrationClientStore(inner core.ClientStore, resolver *TrustChainReso
 		resolver: resolver,
 		now:      time.Now,
 		logError: func(string, ...any) {},
+		// Abuse-resistance defaults (overridable by the options below). These
+		// only ever RUN when the resolver is active; an inert decorator is a
+		// pure pass-through (the negative cache / semaphore are never touched),
+		// so they cost nothing in a default-off build.
+		negCache:   make(map[string]time.Time),
+		negTTL:     DefaultResolutionNegativeCacheTTL,
+		negMax:     DefaultResolutionNegativeCacheMaxSize,
+		resolveSem: make(chan struct{}, DefaultMaxConcurrentResolutions),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -288,6 +358,13 @@ func (s *RegistrationClientStore) Get(ctx context.Context, clientID string) (*co
 // federation Client for entityID, or (nil,false) on any failure (logged). A
 // fresh cache entry is served lock-free; otherwise a per-entity lock funnels
 // concurrent first-time resolutions so the chain is resolved once.
+//
+// Abuse resistance (the resolution trigger is UNAUTHENTICATED): before any
+// fetch it consults the short-TTL NEGATIVE cache (a recent failure for this id
+// short-circuits without re-resolving — blunting a repeated fake-id flood) and,
+// for a genuine miss, acquires the global concurrency semaphore (saturated ⇒
+// fail-closed, no resolution). BOTH return (nil,false) — the caller maps that
+// to the SAME unknown-client error as any miss (oracle-safe).
 func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, entityID string) (*core.Client, bool) {
 	now := s.now()
 	if e, _ := s.cache.Load(entityID); e != nil {
@@ -296,35 +373,71 @@ func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, e
 		}
 	}
 
+	// NEGATIVE-cache check BEFORE taking the per-entity lock or the semaphore:
+	// a recently-failed id must not re-trigger a resolution (the cheap, hot
+	// defense against a repeated fake-but-HTTPS client_id flood). A fresh
+	// negative hit returns the oracle-safe miss with zero outbound work.
+	if s.negativeCacheHit(entityID, now) {
+		return nil, false
+	}
+
 	// Cache miss/stale: resolve under a per-entity lock so a burst of
 	// concurrent first-time requests for the same RP resolves the chain ONCE.
 	unlock := s.resolveLock.lock(entityID)
 	defer unlock()
 
-	// Re-check the cache under the lock — another goroutine may have populated
-	// it while we waited (double-checked locking).
+	// Re-check the positive cache under the lock — another goroutine may have
+	// populated it while we waited (double-checked locking).
 	now = s.now()
 	if e, _ := s.cache.Load(entityID); e != nil {
 		if entry, _ := e.(*federationClientEntry); entry.fresh(now) {
 			return entry.client, true
 		}
 	}
+	// Re-check the negative cache under the lock too: a sibling goroutine for
+	// THIS id may have just recorded a failure while we waited on the per-entity
+	// lock — honor it rather than re-resolving immediately.
+	if s.negativeCacheHit(entityID, now) {
+		return nil, false
+	}
+
+	// GLOBAL concurrency bound: cap DISTINCT-id resolution parallelism (the
+	// per-entity lock above only coalesces ONE id). Fail CLOSED when saturated —
+	// do NOT attempt a resolution and do NOT poison the negative cache (this is
+	// load-shedding, not an RP failure); the caller maps the (nil,false) to the
+	// oracle-safe unknown-client error and a legit RP retries.
+	if !s.acquireResolveSlot() {
+		s.logError("federation: resolution concurrency limit reached; shedding (unknown-client)", "client_id", entityID)
+		return nil, false
+	}
+	defer s.releaseResolveSlot()
 
 	chain, err := s.resolver.ResolveTrustChain(ctx, entityID)
 	if err != nil {
 		// ResolveTrustChain already collapsed + logged the specific cause to
-		// ErrTrustChainInvalid (or returned ErrFederationResolverDisabled). Do
-		// NOT cache a failure — a transient fetch outage must not pin an RP
-		// out for the chain's lifetime; the next request re-attempts.
+		// ErrTrustChainInvalid (or returned ErrFederationResolverDisabled).
+		// Record a SHORT-TTL negative entry so a repeated fake id doesn't
+		// re-fetch — the short TTL means a legit RP whose superior was
+		// transiently down re-attempts soon (it DELAYS, never permanently pins).
+		s.recordNegative(entityID, s.now())
 		s.logError("federation: trust chain resolution failed for client", "client_id", entityID, "error", err)
 		return nil, false
 	}
 
 	client, err := MetadataToClient(entityID, chain.ResolvedRPMetadata, s.chainJWKS(chain), s.defaultTenantID)
 	if err != nil {
+		// A chain validated but its metadata can't form a client — equally an
+		// unusable id; negative-cache it (short TTL) so it isn't re-resolved on
+		// every probe.
+		s.recordNegative(entityID, s.now())
 		s.logError("federation: derive client from resolved metadata failed", "client_id", entityID, "error", err)
 		return nil, false
 	}
+
+	// A successful resolution clears any lingering negative entry for this id
+	// (e.g. a legit RP that just recovered from a transient superior outage) —
+	// keeps the negative cache tidy; the positive cache is authoritative below.
+	s.clearNegative(entityID)
 
 	// Cache bounded by the chain's earliest exp — never serve a client from an
 	// expired chain. A non-positive/zero expiry (which a validated chain never
@@ -336,6 +449,113 @@ func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, e
 		s.cache.Store(entityID, &federationClientEntry{client: client, expiresAt: exp})
 	}
 	return client, true
+}
+
+// ----- negative (failure) cache + concurrency semaphore -------------------
+//
+// The resolution trigger (an /auth/login miss for an HTTPS-shaped client_id) is
+// UNAUTHENTICATED, so these blunt abuse: the negative cache stops a repeated
+// fake id from re-fetching; the semaphore caps distinct-id parallelism. Both
+// keep the wire shape unchanged (a blunted path yields the same unknown-client
+// error) — they only DELAY/SHED, never admit or reject differently.
+
+// negativeCacheHit reports whether entityID has a FRESH negative entry (a
+// recent failure within negTTL). A stale entry is lazily evicted so the map
+// self-trims on lookups for previously-failed ids.
+func (s *RegistrationClientStore) negativeCacheHit(entityID string, now time.Time) bool {
+	if s.negTTL <= 0 {
+		return false
+	}
+	s.negMu.Lock()
+	defer s.negMu.Unlock()
+	exp, ok := s.negCache[entityID]
+	if !ok {
+		return false
+	}
+	if now.Before(exp) {
+		return true
+	}
+	// Stale — lazy-expire.
+	delete(s.negCache, entityID)
+	return false
+}
+
+// recordNegative remembers a FAILED resolution for entityID with a short TTL.
+// It enforces the entry cap so the negative cache cannot itself become an
+// unbounded-memory DoS: at the cap it first sweeps expired entries, then evicts
+// the soonest-to-expire entry to admit the new one.
+func (s *RegistrationClientStore) recordNegative(entityID string, now time.Time) {
+	if s.negTTL <= 0 {
+		return
+	}
+	s.negMu.Lock()
+	defer s.negMu.Unlock()
+	if _, exists := s.negCache[entityID]; !exists && s.negMax > 0 && len(s.negCache) >= s.negMax {
+		s.evictNegativeLocked(now)
+	}
+	s.negCache[entityID] = now.Add(s.negTTL)
+}
+
+// clearNegative drops any negative entry for entityID (called on a successful
+// resolution). nil-safe via the mutex.
+func (s *RegistrationClientStore) clearNegative(entityID string) {
+	s.negMu.Lock()
+	delete(s.negCache, entityID)
+	s.negMu.Unlock()
+}
+
+// evictNegativeLocked makes room under the entry cap. Caller holds negMu. It
+// first deletes every expired entry (cheap, bounded sweep — the map is capped);
+// if that frees nothing (every entry still fresh under a sustained distinct-id
+// flood), it evicts the entry with the EARLIEST expiry so a bounded amount of
+// memory is reclaimed deterministically.
+func (s *RegistrationClientStore) evictNegativeLocked(now time.Time) {
+	freed := false
+	for k, exp := range s.negCache {
+		if !now.Before(exp) {
+			delete(s.negCache, k)
+			freed = true
+		}
+	}
+	if freed {
+		return
+	}
+	var oldestKey string
+	var oldestExp time.Time
+	first := true
+	for k, exp := range s.negCache {
+		if first || exp.Before(oldestExp) {
+			oldestKey, oldestExp, first = k, exp, false
+		}
+	}
+	if !first {
+		delete(s.negCache, oldestKey)
+	}
+}
+
+// acquireResolveSlot tries to take one of the bounded resolution slots WITHOUT
+// blocking. true ⇒ a slot was acquired (the caller MUST releaseResolveSlot);
+// false ⇒ the semaphore is saturated (fail-closed: the caller sheds the
+// resolution and returns the oracle-safe unknown-client error). A nil semaphore
+// (never constructed) is treated as unbounded — acquire always succeeds.
+func (s *RegistrationClientStore) acquireResolveSlot() bool {
+	if s.resolveSem == nil {
+		return true
+	}
+	select {
+	case s.resolveSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseResolveSlot returns a slot taken by acquireResolveSlot.
+func (s *RegistrationClientStore) releaseResolveSlot() {
+	if s.resolveSem == nil {
+		return
+	}
+	<-s.resolveSem
 }
 
 // chainJWKS extracts the RP's protocol keys from the policy-applied

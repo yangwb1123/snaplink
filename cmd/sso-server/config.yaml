@@ -1104,6 +1104,24 @@ federation:
                              # POLICY-CONSTRAINED RP metadata (chain-vouched JWKS, no secret).
                              # REQUIRES trust_anchors (boot error otherwise). false -> authz/token
                              # flow byte-identical. SECURITY-SENSITIVE: admits token-getting clients.
+                             #
+                             # The resolution trigger is UNAUTHENTICATED: a fake-but-HTTPS client_id
+                             # that misses the store fires a full outbound trust-chain resolution
+                             # (up to dozens of HTTPS fetches). When enabling auto_register you MUST
+                             # (1) front /auth/login with the server rate limiter (rate_limit below,
+                             # keyed by client IP) and (2) run a deny-by-default egress policy -- the
+                             # SSRF containment is the operator's egress policy (the in-code https-only
+                             # + internal-IP gate + the knobs below are defense-in-depth, NOT a full
+                             # SSRF wall; DNS-rebinding to internal IPs still passes the literal-IP gate).
+  # Abuse-resistance knobs (only consulted when auto_register is true; 0 -> SDK default):
+  resolution_negative_cache_ttl: 0s       # remember a FAILED resolution this long so a repeated fake id
+                                          # does not re-fetch; SHORT so a legit RP whose superior was
+                                          # transiently down retries soon. 0 -> SDK default (30s).
+  resolution_max_concurrency: 0           # cap CONCURRENT trust-chain resolutions across all distinct
+                                          # entity IDs (bounds distinct-id outbound fan-out); saturated ->
+                                          # fail-closed unknown-client (a legit RP retries). 0 -> default (16).
+  resolution_negative_cache_max_size: 0   # cap negative-cache entries so it can't itself become an
+                                          # unbounded-memory DoS (oldest evicted at the cap). 0 -> default (1024).
 
 # SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
 # dependency stays OUT of this binary's core go.mod, the firm

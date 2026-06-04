@@ -384,6 +384,14 @@ func NewServer(opts ...Option) *Server {
 	// fallback, and a pre-registered client always wins.
 	if s.federationAutoRegister && s.clientStore != nil &&
 		s.federationEntity != nil && s.federationEntity.Resolver().Enabled() {
+		// Source the abuse-resistance knobs (negative-cache TTL + size, the
+		// resolution concurrency cap) from the SAME federation Config the
+		// resolver was built from. Zero/unset values pass through as the SDK
+		// defaults (the With* options no-op on a non-positive arg). These bound
+		// the UNAUTHENTICATED resolution-on-authz surface (a fake-but-HTTPS
+		// client_id flood); see federation/doc.go for the operator rate-limit +
+		// egress-policy that complete the defense.
+		fedCfg := s.federationEntity.Config()
 		s.clientStore = federation.NewRegistrationClientStore(
 			s.clientStore,
 			s.federationEntity.Resolver(),
@@ -394,6 +402,9 @@ func NewServer(opts ...Option) *Server {
 				// Info for operator visibility without alerting noise.
 				s.logger.Info(msg, args...)
 			}),
+			federation.WithRegistrationNegativeCacheTTL(fedCfg.ResolutionNegativeCacheTTL),
+			federation.WithRegistrationNegativeCacheMaxSize(fedCfg.ResolutionNegativeCacheMaxSize),
+			federation.WithRegistrationMaxConcurrency(fedCfg.MaxConcurrentResolutions),
 		)
 	}
 	return s

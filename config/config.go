@@ -379,7 +379,38 @@ type FederationConfig struct {
 	// is a boot error (there is no root of trust to admit anyone). False ⇒ the
 	// authz/token flow is byte-identical (no decoration). SECURITY-SENSITIVE: it
 	// admits token-getting clients on the strength of the validated chain.
+	//
+	// SECURITY (abuse resistance): the resolution trigger is UNAUTHENTICATED —
+	// a fake-but-HTTPS client_id that misses the store fires a full outbound
+	// trust-chain resolution. Operators enabling this MUST front /auth/login
+	// with the server rate limiter (rate_limit / WithRateLimit, keyed by client
+	// IP) AND a deny-by-default egress policy (the SSRF containment). The knobs
+	// below (negative cache + concurrency cap) are defense-in-depth, NOT a full
+	// SSRF wall.
 	AutoRegister bool `yaml:"auto_register"`
+
+	// ResolutionNegativeCacheTTL is how long a FAILED on-the-fly resolution is
+	// remembered (keyed by entity ID) so a repeated fake-but-HTTPS client_id
+	// does not re-trigger a fresh resolution. SHORT on purpose (it only DELAYS
+	// re-attempts, so a legit RP whose superior was transiently down retries
+	// soon — never permanently pinned out). 0 ⇒ SDK default (30s). Only
+	// relevant when auto_register is enabled.
+	ResolutionNegativeCacheTTL time.Duration `yaml:"resolution_negative_cache_ttl"`
+
+	// ResolutionMaxConcurrency bounds CONCURRENT in-flight trust-chain
+	// resolutions across ALL distinct entity IDs, so a flood of distinct fake
+	// IDs cannot exhaust the outbound-fetch / socket budget. Saturated ⇒ the
+	// resolution is shed and the oracle-safe unknown-client error returned
+	// (fail-closed; a legit RP retries). 0 ⇒ SDK default (16). Only relevant
+	// when auto_register is enabled.
+	ResolutionMaxConcurrency int `yaml:"resolution_max_concurrency"`
+
+	// ResolutionNegativeCacheMaxSize caps the negative cache's entry count so it
+	// cannot itself become an unbounded-memory DoS under an attacker wielding
+	// millions of distinct fake IDs (at the cap, expired entries are swept then
+	// the oldest is evicted). 0 ⇒ SDK default (1024). Only relevant when
+	// auto_register is enabled.
+	ResolutionNegativeCacheMaxSize int `yaml:"resolution_negative_cache_max_size"`
 }
 
 // TrustAnchorConfig names one configured federation trust anchor: its Entity

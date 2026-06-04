@@ -79,4 +79,60 @@
 //     anchors); default-off is byte-identical (the decorator is a transparent
 //     pass-through when the resolver is inert). The automatic path adds NO new
 //     endpoint — it is the existing /auth/login (and /token for client auth).
+//
+// # Slice 3 — abuse resistance for the on-the-fly resolution (SECURITY)
+//
+// The resolution TRIGGER is UNAUTHENTICATED: an /auth/login carrying
+// client_id=<any HTTPS URL> that misses the ClientStore fires a full
+// ResolveTrustChain — up to dozens of outbound HTTPS fetches, including
+// authority_hints-derived URLs the leaf itself names. Two amplification
+// primitives follow: (1) an attacker with many DISTINCT fake-but-HTTPS
+// client_ids forces a fresh resolution each time (DoS); (2) the resolver fetches
+// leaf-named authority_hints URLs DURING ASSEMBLY before any trust decision, so
+// a hostile leaf can point them at arbitrary EXTERNAL victim URLs — the OP
+// becomes an outbound-fetch confused-deputy (SSRF-amplification, https-gated but
+// arbitrary external targets).
+//
+// The RegistrationClientStore decorator carries two in-code mitigations
+// (constructed ONLY when auto-registration is wired, so a default-off build is
+// unaffected), both oracle-safe — a blunted path returns the SAME unknown-client
+// error as any miss, leaking no federation-internal signal:
+//
+//   - A short-TTL bounded-size NEGATIVE (failure) cache. A failed resolution is
+//     remembered per entity ID for federation.ResolutionNegativeCacheTTL (30s
+//     default) so a repeated fake id does NOT re-fetch. The TTL is SHORT on
+//     purpose: the negative cache only DELAYS re-attempts, so a legit RP whose
+//     superior was transiently down retries soon — it is never permanently
+//     pinned out. Its entry count is capped
+//     (federation.ResolutionNegativeCacheMaxSize, 1024 default; expired entries
+//     swept, then oldest evicted) so the cache cannot itself become an
+//     unbounded-memory DoS under millions of distinct fake ids.
+//   - A global bounded-concurrency semaphore
+//     (federation.MaxConcurrentResolutions, 16 default) caps the number of
+//     CONCURRENT trust-chain resolutions across ALL distinct entity ids (the
+//     per-entity coalescing lock only collapses a burst for ONE id). Saturated ⇒
+//     the resolution is SHED and the oracle-safe unknown-client error returned
+//     (fail-closed); a legit RP retries.
+//
+// These are DEFENSE-IN-DEPTH, NOT a complete SSRF wall. When auto-registration
+// is enabled the operator MUST also:
+//
+//   - Front /auth/login with the server rate limiter (sso.WithRateLimit, keyed
+//     by client IP — see config rate_limit) so the unauthenticated trigger is
+//     per-source throttled.
+//   - Run a deny-by-default EGRESS policy. The SSRF containment is the
+//     operator's egress policy; the in-code https-only + internal-IP literal
+//     gate (validateFederationURL) bounds obvious targets but does NOT stop
+//     DNS-rebinding to internal IPs (a hostname that resolves to an internal
+//     address still passes the literal-IP gate). The egress firewall is the wall.
+//
+// # Interop note — private_key_jwt is EdDSA-only (slice 3 caveat)
+//
+// A federation RP admitted here authenticates asymmetrically via
+// private_key_jwt / signed request objects against its chain-vouched JWKS. The
+// general client-assertion verifier currently accepts EdDSA only, so a
+// federation RP whose chain-vouched keys are ES256/RS256/PS256 is ADMITTED but
+// cannot authenticate at /token until it publishes an Ed25519 key. This is a
+// broader client-assertion interop gap (not specific to federation) tracked
+// separately; nothing here changes the assertion verifier.
 package federation

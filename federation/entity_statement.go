@@ -210,6 +210,42 @@ type Config struct {
 	// long-lived (hours/days), so the skew is a small allowance, never a way to
 	// accept a meaningfully-expired statement. 0 ⇒ DefaultFederationClockSkew.
 	MaxClockSkew time.Duration
+
+	// ----- automatic-registration abuse resistance (slice 3) ---------------
+	//
+	// These bound the UNAUTHENTICATED resolution-on-authz surface: an
+	// /auth/login with a fake-but-HTTPS client_id that misses the ClientStore
+	// triggers a full ResolveTrustChain (up to ~MaxTrustChainDepth-fanout
+	// outbound fetches). Without a failure cache + a concurrency bound, distinct
+	// fake IDs amplify into an unbounded outbound-fetch DoS / SSRF confused-
+	// deputy. They are defense-in-depth — NOT a complete SSRF wall (the operator
+	// egress policy is, see doc.go); both apply ONLY when auto-registration is
+	// wired and are oracle-safe (a blunted resolution returns the same
+	// unknown-client error as any miss). Zero/negative ⇒ the SDK default.
+
+	// ResolutionNegativeCacheTTL is how long a FAILED on-the-fly resolution is
+	// remembered (keyed by entity ID) so a repeated fake-but-HTTPS client_id does
+	// not re-trigger a fresh unbounded resolution. Kept SHORT on purpose: it only
+	// DELAYS re-attempts, so a legit RP whose superior was transiently down
+	// retries soon — it is never permanently pinned out. 0 ⇒
+	// DefaultResolutionNegativeCacheTTL (30s).
+	ResolutionNegativeCacheTTL time.Duration
+
+	// MaxConcurrentResolutions bounds the number of CONCURRENT in-flight
+	// trust-chain resolutions across ALL distinct entity IDs. The per-entity
+	// coalescing lock already collapses a burst for ONE id; this caps DISTINCT-id
+	// parallelism so a flood of fake ids cannot exhaust sockets/goroutines/
+	// outbound-fetch budget. When saturated a resolution is NOT attempted and the
+	// oracle-safe unknown-client error is returned (fail-closed); a legit RP
+	// retries. 0 ⇒ DefaultMaxConcurrentResolutions (16).
+	MaxConcurrentResolutions int
+
+	// ResolutionNegativeCacheMaxSize caps the negative cache's entry count so the
+	// cache itself cannot become an unbounded-memory DoS under an attacker
+	// wielding millions of distinct fake ids. At the cap, expired entries are
+	// swept and then the oldest entry is evicted to admit a new one. 0 ⇒
+	// DefaultResolutionNegativeCacheMaxSize (1024).
+	ResolutionNegativeCacheMaxSize int
 }
 
 // Default lifetimes mirror the discovery/JWKS scale: a long statement TTL
@@ -234,6 +270,22 @@ const (
 	// enough to absorb ordinary clock drift, negligible against multi-hour
 	// statement lifetimes.
 	DefaultFederationClockSkew = 60 * time.Second
+
+	// DefaultResolutionNegativeCacheTTL is the default lifetime of a cached
+	// FAILED automatic-registration resolution when
+	// Config.ResolutionNegativeCacheTTL is unset. SHORT (30s) so a repeated fake
+	// id is blunted without pinning a legit RP out long (a transient superior
+	// outage re-attempts within the window).
+	DefaultResolutionNegativeCacheTTL = 30 * time.Second
+	// DefaultMaxConcurrentResolutions bounds CONCURRENT distinct-id trust-chain
+	// resolutions when Config.MaxConcurrentResolutions is unset. 16 is generous
+	// for legitimate first-time-RP bursts while capping a fake-id flood's
+	// outbound-fetch/socket fan-out.
+	DefaultMaxConcurrentResolutions = 16
+	// DefaultResolutionNegativeCacheMaxSize caps the negative cache's entries
+	// when Config.ResolutionNegativeCacheMaxSize is unset, so the cache cannot
+	// itself become an unbounded-memory DoS.
+	DefaultResolutionNegativeCacheMaxSize = 1024
 )
 
 // entityStatementTTL returns the configured statement TTL or the default.
@@ -267,6 +319,33 @@ func (c *Config) maxClockSkew() time.Duration {
 		return DefaultFederationClockSkew
 	}
 	return c.MaxClockSkew
+}
+
+// resolutionNegativeCacheTTL returns the configured failed-resolution cache TTL
+// or the default.
+func (c *Config) resolutionNegativeCacheTTL() time.Duration {
+	if c == nil || c.ResolutionNegativeCacheTTL <= 0 {
+		return DefaultResolutionNegativeCacheTTL
+	}
+	return c.ResolutionNegativeCacheTTL
+}
+
+// maxConcurrentResolutions returns the configured distinct-id concurrency bound
+// or the default.
+func (c *Config) maxConcurrentResolutions() int {
+	if c == nil || c.MaxConcurrentResolutions <= 0 {
+		return DefaultMaxConcurrentResolutions
+	}
+	return c.MaxConcurrentResolutions
+}
+
+// resolutionNegativeCacheMaxSize returns the configured negative-cache entry cap
+// or the default.
+func (c *Config) resolutionNegativeCacheMaxSize() int {
+	if c == nil || c.ResolutionNegativeCacheMaxSize <= 0 {
+		return DefaultResolutionNegativeCacheMaxSize
+	}
+	return c.ResolutionNegativeCacheMaxSize
 }
 
 // EntityHandler holds the immutable federation-entity wiring: the operator

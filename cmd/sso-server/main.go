@@ -1124,6 +1124,12 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		CacheTTL:           cfg.CacheTTL,
 		MaxTrustChainDepth: cfg.MaxTrustChainDepth,
 		MaxClockSkew:       cfg.MaxClockSkew,
+		// Slice-3 auto-registration abuse resistance (only consulted when
+		// auto_register is enabled). Unset ⇒ the SDK applies its defaults (30s
+		// negative-cache TTL, 16 concurrent resolutions, 1024-entry cap).
+		ResolutionNegativeCacheTTL:     cfg.ResolutionNegativeCacheTTL,
+		MaxConcurrentResolutions:       cfg.ResolutionMaxConcurrency,
+		ResolutionNegativeCacheMaxSize: cfg.ResolutionNegativeCacheMaxSize,
 	}, nil
 }
 
