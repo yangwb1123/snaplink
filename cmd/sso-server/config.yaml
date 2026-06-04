@@ -968,12 +968,25 @@ caep:
   # allowlist + a signature against that transmitter's trust-bundle JWKS,
   # asymmetric-only / alg=none-blocked) and addressed to `audience` can
   # revoke anything; a forged / untrusted-iss / wrong-aud / expired /
-  # replayed SET, or one for an unknown local subject, does NOTHING (the
-  # unknown-subject case is acked but not acted on -- no wrongful
-  # revocation, which would be a targeted DoS). Disabled -> the route is
-  # NOT mounted, byte-identical to a build without it. When enabled,
-  # `audience` + at least one `transmitters[]` entry are REQUIRED (boot
-  # fails loud otherwise).
+  # no-freshness-claim (neither iat nor exp) / replayed SET, or one for an
+  # unknown local subject, does NOTHING (the unknown-subject case is acked
+  # but not acted on -- no wrongful revocation, which would be a targeted
+  # DoS). Disabled -> the route is NOT mounted, byte-identical to a build
+  # without it. When enabled, `audience` + at least one `transmitters[]`
+  # entry are REQUIRED (boot fails loud otherwise).
+  #
+  # SUBJECT MODE is the trust boundary -- choose per transmitter:
+  #   - opaque  (sub_id.id IS the local user id): grants this transmitter
+  #             authority to revoke ANY local user by id (full-namespace
+  #             "logout everywhere"). Use ONLY for a FULLY-trusted peer that
+  #             shares this server's subject namespace.
+  #   - iss_sub (resolve the federation link via the federation provider):
+  #             confines the transmitter to subjects under its operator-pinned
+  #             `provider` -- it can NEVER revoke users federated from another
+  #             upstream. Use for a PARTIALLY-trusted upstream IdP. `provider`
+  #             is REQUIRED here (boot fails loud on empty) and MUST be pinned
+  #             to this transmitter's trusted namespace -- it is NEVER taken
+  #             from the SET's attacker-controlled sub_id.iss.
   receiver:
     enabled: false
     path: ""                 # mount point; "" -> SDK default /ssf/receive
@@ -982,8 +995,8 @@ caep:
     transmitters: []         # the trusted-transmitter allowlist; each:
       # - issuer: "https://upstream-idp.example"   # exact SET `iss`
       #   jwks_file: /etc/sso/ssf-upstream-jwks.json # that transmitter's published signing JWKS (trust bundle)
-      #   subject_mode: opaque                      # opaque (sub_id.id IS the local user id) | iss_sub (federation link)
-      #   provider: ""                              # iss_sub only: local federation provider name; "" -> the issuer
+      #   subject_mode: opaque                      # opaque (sub_id.id IS the local user id; FULL-trust peer only) | iss_sub (federation link; partially-trusted upstream)
+      #   provider: ""                              # REQUIRED for iss_sub: local federation provider name, operator-pinned to this transmitter's namespace (NOT the SET iss); ignored for opaque
       #   allowed_events: []                        # restrict which SSF event URIs this transmitter may trigger; [] -> all known
       #   allowed_algs: []                          # restrict asymmetric algs; [] -> ES256/RS256/PS256/EdDSA
 

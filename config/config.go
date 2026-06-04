@@ -276,15 +276,28 @@ type CAEPTransmitterConfig struct {
 	JWKSFile string `yaml:"jwks_file"`
 
 	// SubjectMode selects how this transmitter's SET subjects map to local
-	// users: "opaque" (default) treats the SET sub_id `id` as the LOCAL
-	// user id directly; "iss_sub" resolves the federation link
-	// (GetByExternalID(provider, sub)) for an upstream whose subject
-	// namespace differs from this server's local user ids.
+	// users:
+	//   - "opaque" (default) treats the SET sub_id `id` as the LOCAL user id
+	//     directly. SECURITY: this grants the transmitter authority to revoke
+	//     ANY local user it can name by id (a full-namespace "logout
+	//     everywhere" primitive — the only guard is that the user exists, which
+	//     any victim's id satisfies). Use it ONLY for a FULLY-trusted peer that
+	//     shares this server's subject namespace — NOT for a partially-trusted
+	//     upstream IdP.
+	//   - "iss_sub" resolves the federation link
+	//     (GetByExternalID(provider, sub)) for a partially-trusted upstream
+	//     whose subject namespace differs from this server's. It confines the
+	//     transmitter to subjects under its operator-pinned Provider (below),
+	//     so it can NEVER revoke users federated from a different upstream.
 	SubjectMode string `yaml:"subject_mode"`
 
 	// Provider is the local federation provider name used to resolve an
-	// iss_sub subject. Only consulted under subject_mode: iss_sub; empty ⇒
-	// the transmitter's Issuer is used as the provider name.
+	// iss_sub subject. REQUIRED under subject_mode: iss_sub (boot fails loud
+	// on empty) — it MUST be operator-pinned to THIS transmitter's trusted
+	// federated namespace and is NEVER derived from the SET's sub_id.iss
+	// (which the transmitter controls; trusting it would let a transmitter
+	// revoke users federated from ANY other provider — a cross-IdP subject
+	// hijack). Ignored under subject_mode: opaque.
 	Provider string `yaml:"provider"`
 
 	// AllowedEvents, when non-empty, restricts which SSF event URIs from

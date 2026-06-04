@@ -295,6 +295,32 @@ func TestSSFReceiver_UnknownEvent_Acked(t *testing.T) {
 	}
 }
 
+// TestSSFReceiver_NoFreshnessClaim_Rejected: a SET omitting BOTH iat and exp
+// bypasses freshness and (lacking exp) would replay indefinitely past the
+// default jti window → 400 invalid_key, no revocation. Locks the FIX-2
+// temporal gate at the HTTP boundary.
+func TestSSFReceiver_NoFreshnessClaim_Rejected(t *testing.T) {
+	h := newSSFHarness(t)
+	claims := ssfSessionRevokedSET(ssfLocalUser, "ssf-jti-nofresh")
+	delete(claims, "iat")
+	delete(claims, "exp")
+	resp := h.postSET(t, h.signSET(t, claims))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (no-freshness SET rejected)", resp.StatusCode)
+	}
+	var body struct {
+		Err string `json:"err"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Err != caep.ErrReceiverInvalidKey {
+		t.Errorf("err = %q, want %q", body.Err, caep.ErrReceiverInvalidKey)
+	}
+	if !h.localUserHasAccess(t) {
+		t.Fatal("a no-freshness SET revoked the subject")
+	}
+}
+
 // TestSSFReceiver_NotMounted_WhenUnwired: the DEFAULT-OFF proof — without
 // WithCAEPReceiver the /ssf/receive route is NOT mounted (404).
 func TestSSFReceiver_NotMounted_WhenUnwired(t *testing.T) {

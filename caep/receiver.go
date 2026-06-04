@@ -40,9 +40,12 @@ import (
 //   - jti replay: the SET's `jti` is consumed through the JTIReplayStore
 //     (MarkSeen). A replayed SET (same jti within its lifetime) MUST NOT
 //     re-trigger a revocation. Fail-closed: a SET already seen is rejected.
-//   - temporal freshness: `iat`/`exp` are bounded by a configurable skew —
-//     a stale/expired SET is rejected (it widens the replay window and a
-//     late-delivered revocation signal has no use).
+//   - temporal freshness: a SET MUST carry at least one of `iat`/`exp`,
+//     bounded by a configurable skew — a stale/expired SET is rejected (it
+//     widens the replay window and a late-delivered revocation signal has no
+//     use), and a SET with NO temporal claim is rejected outright (it would
+//     skip freshness entirely AND, lacking exp, replay indefinitely past the
+//     default jti window).
 //   - subject mapping PRECISION (the other crux): the SET's subject is
 //     mapped to a LOCAL user via an explicit, configured strategy. A
 //     subject that does NOT map to a KNOWN local user is a NO-OP (acked,
@@ -91,11 +94,14 @@ const (
 	// format {format:"iss_sub", iss:<upstream-iss>, sub:<upstream-sub>} and
 	// resolves it through the federation link:
 	// UserProvider.GetByExternalID(provider, sub). The provider name is the
-	// per-transmitter Provider (defaulting to the transmitter's iss), so a
-	// local user federated from that upstream (User.Provider == provider,
-	// User.ExternalID == upstream sub) is matched EXACTLY. A subject with no
-	// such federation link is a no-op. Use it for an upstream IdP whose
-	// subject namespace differs from this server's local user ids.
+	// per-transmitter Provider, which is REQUIRED (operator-pinned, never
+	// derived from the SET's attacker-controlled sub_id.iss), so a local user
+	// federated from that upstream (User.Provider == provider, User.ExternalID
+	// == upstream sub) is matched EXACTLY. A subject with no such federation
+	// link — or one whose sub_id.iss names a FOREIGN provider — is a no-op.
+	// Use it for a PARTIALLY-trusted upstream IdP whose subject namespace
+	// differs from this server's: a transmitter in this mode can only revoke
+	// subjects under ITS configured provider, never another upstream's.
 	SubjectMapIssSub
 )
 
@@ -167,9 +173,13 @@ type TrustedTransmitter struct {
 
 	// Provider is the local federation provider name used to resolve an
 	// iss_sub subject (UserProvider.GetByExternalID(Provider, sub)). Only
-	// consulted under SubjectMapIssSub; empty ⇒ the transmitter's Issuer is
-	// used as the provider name (the conventional case where the federation
-	// link records the upstream issuer as the provider).
+	// consulted under SubjectMapIssSub, where it is REQUIRED: it MUST be
+	// operator-pinned to THIS transmitter's trusted federated namespace and is
+	// NEVER derived from the SET's sub_id.iss (which the transmitter controls,
+	// so trusting it would let a transmitter revoke users federated from ANY
+	// other provider — a cross-IdP subject hijack). NewReceiver rejects an
+	// empty Provider when SubjectMode is SubjectMapIssSub. Ignored under
+	// SubjectMapOpaque.
 	Provider string
 
 	// AllowedEvents, when non-empty, restricts which SSF event URIs from
@@ -432,6 +442,16 @@ func NewReceiver(audience string, jtiReplay security.JTIReplayStore, revoker Sub
 		if _, dup := trusted[iss]; dup {
 			return nil, errors.New("caep: duplicate trusted transmitter issuer " + iss)
 		}
+		// iss_sub mode REQUIRES an operator-pinned Provider. The empty-provider
+		// default is INSECURE: the resolver must look up the federation link
+		// under a provider name fixed by the operator to THIS transmitter's
+		// trusted namespace, NOT one derived from the SET's attacker-controlled
+		// sub_id.iss (a cross-IdP subject hijack — see userProviderResolver).
+		// Fail LOUD at construction rather than silently accept a config that
+		// would let a transmitter revoke users federated from any provider.
+		if tt.SubjectMode == SubjectMapIssSub && strings.TrimSpace(tt.Provider) == "" {
+			return nil, errors.New("caep: trusted transmitter " + iss + " uses subject_mode iss_sub but has no provider (the provider MUST be operator-pinned to this transmitter's federated namespace; an empty provider is insecure)")
+		}
 		algs := tt.AllowedAlgs
 		if len(algs) == 0 {
 			algs = defaultReceiverAlgs
@@ -512,7 +532,8 @@ func knownReceiverEvent(uri string) bool {
 //     VerifyCompactJWS (alg-allowlist BEFORE signature; no alg=none/HS*).
 //  4. typ: the JOSE header `typ` MUST be secevent+jwt.
 //  5. aud-binding: `aud` MUST contain this server's audience.
-//  6. temporal: iat/exp within the configured skew.
+//  6. temporal: a SET MUST carry iat and/or exp (neither ⇒ reject), within
+//     the configured skew.
 //  7. jti replay: MarkSeen — a seen jti rejects (fail-closed).
 //  8. events: keep only KNOWN actionable URIs (honoring the transmitter's
 //     AllowedEvents). No actionable event ⇒ ack + no-op.
@@ -583,10 +604,23 @@ func (r *Receiver) Receive(ctx context.Context, setBody string) (ReceiverResult,
 		return r.reject(ErrReceiverInvalidKey), nil
 	}
 
-	// (6) temporal freshness. A SET SHOULD carry iat; we bound both iat
-	// (not too far in the future) and exp (not already past) by the skew.
+	// (6) temporal freshness. A SET MUST carry at least one temporal claim
+	// (iat or exp). With NEITHER, both window checks below would be skipped,
+	// so the SET bypasses freshness entirely; worse, with no exp the jti
+	// replay key lives only DefaultJTIReplayWindow (below), so the same
+	// no-temporal SET replays INDEFINITELY past that window, re-triggering a
+	// revocation each time. A push-delivery SET with no freshness claim is
+	// non-conformant for replay-safety → reject (fail-closed). When present,
+	// we bound exp (not already past) and iat (not too far in the future) by
+	// the skew; the jti-replay key (below) is bounded by exp+skew when exp is
+	// present, else the default window from now (and since a fresh iat ≈ now,
+	// that is effectively iat+window for the iat-only case — never unbounded,
+	// because a no-temporal SET is rejected above).
 	now := r.now()
 	skew := r.maxClockSkew
+	if c.Exp == 0 && c.Iat == 0 {
+		return r.reject(ErrReceiverInvalidKey), nil
+	}
 	if c.Exp != 0 && now.Add(-skew).After(time.Unix(c.Exp, 0)) {
 		return r.reject(ErrReceiverInvalidKey), nil
 	}

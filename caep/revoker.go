@@ -109,11 +109,20 @@ func (r *StoreRevoker) RevokeAllForSubject(ctx context.Context, localUserID stri
 //   - SubjectMapOpaque: the sub_id `id` (or a bare top-level `sub`) is the
 //     LOCAL user id. GetByID confirms the user EXISTS; an unknown id is
 //     ok=false. This is the inverse of THIS project's transmitter, which
-//     emits {format:"opaque", id:<local subject>}.
+//     emits {format:"opaque", id:<local subject>}. NOTE the trust model:
+//     opaque grants the trusted transmitter authority to revoke ANY local
+//     user it can name by id (a full-namespace "logout everywhere"
+//     primitive — the only guard is that the user EXISTS, which an attacker
+//     can satisfy with any victim's id). Use it ONLY for a FULLY-trusted
+//     peer that shares this server's subject namespace; for a partially-
+//     trusted upstream IdP use iss_sub (now provider-pinned), which confines
+//     a transmitter to subjects under ITS operator-configured federation
+//     namespace.
 //   - SubjectMapIssSub: the sub_id {iss, sub} is the upstream identity.
-//     GetByExternalID(provider, sub) resolves the FEDERATION LINK (provider
-//     defaults to the transmitter's configured Provider). A subject with no
-//     such link is ok=false.
+//     GetByExternalID(provider, sub) resolves the FEDERATION LINK. The
+//     provider is the OPERATOR-PINNED per-transmitter Provider (REQUIRED in
+//     iss_sub mode) — it is NEVER derived from the SET's attacker-controlled
+//     sub_id.iss. A subject with no such link is ok=false.
 //
 // A transient store error (NOT a "no such user") is returned as err so the
 // receiver fails closed (no action) and the transmitter can retry.
@@ -133,17 +142,29 @@ func (u *userProviderResolver) ResolveLocalSubject(ctx context.Context, mode Sub
 		if sub.Sub == "" {
 			return "", false, nil
 		}
-		// Provider defaults to the SET's iss (sub.Iss) when the transmitter
-		// didn't pin one — the conventional case where the federation link
-		// records the upstream issuer as the provider.
-		p := provider
-		if p == "" {
-			p = sub.Iss
-		}
-		if p == "" {
+		// The provider MUST be the operator-pinned per-transmitter Provider —
+		// NEVER the SET's sub_id.iss. NewReceiver requires a non-empty provider
+		// in iss_sub mode, so an empty one here is a programming/wiring bug, not
+		// an attacker-controlled fallback. Deriving the provider from sub.Iss
+		// would let a trusted (or key-compromised) transmitter name ANY other
+		// provider in its sub_id and revoke users federated from a DIFFERENT
+		// upstream — a cross-IdP subject hijack (targeted DoS). The
+		// per-transmitter namespace isolation iss_sub exists for depends on the
+		// provider being operator-pinned to THIS transmitter's federated
+		// namespace.
+		if provider == "" {
 			return "", false, nil
 		}
-		usr, err := u.users.GetByExternalID(ctx, p, sub.Sub)
+		// Defense-in-depth: if the SET pins a sub_id.iss, it MUST equal the
+		// operator-configured provider. A sub_id.iss naming a FOREIGN provider
+		// means the SET addresses a subject from a namespace this transmitter
+		// is NOT trusted for → no-op (ack, no revocation). A transmitter may
+		// legitimately OMIT sub_id.iss (sub.Iss == "") or set it == its
+		// configured provider; only a present-and-mismatched iss is refused.
+		if sub.Iss != "" && sub.Iss != provider {
+			return "", false, nil
+		}
+		usr, err := u.users.GetByExternalID(ctx, provider, sub.Sub)
 		return resolveResult(usr, err)
 
 	default: // SubjectMapOpaque

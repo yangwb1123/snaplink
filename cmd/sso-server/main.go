@@ -1161,6 +1161,15 @@ func buildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.Sessi
 		if err != nil {
 			return nil, err
 		}
+		// iss_sub mode REQUIRES an operator-pinned provider. An empty provider
+		// is insecure: the local-subject lookup would otherwise fall back to
+		// the SET's attacker-controlled sub_id.iss, letting a trusted
+		// transmitter revoke users federated from ANY other provider
+		// (cross-IdP subject hijack). NewReceiver enforces this too; we fail
+		// here first to name the exact knob.
+		if mode == caep.SubjectMapIssSub && strings.TrimSpace(tt.Provider) == "" {
+			return nil, fmt.Errorf("caep.receiver.transmitters[%d].provider required when subject_mode is iss_sub (the provider MUST be operator-pinned to this transmitter's federated namespace; an empty provider is insecure)", i)
+		}
 		transmitters = append(transmitters, caep.TrustedTransmitter{
 			Issuer:        tt.Issuer,
 			JWKS:          source,

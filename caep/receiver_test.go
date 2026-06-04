@@ -478,7 +478,10 @@ func TestReceiver_IssSubMapping_ResolvesFederationLink(t *testing.T) {
 			Issuer:      rcvIssuer,
 			JWKS:        security.NewStaticJWKS(jwks),
 			SubjectMode: caep.SubjectMapIssSub,
-			// Provider empty ⇒ defaults to the SET iss (rcvIssuer).
+			// Provider is operator-pinned (REQUIRED in iss_sub mode) to the
+			// transmitter's trusted federated namespace — here the upstream
+			// issuer, matching the federated user's User.Provider.
+			Provider: rcvIssuer,
 		}})
 	if err != nil {
 		t.Fatalf("new receiver: %v", err)
@@ -508,6 +511,259 @@ func TestReceiver_IssSubMapping_ResolvesFederationLink(t *testing.T) {
 	}
 	if sess, _ := sessions.ListByUser(ctx, "fed-local-7"); len(sess) != 0 {
 		t.Errorf("federated subject's session survived: %d", len(sess))
+	}
+}
+
+// issSubRcvFixture bundles an iss_sub-mode receiver with a federated local
+// user, for the cross-IdP-hijack tests below. The transmitter's
+// operator-pinned provider is rcvIssuer; the federated user
+// (fed-local-9 / Provider=rcvIssuer / ExternalID=upstream-sub-9) has one
+// live session so a (wrongful or legit) revocation is observable.
+type issSubRcvFixture struct {
+	issuer   *defaultimpl.Ed25519JWTIssuer
+	sessions *defaultimpl.MemorySessionManager
+	users    *defaultimpl.MemoryUserProvider
+	receiver *caep.Receiver
+}
+
+func newIssSubRcvFixture(t *testing.T) *issSubRcvFixture {
+	t.Helper()
+	ctx := context.Background()
+	f := &issSubRcvFixture{
+		issuer:   defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer(rcvIssuer)),
+		sessions: defaultimpl.NewMemorySessionManager(time.Hour),
+		users:    defaultimpl.NewMemoryUserProvider(),
+	}
+	clients := defaultimpl.NewMemoryClientStore()
+	_ = clients.Add(ctx, &core.Client{ID: "app", Active: true})
+	if err := f.users.CreateOrUpdate(ctx, &core.User{ID: "fed-local-9", Provider: rcvIssuer, ExternalID: "upstream-sub-9"}); err != nil {
+		t.Fatalf("create federated user: %v", err)
+	}
+	if _, err := f.sessions.Create(ctx, "fed-local-9"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	revoker, _ := caep.NewStoreRevoker(f.sessions, defaultimpl.NewMemoryRefreshTokenStore(), clients)
+	jwks, _ := f.issuer.JWKS(ctx)
+	rcv, err := caep.NewReceiver(rcvAudience, defaultimpl.NewMemoryJTIReplayStore(), revoker, f.users,
+		[]caep.TrustedTransmitter{{
+			Issuer:      rcvIssuer,
+			JWKS:        security.NewStaticJWKS(jwks),
+			SubjectMode: caep.SubjectMapIssSub,
+			Provider:    rcvIssuer, // operator-pinned trusted namespace
+		}})
+	if err != nil {
+		t.Fatalf("new receiver: %v", err)
+	}
+	f.receiver = rcv
+	return f
+}
+
+func (f *issSubRcvFixture) signIssSub(t *testing.T, subIDIss, sub, jti string) string {
+	t.Helper()
+	now := time.Now()
+	subID := map[string]any{"format": "iss_sub", "sub": sub}
+	if subIDIss != "" {
+		subID["iss"] = subIDIss
+	}
+	claims := map[string]any{
+		"iss": rcvIssuer, "jti": jti, "iat": now.Unix(), "exp": now.Add(time.Minute).Unix(),
+		"aud":    []string{rcvAudience},
+		"sub_id": subID,
+		"events": map[string]any{caep.EventURIRISCAccountDisabled: map[string]any{}},
+	}
+	tok, err := f.issuer.SignJWT(context.Background(), caep.SecurityEventTokenTyp, claims)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return tok
+}
+
+func (f *issSubRcvFixture) fedHasSession(t *testing.T) bool {
+	t.Helper()
+	sess, err := f.sessions.ListByUser(context.Background(), "fed-local-9")
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	return len(sess) > 0
+}
+
+// --- FIX 1 (HIGH): cross-IdP subject hijack is closed. ---
+//
+// A trusted transmitter (iss_sub, provider=rcvIssuer) mints a fully-valid SET
+// whose sub_id.iss names a DIFFERENT provider. Pre-fix, the resolver fell back
+// to sub_id.iss when the operator provider was empty, so the lookup happened
+// under the attacker-named provider — letting transmitter A revoke users
+// federated from ANY other upstream. Now the provider is operator-pinned and a
+// foreign sub_id.iss is a no-op: the SET is acked (it is otherwise valid) but
+// triggers NO revocation.
+func TestReceiver_IssSub_ForeignSubIDIss_NoRevocation(t *testing.T) {
+	f := newIssSubRcvFixture(t)
+	if !f.fedHasSession(t) {
+		t.Fatal("precondition: federated subject should start with a session")
+	}
+	// sub_id.iss names some OTHER provider; sub is the victim's external id.
+	set := f.signIssSub(t, "https://some-other-provider.example", "upstream-sub-9", "jti-hijack")
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if res.Acted {
+		t.Fatal("a foreign sub_id.iss drove a revocation — cross-IdP subject hijack NOT closed")
+	}
+	if res.LocalSubject != "" {
+		t.Errorf("foreign sub_id.iss mapped to a local subject %q (should be unmapped)", res.LocalSubject)
+	}
+	if !f.fedHasSession(t) {
+		t.Fatal("the victim's session was revoked via a foreign sub_id.iss — wrongful revocation")
+	}
+}
+
+// The legit path still works: a SET whose sub_id.iss == the configured
+// provider, naming a real federated subject, revokes correctly.
+func TestReceiver_IssSub_MatchingSubIDIss_Revokes(t *testing.T) {
+	f := newIssSubRcvFixture(t)
+	set := f.signIssSub(t, rcvIssuer, "upstream-sub-9", "jti-match")
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if !res.Acted || res.LocalSubject != "fed-local-9" {
+		t.Fatalf("matching-iss iss_sub SET did not revoke fed-local-9: %+v", res)
+	}
+	if f.fedHasSession(t) {
+		t.Fatal("federated subject still has a session after a valid revocation")
+	}
+}
+
+// The legit path also works when sub_id.iss is OMITTED (the transmitter relies
+// on the operator-pinned provider): the subject still resolves + revokes.
+func TestReceiver_IssSub_OmittedSubIDIss_Revokes(t *testing.T) {
+	f := newIssSubRcvFixture(t)
+	set := f.signIssSub(t, "", "upstream-sub-9", "jti-omit")
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if !res.Acted || res.LocalSubject != "fed-local-9" {
+		t.Fatalf("omitted-iss iss_sub SET did not revoke fed-local-9: %+v", res)
+	}
+	if f.fedHasSession(t) {
+		t.Fatal("federated subject still has a session after a valid revocation")
+	}
+}
+
+// Construction: iss_sub mode with an empty Provider must error (the insecure
+// empty-provider default is refused at the trust boundary), while a non-empty
+// Provider builds fine.
+func TestNewReceiver_IssSubRequiresProvider(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
+	revoker, _ := caep.NewStoreRevoker(sessions, nil, nil)
+	jti := defaultimpl.NewMemoryJTIReplayStore()
+	jwks := security.NewStaticJWKS([]core.JWK{{Kty: "OKP"}})
+
+	if _, err := caep.NewReceiver(rcvAudience, jti, revoker, users,
+		[]caep.TrustedTransmitter{{Issuer: rcvIssuer, JWKS: jwks, SubjectMode: caep.SubjectMapIssSub}}); err == nil {
+		t.Error("iss_sub with an empty provider must error (the provider must be operator-pinned)")
+	}
+	if _, err := caep.NewReceiver(rcvAudience, jti, revoker, users,
+		[]caep.TrustedTransmitter{{Issuer: rcvIssuer, JWKS: jwks, SubjectMode: caep.SubjectMapIssSub, Provider: rcvIssuer}}); err != nil {
+		t.Errorf("iss_sub with a non-empty provider must build: %v", err)
+	}
+	// opaque mode needs no provider (unchanged).
+	if _, err := caep.NewReceiver(rcvAudience, jti, revoker, users,
+		[]caep.TrustedTransmitter{{Issuer: rcvIssuer, JWKS: jwks, SubjectMode: caep.SubjectMapOpaque}}); err != nil {
+		t.Errorf("opaque mode with no provider must still build: %v", err)
+	}
+}
+
+// --- FIX 2 (MEDIUM): a SET with NO freshness claim (neither iat nor exp) is
+// rejected — it would otherwise skip freshness entirely and, lacking exp,
+// replay indefinitely past the default jti window. ---
+
+func TestReceiver_NoFreshnessClaim_Rejected(t *testing.T) {
+	f := newRcvFixture(t)
+	claims := sessionRevokedSET(rcvLocalUser, "jti-nofresh")
+	delete(claims, "iat")
+	delete(claims, "exp")
+	set := f.signSET(t, claims)
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if res.Acked {
+		t.Fatal("a SET with neither iat nor exp was acked — freshness bypass")
+	}
+	if res.RejectCode != caep.ErrReceiverInvalidKey {
+		t.Errorf("reject code = %q, want %q", res.RejectCode, caep.ErrReceiverInvalidKey)
+	}
+	if res.Acted {
+		t.Fatal("a no-freshness SET drove a revocation")
+	}
+	if !f.subjectHasAccess(t) {
+		t.Fatal("a no-freshness SET revoked the subject")
+	}
+}
+
+// A SET carrying ONLY a fresh iat (no exp) is still accepted + acts.
+func TestReceiver_OnlyIat_Fresh_Works(t *testing.T) {
+	f := newRcvFixture(t)
+	claims := sessionRevokedSET(rcvLocalUser, "jti-only-iat")
+	delete(claims, "exp")
+	claims["iat"] = time.Now().Unix()
+	set := f.signSET(t, claims)
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if !res.Acted {
+		t.Fatalf("a fresh iat-only SET did not act: %+v", res)
+	}
+	if f.subjectHasAccess(t) {
+		t.Fatal("subject still has access after a fresh iat-only revocation")
+	}
+}
+
+// A SET carrying ONLY a future-valid exp (no iat) is still accepted + acts;
+// an expired exp-only SET is still rejected.
+func TestReceiver_OnlyExp_FreshAndExpired(t *testing.T) {
+	f := newRcvFixture(t)
+
+	fresh := sessionRevokedSET(rcvLocalUser, "jti-only-exp-fresh")
+	delete(fresh, "iat")
+	fresh["exp"] = time.Now().Add(2 * time.Minute).Unix()
+	res, err := f.receiver.Receive(context.Background(), f.signSET(t, fresh))
+	if err != nil {
+		t.Fatalf("Receive (fresh exp-only) error: %v", err)
+	}
+	if !res.Acted {
+		t.Fatalf("a fresh exp-only SET did not act: %+v", res)
+	}
+	if f.subjectHasAccess(t) {
+		t.Fatal("subject survived a fresh exp-only revocation")
+	}
+
+	// Re-add a session, then an EXPIRED exp-only SET must be rejected.
+	if _, err := f.sessions.Create(context.Background(), rcvLocalUser); err != nil {
+		t.Fatalf("recreate session: %v", err)
+	}
+	expired := sessionRevokedSET(rcvLocalUser, "jti-only-exp-old")
+	delete(expired, "iat")
+	expired["exp"] = time.Now().Add(-5 * time.Minute).Unix()
+	res2, err := f.receiver.Receive(context.Background(), f.signSET(t, expired))
+	if err != nil {
+		t.Fatalf("Receive (expired exp-only) error: %v", err)
+	}
+	if res2.Acked {
+		t.Fatal("an expired exp-only SET was acked")
+	}
+	if !f.subjectHasAccess(t) {
+		t.Fatal("an expired exp-only SET revoked the subject")
 	}
 }
 
