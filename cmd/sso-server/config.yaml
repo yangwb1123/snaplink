@@ -1122,6 +1122,22 @@ federation:
                                           # fail-closed unknown-client (a legit RP retries). 0 -> default (16).
   resolution_negative_cache_max_size: 0   # cap negative-cache entries so it can't itself become an
                                           # unbounded-memory DoS (oldest evicted at the cap). 0 -> default (1024).
+  # OpenID Federation 1.0 §7 TRUST MARKS (slice 4b) -- an EXTRA admission gate ON TOP of auto_register.
+  # When required_trust_mark_types is non-empty, an auto-registering RP must carry a valid Trust Mark
+  # (a signed conformance assertion) of EACH listed type, signed by a CONFIGURED AUTHORIZED trust_mark_
+  # issuer (iss in the set + authorized for the type + signature verified against the issuer's keys),
+  # with sub == the RP entity ID (confused-deputy closed) and the SIGNED trust_mark_type authoritative,
+  # iat/exp fresh. Any missing/forged/unauthorized/expired/wrong-subject required mark -> the RP stays
+  # UNKNOWN (oracle-safe, no trust-mark-specific wire signal). Empty (default) -> NO requirement; the
+  # auto_register path is byte-identical. Non-empty REQUIRES at least one trust_mark_issuer (boot error
+  # otherwise -- a required type with no authorized issuer would admit no RP). Only consulted when
+  # auto_register is true. The federation-resolved issuer-key path is a follow-on; this pins keys here.
+  required_trust_mark_types: []   # Trust Mark Type URIs an auto-registering RP MUST each carry
+  # - "https://federation.example.org/trust-mark/certified-rp"
+  trust_mark_issuers: []          # the ONLY issuers whose signed marks satisfy a required type
+  # - entity_id: "https://trust-mark-issuer.example.org"
+  #   jwks_file: "/etc/sso/trust-mark-issuer-jwks.json"   # root of trust the issuer's marks verify against
+  #   allowed_types: []           # types this issuer may issue (empty -> any required type)
 
 # SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
 # dependency stays OUT of this binary's core go.mod, the firm

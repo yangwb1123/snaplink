@@ -405,6 +405,12 @@ func NewServer(opts ...Option) *Server {
 			federation.WithRegistrationNegativeCacheTTL(fedCfg.ResolutionNegativeCacheTTL),
 			federation.WithRegistrationNegativeCacheMaxSize(fedCfg.ResolutionNegativeCacheMaxSize),
 			federation.WithRegistrationMaxConcurrency(fedCfg.MaxConcurrentResolutions),
+			// §7 trust-mark requirement (slice 4b): an EXTRA admission gate
+			// sourced from the SAME federation Config. Empty
+			// RequiredTrustMarkTypes ⇒ inert (byte-identical to the slice-3
+			// path); when set, an auto-registering RP must carry a valid
+			// configured-issuer-signed mark of each required type.
+			federation.WithRegistrationTrustMarks(fedCfg),
 		)
 	}
 	return s

@@ -54,28 +54,40 @@ func unverifiedPayload(compact string) ([]byte, error) {
 	return payload, nil
 }
 
+// jwsHeaderTyp returns the JOSE `typ` header of a compact JWS WITHOUT verifying
+// the signature. Used to gate a token's type BEFORE the signature check (so a
+// token of the wrong shape signed by the right key is rejected early), shared by
+// the entity-statement typ gate and the §7 trust-mark typ gate.
+func jwsHeaderTyp(compact string) (string, error) {
+	headerSeg, _, _, err := splitCompactJWS(compact)
+	if err != nil {
+		return "", err
+	}
+	hb, err := base64.RawURLEncoding.DecodeString(headerSeg)
+	if err != nil {
+		return "", fmt.Errorf("federation: header decode: %w", err)
+	}
+	var h struct {
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(hb, &h); err != nil {
+		return "", fmt.Errorf("federation: header parse: %w", err)
+	}
+	return h.Typ, nil
+}
+
 // requireEntityStatementTyp asserts the JOSE `typ` header is
 // entity-statement+jwt (OpenID Federation 1.0 §3.1) BEFORE any signature
 // check, so a plain access/id token signed by the same key can never be
 // accepted as a federation statement (the typ gate, mirroring the issuers'
 // at+jwt discipline and the inverse of the slice-1 emit typ).
 func requireEntityStatementTyp(compact string) error {
-	headerSeg, _, _, err := splitCompactJWS(compact)
+	typ, err := jwsHeaderTyp(compact)
 	if err != nil {
 		return err
 	}
-	hb, err := base64.RawURLEncoding.DecodeString(headerSeg)
-	if err != nil {
-		return fmt.Errorf("federation: header decode: %w", err)
-	}
-	var h struct {
-		Typ string `json:"typ"`
-	}
-	if err := json.Unmarshal(hb, &h); err != nil {
-		return fmt.Errorf("federation: header parse: %w", err)
-	}
-	if h.Typ != EntityStatementTyp {
-		return fmt.Errorf("federation: typ %q != %q", h.Typ, EntityStatementTyp)
+	if typ != EntityStatementTyp {
+		return fmt.Errorf("federation: typ %q != %q", typ, EntityStatementTyp)
 	}
 	return nil
 }

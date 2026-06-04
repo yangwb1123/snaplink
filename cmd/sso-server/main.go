@@ -1115,6 +1115,47 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		}
 		anchors = append(anchors, federation.TrustAnchor{EntityID: ta.EntityID, JWKSFile: ta.JWKSFile, Keys: keys})
 	}
+
+	// §7 trust-mark issuers (slice 4b): load each authorized issuer's JWKS into
+	// Keys — the root of trust the marks it signs are verified against (NEVER a
+	// mark's self-asserted keys; an authorized issuer's keys are operator-pinned
+	// here). A configured-but-unloadable issuer is a BOOT ERROR (the gate must
+	// not silently run without an authorized issuer's keys, which would reject
+	// every otherwise-valid mark and surface as a mysterious admission failure).
+	tmIssuers := make([]federation.TrustMarkIssuer, 0, len(cfg.TrustMarkIssuers))
+	for i, ti := range cfg.TrustMarkIssuers {
+		if ti.EntityID == "" {
+			return nil, fmt.Errorf("federation.trust_mark_issuers[%d].entity_id required", i)
+		}
+		if ti.JWKSFile == "" {
+			return nil, fmt.Errorf("federation.trust_mark_issuers[%d].jwks_file required (the issuer's trust-mark signing keys)", i)
+		}
+		doc, err := os.ReadFile(ti.JWKSFile)
+		if err != nil {
+			return nil, fmt.Errorf("read federation.trust_mark_issuers[%d].jwks_file: %w", i, err)
+		}
+		source, err := security.ParseStaticJWKS(doc)
+		if err != nil {
+			return nil, fmt.Errorf("parse federation.trust_mark_issuers[%d] issuer JWKS: %w", i, err)
+		}
+		keys, err := source.GetJWKS(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("federation.trust_mark_issuers[%d] issuer JWKS: %w", i, err)
+		}
+		tmIssuers = append(tmIssuers, federation.TrustMarkIssuer{
+			EntityID:     ti.EntityID,
+			JWKSFile:     ti.JWKSFile,
+			Keys:         keys,
+			AllowedTypes: append([]string(nil), ti.AllowedTypes...),
+		})
+	}
+	// A required type with NO authorized issuer can never be satisfied (it would
+	// lock out EVERY auto-registering RP). Fail loud rather than silently reject
+	// all admissions.
+	if len(cfg.RequiredTrustMarkTypes) > 0 && len(tmIssuers) == 0 {
+		return nil, errors.New("federation.required_trust_mark_types set but no federation.trust_mark_issuers configured (a required trust mark with no authorized issuer would admit no RP)")
+	}
+
 	return &federation.Config{
 		AuthorityHints:     append([]string(nil), cfg.AuthorityHints...),
 		TrustAnchors:       anchors,
@@ -1130,6 +1171,11 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		ResolutionNegativeCacheTTL:     cfg.ResolutionNegativeCacheTTL,
 		MaxConcurrentResolutions:       cfg.ResolutionMaxConcurrency,
 		ResolutionNegativeCacheMaxSize: cfg.ResolutionNegativeCacheMaxSize,
+		// Slice-4b §7 trust-mark requirement (only consulted when non-empty +
+		// auto_register on). Empty RequiredTrustMarkTypes ⇒ the gate is OFF
+		// (byte-identical to the slice-3 path).
+		RequiredTrustMarkTypes: append([]string(nil), cfg.RequiredTrustMarkTypes...),
+		TrustMarkIssuers:       tmIssuers,
 	}, nil
 }
 

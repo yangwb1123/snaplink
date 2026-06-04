@@ -83,6 +83,36 @@ type EntityStatementClaims struct {
 	// statements. Per §6.2 each statement's constraints are applied
 	// INDEPENDENTLY; any failure invalidates the whole chain (fail-closed).
 	Constraints *EntityConstraints `json:"constraints,omitempty"`
+
+	// TrustMarks is the §7 trust_marks claim: the array of Trust Marks the
+	// entity carries in its OWN Entity Configuration (a self-asserted WRAPPER
+	// around each signed Trust Mark JWT). Each entry pairs the unsigned
+	// trust_mark_type with the signed trust_mark JWS; the WRAPPER is untrusted
+	// (the leaf asserts it about itself), so the SIGNED Trust Mark JWT inside is
+	// what trust_marks.go cryptographically validates (issuer signature +
+	// sub==leaf + signed-type + freshness). Set on a leaf Entity Configuration;
+	// absent from Subordinate Statements. omitempty keeps the slice-1 entity-
+	// publishing path (which never sets it) byte-identical.
+	TrustMarks []TrustMarkEntry `json:"trust_marks,omitempty"`
+}
+
+// TrustMarkEntry is one element of the §7 trust_marks array carried in an
+// Entity Configuration: the WRAPPER pairing a Trust Mark Type identifier with
+// its signed Trust Mark. Member names follow OpenID Federation 1.0 final (§7):
+// `trust_mark_type` (the Type URI) + `trust_mark` (the signed Trust Mark, a
+// compact JWS). NOTE the WRAPPER's trust_mark_type is the entity's OWN
+// (unsigned) assertion and is therefore NOT authoritative — the trust decision
+// reads the trust_mark_type CLAIM inside the signature-validated Trust Mark
+// JWT (trust_marks.go), so a wrapper that lies about its type cannot satisfy a
+// requirement a different signed type belongs to.
+type TrustMarkEntry struct {
+	// TrustMarkType is the Trust Mark Type identifier (a URI) this entry claims
+	// to carry. Unsigned wrapper metadata — used only to LOCATE a candidate
+	// entry for a required type; the authoritative type is the signed claim.
+	TrustMarkType string `json:"trust_mark_type"`
+	// TrustMark is the signed Trust Mark itself: a compact JWS (typ
+	// trust-mark+jwt) issued by a Trust Mark Issuer. This is what is verified.
+	TrustMark string `json:"trust_mark"`
 }
 
 // EntityConstraints is the §6.2 constraints object carried on a Subordinate
@@ -288,6 +318,64 @@ type Config struct {
 	// swept and then the oldest entry is evicted to admit a new one. 0 ⇒
 	// DefaultResolutionNegativeCacheMaxSize (1024).
 	ResolutionNegativeCacheMaxSize int
+
+	// ----- §7 trust-mark requirement (slice 4b) ----------------------------
+	//
+	// OpenID Federation 1.0 §7. An EXTRA admission requirement layered ON TOP of
+	// the slice-3 auto-registration gate: an auto-registering RP MUST carry a
+	// valid Trust Mark (a signed conformance assertion) of EACH required type,
+	// else it is not admitted. Empty RequiredTrustMarkTypes ⇒ the gate is OFF
+	// (the slice-3 path is byte-identical). Additive + fail-closed: it can only
+	// make admission STRICTER, never weaken a slice-2/slice-3 check.
+
+	// RequiredTrustMarkTypes are the Trust Mark Type URIs an auto-registering RP
+	// MUST carry (one valid mark per type) to be admitted. Empty (default) ⇒ no
+	// trust-mark requirement — slice-3 behavior unchanged. When non-empty, an RP
+	// whose validated leaf lacks a valid mark for ANY of these types stays
+	// UNKNOWN (oracle-safe, the slice-3 unknown-client path).
+	RequiredTrustMarkTypes []string
+
+	// TrustMarkIssuers is the set of AUTHORIZED Trust Mark Issuers — the ONLY
+	// issuers whose signed Trust Marks can satisfy a RequiredTrustMarkTypes
+	// requirement. WHY operator-configured: a Trust Mark is only as trustworthy
+	// as the issuer's keys, so the operator pins both the issuer Entity ID AND
+	// its keys here (the federation-resolved trust_mark_issuers-key path is a
+	// follow-on). A mark whose iss is NOT in this set, or whose iss IS here but
+	// is not authorized for the mark's type (AllowedTypes), or whose signature
+	// fails against the issuer's keys → does NOT satisfy a requirement (reject).
+	// Only consulted when RequiredTrustMarkTypes is non-empty.
+	TrustMarkIssuers []TrustMarkIssuer
+}
+
+// TrustMarkIssuer names one operator-AUTHORIZED Trust Mark Issuer: its Entity
+// Identifier, its published keys (the root of trust for verifying the marks it
+// signs), and the Trust Mark Types it is authorized to issue. ONLY a mark
+// signed by a configured authorized issuer (iss matches + AllowedTypes permits
+// the type + the signature verifies against Keys) can satisfy a required type —
+// this is the federation-operator analogue of a trust anchor's
+// trust_mark_issuers declaration. cmd loads JWKSFile into Keys at construction
+// so a configured-but-unloadable issuer is a boot error (the gate never
+// silently runs without an authorized issuer's keys, which would reject every
+// otherwise-valid mark and surface as a mysterious admission failure).
+type TrustMarkIssuer struct {
+	// EntityID is the Trust Mark Issuer's Entity Identifier (the value a Trust
+	// Mark's `iss` claim MUST equal to be attributed to this issuer).
+	EntityID string
+	// JWKSFile is the local path the issuer's JWKS was loaded from. Retained for
+	// provenance/diagnostics; the live verification keys are in Keys.
+	JWKSFile string
+	// Keys is the issuer's published JWKS — the key set a Trust Mark signed by
+	// this issuer is verified against (via security.VerifyCompactJWS). An issuer
+	// with no Keys can satisfy nothing (verification against an empty set fails
+	// closed).
+	Keys []core.JWK
+	// AllowedTypes restricts which Trust Mark Types this issuer may issue. A
+	// non-empty list authorizes ONLY those types (a mark of any other type from
+	// this issuer is rejected — an issuer authorized for type X cannot vouch for
+	// type Y). EMPTY ⇒ this issuer is authorized for ANY required type (the
+	// operator trusts it broadly). The check is on the SIGNED type, so a wrapper
+	// cannot relabel a mark into a type its issuer is authorized for.
+	AllowedTypes []string
 }
 
 // Default lifetimes mirror the discovery/JWKS scale: a long statement TTL

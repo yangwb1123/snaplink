@@ -97,6 +97,14 @@ type TrustChain struct {
 	// constraints enforced). nil if the leaf advertised no RP metadata and the
 	// policy added none.
 	ResolvedRPMetadata map[string]any
+	// LeafTrustMarks is the §7 trust_marks array carried in the (now signature-
+	// VALIDATED) leaf Entity Configuration. Surfaced here so slice-4b's
+	// trust-mark requirement gate (trust_marks.go) can check it WITHOUT
+	// re-parsing the leaf compact: the leaf's signature was already verified in
+	// validate(), so reading its trust_marks off the parsed claims is sound (the
+	// wrapper entries are still untrusted — each inner Trust Mark JWT is itself
+	// cryptographically validated). nil when the leaf carries no trust_marks.
+	LeafTrustMarks []TrustMarkEntry
 }
 
 // Expiry returns the instant this validated chain ceases to be trustworthy:
@@ -277,9 +285,15 @@ func (r *TrustChainResolver) ResolveTrustChain(ctx context.Context, leafEntityID
 		statements[i] = l.compact
 	}
 	return &TrustChain{
-		LeafEntityID:       leafEntityID,
-		AnchorEntityID:     anchor.EntityID,
-		Statements:         statements,
+		LeafEntityID:   leafEntityID,
+		AnchorEntityID: anchor.EntityID,
+		Statements:     statements,
+		// The leaf (links[0]) is the validated leaf Entity Configuration; its
+		// trust_marks ride along for the slice-4b requirement gate. The signature
+		// was verified in validate(), so these wrapper entries come from the
+		// authenticated leaf — but each inner Trust Mark JWT is STILL verified
+		// independently (the wrapper's self-asserted type is not trusted).
+		LeafTrustMarks:     links[0].claims.TrustMarks,
 		ResolvedRPMetadata: resolvedRP,
 	}, nil
 }

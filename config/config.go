@@ -411,6 +411,51 @@ type FederationConfig struct {
 	// the oldest is evicted). 0 ⇒ SDK default (1024). Only relevant when
 	// auto_register is enabled.
 	ResolutionNegativeCacheMaxSize int `yaml:"resolution_negative_cache_max_size"`
+
+	// RequiredTrustMarkTypes opts into the OpenID Federation 1.0 §7 trust-mark
+	// requirement (slice 4b): the Trust Mark Type URIs an auto-registering RP
+	// MUST each carry a valid Trust Mark for (a signed conformance assertion
+	// from a configured authorized Trust Mark Issuer) to be admitted. Layered ON
+	// TOP of auto_register — an RP whose validated chain lacks a valid required
+	// mark stays UNKNOWN (oracle-safe). Empty (default) ⇒ NO trust-mark
+	// requirement; the auto_register path is byte-identical. SECURITY-SENSITIVE:
+	// it is a stricter ADMISSION gate; a forged/unauthorized/expired/wrong-
+	// subject mark must NOT admit the RP. Only relevant when auto_register is
+	// enabled; non-empty REQUIRES at least one trust_mark_issuer (cmd fails
+	// loud — a required type with no authorized issuer could never be satisfied,
+	// locking out every RP).
+	RequiredTrustMarkTypes []string `yaml:"required_trust_mark_types"`
+
+	// TrustMarkIssuers is the set of operator-AUTHORIZED Trust Mark Issuers —
+	// the ONLY issuers whose signed Trust Marks can satisfy a
+	// required_trust_mark_types requirement. Each entry pins the issuer Entity
+	// ID, its published keys (jwks_file → the root of trust for verifying its
+	// marks), and (optionally) the types it may issue. A configured-but-
+	// unloadable issuer is a boot error. The federation-resolved
+	// trust_mark_issuers-key path is a follow-on; this uses operator-configured
+	// keys. Only relevant when required_trust_mark_types is non-empty.
+	TrustMarkIssuers []TrustMarkIssuerConfig `yaml:"trust_mark_issuers"`
+}
+
+// TrustMarkIssuerConfig names one operator-authorized Trust Mark Issuer for the
+// §7 trust-mark requirement: its Entity Identifier, its published JWKS (the
+// root of trust the marks it signs are verified against), and (optionally) the
+// Trust Mark Types it is authorized to issue. EntityID + JWKSFile are REQUIRED
+// when an issuer is listed (the resolver verifies a mark's signature against
+// the loaded JWKS, so a missing/empty key set is a boot error, not a silent
+// no-issuer). AllowedTypes empty ⇒ authorized for any required type; non-empty
+// ⇒ only those types (an issuer authorized for type X cannot vouch for type Y).
+type TrustMarkIssuerConfig struct {
+	// EntityID is the Trust Mark Issuer's Entity Identifier — the value a Trust
+	// Mark's `iss` claim MUST equal to be attributed to this authorized issuer.
+	EntityID string `yaml:"entity_id"`
+	// JWKSFile is the local path to the issuer's published JWKS document
+	// (`{"keys":[...]}`) — the key set its signed Trust Marks are verified
+	// against (the root of trust for this issuer).
+	JWKSFile string `yaml:"jwks_file"`
+	// AllowedTypes restricts which Trust Mark Types this issuer may issue. Empty
+	// ⇒ any required type; non-empty ⇒ only the listed type URIs.
+	AllowedTypes []string `yaml:"allowed_types"`
 }
 
 // TrustAnchorConfig names one configured federation trust anchor: its Entity
