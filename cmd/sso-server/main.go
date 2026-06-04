@@ -611,6 +611,7 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 			RefreshTokenTTL:   a.refreshTokenTTL,
 			IDTokenIssuer:     a.idTokenIssuer,
 			Metrics:           a.metrics,
+			AuditRecorder:     a.recorder,
 		}
 		// Data-residency on the WebAuthn login mint path: wire the region
 		// resolver + the server's context-free ResidencyDecision seam ONLY

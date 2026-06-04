@@ -66,6 +66,28 @@ exact emission site.
 |------------------|------|---------------------------------------------------------------------------------------|---------------------------------------|
 | `account_locked` | 423  | `AccountLockout` reports the (client_id, identifier) key is past the failure threshold | Wait until the lock expires, then retry |
 
+### WebAuthn ceremony (`/webauthn/{registration,login}/{begin,finish}`)
+
+| Code                  | HTTP | Emitted when                                                                                          | Client should                                          |
+|-----------------------|------|------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
+| `session_invalid`     | 404  | `session_id` is unknown / expired, or the user record disappeared mid-ceremony (unknown-session + unknown-user collapsed for oracle-leak resistance) | Restart the ceremony from the matching `/begin`        |
+| `ceremony_failed`     | 400  | go-webauthn rejected the attestation / assertion (parse failure, bad signature, challenge mismatch, counter regression) | Retry the ceremony; check the authenticator + origin   |
+| `attestation_denied`  | 403  | The operator's attestation policy rejected the authenticator: its AAGUID is not on the allowlist (or is on the denylist). The credential was NOT persisted. The specific AAGUID + policy mode are in the `webauthn_attestation_denied` audit event, never on the wire | Use an approved authenticator (an operator-curated model) |
+
+**Attestation policy** (`webauthn.attestation`, opt-in): when an operator
+configures `policy_mode: allowlist|denylist`, registration is gated on the
+authenticator's AAGUID (the public authenticator-model identifier carried in
+the attestation's authenticator data) AFTER go-webauthn verifies the
+attestation statement. A rejection returns the generic `attestation_denied`
+(403) — the registering user learns their authenticator isn't approved, not
+the policy internals; the rejected AAGUID + the gating mode are surfaced ONLY
+in the `webauthn_attestation_denied` audit event (the AAGUID is a public
+model identifier, not a secret). A successful registration emits
+`webauthn_registered` (audit) carrying the registered AAGUID for operator
+allowlist curation. The default (`conveyance: none`, `policy_mode: off`)
+introduces no new wire behavior — it accepts any authenticator exactly as
+before.
+
 ### MFA orchestration (`/auth/login`, `/auth/mfa`)
 
 | Code            | HTTP | Emitted when                                                                                                                          | Client should                                              |

@@ -724,6 +724,54 @@ type WebAuthnConfig struct {
 	RPOrigins     []string              `yaml:"rp_origins"`
 	SessionTTL    time.Duration         `yaml:"session_ttl"`
 	Storage       WebAuthnStorageConfig `yaml:"storage"`
+
+	// Attestation opts into the WebAuthn attestation policy: a
+	// configurable conveyance preference + an operator AAGUID
+	// allowlist/denylist gating which authenticators may register. The
+	// zero value (conveyance ""/"none", policy mode "") is byte-identical
+	// to a pre-policy build: no attestation requested, no AAGUID gating
+	// (today's "any authenticator" behavior).
+	Attestation WebAuthnAttestationConfig `yaml:"attestation"`
+}
+
+// WebAuthnAttestationConfig configures authenticator attestation for
+// WebAuthn registration. It lets a high-assurance operator restrict
+// registration to approved authenticator models by AAGUID, instead of the
+// default conveyance "none" that accepts ANY authenticator (including
+// software / virtual ones).
+//
+// ASSURANCE LEVEL (be precise — do not over-claim): the policy gates on the
+// AAGUID carried in the attestation's authenticator data. With Conveyance
+// "direct", go-webauthn VERIFIES THE ATTESTATION STATEMENT SIGNATURE at
+// finish time (the per-format packed/tpm/android-key/... verifier), so the
+// AAGUID is bound to the authenticator's attestation key — a meaningful
+// gate. It does NOT, by itself, validate the attestation certificate chain
+// up to a FIDO Metadata Service root: that requires go-webauthn's
+// metadata.Provider (Config.MDS) seam, a documented follow-on this gate does
+// not build. So: signature-verified AAGUID allowlisting today; full
+// FIDO-root-rooted assurance is the deeper next step.
+type WebAuthnAttestationConfig struct {
+	// Conveyance is the attestation conveyance preference sent at
+	// registration: ""/"none" (default — no attestation requested,
+	// byte-identical to today), "indirect", "direct", or "enterprise".
+	// Set "direct" for the policy to gate on a verified AAGUID; under
+	// "none" most authenticators report the zero AAGUID, which an
+	// allowlist rejects.
+	Conveyance string `yaml:"conveyance"`
+
+	// PolicyMode selects AAGUID gating: ""/"off" (no gating — default),
+	// "allowlist" (only AAGUIDs is permitted), or "denylist" (only
+	// AAGUIDs is rejected). Allowlist + denylist are mutually exclusive.
+	PolicyMode string `yaml:"policy_mode"`
+
+	// AAGUIDs is the allowlist / denylist of authenticator AAGUIDs (canonical
+	// UUID strings like "ee882879-721c-4913-9775-3dfcce97072a", any case;
+	// the bare 32-hex form is also accepted). Required + non-empty when
+	// PolicyMode gates. Under allowlist, include the all-zero AAGUID
+	// ("00000000-0000-0000-0000-000000000000") explicitly to admit
+	// self-attestation / no-attestation authenticators — otherwise they
+	// are rejected.
+	AAGUIDs []string `yaml:"aaguids"`
 }
 
 // WebAuthnStorageConfig selects the substrate for the WebAuthn

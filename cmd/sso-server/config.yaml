@@ -753,6 +753,35 @@ webauthn:
   rp_origins:
     - "https://sso.example.com"
   session_ttl: 5m
+  # Attestation policy — restrict WebAuthn registration to approved
+  # authenticator models by AAGUID. The default (conveyance none, policy
+  # mode off) accepts ANY authenticator, including software/virtual ones,
+  # byte-identically to a pre-policy build.
+  #
+  # ASSURANCE (do not over-claim): the policy gates on the AAGUID carried
+  # in the attestation's authenticator data. With conveyance "direct"
+  # go-webauthn VERIFIES THE ATTESTATION STATEMENT SIGNATURE at finish
+  # time (the per-format packed/tpm/android-key/... verifier), so the
+  # AAGUID is bound to the authenticator's attestation key — a meaningful
+  # gate. It does NOT by itself validate the attestation certificate chain
+  # up to a FIDO Metadata Service root; that needs go-webauthn's
+  # metadata.Provider (Config.MDS) seam, a documented follow-on this gate
+  # does not build. So: signature-verified AAGUID allowlisting today; full
+  # FIDO-root-rooted assurance is the deeper next step.
+  attestation:
+    # ""/"none" (default) | "indirect" | "direct" | "enterprise".
+    # Set "direct" so the policy gates on a verified AAGUID — under "none"
+    # most authenticators report the zero AAGUID, which an allowlist rejects.
+    conveyance: ""
+    # ""/"off" (default — no gating) | "allowlist" | "denylist".
+    policy_mode: ""
+    # The allow/deny list of authenticator AAGUIDs (canonical UUID strings,
+    # any case; the bare 32-hex form is also accepted). Required when
+    # policy_mode gates. Under allowlist, include the all-zero AAGUID
+    # "00000000-0000-0000-0000-000000000000" to admit self-attestation /
+    # no-attestation authenticators — otherwise they are rejected.
+    aaguids: []
+    #   - "ee882879-721c-4913-9775-3dfcce97072a"   # example: a specific authenticator model
   storage:
     users:
       backend: "memory"  # memory | sqlite

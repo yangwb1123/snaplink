@@ -84,6 +84,26 @@ const (
 	// correlate via TraceID.
 	EventAnomalyDetected EventType = "anomaly_detected"
 
+	// EventWebAuthnRegistered — a WebAuthn registration ceremony
+	// completed and the credential was persisted. Outcome=success;
+	// Metadata "aaguid" carries the registered authenticator's AAGUID
+	// (the public authenticator-model identifier, NOT a secret) so an
+	// operator running an attestation allowlist can curate it. Emitted
+	// by the cmd ceremony handler ONLY when an attestation policy is
+	// active — without a policy the success path stays byte-identical to
+	// a pre-policy build (no new audit event).
+	EventWebAuthnRegistered EventType = "webauthn_registered"
+
+	// EventWebAuthnAttestationDenied — a WebAuthn registration was
+	// REJECTED by the operator's attestation policy: the authenticator's
+	// AAGUID was not on the allowlist (or was on the denylist). The
+	// credential was NOT persisted. Outcome=failure; Metadata "aaguid"
+	// carries the rejected AAGUID and "policy_mode" the gating mode
+	// (allowlist|denylist); Reason is the operator-side detail. The
+	// registering client only sees a generic attestation_denied error —
+	// the specifics live here.
+	EventWebAuthnAttestationDenied EventType = "webauthn_attestation_denied"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason

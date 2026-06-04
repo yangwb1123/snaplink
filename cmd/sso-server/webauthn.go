@@ -19,7 +19,10 @@ import (
 	"strings"
 	"time"
 
+	gw "github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/authenticators/webauthn"
 	webauthnsqlite "github.com/snaplink/sso/authenticators/webauthn/sqlite"
 	"github.com/snaplink/sso/config"
@@ -49,11 +52,17 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn sessions: %w", err)
 	}
+	policy, err := buildWebAuthnAttestationPolicy(cfg.Attestation)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("webauthn attestation: %w", err)
+	}
 	h, err := webauthn.NewHelper(webauthn.Config{
-		RPID:          cfg.RPID,
-		RPDisplayName: cfg.RPDisplayName,
-		RPOrigins:     cfg.RPOrigins,
-		SessionTTL:    cfg.SessionTTL,
+		RPID:                  cfg.RPID,
+		RPDisplayName:         cfg.RPDisplayName,
+		RPOrigins:             cfg.RPOrigins,
+		SessionTTL:            cfg.SessionTTL,
+		AttestationConveyance: cfg.Attestation.Conveyance,
+		AttestationPolicy:     policy,
 	}, users, sessions)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn helper: %w", err)
@@ -63,8 +72,46 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 		"origins", cfg.RPOrigins,
 		"users", userDesc,
 		"sessions", sessionDesc,
+		"attestation_conveyance", conveyanceLabel(cfg.Attestation.Conveyance),
+		"attestation_policy", attestationPolicyLabel(policy),
 	)
 	return h, users, sessions, nil
+}
+
+// buildWebAuthnAttestationPolicy maps the YAML attestation block to a
+// webauthn.AttestationPolicy. An empty / "off" mode yields a nil policy (no
+// gating — byte-identical to a pre-policy build). A gating mode requires a
+// non-empty AAGUID list; both the unknown-mode and empty-list cases fail
+// loud here at boot rather than silently admitting/denying the wrong set.
+func buildWebAuthnAttestationPolicy(cfg config.WebAuthnAttestationConfig) (*webauthn.AttestationPolicy, error) {
+	mode := webauthn.AttestationPolicyMode(strings.ToLower(strings.TrimSpace(cfg.PolicyMode)))
+	switch mode {
+	case webauthn.AttestationPolicyOff, "off":
+		// "off" is the operator-friendly spelling of the empty/off mode;
+		// both yield a nil policy so the gate is dark.
+		return nil, nil
+	case webauthn.AttestationPolicyAllowlist, webauthn.AttestationPolicyDenylist:
+		return webauthn.NewAttestationPolicy(mode, cfg.AAGUIDs)
+	default:
+		return nil, fmt.Errorf("unknown webauthn.attestation.policy_mode %q (want off|allowlist|denylist)", cfg.PolicyMode)
+	}
+}
+
+// conveyanceLabel renders the configured conveyance for the startup log,
+// normalizing the empty value to "none" for clarity.
+func conveyanceLabel(s string) string {
+	if v := strings.ToLower(strings.TrimSpace(s)); v != "" {
+		return v
+	}
+	return "none"
+}
+
+// attestationPolicyLabel renders the policy mode for the startup log.
+func attestationPolicyLabel(p *webauthn.AttestationPolicy) string {
+	if !p.Enabled() {
+		return "off"
+	}
+	return string(p.Mode)
 }
 
 func buildWebAuthnUserStore(cfg config.WebAuthnBackendConfig) (webauthn.UserStore, string, error) {
@@ -136,6 +183,15 @@ type webauthnDeps struct {
 	RefreshTokenTTL   time.Duration
 	IDTokenIssuer     oidc.IDTokenIssuer
 	Metrics           *metrics.Metrics // nil-safe; emit only when present
+
+	// AuditRecorder records the WebAuthn registration audit events:
+	// webauthn_registered (success, carrying the AAGUID for operator
+	// allowlist curation) and webauthn_attestation_denied (failure, when
+	// the attestation policy rejects an authenticator). Nil-safe — when
+	// unset (an embedder without an audit pipeline, or a pre-audit build)
+	// no registration audit event is emitted, leaving the begin/finish
+	// flow byte-identical to before. Set in main from a.recorder.
+	AuditRecorder *audit.Recorder
 
 	// IDTokenIssuerForClient selects the per-tenant id_token issuer so a
 	// WebAuthn-minted id_token is signed with the same key as that
@@ -307,16 +363,83 @@ func webauthnFinishRegistrationHandler(deps *webauthnDeps) http.HandlerFunc {
 		}
 		cred, err := deps.Helper.FinishRegistration(r.Context(), sessionID, r)
 		if err != nil {
+			// Attestation-policy denial is a distinct disposition: the
+			// authenticator verified fine but its AAGUID isn't permitted.
+			// Surface a generic attestation_denied (403) to the client —
+			// the AAGUID + policy mode go to the audit trail, not the wire
+			// (oracle-reasonable: the user learns their authenticator isn't
+			// approved, not the policy internals).
+			var denied *webauthn.AttestationDeniedError
+			if errors.As(err, &denied) {
+				recordWebAuthnAttestationDenied(deps, r, denied)
+				writeWebAuthnError(w, http.StatusForbidden, codeAttestationDenied, "authenticator not permitted")
+				recordWebAuthnRegistration(deps, "failure")
+				return
+			}
 			status, code := webauthnErrorStatus(err)
 			writeWebAuthnError(w, status, code, err.Error())
 			recordWebAuthnRegistration(deps, "failure")
 			return
+		}
+		// Emit the success audit (carrying the AAGUID for operator
+		// allowlist curation) ONLY when the attestation policy is active.
+		// Without a policy the registration path stays byte-identical to a
+		// pre-policy build — no new audit event on success (the existing
+		// metric still fires below).
+		if deps.Helper.AttestationPolicyEnabled() {
+			recordWebAuthnRegistered(deps, r, cred)
 		}
 		writeWebAuthnJSON(w, http.StatusOK, webauthnFinishRegistrationResponse{
 			CredentialID: base64.RawURLEncoding.EncodeToString(cred.ID),
 		})
 		recordWebAuthnRegistration(deps, "success")
 	}
+}
+
+// codeAttestationDenied is the wire error code returned when the WebAuthn
+// attestation policy rejects an authenticator (403). Documented in
+// docs/error-codes.md; SPAs branch on the code, never the description.
+const codeAttestationDenied = "attestation_denied"
+
+// recordWebAuthnRegistered emits the success audit event carrying the
+// registered authenticator's AAGUID (a public model identifier, safe in
+// metadata) so an operator running an attestation allowlist can curate it.
+// Nil-safe when no recorder is wired.
+func recordWebAuthnRegistered(deps *webauthnDeps, r *http.Request, cred *gw.Credential) {
+	if deps == nil || deps.AuditRecorder == nil {
+		return
+	}
+	e := &audit.Event{
+		Type:      audit.EventWebAuthnRegistered,
+		Outcome:   audit.OutcomeSuccess,
+		Provider:  "webauthn",
+		ActorIP:   audit.ClientIP(r),
+		UserAgent: r.UserAgent(),
+		Timestamp: time.Now().UTC(),
+	}
+	audit.SetMeta(e, "aaguid", webauthn.CredentialAAGUID(cred.Authenticator.AAGUID))
+	deps.AuditRecorder.Record(r.Context(), e)
+}
+
+// recordWebAuthnAttestationDenied emits the failure audit event for an
+// attestation-policy rejection, carrying the rejected AAGUID + the gating
+// mode + the operator-side reason. Nil-safe when no recorder is wired.
+func recordWebAuthnAttestationDenied(deps *webauthnDeps, r *http.Request, denied *webauthn.AttestationDeniedError) {
+	if deps == nil || deps.AuditRecorder == nil {
+		return
+	}
+	e := &audit.Event{
+		Type:      audit.EventWebAuthnAttestationDenied,
+		Outcome:   audit.OutcomeFailure,
+		Provider:  "webauthn",
+		ActorIP:   audit.ClientIP(r),
+		UserAgent: r.UserAgent(),
+		Reason:    denied.Error(),
+		Timestamp: time.Now().UTC(),
+	}
+	audit.SetMeta(e, "aaguid", denied.AAGUID)
+	audit.SetMeta(e, "policy_mode", string(denied.Mode))
+	deps.AuditRecorder.Record(r.Context(), e)
 }
 
 // recordWebAuthnRegistration increments the registration counter

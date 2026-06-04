@@ -1480,6 +1480,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |
+            `attestation_denied` — the operator's attestation policy
+            (`webauthn.attestation`, opt-in) rejected the authenticator:
+            its AAGUID is not on the allowlist (or is on the denylist).
+            The credential was NOT persisted. The response is deliberately
+            generic ("authenticator not permitted"); the rejected AAGUID +
+            the gating mode are recorded only in the
+            `webauthn_attestation_denied` audit event.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: |
             `session_invalid` — session_id is unknown / expired, or the

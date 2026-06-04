@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,6 +113,18 @@ type Helper struct {
 	users      UserStore
 	sessions   SessionStore
 	sessionTTL time.Duration
+
+	// conveyance, when non-empty, is passed to BeginRegistration as
+	// gw.WithConveyancePreference so the authenticator is asked to
+	// produce an attestation statement ("direct"/"enterprise") or a
+	// privacy-preserving one ("indirect"). Empty (the default) requests
+	// no attestation — byte-identical to the pre-policy ceremony.
+	conveyance protocol.ConveyancePreference
+
+	// attestationPolicy gates the registered credential's AAGUID at
+	// FinishRegistration AFTER go-webauthn verifies the attestation
+	// statement. Nil / mode-off ⇒ no gating (byte-identical default).
+	attestationPolicy *AttestationPolicy
 }
 
 // Config is the operator-supplied configuration. RPID is the
@@ -125,6 +138,24 @@ type Config struct {
 	RPDisplayName string
 	RPOrigins     []string
 	SessionTTL    time.Duration
+
+	// AttestationConveyance sets the WebAuthn attestation conveyance
+	// preference sent to the client at BeginRegistration. Accepts
+	// ""/"none" (no attestation — the default, byte-identical to a
+	// pre-policy build), "indirect", "direct", or "enterprise". A
+	// non-none value asks the authenticator to convey an attestation
+	// statement so the AAGUID it carries is attested (and, for "direct",
+	// the statement signature is verified by go-webauthn at finish time).
+	// Required to be non-none for an [AttestationPolicy] to gate on a
+	// MEANINGFUL (attested) AAGUID — without it many authenticators omit
+	// the attestation statement and report the zero AAGUID. Invalid
+	// values are rejected by [NewHelper].
+	AttestationConveyance string
+
+	// AttestationPolicy, when set to a gating mode, restricts which
+	// authenticators may register by their AAGUID (allowlist / denylist),
+	// applied at FinishRegistration. Nil ⇒ no gating (the default).
+	AttestationPolicy *AttestationPolicy
 }
 
 // NewHelper validates cfg + returns the helper. RPID + at least
@@ -139,6 +170,10 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 	if users == nil || sessions == nil {
 		return nil, errors.New("webauthn: UserStore + SessionStore required")
 	}
+	conveyance, err := mapConveyance(cfg.AttestationConveyance)
+	if err != nil {
+		return nil, err
+	}
 	core, err := gw.New(&gw.Config{
 		RPID:          cfg.RPID,
 		RPDisplayName: cfg.RPDisplayName,
@@ -152,11 +187,36 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		ttl = 5 * time.Minute
 	}
 	return &Helper{
-		core:       core,
-		users:      users,
-		sessions:   sessions,
-		sessionTTL: ttl,
+		core:              core,
+		users:             users,
+		sessions:          sessions,
+		sessionTTL:        ttl,
+		conveyance:        conveyance,
+		attestationPolicy: cfg.AttestationPolicy,
 	}, nil
+}
+
+// mapConveyance validates + maps the operator-supplied conveyance string
+// to the go-webauthn protocol constant. "" and "none" both map to the
+// empty preference (no attestation requested — the default), so the
+// BeginRegistration option is NOT passed and the wire is byte-identical to
+// a pre-policy build. Any other unrecognized value is rejected so a typo
+// in config fails loud at boot rather than silently disabling attestation.
+func mapConveyance(s string) (protocol.ConveyancePreference, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "none":
+		// Empty sentinel: BeginRegistration leaves Attestation at the
+		// library default ("none") and does not apply the option.
+		return "", nil
+	case "indirect":
+		return protocol.PreferIndirectAttestation, nil
+	case "direct":
+		return protocol.PreferDirectAttestation, nil
+	case "enterprise":
+		return protocol.PreferEnterpriseAttestation, nil
+	default:
+		return "", fmt.Errorf("webauthn: unknown attestation conveyance %q (want none|indirect|direct|enterprise)", s)
+	}
 }
 
 // BeginRegistration starts a registration ceremony for name. When
@@ -172,7 +232,15 @@ func (h *Helper) BeginRegistration(ctx context.Context, name, displayName string
 	if err != nil {
 		return nil, "", fmt.Errorf("webauthn: load user: %w", err)
 	}
-	creation, session, err := h.core.BeginRegistration(user)
+	var opts []gw.RegistrationOption
+	if h.conveyance != "" {
+		// Ask the client for an attestation statement so the AAGUID the
+		// authenticator reports at finish time is attested. Only applied
+		// when a non-none conveyance was configured — otherwise no option
+		// is passed and the creation options are byte-identical to today.
+		opts = append(opts, gw.WithConveyancePreference(h.conveyance))
+	}
+	creation, session, err := h.core.BeginRegistration(user, opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("webauthn: begin registration: %w", err)
 	}
@@ -199,10 +267,49 @@ func (h *Helper) FinishRegistration(ctx context.Context, sessionID string, r *ht
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: finish registration: %w", err)
 	}
+	// Attestation-policy gate. Applied AFTER go-webauthn verified the
+	// attestation statement (so cred.Authenticator.AAGUID is the
+	// attestation-verified value) and BEFORE we persist — a denied
+	// authenticator's credential is never written. Returns a typed
+	// AttestationDeniedError carrying the canonical AAGUID so the wiring
+	// layer can audit the denial precisely. Nil / mode-off ⇒ no gating.
+	if err := h.checkAttestationPolicy(cred); err != nil {
+		return nil, err
+	}
 	if err := h.users.AddCredential(ctx, user.Name, cred); err != nil {
 		return nil, fmt.Errorf("webauthn: persist credential: %w", err)
 	}
 	return cred, nil
+}
+
+// AttestationPolicyEnabled reports whether this Helper has an active
+// attestation policy (mode != off). The wiring layer uses it to decide
+// whether to emit the registration audit events — keeping a Helper WITHOUT
+// a policy byte-identical to a pre-policy build (no new audit on the
+// success path). When the operator opts into a policy, the success +
+// denial audit events become part of that feature.
+func (h *Helper) AttestationPolicyEnabled() bool {
+	return h.attestationPolicy.Enabled()
+}
+
+// checkAttestationPolicy applies the configured [AttestationPolicy] to a
+// freshly-verified credential. Returns nil when no policy is configured
+// (mode off) or the authenticator is permitted; otherwise an
+// [AttestationDeniedError] carrying the canonical AAGUID + the policy mode.
+// The canonical AAGUID is best-effort for the error/audit (an unparseable
+// AAGUID yields "" but the denial still stands under allowlist).
+func (h *Helper) checkAttestationPolicy(cred *gw.Credential) error {
+	if !h.attestationPolicy.Enabled() {
+		return nil
+	}
+	if err := h.attestationPolicy.Check(cred.Authenticator.AAGUID); err != nil {
+		canon, cerr := canonicalAAGUIDFromBytes(cred.Authenticator.AAGUID)
+		if cerr != nil {
+			canon = ""
+		}
+		return &AttestationDeniedError{AAGUID: canon, Mode: h.attestationPolicy.Mode}
+	}
+	return nil
 }
 
 // BeginLogin starts an authentication ceremony for name. Returns
