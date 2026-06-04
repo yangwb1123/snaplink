@@ -148,8 +148,10 @@
 //   - A forged / expired / replayed / wrong-realm / keytab-mismatched SPNEGO
 //     token NEVER authenticates: validation FAILS CLOSED against the keytab
 //     (gokrb5's service.VerifyAPREQ checks the AP-REQ signature with the keytab
-//     key and the ticket lifetime; gokrb5's process-wide replay cache rejects a
-//     captured ticket replayed within its lifetime). The client-asserted
+//     key and the ticket lifetime; gokrb5's PER-PROCESS replay cache rejects a
+//     captured ticket replayed within its lifetime AGAINST THE SAME REPLICA —
+//     see the multi-replica caveat below for the cross-replica gap and the
+//     sticky-affinity requirement). The client-asserted
 //     principal is NEVER trusted without this validation. A defense-in-depth
 //     realm check additionally rejects any authenticated principal from a realm
 //     other than the configured one.
@@ -171,6 +173,33 @@
 //   - A refresh token is deliberately NOT minted: desktop SSO re-runs the
 //     (silent) Negotiate handshake to re-authenticate, so a long-lived refresh
 //     token would only widen the blast radius of an exfiltrated token.
+//
+// # Multi-replica deployment caveat (replay protection is PER-PROCESS)
+//
+// IMPORTANT operational requirement, not a code bug: gokrb5's AP-REQ replay
+// cache is a PROCESS singleton (jcmturner/rpc; in-memory, per-process). It does
+// NOT span replicas or survive a restart. In a horizontally-scaled,
+// multi-replica SSO deployment a captured AP-REQ replayed against a DIFFERENT
+// replica than the one that first saw it is therefore NOT detected: replica B's
+// cache has never seen the ticket replica A consumed. The replay window is
+// bounded by the Kerberos clock-skew tolerance (gokrb5's 5-minute default, or
+// Config.MaxClockSkew) — after which the ticket's authenticator is stale and
+// fails the freshness check on every replica regardless of the cache. An
+// attacker still needs a LIVE, validly-signed service ticket to replay (a
+// forged or expired one fails the keytab/freshness check on every replica);
+// what the cross-replica gap removes is only the single-use guarantee WITHIN
+// that bounded window.
+//
+// To preserve full single-use replay protection across replicas, operators MUST
+// pin Negotiate traffic to ONE replica — sticky sessions / session affinity at
+// the load balancer keyed so a given client's handshakes always land on the
+// same instance — exactly mirroring the redis/ hot-path "run single-use traffic
+// on the primary" precedent (AGENTS.md §4): some single-use state (there, the
+// cross-region replication lag; here, the per-process replay cache) is not
+// globally consistent, so the single-use surface must be funneled to one
+// authority. There is deliberately NO distributed replay cache here (it would
+// add a hot-path round-trip to a shared store on every Negotiate request and a
+// new infrastructure dependency); affinity is the recommended control.
 //
 // # Testing
 //

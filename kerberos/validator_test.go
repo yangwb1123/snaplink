@@ -5,7 +5,10 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jcmturner/gokrb5/v8/credentials"
+	"github.com/jcmturner/gokrb5/v8/service"
 	"github.com/jcmturner/gokrb5/v8/test/testdata"
 )
 
@@ -116,6 +119,80 @@ func TestNewGokrb5Validator_BadKeytab(t *testing.T) {
 func TestNewGokrb5Validator_RejectsBadConfig(t *testing.T) {
 	if _, err := NewGokrb5Validator(Config{Name: "k"}); err == nil {
 		t.Error("NewGokrb5Validator with an empty config should error")
+	}
+}
+
+// settingsSkew applies the Config's serviceOpts to a fresh service.Settings and
+// returns the resulting MaxClockSkew. gokrb5's getter returns its 5-minute
+// default when the option was never set, so this distinguishes "knob unset"
+// (== default) from "knob plumbed" (== the configured value).
+func settingsSkew(cfg Config) time.Duration {
+	s := service.NewSettings(nil, serviceOpts(cfg)...)
+	return s.MaxClockSkew()
+}
+
+// TestMaxClockSkew_Plumbing (FIX #5) proves the optional skew knob: ZERO leaves
+// gokrb5's 5-minute default UNCHANGED (no MaxClockSkew option is added — the
+// opts are byte-identical to before the knob existed), while a NON-ZERO value
+// plumbs through to service.MaxClockSkew so the validator enforces the
+// operator's window.
+func TestMaxClockSkew_Plumbing(t *testing.T) {
+	const gokrb5Default = 5 * time.Minute
+
+	cfg := realKeytabConfig(t)
+	// (a) Zero ⇒ gokrb5 default, i.e. exactly what the pre-knob build produced.
+	if cfg.MaxClockSkew != 0 {
+		t.Fatalf("precondition: realKeytabConfig should have zero skew, got %v", cfg.MaxClockSkew)
+	}
+	if got := settingsSkew(cfg); got != gokrb5Default {
+		t.Errorf("zero MaxClockSkew settings = %v, want gokrb5 default %v (byte-identical to no option)", got, gokrb5Default)
+	}
+
+	// (b) A non-zero override is plumbed through verbatim.
+	cfg.MaxClockSkew = 30 * time.Second
+	if got := settingsSkew(cfg); got != 30*time.Second {
+		t.Errorf("MaxClockSkew=30s settings = %v, want 30s (the option was not plumbed)", got)
+	}
+
+	// (c) The option count grows by exactly one when set (proves we APPEND a
+	// MaxClockSkew opt rather than mutate the existing ones).
+	zero := realKeytabConfig(t)
+	set := realKeytabConfig(t)
+	set.MaxClockSkew = time.Minute
+	if n0, n1 := len(serviceOpts(zero)), len(serviceOpts(set)); n1 != n0+1 {
+		t.Errorf("serviceOpts len: zero=%d set=%d, want set==zero+1", n0, n1)
+	}
+
+	// (d) A validator constructed with the override builds cleanly (the opt is
+	// accepted by gokrb5 end-to-end).
+	if _, err := NewGokrb5Validator(set); err != nil {
+		t.Errorf("NewGokrb5Validator with MaxClockSkew set: %v", err)
+	}
+}
+
+// TestExtractGroups_HappyPath (FIX #1) is a focused proof that the dead JSON
+// fallback removal did not change happy-path group extraction: a credentials
+// value carrying AD group SIDs still yields them, and one with none yields nil.
+// (The real-keytab FailsClosed test already proves the production decode path;
+// this pins the helper's contract directly without a KDC.)
+func TestExtractGroups_HappyPath(t *testing.T) {
+	// No PAC / no AD creds ⇒ nil (enrichment, not a gate). credentials.New
+	// initializes the internal attribute maps (new(Credentials) would not).
+	empty := credentials.New("svc", "TEST.GOKRB5")
+	if got := extractGroups(empty); got != nil {
+		t.Errorf("extractGroups(no PAC) = %v, want nil", got)
+	}
+
+	// AD creds with group SIDs ⇒ those SIDs, copied out — the value-typed
+	// ADCredentials path gokrb5 actually produces (the only path now that the
+	// dead JSON-string fallback is gone).
+	withGroups := credentials.New("alice", "TEST.GOKRB5")
+	withGroups.SetADCredentials(credentials.ADCredentials{
+		GroupMembershipSIDs: []string{"S-1-5-21-aaa", "S-1-5-21-bbb"},
+	})
+	got := extractGroups(withGroups)
+	if len(got) != 2 || got[0] != "S-1-5-21-aaa" || got[1] != "S-1-5-21-bbb" {
+		t.Errorf("extractGroups(with PAC) = %v, want the two SIDs", got)
 	}
 }
 

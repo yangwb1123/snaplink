@@ -3,6 +3,7 @@ package kerberosauth
 import (
 	"errors"
 	"strings"
+	"time"
 )
 
 // DefaultMountPath is where the Negotiate handler is mounted when Config.Path
@@ -103,6 +104,21 @@ type Config struct {
 	// ("/auth/kerberos"). The operator mounts the returned HandlerSpec at this
 	// path via srv.Handle.
 	Path string
+
+	// MaxClockSkew OPTIONALLY overrides the maximum acceptable clock skew the
+	// validator allows between this service's clock and a Kerberos ticket's
+	// issue time. It governs the SAME window gokrb5 applies to: the ticket
+	// validity check, the authenticator timestamp acceptance, AND the
+	// process-wide replay cache retention. ZERO (the default) leaves gokrb5's
+	// built-in 5-minute default UNCHANGED — byte-identical to wiring no skew
+	// option at all — so existing deployments are unaffected. Set it to TIGHTEN
+	// the window for a tightly-synchronized fleet, or (cautiously) to widen it
+	// for a drifty one; this mirrors DPoP's WithDPoPMaxClockSkew knob (AGENTS.md
+	// §3). The AGENTS.md §2 "ops MUST slew, never step, the clock (chrony)"
+	// guidance applies: a backward clock step can transiently let a slightly
+	// stale ticket pass, and widening the window enlarges the replay-cache
+	// exposure correspondingly.
+	MaxClockSkew time.Duration
 }
 
 // Validate checks the REQUIRED fields, failing the operator's boot CLOSED on a
@@ -133,6 +149,12 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.ClientID) == "" {
 		return errors.New("kerberos: ClientID required (the registered client tokens are minted for)")
+	}
+	// A negative skew is a misconfiguration that would otherwise be silently
+	// passed to gokrb5; reject it loud at boot. Zero stays valid (= gokrb5's
+	// default window, unchanged).
+	if c.MaxClockSkew < 0 {
+		return errors.New("kerberos: MaxClockSkew must not be negative (0 = gokrb5 default of 5m)")
 	}
 	return nil
 }

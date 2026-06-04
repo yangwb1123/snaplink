@@ -3,6 +3,7 @@ package kerberosauth_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	kerberosauth "github.com/snaplink/sso/kerberos"
 )
@@ -42,6 +43,11 @@ func TestConfigValidate(t *testing.T) {
 		{"missing service principal", func(c *kerberosauth.Config) { c.ServicePrincipal = "" }, "ServicePrincipal required"},
 		{"missing realm", func(c *kerberosauth.Config) { c.Realm = "" }, "Realm required"},
 		{"missing client_id", func(c *kerberosauth.Config) { c.ClientID = "" }, "ClientID required"},
+		// FIX #5: an optional skew knob — zero stays valid (= gokrb5 default), a
+		// positive value is accepted, a negative value fails closed.
+		{"zero skew (default)", func(c *kerberosauth.Config) { c.MaxClockSkew = 0 }, ""},
+		{"positive skew", func(c *kerberosauth.Config) { c.MaxClockSkew = 30 * time.Second }, ""},
+		{"negative skew", func(c *kerberosauth.Config) { c.MaxClockSkew = -time.Second }, "MaxClockSkew"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

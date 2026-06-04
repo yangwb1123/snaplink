@@ -2,7 +2,6 @@ package kerberosauth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -83,6 +82,16 @@ func NewGokrb5Validator(cfg Config) (*gokrb5Validator, error) {
 		return nil, fmt.Errorf("kerberos: load keytab: %w", err)
 	}
 
+	return &gokrb5Validator{
+		svc: spnego.SPNEGOService(kt, serviceOpts(cfg)...),
+	}, nil
+}
+
+// serviceOpts assembles the gokrb5 SPNEGOService settings options from the
+// Config. Extracted so a test can apply it to a fresh service.Settings and read
+// the resulting MaxClockSkew back (the SPNEGO struct's settings field is
+// unexported), proving the optional skew knob plumbs through.
+func serviceOpts(cfg Config) []func(*service.Settings) {
 	opts := []func(*service.Settings){
 		// KeytabPrincipal pins WHICH key in the keytab validates the AP-REQ.
 		// A service keytab commonly holds several principals/enctypes (the AD
@@ -93,10 +102,15 @@ func NewGokrb5Validator(cfg Config) (*gokrb5Validator, error) {
 		// the principal's group SIDs come from.
 		service.DecodePAC(!cfg.DisablePAC),
 	}
-
-	return &gokrb5Validator{
-		svc: spnego.SPNEGOService(kt, opts...),
-	}, nil
+	// Plumb the optional skew override ONLY when set. A zero value is left out
+	// entirely so the opts slice is byte-identical to before — gokrb5 then
+	// applies its own 5-minute default. (Config.Validate already rejected a
+	// negative value.) This governs the ticket-validity, authenticator-skew,
+	// and replay-cache-retention window alike.
+	if cfg.MaxClockSkew > 0 {
+		opts = append(opts, service.MaxClockSkew(cfg.MaxClockSkew))
+	}
+	return opts
 }
 
 // loadKeytab reads the keytab from whichever source the (already-validated)
@@ -166,6 +180,13 @@ func (v *gokrb5Validator) Validate(_ context.Context, negotiateToken []byte) (st
 		return "", "", nil, fmt.Errorf("%w: no credentials in validated context", ErrValidate)
 	}
 
+	// UserName is KDC-asserted, not attacker-controllable: when a PAC is decoded
+	// (the AD default), gokrb5 OVERWRITES UserName with the PAC's EffectiveName
+	// (spnego/krb5Token.go), so the qualified principal we build below is the
+	// KDC's signed EffectiveName, NOT the raw authenticator CName a client could
+	// influence — and the PAC itself is keytab-validated. Domain() / the realm
+	// is NOT PAC-overwritten (it comes from the validated ticket's realm), so
+	// the realm gate in the handler is unaffected by PAC decoding.
 	principal := creds.UserName()
 	realm := creds.Domain()
 	if principal == "" || realm == "" {
@@ -185,25 +206,17 @@ func (v *gokrb5Validator) Validate(_ context.Context, negotiateToken []byte) (st
 const ctxKeyCredentials = "github.com/jcmturner/gokrb5/v8/ctxCredentials"
 
 // extractGroups returns the PAC group SIDs from the validated credentials, or
-// nil when no PAC was present / PAC decoding was disabled. gokrb5 stores the
-// decoded PAC as an ADCredentials attribute; we read it through the typed
-// accessor first, falling back to the JSON-encoded attribute form some gokrb5
-// paths use, so groups surface regardless of which representation is present.
+// nil when no PAC was present / PAC decoding was disabled. gokrb5 decodes the
+// AD PAC into a value-typed credentials.ADCredentials stored under the standard
+// attribute key and exposed via the typed GetADCredentials accessor; that is
+// the ONLY representation gokrb5 produces. (An earlier JSON-string fallback
+// here was dead code — gokrb5 never stashes the ADCredentials as a string — so
+// it was removed.) Groups are enrichment, never an auth gate: no PAC ⇒ nil, and
+// the principal + realm still authenticate.
 func extractGroups(creds *credentials.Credentials) []string {
 	ad := creds.GetADCredentials()
 	if len(ad.GroupMembershipSIDs) > 0 {
 		return append([]string(nil), ad.GroupMembershipSIDs...)
-	}
-	// Fallback: some gokrb5 versions stash the ADCredentials as a JSON string
-	// under the attribute key. Read it defensively (any decode error ⇒ no
-	// groups, never an error — groups are an enrichment, not a gate).
-	if raw, ok := creds.Attributes()[credentials.AttributeKeyADCredentials]; ok {
-		if s, isStr := raw.(string); isStr && s != "" {
-			var decoded credentials.ADCredentials
-			if json.Unmarshal([]byte(s), &decoded) == nil && len(decoded.GroupMembershipSIDs) > 0 {
-				return append([]string(nil), decoded.GroupMembershipSIDs...)
-			}
-		}
 	}
 	return nil
 }

@@ -35,6 +35,25 @@ const (
 // credential.
 const errInvalidToken = "invalid_token"
 
+// Secret-free reason codes carried on the SERVER-SIDE failure audit event
+// (Metadata "reason"), NEVER on the wire. They distinguish the two failure
+// classes for a SIEM/anomaly detector without leaking which check failed to the
+// client (the wire stays the one generic 401 — oracle-safe, AGENTS.md §2). They
+// are an internal audit vocabulary, NOT a wire `error` code, so docs/
+// error-codes.md is unaffected.
+const (
+	// reasonValidate — the SPNEGO token did not validate against the keytab
+	// (forged / malformed base64 / bad signature / expired / replayed / not a
+	// SPNEGO token — all collapsed). There is NO validated identity, so no
+	// principal/realm is attached.
+	reasonValidate = "krb5_validate"
+	// reasonRealmMismatch — the ticket validated against the keytab but the
+	// authenticated principal's realm is not the configured one (the
+	// load-bearing realm gate). Here the principal/realm ARE keytab-validated,
+	// so they may be attached for the operator's triage.
+	reasonRealmMismatch = "krb5_realm_mismatch"
+)
+
 // negotiateHandler serves the SPNEGO/Negotiate flow for one configured
 // surface: challenge -> validate the ticket against the keytab -> mint SSO
 // tokens for the validated principal.
@@ -82,6 +101,7 @@ func (h *negotiateHandler) serve(w http.ResponseWriter, r *http.Request) {
 	tokenBytes, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil || len(tokenBytes) == 0 {
 		h.logger.Error("kerberos: malformed Negotiate token", "error", "base64 decode")
+		h.recordLoginFailure(r.Context(), reasonValidate, "", "")
 		h.challenge(w, http.StatusUnauthorized, errInvalidToken)
 		return
 	}
@@ -92,17 +112,28 @@ func (h *negotiateHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Oracle-safe: log the reason (already secret-free; never the keytab or
 		// token), return ONE generic 401 + a Negotiate challenge so a stale
-		// ticket can be retried.
+		// ticket can be retried. A secret-free failure audit event surfaces the
+		// attempt to the audit pipeline + anomaly detectors (parity with the
+		// SAML/MFA *_failure side channel) WITHOUT changing the wire response.
+		// No principal is emitted: validation FAILED, so there is no validated
+		// identity to attribute — only a generic reason.
 		h.logger.Error("kerberos: SPNEGO validation failed", "error", err.Error())
+		h.recordLoginFailure(r.Context(), reasonValidate, "", "")
 		h.challenge(w, http.StatusUnauthorized, errInvalidToken)
 		return
 	}
 
-	// (4) Defense-in-depth realm check: even though the keytab validated the
-	// ticket, only mint for the configured realm. A principal from any other
-	// realm the keytab might transitively trust is rejected (same generic 401).
+	// (4) Realm check. This is LOAD-BEARING, not cosmetic, and MUST NOT be
+	// removed: the keytab validates the AP-REQ *signature* but does NOT pin the
+	// client's realm — a keytab provisioned for cross-realm trust will happily
+	// validate a ticket whose client lives in a FOREIGN trusted realm. This
+	// EqualFold comparison is therefore the SOLE constraint binding the
+	// authenticated principal to the one realm this surface accepts; without it
+	// a principal from any transitively-trusted realm could mint here. A
+	// mismatch collapses to the same generic 401 (oracle-safe).
 	if !strings.EqualFold(strings.TrimSpace(realm), strings.TrimSpace(h.cfg.Realm)) {
 		h.logger.Error("kerberos: principal realm not permitted", "expected_realm", h.cfg.Realm)
+		h.recordLoginFailure(r.Context(), reasonRealmMismatch, realm, principal)
 		h.challenge(w, http.StatusUnauthorized, errInvalidToken)
 		return
 	}
@@ -302,6 +333,46 @@ func (h *negotiateHandler) recordLogin(ctx context.Context, clientID, userID, se
 		SessionID: sessionID,
 	}
 	audit.SetMeta(e, "krb5_realm", realm)
+	h.deps.AuditRecorder.Record(ctx, e)
+}
+
+// recordLoginFailure emits a login_failure audit event (the EXISTING
+// audit.EventLoginFailure vocabulary — NOT a new wire contract) on a validation
+// or realm-gate rejection, so brute-force / replay attempts against the
+// Negotiate endpoint surface in the audit pipeline + anomaly detectors. It is
+// the SECRET-BEARING server-side side channel that pairs with the oracle-safe
+// wire response (the SAML/MFA *_failure pattern, AGENTS.md §2): the WIRE stays a
+// byte-identical generic 401, the detail rides only this server-side event.
+//
+// Carries ONLY a secret-free reason (Metadata "reason"=reasonValidate|
+// reasonRealmMismatch, "provider"=Config.Name) — NEVER the ticket, keytab, or
+// any gokrb5 internal. principal/realm are attached ONLY when keytab-validated
+// (the realm-mismatch case, where the KDC asserted them); on a validation
+// failure they are empty (no validated identity exists to attribute, and the
+// client-asserted name from an unvalidated token MUST NOT be trusted/logged as
+// an identity). Nil recorder = no-op. Metadata rides SetMeta (NEVER e.Metadata =
+// map{}, which clobbers geo/tenant enrichment, AGENTS.md §2).
+func (h *negotiateHandler) recordLoginFailure(ctx context.Context, reason, validatedRealm, validatedPrincipal string) {
+	if h.deps.AuditRecorder == nil {
+		return
+	}
+	e := &audit.Event{
+		Type:     audit.EventLoginFailure,
+		Outcome:  audit.OutcomeFailure,
+		Provider: h.cfg.Name,
+		ClientID: h.cfg.ClientID,
+		Reason:   reason,
+	}
+	// ActorID + realm only when keytab-validated (realm-mismatch path). On a
+	// validation failure both stay empty — there is no proven identity.
+	if validatedPrincipal != "" {
+		e.ActorID = validatedPrincipal + "@" + validatedRealm
+	}
+	audit.SetMeta(e, "reason", reason)
+	audit.SetMeta(e, "provider", h.cfg.Name)
+	if validatedRealm != "" {
+		audit.SetMeta(e, "krb5_realm", validatedRealm)
+	}
 	h.deps.AuditRecorder.Record(ctx, e)
 }
 

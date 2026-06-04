@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/defaultimpl"
 	"github.com/snaplink/sso/oidc"
 
@@ -57,18 +59,24 @@ type harness struct {
 	users    *defaultimpl.MemoryUserProvider
 	sessions *defaultimpl.MemorySessionManager
 	issuer   *defaultimpl.Ed25519JWTIssuer
+	// auditSink captures every recorded event so failure/success-audit tests
+	// can assert the side channel (real MemorySink, no mock — §2).
+	auditSink *audit.MemorySink
 }
 
 // newHarness wires real in-memory stores + an Ed25519 issuer (which implements
 // BOTH sso.TokenIssuer and oidc.IDTokenIssuer) behind Build, with the supplied
 // fake validator. The minting client is registered active with openid scope so
-// the id_token path is exercised.
+// the id_token path is exercised. An audit Recorder over a MemorySink is wired
+// so tests can assert the login_success / login_failure side channel.
 func newHarness(t *testing.T, v kerberosauth.SPNEGOValidator, cfgMut func(*kerberosauth.Config)) *harness {
 	t.Helper()
 	clients := defaultimpl.NewMemoryClientStore()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager()
 	issuer := defaultimpl.NewEd25519JWTIssuer()
+	auditSink := audit.NewMemorySink(64)
+	recorder := audit.New(auditSink)
 
 	if err := clients.Add(context.Background(), &sso.Client{
 		ID:            testClientID,
@@ -95,6 +103,7 @@ func newHarness(t *testing.T, v kerberosauth.SPNEGOValidator, cfgMut func(*kerbe
 		UserProvider:           users,
 		IssuerForClient:        func(c *sso.Client) (string, sso.TokenIssuer, error) { return "jwt", issuer, nil },
 		IDTokenIssuerForClient: func(c *sso.Client) (oidc.IDTokenIssuer, bool, error) { return issuer, true, nil },
+		AuditRecorder:          recorder,
 	}, cfg, v)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -112,7 +121,43 @@ func newHarness(t *testing.T, v kerberosauth.SPNEGOValidator, cfgMut func(*kerbe
 	if h == nil {
 		t.Fatal("no GET handler mounted")
 	}
-	return &harness{handler: h, clients: clients, users: users, sessions: sessions, issuer: issuer}
+	return &harness{handler: h, clients: clients, users: users, sessions: sessions, issuer: issuer, auditSink: auditSink}
+}
+
+// newHarnessNoAudit builds a handler with NO AuditRecorder wired — the pre-FIX-#6
+// configuration — so a test can capture the wire response as it was BEFORE the
+// failure-audit side channel was added and prove the audited build is
+// byte-identical on the wire.
+func newHarnessNoAudit(t *testing.T, v kerberosauth.SPNEGOValidator) http.HandlerFunc {
+	t.Helper()
+	clients := defaultimpl.NewMemoryClientStore()
+	if err := clients.Add(context.Background(), &sso.Client{
+		ID: testClientID, Active: true, AllowedScopes: []string{sso.ScopeOpenID, "profile"},
+	}); err != nil {
+		t.Fatalf("add client: %v", err)
+	}
+	res, err := kerberosauth.Build(kerberosauth.Deps{
+		ClientStore:    clients,
+		SessionManager: defaultimpl.NewMemorySessionManager(),
+		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		IssuerForClient: func(c *sso.Client) (string, sso.TokenIssuer, error) {
+			return "jwt", defaultimpl.NewEd25519JWTIssuer(), nil
+		},
+		// AuditRecorder deliberately nil.
+	}, kerberosauth.Config{
+		Name: "kerberos", KeytabBytes: []byte("kt"), ServicePrincipal: testSPN,
+		Realm: testRealm, ClientID: testClientID,
+	}, v)
+	if err != nil {
+		t.Fatalf("Build (no audit): %v", err)
+	}
+	for _, hs := range res.Handlers {
+		if hs.Method == http.MethodGet {
+			return hs.Handler
+		}
+	}
+	t.Fatal("no GET handler mounted")
+	return nil
 }
 
 func negotiateHeader(tokenBytes []byte) string {
@@ -361,6 +406,128 @@ func TestWrongRealm_Rejected(t *testing.T) {
 	assertNoMint(t, h)
 }
 
+// TestForgedToken_EmitsFailureAudit (FIX #6) proves a validation failure emits a
+// SECRET-FREE login_failure audit event (Outcome=failure, provider, reason=
+// krb5_validate, NO identity/secret) — the side channel that surfaces brute-
+// force/replay attempts to the audit pipeline + anomaly detectors — WHILE the
+// wire response stays the byte-identical generic 401 (oracle-safe). No principal
+// is attached: validation failed, so there is no proven identity.
+func TestForgedToken_EmitsFailureAudit(t *testing.T) {
+	const secretCause = "bad signature against keytab S-1-5-21-secret"
+	v := &fakeValidator{err: errors.New(secretCause)}
+	h := newHarness(t, v, nil)
+
+	// Capture the wire response WITHOUT auditing first, to prove byte-identity.
+	noAudit := newHarnessNoAudit(t, &fakeValidator{err: errors.New("a different cause entirely")})
+	wantBody := doGET(noAudit, negotiateHeader([]byte("forged"))).Body.String()
+
+	rr := doGET(h.handler, negotiateHeader([]byte("forged-token")))
+
+	// Wire stays the generic 401 + Negotiate, and byte-identical to the
+	// no-audit build (the audit is purely server-side).
+	assertNegotiateChallenge(t, rr)
+	assertNoStore(t, rr)
+	if rr.Body.String() != wantBody {
+		t.Errorf("audit changed the wire body:\n got %q\n want %q", rr.Body.String(), wantBody)
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["error"] != "invalid_token" {
+		t.Errorf("error = %q, want invalid_token", resp["error"])
+	}
+	assertNoMint(t, h)
+
+	// The failure audit is recorded, secret-free, with no attached identity.
+	// The validator's internal error string (secretCause) must NEVER appear.
+	assertSecretFreeFailureAudit(t, h, "krb5_validate", "", secretCause, "forged-token", "S-1-5-21-secret")
+}
+
+// TestWrongRealm_EmitsFailureAudit (FIX #6) proves the realm-gate rejection
+// emits a login_failure audit (reason=krb5_realm_mismatch). Here the principal
+// IS keytab-validated (the KDC asserted it), so the qualified principal MAY be
+// attached for the operator's triage — but still no secret (ticket/keytab). The
+// wire stays the byte-identical generic 401.
+func TestWrongRealm_EmitsFailureAudit(t *testing.T) {
+	v := &fakeValidator{principal: "mallory", realm: "EVIL.CORP"} // != EXAMPLE.COM
+	h := newHarness(t, v, nil)
+
+	rr := doGET(h.handler, negotiateHeader([]byte("valid-but-foreign-realm")))
+
+	assertNegotiateChallenge(t, rr)
+	assertNoStore(t, rr)
+	assertNoMint(t, h)
+
+	// reason=krb5_realm_mismatch; the keytab-validated principal@realm IS
+	// attached (legitimate — it is KDC-asserted, not attacker-controlled). No
+	// secret material rides the event.
+	assertSecretFreeFailureAudit(t, h, "krb5_realm_mismatch", "mallory@EVIL.CORP", "valid-but-foreign-realm")
+	// And the validated foreign realm rides Metadata for triage.
+	e := auditEventsOfType(t, h, audit.EventLoginFailure)[0]
+	if e.Metadata["krb5_realm"] != "EVIL.CORP" {
+		t.Errorf("realm-mismatch Metadata[krb5_realm] = %q, want EVIL.CORP", e.Metadata["krb5_realm"])
+	}
+}
+
+// TestMalformedBase64_EmitsFailureAudit (FIX #6) proves the malformed-base64
+// path (which never reaches the validator) ALSO emits the krb5_validate failure
+// audit, with no identity — consistent with its oracle-safe collapse to the
+// same 401 as a bad ticket.
+func TestMalformedBase64_EmitsFailureAudit(t *testing.T) {
+	v := &fakeValidator{principal: "alice", realm: testRealm}
+	h := newHarness(t, v, nil)
+
+	rr := doGET(h.handler, "Negotiate not!!base64!!")
+
+	assertNegotiateChallenge(t, rr)
+	if v.gotToken != nil {
+		t.Error("validator was handed an undecodable token")
+	}
+	assertNoMint(t, h)
+	assertSecretFreeFailureAudit(t, h, "krb5_validate", "")
+}
+
+// TestNoCredentialChallenge_NoFailureAudit (FIX #6) proves the INITIAL handshake
+// leg (no Authorization header) does NOT emit a failure audit — it is the normal
+// SPNEGO challenge, not a credential failure, so it must not pollute the audit
+// pipeline / trip brute-force detectors.
+func TestNoCredentialChallenge_NoFailureAudit(t *testing.T) {
+	v := &fakeValidator{principal: "alice", realm: testRealm}
+	h := newHarness(t, v, nil)
+
+	doGET(h.handler, "")           // no credential
+	doGET(h.handler, "Bearer abc") // non-Negotiate scheme = also the handshake leg
+
+	if fails := auditEventsOfType(t, h, audit.EventLoginFailure); len(fails) != 0 {
+		t.Errorf("login_failure events on the handshake leg = %d, want 0", len(fails))
+	}
+}
+
+// TestValidToken_EmitsLoginSuccessAudit (FIX #6 parity) proves the SUCCESS path
+// still records a login_success (unchanged) and NO login_failure.
+func TestValidToken_EmitsLoginSuccessAudit(t *testing.T) {
+	v := &fakeValidator{principal: "alice", realm: testRealm}
+	h := newHarness(t, v, nil)
+
+	rr := doGET(h.handler, negotiateHeader([]byte("\x60\x82ok")))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	succ := auditEventsOfType(t, h, audit.EventLogin)
+	if len(succ) != 1 {
+		t.Fatalf("login_success events = %d, want 1", len(succ))
+	}
+	if succ[0].Outcome != audit.OutcomeSuccess {
+		t.Errorf("success Outcome = %q, want success", succ[0].Outcome)
+	}
+	if succ[0].ActorID != "alice@"+testRealm {
+		t.Errorf("success ActorID = %q, want the qualified principal", succ[0].ActorID)
+	}
+	if fails := auditEventsOfType(t, h, audit.EventLoginFailure); len(fails) != 0 {
+		t.Errorf("login_failure events on the success path = %d, want 0", len(fails))
+	}
+}
+
 // TestGroupRealmMapping_CustomKeys proves AttributeMapping renames the derived
 // realm + groups attributes onto the AuthResult/user under the operator's keys.
 func TestGroupRealmMapping_CustomKeys(t *testing.T) {
@@ -485,6 +652,66 @@ func TestBuild_Validation(t *testing.T) {
 	d.IssuerForClient = nil
 	if _, err := kerberosauth.Build(d, goodCfg, v); err == nil {
 		t.Error("Build with nil IssuerForClient should error")
+	}
+}
+
+// ---- audit-side-channel helpers -------------------------------------------
+
+// auditEventsOfType returns every recorded event of the given type. It queries
+// the MemorySink (the same Query path the rest of the server uses).
+func auditEventsOfType(t *testing.T, h *harness, typ audit.EventType) []*audit.Event {
+	t.Helper()
+	evs, err := h.auditSink.Query(context.Background(), audit.Query{Type: typ})
+	if err != nil {
+		t.Fatalf("query audit events: %v", err)
+	}
+	return evs
+}
+
+// assertSecretFreeFailureAudit asserts EXACTLY one login_failure event was
+// recorded with Outcome=failure, the provider label, the expected secret-free
+// reason, and NO secret material anywhere in it (no ticket, keytab, base64
+// token, or gokrb5 internal). wantPrincipalRealm is the qualified principal the
+// realm-mismatch path may attach (keytab-validated); "" asserts NO actor/
+// identity is attached (the validation-failure path, where there is no proven
+// identity). It also asserts NO login_success leaked.
+func assertSecretFreeFailureAudit(t *testing.T, h *harness, wantReason, wantPrincipalRealm string, secretsAbsent ...string) {
+	t.Helper()
+	fails := auditEventsOfType(t, h, audit.EventLoginFailure)
+	if len(fails) != 1 {
+		t.Fatalf("login_failure events = %d, want exactly 1", len(fails))
+	}
+	e := fails[0]
+	if e.Outcome != audit.OutcomeFailure {
+		t.Errorf("failure event Outcome = %q, want failure", e.Outcome)
+	}
+	if e.Provider != "kerberos" {
+		t.Errorf("failure event Provider = %q, want kerberos", e.Provider)
+	}
+	if e.Reason != wantReason {
+		t.Errorf("failure event Reason = %q, want %q", e.Reason, wantReason)
+	}
+	if e.Metadata["reason"] != wantReason {
+		t.Errorf("failure event Metadata[reason] = %q, want %q", e.Metadata["reason"], wantReason)
+	}
+	if e.Metadata["provider"] != "kerberos" {
+		t.Errorf("failure event Metadata[provider] = %q, want kerberos", e.Metadata["provider"])
+	}
+	if e.ActorID != wantPrincipalRealm {
+		t.Errorf("failure event ActorID = %q, want %q", e.ActorID, wantPrincipalRealm)
+	}
+	// No success event must have leaked on a failure path.
+	if succ := auditEventsOfType(t, h, audit.EventLogin); len(succ) != 0 {
+		t.Errorf("login_success events = %d on a failure path, want 0", len(succ))
+	}
+	// The entire serialized event must contain no secret material. The fake
+	// validator never sees real secrets, but this guards against a future change
+	// that attaches the token/keytab/principal-from-an-unvalidated-token.
+	blob := fmt.Sprintf("%+v %+v", *e, e.Metadata)
+	for _, secret := range secretsAbsent {
+		if secret != "" && strings.Contains(blob, secret) {
+			t.Errorf("failure audit event leaked secret-ish value %q: %s", secret, blob)
+		}
 	}
 }
 
