@@ -112,7 +112,9 @@ func testMetadataSignedValidatesAgainstOwnKeyDescriptor(t *testing.T, kind testI
 	certFromDoc := signingCertFromServedMetadata(t, rec.Body.Bytes())
 	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{certFromDoc}}
 	ctx := dsig.NewDefaultValidationContext(store)
-	ctx.Clock = dsig.NewFakeClockAt(fixedNow)
+	// Real wall clock for cert-validity: the synthetic signing cert's dates are
+	// real-now-based (AssertionSigner.buildCert has no clock seam), so pinning a
+	// fixed past clock falsely rejects it once the real date drifts past fixedNow.
 	if _, err := ctx.Validate(root); err != nil {
 		t.Fatalf("metadata signature INVALID against its OWN KeyDescriptor cert: %v", err)
 	}
@@ -359,7 +361,9 @@ func TestMetadata_Signed_ConcurrentRequests_RaceSafe(t *testing.T) {
 	certFromDoc := signingCertFromServedMetadata(t, rec.Body.Bytes())
 	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{certFromDoc}}
 	ctx := dsig.NewDefaultValidationContext(store)
-	ctx.Clock = dsig.NewFakeClockAt(fixedNow)
+	// Real wall clock for cert-validity: the synthetic signing cert's dates are
+	// real-now-based (AssertionSigner.buildCert has no clock seam), so pinning a
+	// fixed past clock falsely rejects it once the real date drifts past fixedNow.
 	if _, err := ctx.Validate(doc.Root()); err != nil {
 		t.Fatalf("post-concurrency signed metadata INVALID: %v", err)
 	}

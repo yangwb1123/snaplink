@@ -288,9 +288,11 @@ func verifyAssertionSignature(t *testing.T, assertionEl *etree.Element, signer *
 	}
 	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{cert}}
 	ctx := dsig.NewDefaultValidationContext(store)
-	// Pin the validation clock inside the cert window so cert-validity never
-	// trips (the synthetic cert is valid for 10y around now anyway).
-	ctx.Clock = dsig.NewFakeClockAt(fixedNow)
+	// Validate cert-validity at the REAL wall clock (NewDefaultValidationContext's
+	// default): the synthetic signing cert's NotBefore/NotAfter use time.Now()
+	// (AssertionSigner.buildCert has no clock seam), so pinning to a fixed past
+	// clock falsely rejected the cert as "not valid at this time" once the real
+	// date drifted past fixedNow. The XML-DSig digest itself is clock-independent.
 	if _, err := ctx.Validate(assertionEl); err != nil {
 		t.Fatalf("assertion signature INVALID: %v", err)
 	}
@@ -338,7 +340,8 @@ func assertionValidatesAgainst(assertionEl *etree.Element, signer *AssertionSign
 	}
 	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{cert}}
 	ctx := dsig.NewDefaultValidationContext(store)
-	ctx.Clock = dsig.NewFakeClockAt(fixedNow)
+	// Real wall clock for cert-validity (the synthetic cert is real-now-based; see
+	// the assertion-signature helper above).
 	_, err = ctx.Validate(assertionEl)
 	return err == nil
 }
