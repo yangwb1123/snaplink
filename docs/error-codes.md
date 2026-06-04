@@ -72,21 +72,39 @@ exact emission site.
 |-----------------------|------|------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
 | `session_invalid`     | 404  | `session_id` is unknown / expired, or the user record disappeared mid-ceremony (unknown-session + unknown-user collapsed for oracle-leak resistance) | Restart the ceremony from the matching `/begin`        |
 | `ceremony_failed`     | 400  | go-webauthn rejected the attestation / assertion (parse failure, bad signature, challenge mismatch, counter regression) | Retry the ceremony; check the authenticator + origin   |
-| `attestation_denied`  | 403  | The operator's attestation policy rejected the authenticator: its AAGUID is not on the allowlist (or is on the denylist). The credential was NOT persisted. The specific AAGUID + policy mode are in the `webauthn_attestation_denied` audit event, never on the wire | Use an approved authenticator (an operator-curated model) |
+| `attestation_denied`  | 403  | The operator's attestation policy rejected the authenticator: either its AAGUID is not on the allowlist (or is on the denylist), OR the credential conveyed no attestation (format `none` — a downgrade an active policy refuses). The credential was NOT persisted. The specific AAGUID + policy mode + a machine-readable `reason` (`aaguid_not_permitted` \| `attestation_format_none`) are in the `webauthn_attestation_denied` audit event, never on the wire | Use an approved authenticator (an operator-curated model) that conveys attestation |
 
 **Attestation policy** (`webauthn.attestation`, opt-in): when an operator
 configures `policy_mode: allowlist|denylist`, registration is gated on the
 authenticator's AAGUID (the public authenticator-model identifier carried in
 the attestation's authenticator data) AFTER go-webauthn verifies the
-attestation statement. A rejection returns the generic `attestation_denied`
-(403) — the registering user learns their authenticator isn't approved, not
-the policy internals; the rejected AAGUID + the gating mode are surfaced ONLY
-in the `webauthn_attestation_denied` audit event (the AAGUID is a public
-model identifier, not a secret). A successful registration emits
+attestation statement. An active policy REQUIRES `conveyance: direct` (or
+`enterprise`) — the server fails to boot otherwise — and REJECTS any credential
+that conveyed no attestation (format `none`, which go-webauthn accepts with no
+signature check), so a client cannot downgrade to slip a denylist or spoof an
+allowlisted AAGUID under `none`. A rejection returns the generic
+`attestation_denied` (403) — the registering user learns their authenticator
+isn't approved, not the policy internals; the rejected AAGUID, the gating mode,
+and a machine-readable `reason` (`aaguid_not_permitted` | `attestation_format_none`)
+are surfaced ONLY in the `webauthn_attestation_denied` audit event (the AAGUID
+is a public model identifier, not a secret). A successful registration emits
 `webauthn_registered` (audit) carrying the registered AAGUID for operator
 allowlist curation. The default (`conveyance: none`, `policy_mode: off`)
 introduces no new wire behavior — it accepts any authenticator exactly as
 before.
+
+**Assurance — what this gate does and does NOT give you** (do not over-claim):
+with a policy active and a verified attestation statement, go-webauthn verifies
+the attestation *signature* and, in the basic/x5c path, matches the AAGUID to
+the attestation certificate. BUT without go-webauthn's `metadata.Provider`
+(`Config.MDS`) validating that certificate *chain* up to a FIDO Metadata Service
+root, the AAGUID gate is NOT cryptographically adversary-resistant: a determined
+attacker can craft a self-signed `x5c` (or self/`none` attestation) asserting an
+allowlisted AAGUID. So WITHOUT MDS this is an OPERATIONAL control — honest-client
+gating, audit visibility of which AAGUIDs registered, and blocking non-attesting
+software authenticators — NOT a defense against a hostile registrant. Wiring
+go-webauthn's `metadata.Provider` against the FIDO MDS is the documented
+follow-on for full adversary-resistance.
 
 ### MFA orchestration (`/auth/login`, `/auth/mfa`)
 

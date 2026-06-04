@@ -95,13 +95,16 @@ const (
 	EventWebAuthnRegistered EventType = "webauthn_registered"
 
 	// EventWebAuthnAttestationDenied — a WebAuthn registration was
-	// REJECTED by the operator's attestation policy: the authenticator's
-	// AAGUID was not on the allowlist (or was on the denylist). The
-	// credential was NOT persisted. Outcome=failure; Metadata "aaguid"
-	// carries the rejected AAGUID and "policy_mode" the gating mode
-	// (allowlist|denylist); Reason is the operator-side detail. The
-	// registering client only sees a generic attestation_denied error —
-	// the specifics live here.
+	// REJECTED by the operator's attestation policy: either the
+	// authenticator's AAGUID was not on the allowlist (or was on the
+	// denylist), or the credential conveyed no attestation (format "none" —
+	// a downgrade an active policy refuses). The credential was NOT
+	// persisted. Outcome=failure; Metadata "aaguid" carries the rejected
+	// AAGUID, "policy_mode" the gating mode (allowlist|denylist), and
+	// "reason" a machine-readable cause (aaguid_not_permitted |
+	// attestation_format_none); Reason is the human-readable operator-side
+	// detail. The registering client only sees a generic attestation_denied
+	// error — the specifics live here.
 	EventWebAuthnAttestationDenied EventType = "webauthn_attestation_denied"
 
 	// Admin control-plane mutations. Every mutating RPC on the

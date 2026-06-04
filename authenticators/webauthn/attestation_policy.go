@@ -41,6 +41,19 @@ const (
 // [AttestationPolicyDenylist] it can be banned by listing it.
 const ZeroAAGUID = "00000000-0000-0000-0000-000000000000"
 
+// AttestationFormatNone is go-webauthn's attestation statement format
+// identifier for a credential that conveyed NO attestation. go-webauthn's
+// VerifyAttestation short-circuits this format with ZERO signature
+// verification (it only checks the statement is absent), so the AAGUID such a
+// credential carries is the all-zero / unverifiable value — untrustworthy by
+// construction. An active [AttestationPolicy] rejects it (see
+// [Helper.checkAttestationPolicy]) because a denylist would never match its
+// zero AAGUID (silent bypass) and an allowlist gate is meaningless on an
+// un-attested AAGUID; a client may downgrade to this format even when the RP
+// requested "direct" conveyance (conveyance is only a preference). Matched
+// case-insensitively against gw.Credential.AttestationFormat.
+const AttestationFormatNone = "none"
+
 // ErrAttestationDenied is the sentinel returned by [AttestationPolicy.Check]
 // (and surfaced by [Helper.FinishRegistration]) when an authenticator's
 // AAGUID is not permitted by the configured policy. Callers map it to a
@@ -52,19 +65,44 @@ var ErrAttestationDenied = errors.New("webauthn: authenticator not permitted by 
 
 // AttestationDeniedError is the concrete denial [Helper.FinishRegistration]
 // returns when the attestation policy rejects a credential. It carries the
-// canonical AAGUID + the policy mode so the wiring layer can emit a precise
-// audit event (the AAGUID is a public authenticator-model identifier, not a
-// secret — safe in audit metadata). It wraps [ErrAttestationDenied] so
-// callers can match with errors.Is without depending on the concrete type.
+// canonical AAGUID + the policy mode + a machine-readable Reason so the wiring
+// layer can emit a precise audit event (the AAGUID is a public
+// authenticator-model identifier, not a secret — safe in audit metadata). It
+// wraps [ErrAttestationDenied] so callers can match with errors.Is without
+// depending on the concrete type.
 type AttestationDeniedError struct {
 	// AAGUID is the canonical (lowercased, hyphenated) AAGUID of the
-	// rejected authenticator, or "" when the AAGUID was unparseable.
+	// rejected authenticator, or "" when the AAGUID was unparseable / the
+	// credential conveyed no attestation.
 	AAGUID string
 	// Mode is the policy mode that produced the denial (allowlist|denylist).
 	Mode AttestationPolicyMode
+	// Reason is a stable, machine-readable denial reason for the audit trail
+	// ([ReasonAAGUIDNotPermitted] for an AAGUID-list miss, or
+	// [ReasonAttestationFormatNone] for a none-attestation downgrade). It is
+	// an internal audit field, NOT a wire error code — the client always sees
+	// the generic attestation_denied disposition regardless of Reason.
+	Reason string
 }
 
+// Denial reasons carried on [AttestationDeniedError.Reason]. These are
+// internal audit-metadata values (not wire error codes); the registering
+// client never sees them — the oracle-safe attestation_denied disposition is
+// identical for both.
+const (
+	// ReasonAAGUIDNotPermitted: the credential's AAGUID failed the
+	// allowlist/denylist gate.
+	ReasonAAGUIDNotPermitted = "aaguid_not_permitted"
+	// ReasonAttestationFormatNone: the credential conveyed no attestation
+	// (format "none"), so its AAGUID is untrustworthy and an active policy
+	// rejects it before the AAGUID gate even runs.
+	ReasonAttestationFormatNone = "attestation_format_none"
+)
+
 func (e *AttestationDeniedError) Error() string {
+	if e.Reason == ReasonAttestationFormatNone {
+		return fmt.Sprintf("webauthn: credential conveyed no attestation (format none) — rejected by active %s attestation policy", e.Mode)
+	}
 	return fmt.Sprintf("webauthn: authenticator AAGUID %q denied by %s attestation policy", e.AAGUID, e.Mode)
 }
 
@@ -74,11 +112,27 @@ func (e *AttestationDeniedError) Unwrap() error { return ErrAttestationDenied }
 // (the public authenticator-model identifier the authenticator embeds in
 // attested credential data). It is operator-configured and applied at
 // [Helper.FinishRegistration] AFTER go-webauthn has verified the attestation
-// statement, so the AAGUID it gates on is the attestation-verified value
-// (see the package + [Helper.FinishRegistration] docs for the precise
-// assurance level — signature-verified by default; full FIDO-root-rooted
-// assurance needs the go-webauthn metadata.Provider seam, a documented
-// follow-on, not this gate).
+// statement, so the AAGUID it gates on is the attestation-verified value.
+//
+// ASSURANCE — read carefully, do not over-claim:
+//
+//   - An ACTIVE policy requires conveyance direct|enterprise ([NewHelper]
+//     enforces it) AND rejects any credential that conveyed NO attestation
+//     (format "none" — go-webauthn accepts that format with ZERO signature
+//     verification, so its AAGUID is untrustworthy). So with a policy active,
+//     a credential MUST carry an attestation statement go-webauthn verified;
+//     in the basic/x5c path go-webauthn matches the AAGUID to the attestation
+//     certificate.
+//
+//   - WITHOUT go-webauthn's metadata.Provider (Config.MDS) validating that
+//     attestation certificate CHAIN to a FIDO Metadata Service root, the
+//     AAGUID gate is NOT adversary-resistant: a determined attacker can craft
+//     a self-signed x5c (or self/none attestation) asserting an allowlisted
+//     AAGUID. Without MDS this is therefore an OPERATIONAL control (honest-
+//     client gating + audit visibility of registered AAGUIDs + blocking non-
+//     attesting software authenticators), NOT a defense against a hostile
+//     registrant. Full adversary-resistance needs the metadata.Provider seam
+//     (the documented follow-on); this gate does not build the MDS fetcher.
 //
 // The zero value (Mode == [AttestationPolicyOff]) admits every authenticator,
 // so a Helper without a policy behaves byte-identically to one that never

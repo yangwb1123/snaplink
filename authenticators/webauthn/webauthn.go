@@ -144,17 +144,21 @@ type Config struct {
 	// ""/"none" (no attestation — the default, byte-identical to a
 	// pre-policy build), "indirect", "direct", or "enterprise". A
 	// non-none value asks the authenticator to convey an attestation
-	// statement so the AAGUID it carries is attested (and, for "direct",
-	// the statement signature is verified by go-webauthn at finish time).
-	// Required to be non-none for an [AttestationPolicy] to gate on a
-	// MEANINGFUL (attested) AAGUID — without it many authenticators omit
-	// the attestation statement and report the zero AAGUID. Invalid
-	// values are rejected by [NewHelper].
+	// statement so the AAGUID it carries is attested (and, for "direct"/
+	// "enterprise", the statement signature is verified by go-webauthn at
+	// finish time). When an [AttestationPolicy] is active this MUST be
+	// "direct" or "enterprise" — [NewHelper] FAILS otherwise, because under
+	// none/indirect many authenticators omit the attestation statement and
+	// report the zero AAGUID, which a denylist can never match (silent
+	// bypass). Invalid values are rejected by [NewHelper].
 	AttestationConveyance string
 
 	// AttestationPolicy, when set to a gating mode, restricts which
 	// authenticators may register by their AAGUID (allowlist / denylist),
-	// applied at FinishRegistration. Nil ⇒ no gating (the default).
+	// applied at FinishRegistration. An active policy additionally rejects
+	// any credential that conveyed no attestation (format "none") and
+	// REQUIRES AttestationConveyance direct|enterprise. Nil ⇒ no gating (the
+	// default — byte-identical to a pre-policy build).
 	AttestationPolicy *AttestationPolicy
 }
 
@@ -173,6 +177,23 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 	conveyance, err := mapConveyance(cfg.AttestationConveyance)
 	if err != nil {
 		return nil, err
+	}
+	// Boot guard: an ACTIVE attestation policy is meaningless unless the RP
+	// asks for attestation to be conveyed. Under conveyance ""/none/indirect
+	// most authenticators omit the attestation statement and report the
+	// all-zero AAGUID, which a denylist can never match (silent bypass) and an
+	// allowlist gate can only reject wholesale — so a policy with weak
+	// conveyance is silently ineffective. Require direct (or stronger:
+	// enterprise) so the gate sees a verified, model-specific AAGUID. Fail
+	// loud here rather than ship a dark policy. (mapConveyance has already
+	// validated the string; "" / PreferIndirectAttestation are the
+	// below-direct values.)
+	if cfg.AttestationPolicy.Enabled() &&
+		(conveyance == "" || conveyance == protocol.PreferIndirectAttestation) {
+		return nil, fmt.Errorf(
+			"webauthn: attestation policy mode %q requires AttestationConveyance \"direct\" or \"enterprise\" "+
+				"(got %q) — an attestation policy on an un-attested AAGUID is meaningless",
+			cfg.AttestationPolicy.Mode, conveyanceOrNone(cfg.AttestationConveyance))
 	}
 	core, err := gw.New(&gw.Config{
 		RPID:          cfg.RPID,
@@ -217,6 +238,16 @@ func mapConveyance(s string) (protocol.ConveyancePreference, error) {
 	default:
 		return "", fmt.Errorf("webauthn: unknown attestation conveyance %q (want none|indirect|direct|enterprise)", s)
 	}
+}
+
+// conveyanceOrNone renders the operator-supplied conveyance string for the
+// boot-guard error message, normalizing the empty value to "none" so the
+// error names a concrete preference the operator can recognize in config.
+func conveyanceOrNone(s string) string {
+	if v := strings.ToLower(strings.TrimSpace(s)); v != "" {
+		return v
+	}
+	return "none"
 }
 
 // BeginRegistration starts a registration ceremony for name. When
@@ -295,19 +326,40 @@ func (h *Helper) AttestationPolicyEnabled() bool {
 // checkAttestationPolicy applies the configured [AttestationPolicy] to a
 // freshly-verified credential. Returns nil when no policy is configured
 // (mode off) or the authenticator is permitted; otherwise an
-// [AttestationDeniedError] carrying the canonical AAGUID + the policy mode.
-// The canonical AAGUID is best-effort for the error/audit (an unparseable
-// AAGUID yields "" but the denial still stands under allowlist).
+// [AttestationDeniedError] carrying the canonical AAGUID + the policy mode +
+// a machine-readable Reason. The canonical AAGUID is best-effort for the
+// error/audit (an unparseable AAGUID yields "" but the denial still stands
+// under allowlist).
+//
+// When a policy is ACTIVE the gate FIRST rejects a credential that conveyed
+// NO attestation (format "none"). go-webauthn's VerifyAttestation accepts the
+// "none" format with ZERO signature verification, so such a credential's
+// AAGUID is the all-zero / unverifiable value: a denylist would never match
+// it (a banned authenticator could downgrade to "none" and slip through) and
+// an allowlist gate on an un-attested AAGUID is meaningless. Conveyance is
+// only a PREFERENCE the client may ignore, so even an RP that asked for
+// "direct" can receive a "none" credential — this is the structural fix that
+// makes an active policy demand a verified attestation statement. The boot
+// guard (requiring conveyance >= direct for an active policy) is the
+// complementary half; together they close the downgrade bypass. Default-off
+// (no policy) performs NO format check — byte-identical to a pre-policy build.
 func (h *Helper) checkAttestationPolicy(cred *gw.Credential) error {
 	if !h.attestationPolicy.Enabled() {
 		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(cred.AttestationFormat), AttestationFormatNone) {
+		return &AttestationDeniedError{
+			AAGUID: CredentialAAGUID(cred.Authenticator.AAGUID),
+			Mode:   h.attestationPolicy.Mode,
+			Reason: ReasonAttestationFormatNone,
+		}
 	}
 	if err := h.attestationPolicy.Check(cred.Authenticator.AAGUID); err != nil {
 		canon, cerr := canonicalAAGUIDFromBytes(cred.Authenticator.AAGUID)
 		if cerr != nil {
 			canon = ""
 		}
-		return &AttestationDeniedError{AAGUID: canon, Mode: h.attestationPolicy.Mode}
+		return &AttestationDeniedError{AAGUID: canon, Mode: h.attestationPolicy.Mode, Reason: ReasonAAGUIDNotPermitted}
 	}
 	return nil
 }

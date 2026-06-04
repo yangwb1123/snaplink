@@ -31,8 +31,9 @@ func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
 		}
 	}
 
-	// allowlist with AAGUIDs builds an enabled policy.
+	// allowlist with AAGUIDs + direct conveyance builds an enabled policy.
 	p, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{
+		Conveyance: "direct",
 		PolicyMode: "allowlist",
 		AAGUIDs:    []string{testAAGUIDCanonical},
 	})
@@ -43,8 +44,10 @@ func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
 		t.Fatalf("allowlist policy not built correctly: %+v", p)
 	}
 
-	// denylist likewise.
+	// denylist likewise (enterprise conveyance is also accepted — stronger
+	// than direct).
 	p, err = buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{
+		Conveyance: "enterprise",
 		PolicyMode: "DenyList",
 		AAGUIDs:    []string{testAAGUIDCanonical},
 	})
@@ -55,8 +58,30 @@ func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
 		t.Fatalf("denylist mode = %q", p.Mode)
 	}
 
-	// allowlist without AAGUIDs fails loud.
-	if _, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{PolicyMode: "allowlist"}); err == nil {
+	// An active policy with a below-direct conveyance ("" / none / indirect)
+	// fails loud: the boot guard rejects a policy on an un-attested AAGUID.
+	for _, conv := range []string{"", "none", "indirect"} {
+		if _, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{
+			Conveyance: conv,
+			PolicyMode: "allowlist",
+			AAGUIDs:    []string{testAAGUIDCanonical},
+		}); err == nil {
+			t.Fatalf("allowlist with conveyance %q must error (policy needs direct|enterprise)", conv)
+		}
+		if _, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{
+			Conveyance: conv,
+			PolicyMode: "denylist",
+			AAGUIDs:    []string{testAAGUIDCanonical},
+		}); err == nil {
+			t.Fatalf("denylist with conveyance %q must error (policy needs direct|enterprise)", conv)
+		}
+	}
+
+	// allowlist without AAGUIDs fails loud (even with a valid conveyance).
+	if _, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{
+		Conveyance: "direct",
+		PolicyMode: "allowlist",
+	}); err == nil {
 		t.Fatal("allowlist with no AAGUIDs must error")
 	}
 
@@ -67,6 +92,7 @@ func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
 
 	// malformed AAGUID fails loud.
 	if _, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{
+		Conveyance: "direct",
 		PolicyMode: "allowlist",
 		AAGUIDs:    []string{"not-a-uuid"},
 	}); err == nil {
@@ -160,6 +186,7 @@ func TestHelperAttestationPolicyEnabled_GatesSuccessAudit(t *testing.T) {
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
 		Attestation: config.WebAuthnAttestationConfig{
+			Conveyance: "direct", // required now that a policy is active
 			PolicyMode: "allowlist",
 			AAGUIDs:    []string{testAAGUIDCanonical},
 		},
@@ -203,6 +230,7 @@ func TestRecordWebAuthnAttestationDenied_EmitsAAGUIDAndMode(t *testing.T) {
 	denied := &webauthn.AttestationDeniedError{
 		AAGUID: testAAGUIDCanonical,
 		Mode:   webauthn.AttestationPolicyAllowlist,
+		Reason: webauthn.ReasonAAGUIDNotPermitted,
 	}
 
 	r := httptest.NewRequest("POST", "/webauthn/registration/finish?session_id=s", nil)
@@ -225,8 +253,34 @@ func TestRecordWebAuthnAttestationDenied_EmitsAAGUIDAndMode(t *testing.T) {
 	if e.Metadata["policy_mode"] != "allowlist" {
 		t.Fatalf("policy_mode = %q, want allowlist", e.Metadata["policy_mode"])
 	}
+	if e.Metadata["reason"] != webauthn.ReasonAAGUIDNotPermitted {
+		t.Fatalf("reason metadata = %q, want %q", e.Metadata["reason"], webauthn.ReasonAAGUIDNotPermitted)
+	}
 	if e.Reason == "" {
 		t.Fatal("reason must carry the operator-side detail")
+	}
+}
+
+// TestRecordWebAuthnAttestationDenied_NoneReason proves the none-attestation
+// downgrade surfaces its distinct reason (attestation_format_none) in the
+// audit metadata, so an operator can see a downgrade attempt separately from
+// an AAGUID-list miss.
+func TestRecordWebAuthnAttestationDenied_NoneReason(t *testing.T) {
+	sink := audit.NewMemorySink(8)
+	deps := &webauthnDeps{AuditRecorder: audit.New(sink)}
+	denied := &webauthn.AttestationDeniedError{
+		Mode:   webauthn.AttestationPolicyDenylist,
+		Reason: webauthn.ReasonAttestationFormatNone,
+	}
+	r := httptest.NewRequest("POST", "/webauthn/registration/finish?session_id=s", nil)
+	recordWebAuthnAttestationDenied(deps, r, denied)
+
+	events, _ := sink.Query(context.Background(), audit.Query{})
+	if len(events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(events))
+	}
+	if events[0].Metadata["reason"] != webauthn.ReasonAttestationFormatNone {
+		t.Fatalf("reason = %q, want %q", events[0].Metadata["reason"], webauthn.ReasonAttestationFormatNone)
 	}
 }
 

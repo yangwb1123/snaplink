@@ -740,28 +740,43 @@ type WebAuthnConfig struct {
 // default conveyance "none" that accepts ANY authenticator (including
 // software / virtual ones).
 //
-// ASSURANCE LEVEL (be precise — do not over-claim): the policy gates on the
-// AAGUID carried in the attestation's authenticator data. With Conveyance
-// "direct", go-webauthn VERIFIES THE ATTESTATION STATEMENT SIGNATURE at
-// finish time (the per-format packed/tpm/android-key/... verifier), so the
-// AAGUID is bound to the authenticator's attestation key — a meaningful
-// gate. It does NOT, by itself, validate the attestation certificate chain
-// up to a FIDO Metadata Service root: that requires go-webauthn's
-// metadata.Provider (Config.MDS) seam, a documented follow-on this gate does
-// not build. So: signature-verified AAGUID allowlisting today; full
-// FIDO-root-rooted assurance is the deeper next step.
+// ASSURANCE LEVEL (be precise — do not over-claim):
+//
+// When a policy is ACTIVE it requires Conveyance "direct" (or "enterprise");
+// the cmd + webauthn.NewHelper fail loud otherwise, because under none/
+// indirect an authenticator may convey no attestation and report the all-zero
+// AAGUID a denylist can never match. With a verified statement go-webauthn
+// VERIFIES THE ATTESTATION SIGNATURE at finish time (the per-format
+// packed/tpm/android-key/... verifier), and a credential that conveyed NO
+// attestation (format "none" — which go-webauthn accepts with ZERO signature
+// check) is REJECTED by the gate, closing the downgrade where a client ignores
+// the requested conveyance.
+//
+// BUT without go-webauthn's metadata.Provider (Config.MDS) validating the
+// attestation certificate CHAIN up to a FIDO Metadata Service root, the AAGUID
+// gate is NOT cryptographically adversary-resistant: a determined attacker can
+// craft a self-signed x5c (or a self/none attestation) asserting an
+// allowlisted AAGUID. So WITHOUT MDS this is an OPERATIONAL control — it gates
+// honest clients, blocks non-attesting software authenticators, and gives
+// audit visibility of which AAGUIDs registered — NOT a defense against a
+// hostile registrant. For full adversary-resistance, wire go-webauthn's
+// metadata.Provider against the FIDO MDS (the documented follow-on; Config.MDS);
+// this gate does not build the MDS fetcher.
 type WebAuthnAttestationConfig struct {
 	// Conveyance is the attestation conveyance preference sent at
 	// registration: ""/"none" (default — no attestation requested,
 	// byte-identical to today), "indirect", "direct", or "enterprise".
-	// Set "direct" for the policy to gate on a verified AAGUID; under
-	// "none" most authenticators report the zero AAGUID, which an
-	// allowlist rejects.
+	// When PolicyMode gates, this MUST be "direct" or "enterprise" (boot
+	// fails otherwise) so the authenticator conveys a verified, model-specific
+	// AAGUID; under none/indirect most authenticators report the zero AAGUID,
+	// which an allowlist rejects and a denylist can never match.
 	Conveyance string `yaml:"conveyance"`
 
 	// PolicyMode selects AAGUID gating: ""/"off" (no gating — default),
 	// "allowlist" (only AAGUIDs is permitted), or "denylist" (only
-	// AAGUIDs is rejected). Allowlist + denylist are mutually exclusive.
+	// AAGUIDs is rejected). Allowlist + denylist are mutually exclusive. An
+	// active mode requires Conveyance direct|enterprise (see above) and
+	// rejects any credential that conveyed no attestation (format "none").
 	PolicyMode string `yaml:"policy_mode"`
 
 	// AAGUIDs is the allowlist / denylist of authenticator AAGUIDs (canonical

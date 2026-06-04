@@ -256,9 +256,10 @@ func TestFinishRegistrationGate(t *testing.T) {
 			t.Fatalf("policy: %v", err)
 		}
 		h, err := NewHelper(Config{
-			RPID:              "example.com",
-			RPOrigins:         []string{"https://sso.example.com"},
-			AttestationPolicy: policy,
+			RPID:                  "example.com",
+			RPOrigins:             []string{"https://sso.example.com"},
+			AttestationConveyance: "direct", // required for an active policy
+			AttestationPolicy:     policy,
 		}, NewMemoryUserStore(), NewMemorySessionStore())
 		if err != nil {
 			t.Fatalf("NewHelper: %v", err)
@@ -293,12 +294,137 @@ func TestFinishRegistrationGate(t *testing.T) {
 	t.Run("zero AAGUID denied under allowlist", func(t *testing.T) {
 		policy, _ := NewAttestationPolicy(AttestationPolicyAllowlist, []string{aaguidCanonical})
 		h, _ := NewHelper(Config{
-			RPID:              "example.com",
-			RPOrigins:         []string{"https://sso.example.com"},
-			AttestationPolicy: policy,
+			RPID:                  "example.com",
+			RPOrigins:             []string{"https://sso.example.com"},
+			AttestationConveyance: "direct",
+			AttestationPolicy:     policy,
 		}, NewMemoryUserStore(), NewMemorySessionStore())
 		if err := h.checkAttestationPolicy(credWith(zeroAAGUID16)); !errors.Is(err, ErrAttestationDenied) {
 			t.Fatalf("zero AAGUID under allowlist: got %v, want denial", err)
 		}
 	})
+}
+
+// TestFinishRegistrationGate_NoneAttestationRejected proves the downgrade
+// fix: when a policy is active, a credential conveying NO attestation
+// (AttestationFormat "none") is rejected even when its AAGUID would otherwise
+// satisfy the gate. go-webauthn accepts the "none" format with zero signature
+// verification, so the AAGUID is untrustworthy; an active policy MUST demand a
+// verified attestation statement. Default-off performs no format check.
+func TestFinishRegistrationGate_NoneAttestationRejected(t *testing.T) {
+	credNone := func(aaguid []byte) *gw.Credential {
+		c := &gw.Credential{ID: []byte("cred-none"), AttestationFormat: "none"}
+		c.Authenticator.AAGUID = aaguid
+		return c
+	}
+
+	// Active denylist (banning a specific model): a none-attestation cred
+	// carries the zero AAGUID, which the denylist would NOT match — the exact
+	// silent bypass the fix closes. It must be rejected as
+	// attestation_format_none.
+	denyPolicy, err := NewAttestationPolicy(AttestationPolicyDenylist, []string{aaguidCanonical})
+	if err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	hDeny, err := NewHelper(Config{
+		RPID:                  "example.com",
+		RPOrigins:             []string{"https://sso.example.com"},
+		AttestationConveyance: "direct",
+		AttestationPolicy:     denyPolicy,
+	}, NewMemoryUserStore(), NewMemorySessionStore())
+	if err != nil {
+		t.Fatalf("NewHelper: %v", err)
+	}
+	err = hDeny.checkAttestationPolicy(credNone(zeroAAGUID16))
+	var denied *AttestationDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("none-attestation under denylist: expected *AttestationDeniedError, got %v", err)
+	}
+	if denied.Reason != ReasonAttestationFormatNone {
+		t.Fatalf("denied.Reason = %q, want %q", denied.Reason, ReasonAttestationFormatNone)
+	}
+	if !errors.Is(err, ErrAttestationDenied) {
+		t.Fatalf("none denial must wrap ErrAttestationDenied, got %v", err)
+	}
+
+	// Even an ALLOWLISTED AAGUID is rejected when the format is "none": the
+	// client downgraded the (spoofable, unverified) AAGUID, so the gate can't
+	// trust it. Reason is still attestation_format_none (the format check
+	// precedes the AAGUID check).
+	allowPolicy, _ := NewAttestationPolicy(AttestationPolicyAllowlist, []string{aaguidCanonical})
+	hAllow, _ := NewHelper(Config{
+		RPID:                  "example.com",
+		RPOrigins:             []string{"https://sso.example.com"},
+		AttestationConveyance: "direct",
+		AttestationPolicy:     allowPolicy,
+	}, NewMemoryUserStore(), NewMemorySessionStore())
+	err = hAllow.checkAttestationPolicy(credNone(rawAAGUID16))
+	if !errors.As(err, &denied) || denied.Reason != ReasonAttestationFormatNone {
+		t.Fatalf("none-attestation with allowlisted AAGUID: got %v, want attestation_format_none denial", err)
+	}
+
+	// "NONE" (case-insensitive) is also rejected — the format string is
+	// matched case-insensitively.
+	if err := hAllow.checkAttestationPolicy(&gw.Credential{ID: []byte("c"), AttestationFormat: "NONE"}); !errors.Is(err, ErrAttestationDenied) {
+		t.Fatalf("case-insensitive NONE must be rejected, got %v", err)
+	}
+
+	// Default-off (no policy) performs NO format check — a none-attestation
+	// cred passes, byte-identical to a pre-policy build.
+	hOff := newHelperForTest(t)
+	if err := hOff.checkAttestationPolicy(credNone(zeroAAGUID16)); err != nil {
+		t.Fatalf("off helper must not format-check (none passes), got %v", err)
+	}
+
+	// A packed-attestation cred with an allowlisted AAGUID still passes — the
+	// none-rejection does not over-reach to real attestation formats.
+	packed := &gw.Credential{ID: []byte("c-packed"), AttestationFormat: "packed"}
+	packed.Authenticator.AAGUID = rawAAGUID16
+	if err := hAllow.checkAttestationPolicy(packed); err != nil {
+		t.Fatalf("packed attestation with allowlisted AAGUID rejected: %v", err)
+	}
+}
+
+// TestNewHelper_ActivePolicyRequiresDirectConveyance proves the boot guard:
+// an active policy demands conveyance direct|enterprise; ""/none/indirect
+// fail loud; mode-off with any conveyance is fine (no guard).
+func TestNewHelper_ActivePolicyRequiresDirectConveyance(t *testing.T) {
+	mk := func(conv string, policy *AttestationPolicy) error {
+		_, err := NewHelper(Config{
+			RPID:                  "example.com",
+			RPOrigins:             []string{"https://sso.example.com"},
+			AttestationConveyance: conv,
+			AttestationPolicy:     policy,
+		}, NewMemoryUserStore(), NewMemorySessionStore())
+		return err
+	}
+	allow, _ := NewAttestationPolicy(AttestationPolicyAllowlist, []string{aaguidCanonical})
+	deny, _ := NewAttestationPolicy(AttestationPolicyDenylist, []string{aaguidCanonical})
+
+	// Active policy + below-direct conveyance → boot error.
+	for _, conv := range []string{"", "none", "indirect"} {
+		if err := mk(conv, allow); err == nil {
+			t.Fatalf("allowlist + conveyance %q must error at NewHelper", conv)
+		}
+		if err := mk(conv, deny); err == nil {
+			t.Fatalf("denylist + conveyance %q must error at NewHelper", conv)
+		}
+	}
+	// Active policy + direct|enterprise → ok.
+	for _, conv := range []string{"direct", "enterprise", "DIRECT"} {
+		if err := mk(conv, allow); err != nil {
+			t.Fatalf("allowlist + conveyance %q must be accepted, got %v", conv, err)
+		}
+	}
+	// Mode-off (nil policy, or an explicit off policy) + any conveyance → no
+	// guard (the guard only fires for an active policy).
+	for _, conv := range []string{"", "none", "indirect", "direct"} {
+		if err := mk(conv, nil); err != nil {
+			t.Fatalf("nil policy + conveyance %q must be accepted, got %v", conv, err)
+		}
+	}
+	offPolicy, _ := NewAttestationPolicy(AttestationPolicyOff, nil)
+	if err := mk("", offPolicy); err != nil {
+		t.Fatalf("off policy + empty conveyance must be accepted, got %v", err)
+	}
 }

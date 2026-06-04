@@ -81,8 +81,14 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 // buildWebAuthnAttestationPolicy maps the YAML attestation block to a
 // webauthn.AttestationPolicy. An empty / "off" mode yields a nil policy (no
 // gating — byte-identical to a pre-policy build). A gating mode requires a
-// non-empty AAGUID list; both the unknown-mode and empty-list cases fail
-// loud here at boot rather than silently admitting/denying the wrong set.
+// non-empty AAGUID list AND a conveyance of direct|enterprise (an attestation
+// policy on an un-attested AAGUID is meaningless — under none/indirect the
+// authenticator may convey no attestation, reporting the zero AAGUID a
+// denylist can never match). All three — unknown-mode, empty-list, and
+// weak-conveyance — fail loud here at boot rather than silently admitting/
+// denying the wrong set. (webauthn.NewHelper enforces the same conveyance
+// guard for embedders not going through this cmd path; this is the earlier,
+// config-knob-named message for the YAML operator.)
 func buildWebAuthnAttestationPolicy(cfg config.WebAuthnAttestationConfig) (*webauthn.AttestationPolicy, error) {
 	mode := webauthn.AttestationPolicyMode(strings.ToLower(strings.TrimSpace(cfg.PolicyMode)))
 	switch mode {
@@ -91,9 +97,31 @@ func buildWebAuthnAttestationPolicy(cfg config.WebAuthnAttestationConfig) (*weba
 		// both yield a nil policy so the gate is dark.
 		return nil, nil
 	case webauthn.AttestationPolicyAllowlist, webauthn.AttestationPolicyDenylist:
+		if !conveyanceAttestsAAGUID(cfg.Conveyance) {
+			return nil, fmt.Errorf(
+				"webauthn.attestation.policy_mode %q requires webauthn.attestation.conveyance \"direct\" or \"enterprise\" "+
+					"(got %q) — a %s on an un-attested AAGUID is meaningless: under none/indirect the authenticator "+
+					"may report the zero AAGUID, silently neutering the policy",
+				cfg.PolicyMode, conveyanceLabel(cfg.Conveyance), mode)
+		}
 		return webauthn.NewAttestationPolicy(mode, cfg.AAGUIDs)
 	default:
 		return nil, fmt.Errorf("unknown webauthn.attestation.policy_mode %q (want off|allowlist|denylist)", cfg.PolicyMode)
+	}
+}
+
+// conveyanceAttestsAAGUID reports whether the configured conveyance asks the
+// authenticator to actually convey an attestation statement — i.e. "direct"
+// or "enterprise". ""/"none"/"indirect" do NOT (the authenticator may omit
+// the statement and report the zero AAGUID), so they can't back an AAGUID
+// policy. Unknown strings return false; webauthn.NewHelper rejects them as
+// invalid conveyance separately, so this only gates the recognized values.
+func conveyanceAttestsAAGUID(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "direct", "enterprise":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -439,6 +467,11 @@ func recordWebAuthnAttestationDenied(deps *webauthnDeps, r *http.Request, denied
 	}
 	audit.SetMeta(e, "aaguid", denied.AAGUID)
 	audit.SetMeta(e, "policy_mode", string(denied.Mode))
+	// reason distinguishes an AAGUID-list miss from a none-attestation
+	// downgrade (aaguid_not_permitted | attestation_format_none) so operators
+	// can see WHY a registration was rejected — an internal audit field, never
+	// the wire code (both stay the generic attestation_denied disposition).
+	audit.SetMeta(e, "reason", denied.Reason)
 	deps.AuditRecorder.Record(r.Context(), e)
 }
 
