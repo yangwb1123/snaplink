@@ -290,18 +290,27 @@ func WithRegistrationMaxConcurrency(n int) RegistrationOption {
 }
 
 // WithRegistrationTrustMarks wires the OpenID Federation 1.0 §7 trust-mark
-// requirement gate (slice 4b) from the federation Config: an auto-registering
-// RP must carry a valid Trust Mark (a signed conformance assertion from a
-// configured authorized Trust Mark Issuer) of EACH RequiredTrustMarkTypes,
-// else it is NOT admitted. An empty RequiredTrustMarkTypes (or a nil cfg) is
-// INERT — the gate is a no-op and the slice-3 path is byte-identical (the
-// default-off posture). The requirement is compiled ONCE here and shared
-// read-only; it is checked AFTER ResolveTrustChain succeeds and BEFORE the
-// client is derived. A failed mark check is oracle-safe (the same unknown-
-// client outcome as a failed resolution).
+// requirement gate (slice 4b, +slice-4c federation-resolved issuers) from the
+// federation Config: an auto-registering RP must carry a valid Trust Mark (a
+// signed conformance assertion from an AUTHORIZED Trust Mark Issuer) of EACH
+// RequiredTrustMarkTypes, else it is NOT admitted. An empty
+// RequiredTrustMarkTypes (or a nil cfg) is INERT — the gate is a no-op and the
+// slice-3 path is byte-identical (the default-off posture). The requirement is
+// compiled ONCE here and shared read-only; it is checked AFTER ResolveTrustChain
+// succeeds and BEFORE the client is derived. A failed mark check is oracle-safe
+// (the same unknown-client outcome as a failed resolution).
+//
+// The gate is handed the SAME resolver the decorator wraps (s.resolver, set in
+// the struct literal before options run) so the OPT-IN federation-resolved
+// issuer path (Config.AllowFederationResolvedTrustMarkIssuers) can discover a
+// Trust Mark Issuer as a federation entity. When that flag is off (default), the
+// resolver is unused by the gate and behavior is byte-identical to slice 4b
+// (configured issuers only). MUST run after the resolver field is populated —
+// it is (NewRegistrationClientStore sets resolver in the struct literal, then
+// applies options).
 func WithRegistrationTrustMarks(cfg *Config) RegistrationOption {
 	return func(s *RegistrationClientStore) {
-		s.trustMarks = newTrustMarkRequirement(cfg)
+		s.trustMarks = newTrustMarkRequirement(cfg, s.resolver)
 	}
 }
 
@@ -457,7 +466,7 @@ func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, e
 	// outcome as a failed resolution; the cause is logged, not leaked).
 	// Negative-cache it (short TTL) so a repeated probe for an RP that lacks the
 	// required marks isn't re-resolved on every request.
-	if err := s.trustMarks.validate(chain.LeafEntityID, chain.LeafTrustMarks, s.now(), s.logError); err != nil {
+	if err := s.trustMarks.validate(ctx, chain.LeafEntityID, chain.LeafTrustMarks, s.now(), s.logError); err != nil {
 		s.recordNegative(entityID, s.now())
 		s.logError("federation: trust mark requirement unmet for client", "client_id", entityID, "error", err)
 		return nil, false

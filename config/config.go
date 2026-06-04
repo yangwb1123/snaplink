@@ -442,14 +442,36 @@ type FederationConfig struct {
 	RequiredTrustMarkTypes []string `yaml:"required_trust_mark_types"`
 
 	// TrustMarkIssuers is the set of operator-AUTHORIZED Trust Mark Issuers —
-	// the ONLY issuers whose signed Trust Marks can satisfy a
-	// required_trust_mark_types requirement. Each entry pins the issuer Entity
-	// ID, its published keys (jwks_file → the root of trust for verifying its
-	// marks), and (optionally) the types it may issue. A configured-but-
-	// unloadable issuer is a boot error. The federation-resolved
-	// trust_mark_issuers-key path is a follow-on; this uses operator-configured
-	// keys. Only relevant when required_trust_mark_types is non-empty.
+	// the PRIMARY (and, by default, only) issuers whose signed Trust Marks can
+	// satisfy a required_trust_mark_types requirement. Each entry pins the issuer
+	// Entity ID, its published keys (jwks_file → the root of trust for verifying
+	// its marks), and (optionally) the types it may issue. A configured-but-
+	// unloadable issuer is a boot error. The federation-resolved issuer path
+	// (allow_federation_resolved_trust_mark_issuers, below) is an opt-in
+	// FALLBACK; this remains the operator-pinned-keys path. Only relevant when
+	// required_trust_mark_types is non-empty.
 	TrustMarkIssuers []TrustMarkIssuerConfig `yaml:"trust_mark_issuers"`
+
+	// AllowFederationResolvedTrustMarkIssuers opts into the DYNAMIC-FEDERATION
+	// trust-mark issuer path (OpenID Federation 1.0 §3.1.2/§7): a SECOND
+	// authorized-issuer source where a Trust Mark Issuer is itself a federation
+	// entity, discovered + validated via its trust chain rather than pre-
+	// configured in trust_mark_issuers. Default FALSE ⇒ ONLY the operator-
+	// configured trust_mark_issuers path runs (byte-identical to the reviewed
+	// gate). When TRUE: for a required mark whose iss is NOT in trust_mark_issuers,
+	// the issuer is resolved as a federation entity (trust chain to a CONFIGURED
+	// trust anchor, fail-closed) and MUST be listed in that anchor's validated
+	// trust_mark_issuers for the required type; only then do the issuer's chain-
+	// validated keys verify the mark (under the same sub==RP / signed-type /
+	// freshness checks). The authorization ROOT is the configured anchor's
+	// trust_mark_issuers — NOT the issuer's self-assertion, NOT the mark. An
+	// issuer not chaining to a configured anchor, or not anchor-authorized for the
+	// type, is rejected. Requires trust_anchors (the root of trust); the
+	// configured path always takes precedence. SECURITY-SENSITIVE: it admits
+	// marks from dynamically-discovered issuers; the anchor's trust_mark_issuers
+	// is the gate. Only relevant when required_trust_mark_types is non-empty +
+	// auto_register is enabled.
+	AllowFederationResolvedTrustMarkIssuers bool `yaml:"allow_federation_resolved_trust_mark_issuers"`
 }
 
 // TrustMarkIssuerConfig names one operator-authorized Trust Mark Issuer for the

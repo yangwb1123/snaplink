@@ -217,6 +217,23 @@ type FederationEntityMeta struct {
 	OrganizationName        string   `json:"organization_name,omitempty"`
 	Contacts                []string `json:"contacts,omitempty"`
 	FederationFetchEndpoint string   `json:"federation_fetch_endpoint,omitempty"`
+
+	// TrustMarkIssuers is the §7 (federation_entity) trust_mark_issuers claim a
+	// TRUST ANCHOR publishes to declare which issuer Entity IDs are authorized
+	// to mint Trust Marks of each type (OpenID Federation 1.0 §3.1.2): a JSON
+	// object mapping a trust_mark_type URI to the array of authorized issuer
+	// Entity Identifiers. It is the AUTHORIZATION ROOT for the federation-
+	// resolved trust-mark path (slice 4c): when a required mark's iss is not
+	// operator-pre-configured, the issuer is resolved as a federation entity and
+	// MUST be listed here (in the validated ANCHOR config — the root of trust)
+	// for the required type. Per spec, an EMPTY array authorizes ANYONE for that
+	// type ("anyone MAY issue"); the gate reads this off the CHAIN-VALIDATED
+	// anchor config ONLY (the spec mandates it be IGNORED on any non-anchor
+	// Entity Configuration, so a self-asserted value on the issuer or an
+	// intermediate is never consulted). omitempty keeps the slice-1 entity-
+	// publishing path (which never sets it — this OP is a leaf, not an anchor)
+	// byte-identical.
+	TrustMarkIssuers map[string][]string `json:"trust_mark_issuers,omitempty"`
 }
 
 // TrustAnchor names one configured federation trust anchor: its Entity
@@ -349,16 +366,39 @@ type Config struct {
 	// UNKNOWN (oracle-safe, the slice-3 unknown-client path).
 	RequiredTrustMarkTypes []string
 
-	// TrustMarkIssuers is the set of AUTHORIZED Trust Mark Issuers — the ONLY
-	// issuers whose signed Trust Marks can satisfy a RequiredTrustMarkTypes
-	// requirement. WHY operator-configured: a Trust Mark is only as trustworthy
-	// as the issuer's keys, so the operator pins both the issuer Entity ID AND
-	// its keys here (the federation-resolved trust_mark_issuers-key path is a
-	// follow-on). A mark whose iss is NOT in this set, or whose iss IS here but
-	// is not authorized for the mark's type (AllowedTypes), or whose signature
-	// fails against the issuer's keys → does NOT satisfy a requirement (reject).
-	// Only consulted when RequiredTrustMarkTypes is non-empty.
+	// TrustMarkIssuers is the set of AUTHORIZED Trust Mark Issuers — the
+	// PRIMARY (operator-configured) source of issuers whose signed Trust Marks
+	// can satisfy a RequiredTrustMarkTypes requirement. WHY operator-configured:
+	// a Trust Mark is only as trustworthy as the issuer's keys, so the operator
+	// pins both the issuer Entity ID AND its keys here. A mark whose iss is NOT
+	// in this set, or whose iss IS here but is not authorized for the mark's
+	// type (AllowedTypes), or whose signature fails against the issuer's keys →
+	// does NOT satisfy via this path. This is the FIRST (and, by default, ONLY)
+	// authorized-issuer path; the federation-resolved path below is opt-in and
+	// only attempted as a FALLBACK when the configured path doesn't recognize
+	// the iss. Only consulted when RequiredTrustMarkTypes is non-empty.
 	TrustMarkIssuers []TrustMarkIssuer
+
+	// AllowFederationResolvedTrustMarkIssuers opts into the DYNAMIC-FEDERATION
+	// trust-mark issuer path (slice 4c, OpenID Federation 1.0 §3.1.2/§7): a
+	// SECOND authorized-issuer source where a Trust Mark Issuer is itself a
+	// federation entity, discovered + validated via its trust chain rather than
+	// pre-configured. Default FALSE ⇒ ONLY the operator-configured
+	// TrustMarkIssuers path runs (the slice-4b gate is byte-identical — zero
+	// regression to the reviewed gate). When TRUE: for a required mark whose iss
+	// is NOT in TrustMarkIssuers, the issuer is resolved as a federation entity
+	// (ResolveTrustChain to a CONFIGURED trust anchor, slice 2, fail-closed) and
+	// MUST be listed in that anchor's validated trust_mark_issuers for the
+	// required type; only then do the issuer's CHAIN-VALIDATED keys verify the
+	// mark (under the same slice-4b sub==RP / signed-type / typ / freshness
+	// checks). The authorization ROOT is the configured anchor's
+	// trust_mark_issuers — NOT the issuer's self-assertion, NOT the mark, NOT
+	// request input. An issuer not chaining to a configured anchor, or not
+	// listed for the type, is REJECTED (fail-closed, oracle-safe). The
+	// configured path always takes PRECEDENCE (this is only tried on its miss).
+	// Requires a resolver with configured trust anchors (otherwise inert). Only
+	// consulted when RequiredTrustMarkTypes is non-empty.
+	AllowFederationResolvedTrustMarkIssuers bool
 }
 
 // TrustMarkIssuer names one operator-AUTHORIZED Trust Mark Issuer: its Entity

@@ -1149,11 +1149,22 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 			AllowedTypes: append([]string(nil), ti.AllowedTypes...),
 		})
 	}
-	// A required type with NO authorized issuer can never be satisfied (it would
-	// lock out EVERY auto-registering RP). Fail loud rather than silently reject
-	// all admissions.
-	if len(cfg.RequiredTrustMarkTypes) > 0 && len(tmIssuers) == 0 {
-		return nil, errors.New("federation.required_trust_mark_types set but no federation.trust_mark_issuers configured (a required trust mark with no authorized issuer would admit no RP)")
+	// A required type needs SOME authorized-issuer source, else it locks out
+	// EVERY auto-registering RP. Normally that source is operator-configured
+	// trust_mark_issuers; the opt-in federation-resolved path provides an
+	// ALTERNATE source (issuers discovered via their trust chain + authorized by
+	// the anchor's trust_mark_issuers). So a required type with no configured
+	// issuers is a misconfig ONLY when the federation-resolved path is ALSO off.
+	if len(cfg.RequiredTrustMarkTypes) > 0 && len(tmIssuers) == 0 && !cfg.AllowFederationResolvedTrustMarkIssuers {
+		return nil, errors.New("federation.required_trust_mark_types set but no federation.trust_mark_issuers configured and allow_federation_resolved_trust_mark_issuers is false (a required trust mark with no authorized issuer source would admit no RP)")
+	}
+	// The federation-resolved issuer path needs a configured trust anchor: it is
+	// the root of trust the issuer's chain must reach AND whose trust_mark_issuers
+	// authorizes the issuer. Without any anchor the path is inert (the SDK gate
+	// nil-checks the resolver), so a flag set with no anchors is a misconfig —
+	// fail loud rather than silently never admitting a resolved issuer.
+	if cfg.AllowFederationResolvedTrustMarkIssuers && len(anchors) == 0 {
+		return nil, errors.New("federation.allow_federation_resolved_trust_mark_issuers is true but no federation.trust_anchors configured (the anchor is the root of trust that authorizes a resolved issuer)")
 	}
 
 	// §8 SUPERIOR role: load each configured subordinate's JWKS into Keys — the
@@ -1214,6 +1225,10 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		// (byte-identical to the slice-3 path).
 		RequiredTrustMarkTypes: append([]string(nil), cfg.RequiredTrustMarkTypes...),
 		TrustMarkIssuers:       tmIssuers,
+		// Slice-4c opt-in federation-resolved issuer path (default false ⇒ the
+		// slice-4b configured-issuer gate is byte-identical). Only consulted when
+		// RequiredTrustMarkTypes is non-empty.
+		AllowFederationResolvedTrustMarkIssuers: cfg.AllowFederationResolvedTrustMarkIssuers,
 	}, nil
 }
 

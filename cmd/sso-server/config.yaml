@@ -1149,15 +1149,24 @@ federation:
   # with sub == the RP entity ID (confused-deputy closed) and the SIGNED trust_mark_type authoritative,
   # iat/exp fresh. Any missing/forged/unauthorized/expired/wrong-subject required mark -> the RP stays
   # UNKNOWN (oracle-safe, no trust-mark-specific wire signal). Empty (default) -> NO requirement; the
-  # auto_register path is byte-identical. Non-empty REQUIRES at least one trust_mark_issuer (boot error
-  # otherwise -- a required type with no authorized issuer would admit no RP). Only consulted when
-  # auto_register is true. The federation-resolved issuer-key path is a follow-on; this pins keys here.
+  # auto_register path is byte-identical. Non-empty REQUIRES an authorized-issuer source: at least one
+  # trust_mark_issuer OR allow_federation_resolved_trust_mark_issuers (boot error otherwise -- a required
+  # type with no authorized issuer would admit no RP). Only consulted when auto_register is true.
   required_trust_mark_types: []   # Trust Mark Type URIs an auto-registering RP MUST each carry
   # - "https://federation.example.org/trust-mark/certified-rp"
-  trust_mark_issuers: []          # the ONLY issuers whose signed marks satisfy a required type
+  trust_mark_issuers: []          # the PRIMARY (operator-pinned) issuers whose signed marks satisfy a type
   # - entity_id: "https://trust-mark-issuer.example.org"
   #   jwks_file: "/etc/sso/trust-mark-issuer-jwks.json"   # root of trust the issuer's marks verify against
   #   allowed_types: []           # types this issuer may issue (empty -> any required type)
+  # OpenID Federation 1.0 §3.1.2 FEDERATION-RESOLVED trust-mark issuers (slice 4c) -- OPT-IN, default false.
+  # A SECOND authorized-issuer source where the Trust Mark Issuer is itself a federation entity: when a
+  # required mark's iss is NOT in trust_mark_issuers above, the issuer is resolved via its trust chain to a
+  # CONFIGURED trust_anchor (fail-closed) and MUST be listed in that anchor's validated trust_mark_issuers
+  # for the required type; only then do the issuer's chain-validated keys verify the mark (same sub==RP /
+  # signed-type / freshness checks). The authorization ROOT is the configured anchor's trust_mark_issuers --
+  # NOT the issuer's self-assertion, NOT the mark. Requires trust_anchors. The configured path above always
+  # takes precedence. false (default) -> ONLY the configured path runs (byte-identical to the reviewed gate).
+  allow_federation_resolved_trust_mark_issuers: false
 
 # SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
 # dependency stays OUT of this binary's core go.mod, the firm

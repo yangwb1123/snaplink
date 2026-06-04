@@ -105,6 +105,31 @@ type TrustChain struct {
 	// wrapper entries are still untrusted — each inner Trust Mark JWT is itself
 	// cryptographically validated). nil when the leaf carries no trust_marks.
 	LeafTrustMarks []TrustMarkEntry
+	// AnchorTrustMarkIssuers is the §3.1.2 trust_mark_issuers claim carried in
+	// the matched TRUST ANCHOR's (now signature-VALIDATED, against the CONFIGURED
+	// root-of-trust keys) Entity Configuration: trust_mark_type URI → authorized
+	// issuer Entity IDs. It is the AUTHORIZATION ROOT for the federation-resolved
+	// trust-mark issuer path (slice 4c, trust_marks.go): when an issuer is itself
+	// resolved as a federation entity, this map (read off the ANCHOR — the root
+	// of trust the chain validated against, per spec IGNORED on any non-anchor)
+	// decides whether that issuer is authorized for a given trust-mark type. Read
+	// off the parsed anchor claims here so the gate need not re-parse the anchor
+	// compact (the anchor config's signature was verified in validate()). nil
+	// when the anchor publishes no trust_mark_issuers (then no resolved issuer is
+	// authorized — fail-closed).
+	AnchorTrustMarkIssuers map[string][]string
+	// LeafKeys is the resolved leaf entity's OWN signing keys — the `jwks` of its
+	// (now signature-VALIDATED) Entity Configuration (NOT the openid_relying_
+	// party.jwks, which is the protocol/client key set in ResolvedRPMetadata).
+	// These are the keys the chain VOUCHES FOR the leaf entity itself. The
+	// federation-resolved trust-mark path (slice 4c) uses them when the resolved
+	// leaf is a Trust Mark ISSUER (its marks are signed with its entity keys), so
+	// the mark is verified against the issuer's chain-vouched keys rather than a
+	// self-asserted set. The leaf config's signature was verified in validate(),
+	// so reading its jwks off the parsed claims is sound. nil only for a
+	// malformed/empty leaf jwks (which validate() never admits for a chain it
+	// produces).
+	LeafKeys []core.JWK
 }
 
 // Expiry returns the instant this validated chain ceases to be trustworthy:
@@ -293,9 +318,31 @@ func (r *TrustChainResolver) ResolveTrustChain(ctx context.Context, leafEntityID
 		// was verified in validate(), so these wrapper entries come from the
 		// authenticated leaf — but each inner Trust Mark JWT is STILL verified
 		// independently (the wrapper's self-asserted type is not trusted).
-		LeafTrustMarks:     links[0].claims.TrustMarks,
+		LeafTrustMarks: links[0].claims.TrustMarks,
+		// The ANCHOR (links[len-1]) is the chain terminus, its config verified
+		// against the CONFIGURED root-of-trust keys in validate(). Its
+		// trust_mark_issuers is the AUTHORIZATION ROOT for the federation-resolved
+		// trust-mark path — surfaced from the now-validated anchor claims (the
+		// spec mandates this claim be IGNORED on any non-anchor, so it is sourced
+		// ONLY from the anchor terminus, never an intermediate or the leaf).
+		AnchorTrustMarkIssuers: anchorTrustMarkIssuers(links[len(links)-1].claims),
+		// The resolved leaf entity's own (chain-vouched) signing keys, for the
+		// slice-4c path when the leaf is itself a Trust Mark Issuer.
+		LeafKeys:           links[0].claims.JWKS.Keys,
 		ResolvedRPMetadata: resolvedRP,
 	}, nil
+}
+
+// anchorTrustMarkIssuers extracts the §3.1.2 trust_mark_issuers map from a
+// (validated) anchor Entity Configuration's federation_entity metadata, or nil
+// when absent. The claim lives in metadata.federation_entity per spec; reading
+// it from the validated anchor claims is sound (the anchor config's signature
+// was verified against the configured root-of-trust keys).
+func anchorTrustMarkIssuers(claims EntityStatementClaims) map[string][]string {
+	if claims.Metadata == nil || claims.Metadata.FederationEntity == nil {
+		return nil
+	}
+	return claims.Metadata.FederationEntity.TrustMarkIssuers
 }
 
 // assemble fetches + parses the chain bottom-up: the leaf's Entity
