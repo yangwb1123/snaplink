@@ -57,6 +57,7 @@ import (
 	"github.com/snaplink/sso/defaultimpl"
 	"github.com/snaplink/sso/defaultimpl/cryptosigner"
 	sqlitestores "github.com/snaplink/sso/defaultimpl/sqlite"
+	"github.com/snaplink/sso/federation"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
 	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
@@ -1078,6 +1079,25 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 // bundle itself, and silently degrading would leave an operator believing
 // SVID acceptance is on when it isn't (or, worse, accepting tokens it
 // shouldn't).
+// buildFederationConfig translates the YAML federation block onto the SDK
+// federation.Config. TrustAnchors are carried through verbatim (inert in the
+// entity-publishing slice). Unset TTLs stay zero so the SDK applies its
+// defaults (24h statement TTL, 5m cache).
+func buildFederationConfig(cfg config.FederationConfig) *federation.Config {
+	anchors := make([]federation.TrustAnchor, 0, len(cfg.TrustAnchors))
+	for _, ta := range cfg.TrustAnchors {
+		anchors = append(anchors, federation.TrustAnchor{EntityID: ta.EntityID, JWKSFile: ta.JWKSFile})
+	}
+	return &federation.Config{
+		AuthorityHints:     append([]string(nil), cfg.AuthorityHints...),
+		TrustAnchors:       anchors,
+		OrganizationName:   cfg.OrganizationName,
+		Contacts:           append([]string(nil), cfg.Contacts...),
+		EntityStatementTTL: cfg.EntityStatementTTL,
+		CacheTTL:           cfg.CacheTTL,
+	}
+}
+
 func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
 	if cfg.TrustDomain == "" {
 		return nil, errors.New("spiffe.trust_domain required when spiffe.enabled")
@@ -3273,6 +3293,21 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		caepTx := caep.NewTransmitter(jwtIssuer, clientStore, caepOpts...)
 		opts = append(opts, sso.WithCAEPTransmitter(caepTx))
 		logger.Info("caep: OpenID Shared Signals transmitter enabled — signed SETs pushed to affected clients' registered receivers on revocation/suspension/family-reuse events")
+	}
+	if cfg.Federation.Enabled {
+		// OpenID Federation 1.0 entity configuration: publish the OP's
+		// self-signed Entity Statement so it is discoverable as a federation
+		// ENTITY. The signer is the SAME signing issuer that mints tokens —
+		// jwtIssuer satisfies federation.JWTSigner via its SignJWT seam — so
+		// the entity statement verifies against a key already in JWKS (no new
+		// trust setup). TrustAnchors are loaded into the config but inert in
+		// this slice (trust-chain validation is a later slice).
+		fedCfg := buildFederationConfig(cfg.Federation)
+		opts = append(opts, sso.WithFederationEntity(fedCfg, jwtIssuer))
+		logger.Info("federation: OpenID Federation 1.0 entity configuration enabled — self-signed Entity Statement served at /.well-known/openid-federation",
+			"authority_hints", len(fedCfg.AuthorityHints),
+			"trust_anchors", len(fedCfg.TrustAnchors),
+		)
 	}
 	if cfg.Server.OAuth21StrictMode {
 		opts = append(opts, sso.WithOAuth21StrictMode(true))

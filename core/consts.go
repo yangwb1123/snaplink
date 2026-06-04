@@ -74,6 +74,20 @@ const (
 	// Only mounted when WithCAEPReceiver is wired (byte-identical off).
 	PathSSFReceive = "/ssf/receive"
 
+	// PathFederationEntityConfig is the OpenID Federation 1.0 §9 well-known
+	// endpoint serving THIS server's self-signed Entity Configuration — an
+	// Entity Statement (§3) with iss == sub == issuer, signed by the OP's
+	// own JWKS signing key (so a verifier validates it against a key it
+	// already trusts) and typ "entity-statement+jwt". It advertises the OP
+	// as a federation ENTITY: its public keys (inline jwks), its
+	// openid_provider metadata (derived from the discovery doc), and its
+	// authority_hints (the superiors whose trust chains it participates in).
+	// Only mounted when WithFederationEntity is wired (byte-identical off);
+	// public metadata (Cache-Control public, max-age — NOT a credential
+	// endpoint). Trust-chain VALIDATION (resolving authority_hints up to a
+	// trust anchor) is a separate slice and is NOT performed here.
+	PathFederationEntityConfig = "/.well-known/openid-federation"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"

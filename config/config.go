@@ -59,6 +59,7 @@ type Config struct {
 	CAEP               CAEPConfig               `yaml:"caep"`
 	SPIFFE             SPIFFEConfig             `yaml:"spiffe"`
 	Mesh               MeshConfig               `yaml:"mesh"`
+	Federation         FederationConfig         `yaml:"federation"`
 	SAML               SAMLConfig               `yaml:"saml"`
 }
 
@@ -310,6 +311,58 @@ type CAEPTransmitterConfig struct {
 	// transmitter's bundle. Empty ⇒ the receiver default
 	// (ES256/RS256/PS256/EdDSA). A symmetric alg is rejected by the verifier.
 	AllowedAlgs []string `yaml:"allowed_algs"`
+}
+
+// FederationConfig opts into the OpenID Federation 1.0 entity-configuration
+// endpoint: the server publishes its SELF-SIGNED Entity Statement at
+// /.well-known/openid-federation so it participates in a multilateral
+// federation as an ENTITY. Disabled (the default) ⇒ the route is NOT mounted
+// and behavior is byte-identical to a build without it. The Entity Statement
+// is signed by the SAME key already in JWKS (the OP signing issuer's generic
+// SignJWT seam), so no extra signing config is needed.
+//
+// This config wires the entity-PUBLISHING slice only. TrustAnchors is
+// present-but-inert here (forward-compatible for the trust-chain-validation
+// slice, which will resolve authority_hints up to one of these anchors).
+type FederationConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// AuthorityHints are the immediate superiors (Entity Identifiers, HTTPS
+	// URLs) whose trust chains this OP participates in. Emitted verbatim in
+	// the Entity Configuration's authority_hints so a federation resolver
+	// knows where to climb toward a trust anchor. Empty = a standalone /
+	// trust-anchor-only entity.
+	AuthorityHints []string `yaml:"authority_hints"`
+
+	// TrustAnchors is the configured set of federation trust anchors. INERT
+	// in this slice (loaded + used by the future trust-chain-validation
+	// slice). Defining it now keeps the config schema stable across slices.
+	TrustAnchors []TrustAnchorConfig `yaml:"trust_anchors"`
+
+	// OrganizationName + Contacts populate the federation_entity metadata
+	// entry in the Entity Statement. Both optional (omitted when empty).
+	OrganizationName string   `yaml:"organization_name"`
+	Contacts         []string `yaml:"contacts"`
+
+	// EntityStatementTTL bounds the lifetime (exp - iat) stamped into each
+	// Entity Configuration; consumers re-fetch after exp. 0 ⇒ SDK default
+	// (24h).
+	EntityStatementTTL time.Duration `yaml:"entity_statement_ttl"`
+
+	// CacheTTL controls the in-process body cache + the Cache-Control
+	// max-age advertised to downstream caches. 0 ⇒ SDK default (5m).
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+}
+
+// TrustAnchorConfig names one configured federation trust anchor. INERT in
+// the entity-publishing slice (consumed by the future trust-chain-validation
+// slice, which verifies each chain link against the anchor's keys).
+type TrustAnchorConfig struct {
+	// EntityID is the trust anchor's Entity Identifier (an HTTPS URL).
+	EntityID string `yaml:"entity_id"`
+	// JWKSFile is the local path to the anchor's published JWKS document
+	// (`{"keys":[...]}`, its trust bundle).
+	JWKSFile string `yaml:"jwks_file"`
 }
 
 // DPoPConfig tunes the RFC 9449 DPoP proof iat-window validation. Both

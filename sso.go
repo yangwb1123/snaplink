@@ -25,6 +25,7 @@ import (
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/fapi"
+	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
@@ -110,6 +111,17 @@ type Server struct {
 	// PathMeshExtAuthz.
 	meshExtAuthz     bool
 	meshExtAuthzPath string
+
+	// Opt-in OpenID Federation 1.0 entity configuration. When
+	// federationEntity is wired (WithFederationEntity), the server mounts
+	// PathFederationEntityConfig serving the OP's self-signed Entity
+	// Statement (iss == sub == issuer, signed by the OP's own JWKS key, typ
+	// entity-statement+jwt) so the OP participates in a multilateral
+	// federation as an ENTITY. Nil ⇒ the route is NOT mounted — behavior is
+	// byte-identical to a build without it. This is the entity-publishing
+	// slice only; trust-chain VALIDATION (the trust boundary) is a separate
+	// slice.
+	federationEntity *federation.EntityHandler
 
 	// Opt-in per-store storage-health admin report (WithStorageHealth).
 	// Each source describes one wired store: a Name, a Ping for
@@ -1576,6 +1588,14 @@ func (s *Server) Mount() {
 	// byte-identical to a build without it.
 	if s.caepReceiver != nil {
 		s.router.POST(PathSSFReceive, s.handleSSFReceive)
+	}
+
+	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
+	// self-signed Entity Statement at the well-known endpoint so the OP is
+	// discoverable as a federation ENTITY. Not mounted unless
+	// WithFederationEntity is wired — byte-identical to a build without it.
+	if s.federationEntity != nil {
+		s.router.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
 	}
 
 	api := s.router.Group(PathAPIPrefix)

@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
@@ -2063,6 +2064,36 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 			return
 		}
 	}
+	cfg := s.buildOIDCConfiguration(ctx, base)
+
+	// ttl <= 0 disables both in-process caching AND the response-side
+	// ETag / Cache-Control headers — every request renders fresh and
+	// downstream caches (CDN, RP libraries) are told not to cache.
+	if s.discoveryDocCacheTTL <= 0 {
+		ctx.JSON(http.StatusOK, cfg)
+		return
+	}
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		s.logger.Error("discovery marshal failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	entry := buildDiscoveryDocEntry(body, s.discoveryDocCacheTTL)
+	s.storeDiscoveryDocCache(base, entry)
+	s.writeDiscoveryDoc(ctx, entry)
+}
+
+// buildOIDCConfiguration assembles the fully-finalized OpenID Connect
+// Discovery 1.0 + RFC 8414 metadata struct for the given request base URL
+// — every derived field plus the RFC 8414 §2.1 signed_metadata. Extracted
+// from handleOIDCDiscovery (behavior-preserving) so the federation entity
+// configuration can DERIVE its openid_provider metadata from the SAME
+// projection (see BuildOPMetadata) instead of hand-duplicating the
+// derivation, which would risk the two metadata views drifting apart. The
+// output is byte-identical to the previous inline assembly — the existing
+// discovery + signed_metadata tests are the proof.
+func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidcConfiguration {
 	// Single client-store iteration powers every derived field below
 	// (scopes union, RequirePAR-any, RequireSignedRequestObject-all,
 	// frontchannel_logout_supported, authorization_details types
@@ -2313,22 +2344,41 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 		}
 	}
 
-	// ttl <= 0 disables both in-process caching AND the response-side
-	// ETag / Cache-Control headers — every request renders fresh and
-	// downstream caches (CDN, RP libraries) are told not to cache.
-	if s.discoveryDocCacheTTL <= 0 {
-		ctx.JSON(http.StatusOK, cfg)
-		return
+	return cfg
+}
+
+// BuildOPMetadata projects the openid_provider metadata for the OpenID
+// Federation 1.0 entity configuration (federation.Deps). It DERIVES from the
+// same buildOIDCConfiguration projection the /.well-known/openid-configuration
+// discovery doc uses — taking only the federation-relevant subset (OpenID
+// Federation 1.0 §4.5: federation OP metadata is OIDC OP metadata) — so the
+// federation view can never drift from the discovery view. signed_metadata
+// (an RFC 8414 field of the discovery doc) is deliberately NOT carried: the
+// Entity Statement is itself a signed JWS, so the discovery-doc signature is
+// redundant inside it.
+func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPFederationMetadata {
+	cfg := s.buildOIDCConfiguration(ctx, base)
+	return federation.OPFederationMetadata{
+		Issuer:                            cfg.Issuer,
+		AuthorizationEndpoint:             cfg.AuthorizationEndpoint,
+		TokenEndpoint:                     cfg.TokenEndpoint,
+		UserinfoEndpoint:                  cfg.UserInfoEndpoint,
+		JWKSURI:                           cfg.JWKSURI,
+		RegistrationEndpoint:              cfg.RegistrationEndpoint,
+		ResponseTypesSupported:            cfg.ResponseTypesSupported,
+		SubjectTypesSupported:             cfg.SubjectTypesSupported,
+		IDTokenSigningAlgValuesSupported:  cfg.IDTokenSigningAlgValuesSupported,
+		ScopesSupported:                   cfg.ScopesSupported,
+		TokenEndpointAuthMethodsSupported: cfg.TokenEndpointAuthMethodsSupported,
+		CodeChallengeMethodsSupported:     cfg.CodeChallengeMethodsSupported,
 	}
-	body, err := json.Marshal(cfg)
-	if err != nil {
-		s.logger.Error("discovery marshal failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
-		return
-	}
-	entry := buildDiscoveryDocEntry(body, s.discoveryDocCacheTTL)
-	s.storeDiscoveryDocCache(base, entry)
-	s.writeDiscoveryDoc(ctx, entry)
+}
+
+// handleFederationEntityConfig delegates to the hexagonal federation handler
+// (*Server satisfies federation.Deps via accessors.go). Only mounted when
+// WithFederationEntity is wired.
+func (s *Server) handleFederationEntityConfig(ctx HandlerContext) {
+	federation.HandleEntityConfiguration(s, ctx)
 }
 
 // requestBaseURL delegates to middleware.BaseURL — see that function

@@ -256,6 +256,7 @@ const PathAPIPrefix = core.PathAPIPrefix
 const PathAuthzPolicyBundle = core.PathAuthzPolicyBundle
 const PathStorageHealth = core.PathStorageHealth
 const PathSSFReceive = core.PathSSFReceive
+const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathAuditEventByID = core.PathAuditEventByID
 const PathAuditEvents = core.PathAuditEvents
 const PathAuditFacets = core.PathAuditFacets

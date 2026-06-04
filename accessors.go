@@ -13,6 +13,7 @@ import (
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/oauth"
@@ -241,6 +242,51 @@ func (s *Server) DiscoveryDocCacheTTL() time.Duration { return s.discoveryDocCac
 // responses for the current request. Honors WithTrustForwardedProto
 // + X-Forwarded-Host edge-trust contract.
 func (s *Server) ResolveIssuer(ctx core.HandlerContext) string { return s.resolveIssuer(ctx) }
+
+// RequestBaseURL derives the absolute scheme://host base for the request,
+// the SAME derivation the discovery doc uses. Backs federation.Deps so the
+// federation package needn't reach into the middleware base-URL extractor.
+func (s *Server) RequestBaseURL(ctx core.HandlerContext) string {
+	return requestBaseURL(ctx.Request())
+}
+
+// FederationSigner returns the OpenID Federation entity-configuration signer
+// (the OP signing issuer reused via SignJWT). nil when WithFederationEntity
+// is not wired. Backs federation.Deps.
+func (s *Server) FederationSigner() federation.JWTSigner {
+	if s.federationEntity == nil {
+		return nil
+	}
+	return s.federationEntity.Signer()
+}
+
+// FederationConfig returns the wired OpenID Federation config (nil when
+// WithFederationEntity is not wired). Backs federation.Deps.
+func (s *Server) FederationConfig() *federation.Config {
+	if s.federationEntity == nil {
+		return nil
+	}
+	return s.federationEntity.Config()
+}
+
+// FederationCache returns the per-issuer Entity Configuration cache (nil when
+// WithFederationEntity is not wired). Backs federation.Deps.
+func (s *Server) FederationCache() *federation.EntityConfigCache {
+	if s.federationEntity == nil {
+		return nil
+	}
+	return s.federationEntity.Cache()
+}
+
+// FederationNow is the clock the federation handler stamps the Entity
+// Configuration's iat/exp from. Real wall clock in production; a test wiring
+// its own federation.Deps injects a fixed time so exp stays deterministic.
+// Backs federation.Deps.
+func (s *Server) FederationNow() time.Time { return time.Now() }
+
+// LogError logs a non-fatal error through the server logger. Backs
+// federation.Deps (the signing/marshal failure path).
+func (s *Server) LogError(msg string, args ...any) { s.logger.Error(msg, args...) }
 
 // ValidateAnyToken iterates registered TokenIssuers until one accepts
 // the bearer. Returns issuer name on success for revocation /audit

@@ -1054,6 +1054,35 @@ mesh:
     enabled: false
     path: ""                 # mount point; empty -> SDK default ("/mesh/ext-authz")
 
+# OpenID Federation 1.0 entity configuration. When enabled, the server
+# publishes its SELF-SIGNED Entity Statement at /.well-known/openid-federation
+# so it is discoverable as a federation ENTITY (eduGAIN / research /
+# government multilateral-federation trust frameworks). The statement carries
+# iss == sub == issuer, the OP's published signing keys inline (jwks),
+# openid_provider metadata DERIVED from the discovery doc, and the
+# authority_hints below; it is signed by the SAME key already in JWKS (the
+# signing issuer's generic SignJWT seam, typ "entity-statement+jwt"), so a
+# federation consumer validates it with no new trust setup. It is PUBLIC
+# metadata (Cache-Control public, max-age -- not a credential).
+#
+# This is the entity-PUBLISHING slice only. Trust-chain VALIDATION (resolving
+# authority_hints up to a configured trust_anchor -- the actual trust
+# boundary) and federation-based client registration are later slices.
+# trust_anchors below are parsed but INERT in this slice (present so enabling
+# the validation slice needs no config change). Disabled (the default) ->
+# the route is NOT mounted, byte-identical to a build without it.
+federation:
+  enabled: false
+  authority_hints: []        # superiors' Entity Identifiers (HTTPS URLs) whose chains this OP joins
+  # - "https://federation.example.org"
+  trust_anchors: []          # INERT in this slice (forward-compat for trust-chain validation)
+  # - entity_id: "https://anchor.example.org"
+  #   jwks_file: "/etc/sso/anchor-jwks.json"
+  organization_name: ""      # federation_entity metadata (optional)
+  contacts: []               # federation_entity contacts, e.g. ["mailto:admin@example.org"]
+  entity_statement_ttl: 0s   # exp - iat stamped into the statement; 0 -> SDK default (24h)
+  cache_ttl: 0s              # body cache + Cache-Control max-age; 0 -> SDK default (5m)
+
 # SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
 # dependency stays OUT of this binary's core go.mod, the firm
 # zero-external-dep invariant). Disabled by default: handler == "" mounts

@@ -27,6 +27,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
@@ -1177,6 +1178,42 @@ func WithJWKSCacheTTL(ttl time.Duration) Option {
 func WithMetadataSigner(s oidc.MetadataSigner) Option {
 	return func(srv *Server) { srv.metadataSigner = s }
 }
+
+// WithFederationEntity mounts the OpenID Federation 1.0 entity-configuration
+// endpoint (PathFederationEntityConfig, "/.well-known/openid-federation"),
+// serving this server's SELF-SIGNED Entity Statement so the OP participates
+// in a multilateral federation as an ENTITY (eduGAIN / research / government
+// trust frameworks). The statement carries iss == sub == issuer, the OP's
+// published signing keys inline (jwks), openid_provider metadata DERIVED
+// from the discovery doc, and the operator's authority_hints; it is signed
+// via the issuer's generic SignJWT seam with typ "entity-statement+jwt" —
+// the SAME key already in JWKS, so a federation consumer validates it with
+// no new trust setup. ETag + Cache-Control (public, max-age) cached — it is
+// public metadata, NOT a credential.
+//
+// signer is the OP signing issuer (typically the same instance wired as
+// WithTokenIssuer / WithIDTokenIssuer, so one key covers tokens, id_tokens,
+// SETs, and the entity statement). cfg carries authority_hints,
+// organization/contacts, the TTLs, and (present-but-inert in this slice) the
+// trust anchors.
+//
+// Opt-in / default-off: a nil cfg OR a nil signer leaves the Server's field
+// nil — the route is NOT mounted and behavior is byte-identical to a build
+// without it. This is the entity-PUBLISHING slice; trust-chain VALIDATION
+// (resolving authority_hints up to a trust anchor — the actual trust
+// boundary) and federation client registration are separate slices.
+func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner) Option {
+	return func(srv *Server) {
+		if cfg == nil || signer == nil {
+			return
+		}
+		srv.federationEntity = federation.NewEntityHandler(cfg, signer)
+	}
+}
+
+// FederationEntity returns the wired federation entity handler (nil when
+// WithFederationEntity is not configured).
+func (s *Server) FederationEntity() *federation.EntityHandler { return s.federationEntity }
 
 // WithDPoPNonceProvider enables RFC 9449 §8 nonce-bound DPoP proofs.
 // When set, /token rejects DPoP-bearing requests that lack a fresh
