@@ -15,10 +15,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/metadata"
 	gw "github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/snaplink/sso"
@@ -56,6 +58,14 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn attestation: %w", err)
 	}
+	// MDS root validation (opt-in). A configured source makes the AAGUID gate
+	// adversary-resistant; a malformed/wrong-root blob fails loud HERE at boot
+	// (BuildMDSProvider verifies the blob's JWS chain to the FIDO root). Nil
+	// when no source is configured — byte-identical to the pre-MDS ceremony.
+	mds, err := buildWebAuthnMDSProvider(cfg.Attestation.MDS)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("webauthn mds: %w", err)
+	}
 	h, err := webauthn.NewHelper(webauthn.Config{
 		RPID:                  cfg.RPID,
 		RPDisplayName:         cfg.RPDisplayName,
@@ -63,6 +73,7 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 		SessionTTL:            cfg.SessionTTL,
 		AttestationConveyance: cfg.Attestation.Conveyance,
 		AttestationPolicy:     policy,
+		MDS:                   mds,
 	}, users, sessions)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn helper: %w", err)
@@ -74,8 +85,58 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 		"sessions", sessionDesc,
 		"attestation_conveyance", conveyanceLabel(cfg.Attestation.Conveyance),
 		"attestation_policy", attestationPolicyLabel(policy),
+		"attestation_mds", mdsLabel(cfg.Attestation.MDS, mds),
 	)
 	return h, users, sessions, nil
+}
+
+// buildWebAuthnMDSProvider maps the YAML MDS block to a go-webauthn
+// metadata.Provider, or nil when no source is configured (the byte-identical
+// default — gw.Config.MDS stays nil). When configured it reads the optional
+// custom root file then delegates to webauthn.BuildMDSProvider, which loads +
+// JWS-verifies the blob against the FIDO root (or that custom root) and FAILS
+// LOUD on a tampered / wrong-root / unreadable blob — we never silently run
+// without MDS when the operator asked for it (that would downgrade the
+// security control). The resulting provider is the in-memory startup snapshot
+// (reload = restart; see config.WebAuthnMDSConfig).
+func buildWebAuthnMDSProvider(cfg config.WebAuthnMDSConfig) (metadata.Provider, error) {
+	src := webauthn.MDSSource{
+		FilePath:     strings.TrimSpace(cfg.File),
+		FetchURL:     strings.TrimSpace(cfg.FetchURL),
+		FetchTimeout: cfg.FetchTimeout,
+	}
+	if !src.Configured() {
+		// No source — MDS off. Validate that a stray custom_root_file wasn't
+		// set on its own (a likely misconfiguration: the operator meant to
+		// point at a blob too) so it fails loud rather than silently no-op.
+		if strings.TrimSpace(cfg.CustomRootFile) != "" {
+			return nil, errors.New("webauthn.attestation.mds.custom_root_file is set but neither file nor fetch_url is — configure an MDS blob source or remove the custom root")
+		}
+		return nil, nil
+	}
+	if root := strings.TrimSpace(cfg.CustomRootFile); root != "" {
+		raw, err := os.ReadFile(root)
+		if err != nil {
+			return nil, fmt.Errorf("read custom_root_file %q: %w", root, err)
+		}
+		src.CustomRootPEM = strings.TrimSpace(string(raw))
+		if src.CustomRootPEM == "" {
+			return nil, fmt.Errorf("custom_root_file %q is empty", root)
+		}
+	}
+	return webauthn.BuildMDSProvider(src)
+}
+
+// mdsLabel renders the MDS source for the startup log without leaking the
+// blob contents — just which source (if any) was wired.
+func mdsLabel(cfg config.WebAuthnMDSConfig, provider metadata.Provider) string {
+	if provider == nil {
+		return "off"
+	}
+	if strings.TrimSpace(cfg.File) != "" {
+		return "file (adversary-resistant)"
+	}
+	return "fetch (adversary-resistant)"
 }
 
 // buildWebAuthnAttestationPolicy maps the YAML attestation block to a

@@ -73,6 +73,7 @@ exact emission site.
 | `session_invalid`     | 404  | `session_id` is unknown / expired, or the user record disappeared mid-ceremony (unknown-session + unknown-user collapsed for oracle-leak resistance) | Restart the ceremony from the matching `/begin`        |
 | `ceremony_failed`     | 400  | go-webauthn rejected the attestation / assertion (parse failure, bad signature, challenge mismatch, counter regression) | Retry the ceremony; check the authenticator + origin   |
 | `attestation_denied`  | 403  | The operator's attestation policy rejected the authenticator: either its AAGUID is not on the allowlist (or is on the denylist), OR the credential conveyed no attestation (format `none` — a downgrade an active policy refuses). The credential was NOT persisted. The specific AAGUID + policy mode + a machine-readable `reason` (`aaguid_not_permitted` \| `attestation_format_none`) are in the `webauthn_attestation_denied` audit event, never on the wire | Use an approved authenticator (an operator-curated model) that conveys attestation |
+| `ceremony_failed`     | 400  | (also) With MDS root validation wired (`webauthn.attestation.mds`), go-webauthn's `VerifyAttestation` rejected the attestation because its certificate chain does not root in the FIDO Metadata Service (e.g. a self-signed `x5c` asserting an allowlisted AAGUID, or an AAGUID with no FIDO-validated metadata entry). This surfaces through the same `ceremony_failed` (attestation verification failure) path — oracle-safe, no distinct wire code | Use a genuine FIDO-certified authenticator |
 
 **Attestation policy** (`webauthn.attestation`, opt-in): when an operator
 configures `policy_mode: allowlist|denylist`, registration is gated on the
@@ -96,15 +97,25 @@ before.
 **Assurance — what this gate does and does NOT give you** (do not over-claim):
 with a policy active and a verified attestation statement, go-webauthn verifies
 the attestation *signature* and, in the basic/x5c path, matches the AAGUID to
-the attestation certificate. BUT without go-webauthn's `metadata.Provider`
-(`Config.MDS`) validating that certificate *chain* up to a FIDO Metadata Service
-root, the AAGUID gate is NOT cryptographically adversary-resistant: a determined
-attacker can craft a self-signed `x5c` (or self/`none` attestation) asserting an
-allowlisted AAGUID. So WITHOUT MDS this is an OPERATIONAL control — honest-client
-gating, audit visibility of which AAGUIDs registered, and blocking non-attesting
-software authenticators — NOT a defense against a hostile registrant. Wiring
-go-webauthn's `metadata.Provider` against the FIDO MDS is the documented
-follow-on for full adversary-resistance.
+the attestation certificate.
+
+- **WITH FIDO MDS root validation** (`webauthn.attestation.mds` — a downloaded
+  FIDO Metadata Service blob, by `file` or `fetch_url`), the AAGUID gate is
+  **ADVERSARY-RESISTANT**. go-webauthn's `VerifyAttestation` validates the
+  attestation certificate *chain* up to the FIDO root (the blob's own signing
+  chain is JWS-verified to the FIDO root at boot — a tampered or wrong-root
+  blob fails loud at startup) and rejects an AAGUID with no FIDO-validated
+  metadata entry, so a crafted self-signed `x5c` asserting an allowlisted
+  AAGUID is **rejected** (its chain doesn't root in the MDS). The loaded
+  metadata is a startup snapshot — the FIDO MDS rotates ~monthly, so reload by
+  restarting with a fresh blob (or run go-webauthn's `providers/cached`
+  fetch+refresh provider out-of-band).
+- **WITHOUT an MDS source** (the default), the AAGUID gate is NOT
+  cryptographically adversary-resistant: a determined attacker can craft a
+  self-signed `x5c` (or self/`none` attestation) asserting an allowlisted
+  AAGUID. So without MDS this is an OPERATIONAL control — honest-client gating,
+  audit visibility of which AAGUIDs registered, and blocking non-attesting
+  software authenticators — NOT a defense against a hostile registrant.
 
 ### MFA orchestration (`/auth/login`, `/auth/mfa`)
 

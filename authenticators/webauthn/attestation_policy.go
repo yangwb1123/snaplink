@@ -124,15 +124,23 @@ func (e *AttestationDeniedError) Unwrap() error { return ErrAttestationDenied }
 //     in the basic/x5c path go-webauthn matches the AAGUID to the attestation
 //     certificate.
 //
-//   - WITHOUT go-webauthn's metadata.Provider (Config.MDS) validating that
-//     attestation certificate CHAIN to a FIDO Metadata Service root, the
-//     AAGUID gate is NOT adversary-resistant: a determined attacker can craft
-//     a self-signed x5c (or self/none attestation) asserting an allowlisted
-//     AAGUID. Without MDS this is therefore an OPERATIONAL control (honest-
-//     client gating + audit visibility of registered AAGUIDs + blocking non-
-//     attesting software authenticators), NOT a defense against a hostile
-//     registrant. Full adversary-resistance needs the metadata.Provider seam
-//     (the documented follow-on); this gate does not build the MDS fetcher.
+//   - WITH go-webauthn's metadata.Provider wired (webauthn.Config.MDS, built
+//     from a FIDO MDS blob via BuildMDSProvider), the AAGUID gate becomes
+//     ADVERSARY-RESISTANT: go-webauthn's VerifyAttestation validates the
+//     attestation certificate CHAIN to the FIDO root and rejects an AAGUID
+//     with no FIDO-root-validated metadata entry, so a crafted self-signed
+//     x5c asserting an allowlisted AAGUID is rejected (its chain doesn't root
+//     in the MDS). This closes the residual spoof below.
+//
+//   - WITHOUT the metadata.Provider (Config.MDS nil — the default), validating
+//     that attestation certificate CHAIN to a FIDO Metadata Service root does
+//     NOT happen, so the AAGUID gate is NOT adversary-resistant: a determined
+//     attacker can craft a self-signed x5c (or self/none attestation)
+//     asserting an allowlisted AAGUID. Without MDS this is therefore an
+//     OPERATIONAL control (honest-client gating + audit visibility of
+//     registered AAGUIDs + blocking non-attesting software authenticators),
+//     NOT a defense against a hostile registrant. Wire MDS for full
+//     adversary-resistance.
 //
 // The zero value (Mode == [AttestationPolicyOff]) admits every authenticator,
 // so a Helper without a policy behaves byte-identically to one that never

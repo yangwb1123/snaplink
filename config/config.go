@@ -752,16 +752,15 @@ type WebAuthnConfig struct {
 // check) is REJECTED by the gate, closing the downgrade where a client ignores
 // the requested conveyance.
 //
-// BUT without go-webauthn's metadata.Provider (Config.MDS) validating the
-// attestation certificate CHAIN up to a FIDO Metadata Service root, the AAGUID
-// gate is NOT cryptographically adversary-resistant: a determined attacker can
-// craft a self-signed x5c (or a self/none attestation) asserting an
-// allowlisted AAGUID. So WITHOUT MDS this is an OPERATIONAL control — it gates
-// honest clients, blocks non-attesting software authenticators, and gives
-// audit visibility of which AAGUIDs registered — NOT a defense against a
-// hostile registrant. For full adversary-resistance, wire go-webauthn's
-// metadata.Provider against the FIDO MDS (the documented follow-on; Config.MDS);
-// this gate does not build the MDS fetcher.
+// Wire MDS (the mds block below) for full adversary-resistance: with a FIDO
+// Metadata Service source configured, go-webauthn validates the attestation
+// certificate CHAIN up to the FIDO root, so a crafted self-signed x5c (or a
+// self/none attestation) asserting an allowlisted AAGUID is REJECTED (its
+// chain doesn't root in the MDS). WITHOUT an MDS source (the default,
+// Config.MDS nil) the AAGUID gate is NOT cryptographically adversary-resistant
+// — it is an OPERATIONAL control that gates honest clients, blocks
+// non-attesting software authenticators, and gives audit visibility of which
+// AAGUIDs registered, but is NOT a defense against a hostile registrant.
 type WebAuthnAttestationConfig struct {
 	// Conveyance is the attestation conveyance preference sent at
 	// registration: ""/"none" (default — no attestation requested,
@@ -787,6 +786,51 @@ type WebAuthnAttestationConfig struct {
 	// self-attestation / no-attestation authenticators — otherwise they
 	// are rejected.
 	AAGUIDs []string `yaml:"aaguids"`
+
+	// MDS opts into FIDO Metadata Service root validation. When a source is
+	// configured, the AAGUID gate becomes ADVERSARY-RESISTANT: go-webauthn
+	// validates the attestation certificate chain to the FIDO root, so a
+	// crafted self-signed x5c asserting an allowlisted AAGUID is rejected.
+	// The zero value (no source) leaves Config.MDS nil — the operational
+	// control described above, byte-identical to a pre-MDS build.
+	MDS WebAuthnMDSConfig `yaml:"mds"`
+}
+
+// WebAuthnMDSConfig configures the FIDO Metadata Service (MDS) source that
+// makes the WebAuthn attestation AAGUID gate adversary-resistant. The blob
+// is the JWS an operator downloads from https://mds3.fido2.org/ (or fetches
+// over HTTPS); go-webauthn JWS-verifies its signing chain to the built-in
+// FIDO production root (or CustomRootFile for a test/non-prod MDS) at boot —
+// a tampered / wrong-root blob FAILS LOUD rather than silently downgrading
+// to no-MDS.
+//
+// EXACTLY ONE of File / FetchURL supplies the blob. Both empty ⇒ MDS off
+// (Config.MDS nil, byte-identical default).
+//
+// REFRESH: the loaded metadata is a STARTUP SNAPSHOT — the in-memory
+// provider does not refresh. The FIDO MDS rotates roughly monthly (the blob
+// carries a nextUpdate date); reload by restarting with a fresh blob.
+// go-webauthn's providers/cached fetch+refresh provider is the auto-refresh
+// alternative (an out-of-band enhancement; cmd wires the snapshot provider).
+type WebAuthnMDSConfig struct {
+	// File is a path to the FIDO MDS blob on disk. Mutually exclusive with
+	// FetchURL.
+	File string `yaml:"file"`
+
+	// FetchURL is an HTTPS URL the blob is fetched from at boot (dep-free
+	// net/http). Mutually exclusive with File; must be https.
+	FetchURL string `yaml:"fetch_url"`
+
+	// CustomRootFile is a path to a file containing the base64 DER of a custom
+	// root certificate (the raw x5c-style base64 body, NOT PEM armour) used to
+	// verify the blob INSTEAD of the built-in FIDO production root. ONLY for a
+	// non-production / test MDS (e.g. the FIDO conformance suite). Production
+	// leaves it empty so the real FIDO root validates the blob.
+	CustomRootFile string `yaml:"custom_root_file"`
+
+	// FetchTimeout bounds the boot-time HTTPS fetch (FetchURL only). Zero
+	// defaults to 30s.
+	FetchTimeout time.Duration `yaml:"fetch_timeout"`
 }
 
 // WebAuthnStorageConfig selects the substrate for the WebAuthn

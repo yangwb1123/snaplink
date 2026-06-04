@@ -766,16 +766,16 @@ webauthn:
   #     ATTESTATION SIGNATURE at finish time, and a credential that conveyed
   #     NO attestation (format "none") is REJECTED by the gate (closing the
   #     client-downgrade bypass).
-  #   - BUT without go-webauthn's metadata.Provider (Config.MDS) validating
-  #     the attestation cert CHAIN to a FIDO Metadata Service root, the AAGUID
-  #     gate is NOT adversary-resistant: a determined attacker can craft a
-  #     self-signed x5c (or self/none attestation) asserting an allowlisted
-  #     AAGUID. So WITHOUT MDS this is an OPERATIONAL control — honest-client
-  #     gating + audit visibility of registered AAGUIDs + blocking non-
-  #     attesting software authenticators — NOT a defense against a hostile
-  #     registrant. Full adversary-resistance needs the metadata.Provider
-  #     seam (the documented follow-on); this gate does not build the MDS
-  #     fetcher.
+  #   - Configure the mds block below for full ADVERSARY-RESISTANCE: with a
+  #     FIDO Metadata Service source, go-webauthn validates the attestation
+  #     cert CHAIN to the FIDO root, so a crafted self-signed x5c asserting an
+  #     allowlisted AAGUID is REJECTED (its chain doesn't root in the MDS).
+  #   - WITHOUT an mds source (default), the AAGUID gate is NOT
+  #     adversary-resistant: a determined attacker can craft a self-signed x5c
+  #     (or self/none attestation) asserting an allowlisted AAGUID. So without
+  #     MDS this is an OPERATIONAL control — honest-client gating + audit
+  #     visibility of registered AAGUIDs + blocking non-attesting software
+  #     authenticators — NOT a defense against a hostile registrant.
   attestation:
     # ""/"none" (default) | "indirect" | "direct" | "enterprise".
     # REQUIRED to be "direct" or "enterprise" when policy_mode gates (boot
@@ -793,6 +793,26 @@ webauthn:
     # no-attestation authenticators — otherwise they are rejected.
     aaguids: []
     #   - "ee882879-721c-4913-9775-3dfcce97072a"   # example: a specific authenticator model
+    # FIDO Metadata Service (MDS) root validation — makes the AAGUID gate
+    # ADVERSARY-RESISTANT. With a source set, go-webauthn JWS-verifies the
+    # blob's signing chain to the FIDO root at boot (a tampered/wrong-root
+    # blob fails loud) and then validates each attestation's cert chain to the
+    # FIDO-validated metadata, so a crafted self-signed x5c asserting an
+    # allowlisted AAGUID is rejected. The loaded metadata is a STARTUP
+    # SNAPSHOT — the FIDO MDS rotates ~monthly (the blob carries a nextUpdate
+    # date); reload by restarting with a fresh blob downloaded from
+    # https://mds3.fido2.org/. Default (no source) leaves Config.MDS nil — the
+    # operational control above, byte-identical to a pre-MDS build.
+    mds:
+      # EXACTLY ONE of file / fetch_url supplies the blob. Both empty ⇒ MDS off.
+      file: ""            # path to a downloaded FIDO MDS blob (the JWS)
+      fetch_url: ""       # OR an https URL the blob is fetched from at boot
+      fetch_timeout: 30s  # bounds the boot-time fetch (fetch_url only)
+      # custom_root_file: path to the base64 DER (raw x5c body, not PEM) of a
+      # custom root to verify the blob INSTEAD of the built-in FIDO production
+      # root — ONLY for a non-production / test MDS (e.g. the conformance
+      # suite). Production leaves it empty.
+      custom_root_file: ""
   storage:
     users:
       backend: "memory"  # memory | sqlite

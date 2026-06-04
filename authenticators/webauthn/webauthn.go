@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/metadata"
 	"github.com/go-webauthn/webauthn/protocol"
 	gw "github.com/go-webauthn/webauthn/webauthn"
 )
@@ -160,6 +161,23 @@ type Config struct {
 	// REQUIRES AttestationConveyance direct|enterprise. Nil ⇒ no gating (the
 	// default — byte-identical to a pre-policy build).
 	AttestationPolicy *AttestationPolicy
+
+	// MDS, when non-nil, is a FIDO Metadata Service provider set as
+	// gw.Config.MDS. With it, go-webauthn's VerifyAttestation validates the
+	// attestation certificate CHAIN to the FIDO root (or the provider's
+	// configured root) and rejects an authenticator whose AAGUID has no
+	// FIDO-root-validated metadata entry — making the [AttestationPolicy]
+	// AAGUID gate ADVERSARY-RESISTANT (a crafted self-signed x5c asserting an
+	// allowlisted AAGUID is rejected because its chain doesn't root in the
+	// MDS). Build one from a downloaded MDS blob via [BuildMDSProvider]
+	// (the in-memory startup-snapshot provider) or pass any other
+	// metadata.Provider (e.g. go-webauthn's providers/cached fetch+refresh
+	// provider). Nil ⇒ no metadata validation — byte-identical to today; the
+	// AttestationPolicy then remains the operational/honest-client control,
+	// NOT a defence against a hostile registrant. MDS strengthens an
+	// AttestationPolicy but does not require one (MDS alone makes go-webauthn
+	// reject untrusted authenticators).
+	MDS metadata.Provider
 }
 
 // NewHelper validates cfg + returns the helper. RPID + at least
@@ -199,6 +217,12 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		RPID:          cfg.RPID,
 		RPDisplayName: cfg.RPDisplayName,
 		RPOrigins:     cfg.RPOrigins,
+		// MDS = FIDO Metadata Service provider. When non-nil, go-webauthn
+		// root-validates the attestation chain (see Config.MDS doc) — the
+		// AAGUID policy then gates a FIDO-validated AAGUID. Nil leaves the
+		// field at go-webauthn's zero (no metadata validation), byte-identical
+		// to the pre-MDS ceremony.
+		MDS: cfg.MDS,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: configure: %w", err)
@@ -311,6 +335,15 @@ func (h *Helper) FinishRegistration(ctx context.Context, sessionID string, r *ht
 		return nil, fmt.Errorf("webauthn: persist credential: %w", err)
 	}
 	return cred, nil
+}
+
+// MDSEnabled reports whether this Helper was wired with a FIDO Metadata
+// Service provider (gw.Config.MDS), i.e. whether go-webauthn's
+// VerifyAttestation will root-validate the attestation chain against the MDS
+// (the adversary-resistant posture). The wiring layer uses it for the startup
+// signal + tests; nil/unset ⇒ false (the operational-control default).
+func (h *Helper) MDSEnabled() bool {
+	return h != nil && h.core != nil && h.core.Config != nil && h.core.Config.MDS != nil
 }
 
 // AttestationPolicyEnabled reports whether this Helper has an active
