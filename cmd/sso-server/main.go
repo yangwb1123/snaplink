@@ -1103,6 +1103,114 @@ func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
 	return sso.WithSPIFFEJWTSVID(cfg.TrustDomain, cfg.Audience, source, vopts...), nil
 }
 
+// caepSubjectMode maps the YAML subject_mode string onto the SDK enum. It
+// fails LOUD on an unrecognised value rather than silently defaulting —
+// the wrong mode is a wrong-subject-revocation risk, so an operator typo
+// must surface, not degrade.
+func caepSubjectMode(raw string) (caep.SubjectMapMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "opaque":
+		return caep.SubjectMapOpaque, nil
+	case "iss_sub", "iss-sub":
+		return caep.SubjectMapIssSub, nil
+	default:
+		return 0, fmt.Errorf("unknown caep.receiver subject_mode %q (want opaque|iss_sub)", raw)
+	}
+}
+
+// buildCAEPReceiverOption assembles the WithCAEPReceiver option — the
+// INBOUND half of OpenID Shared Signals. It loads each trusted
+// transmitter's trust-bundle JWKS from disk, composes the revocation seam
+// (sessions + refresh tokens) from the already-built stores, and wires a
+// dedicated JTI-replay store for the SET jti namespace.
+//
+// It fails LOUD on any missing required field (audience, no transmitters, a
+// transmitter without issuer/jwks_file, a bad subject_mode) — a half-wired
+// receiver would either accept nothing or, worse, mis-map a subject, so a
+// misconfiguration must stop boot, not degrade.
+//
+// The receiver's revocation reuses the SAME seams /token/revoke-all drives:
+// the RefreshTokenSubjectIndex (when the refresh store supports it) + the
+// SessionManager. A receiver that could revoke NOTHING (no session manager
+// AND no subject-index refresh store) is rejected.
+func buildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.SessionManager, refreshStore oauth.RefreshTokenStore, clientStore sso.ClientStore, userProvider sso.UserProvider, recorder *audit.Recorder, metricsReg *metrics.Metrics, logger spi.Logger) (sso.Option, error) {
+	if cfg.Audience == "" {
+		return nil, errors.New("caep.receiver.audience required when caep.receiver.enabled")
+	}
+	if len(cfg.Transmitters) == 0 {
+		return nil, errors.New("caep.receiver.transmitters requires at least one entry when caep.receiver.enabled")
+	}
+
+	transmitters := make([]caep.TrustedTransmitter, 0, len(cfg.Transmitters))
+	for i, tt := range cfg.Transmitters {
+		if tt.Issuer == "" {
+			return nil, fmt.Errorf("caep.receiver.transmitters[%d].issuer required", i)
+		}
+		if tt.JWKSFile == "" {
+			return nil, fmt.Errorf("caep.receiver.transmitters[%d].jwks_file required", i)
+		}
+		doc, err := os.ReadFile(tt.JWKSFile)
+		if err != nil {
+			return nil, fmt.Errorf("read caep.receiver.transmitters[%d].jwks_file: %w", i, err)
+		}
+		source, err := security.ParseStaticJWKS(doc)
+		if err != nil {
+			return nil, fmt.Errorf("parse caep.receiver.transmitters[%d] trust bundle: %w", i, err)
+		}
+		mode, err := caepSubjectMode(tt.SubjectMode)
+		if err != nil {
+			return nil, err
+		}
+		transmitters = append(transmitters, caep.TrustedTransmitter{
+			Issuer:        tt.Issuer,
+			JWKS:          source,
+			SubjectMode:   mode,
+			Provider:      tt.Provider,
+			AllowedEvents: tt.AllowedEvents,
+			AllowedAlgs:   tt.AllowedAlgs,
+		})
+	}
+
+	// Revocation seam: the RefreshTokenSubjectIndex (bulk subject revoke,
+	// when the refresh store supports it) + the SessionManager. Identical to
+	// the seams /token/revoke-all + the compliance Eraser use.
+	var subjectIndex oauth.RefreshTokenSubjectIndex
+	if idx, ok := refreshStore.(oauth.RefreshTokenSubjectIndex); ok {
+		subjectIndex = idx
+	}
+	revoker, err := caep.NewStoreRevoker(sessionMgr, subjectIndex, clientStore)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dedicated replay store for the SET jti namespace (ssf:<iss>:<jti>),
+	// independent of the DPoP/actor-token replay store. Memory keeps the
+	// single-replica story; a multi-replica receiver deployment SHOULD swap
+	// this for a cluster-shared store so a replayed SET routed to a
+	// different replica is still rejected. The receiver itself fails CLOSED
+	// on any MarkSeen error regardless of backend.
+	jti := defaultimpl.NewMemoryJTIReplayStore()
+
+	ropts := []caep.ReceiverOption{
+		caep.WithReceiverAuditRecorder(recorder),
+		caep.WithReceiverLogger(logger),
+	}
+	if cfg.MaxClockSkew > 0 {
+		ropts = append(ropts, caep.WithReceiverMaxClockSkew(cfg.MaxClockSkew))
+	}
+	if metricsReg != nil {
+		ropts = append(ropts, caep.WithReceiverMetric(func(outcome string) {
+			metricsReg.SSFSetsReceivedTotal.WithLabelValues(outcome).Inc()
+		}))
+	}
+
+	rcv, err := caep.NewReceiver(cfg.Audience, jti, revoker, userProvider, transmitters, ropts...)
+	if err != nil {
+		return nil, err
+	}
+	return sso.WithCAEPReceiver(rcv), nil
+}
+
 // buildClientCertExtractor picks the RFC 8705 mTLS extractor backend.
 //   - "" / "tls" — DefaultTLSPeerCertExtractor (in-process TLS only)
 //   - "header"   — HeaderClientCertExtractor (reverse-proxy edge)
@@ -3274,6 +3382,26 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			"audience", cfg.SPIFFE.Audience,
 			"jwks_file", cfg.SPIFFE.JWKSFile,
 		)
+	}
+	if cfg.CAEP.Receiver.Enabled {
+		// OpenID Shared Signals (CAEP/SSF) RECEIVER — the inbound half. It
+		// mounts /ssf/receive, consumes SETs from the configured trusted
+		// transmitters, and revokes the mapped subject's local access via the
+		// SAME seams /token/revoke-all uses. Fail-closed validation; unmapped
+		// subject ⇒ ack + no-op (no wrongful revocation).
+		rcvOpt, err := buildCAEPReceiverOption(cfg.CAEP.Receiver, sessionMgr, refreshTokenStore, clientStore, userProvider, recorder, metricsRegistry, logger)
+		if err != nil {
+			return nil, fmt.Errorf("caep receiver: %w", err)
+		}
+		opts = append(opts, rcvOpt)
+		path := cfg.CAEP.Receiver.Path
+		if path == "" {
+			path = sso.PathSSFReceive
+		}
+		logger.Info("caep: OpenID Shared Signals receiver enabled — consumes signed SETs from trusted transmitters and revokes local access",
+			"path", path,
+			"audience", cfg.CAEP.Receiver.Audience,
+			"trusted_transmitters", len(cfg.CAEP.Receiver.Transmitters))
 	}
 	if cfg.Mesh.ExtAuthz.Enabled {
 		// Envoy/Istio ext_authz HTTP-mode endpoint (cluster C1 mesh

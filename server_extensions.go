@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/oauth"
@@ -1770,6 +1771,95 @@ func (s *Server) auditPartialRevokeFailure(ctx HandlerContext, revoked, failed [
 	audit.SetMeta(e, "revoked", strings.Join(revoked, ","))
 	audit.SetMeta(e, "failed", strings.Join(failed, ","))
 	s.auditor.Record(ctx.Request().Context(), e)
+}
+
+// maxSETBodyBytes bounds how much of an inbound SET body the receiver
+// reads. A compact-JWS SET is small (header + a few claims + signature);
+// 64 KiB is generous for an RSA-4096 signature + a richer subject id yet
+// caps a hostile/oversized body before it allocates. The body limit
+// middleware (when wired) also caps it; this is a defensive inner bound for
+// the byte-stream read regardless of middleware.
+const maxSETBodyBytes = 64 << 10
+
+// handleSSFReceive is the opt-in OpenID Shared Signals (CAEP/SSF) push
+// delivery RECEIVER endpoint (RFC 8935) — the inbound half of Shared
+// Signals, the inverse of the CAEP transmitter. A CONFIGURED trusted
+// upstream transmitter POSTs a signed Security Event Token (a compact JWS,
+// Content-Type application/secevent+jwt) in the body; the receiver
+// validates it FAIL-CLOSED (trusted-iss allowlist + signature against that
+// transmitter's JWKS via the alg-confusion-safe security.VerifyCompactJWS +
+// aud-binding + exp/iat + jti-replay) and, for a PRECISELY-mapped local
+// subject on a revocation event, revokes that subject's local access.
+//
+// Response contract (RFC 8935):
+//   - 202 Accepted on a VALID SET — including a valid SET that maps to no
+//     local subject or carries only unknown events (the transmitter did its
+//     job; the receiver simply had nothing to do). No body.
+//   - 400 with an oracle-safe SSF error body ({err, description}) on a
+//     MALFORMED / UNSIGNED / UNTRUSTED-iss / WRONG-aud / EXPIRED / REPLAYED
+//     SET. The `err` is a COARSE SSF-standard code (invalid_request /
+//     invalid_key); it does NOT reveal which precise gate failed.
+//   - 500 only on a transient internal failure AFTER full validation (a
+//     resolver/revoke-store outage) — the validated revocation intent is
+//     real, so the transmitter should retry rather than the receiver
+//     silently dropping it.
+//
+// This is a credential-bearing endpoint (the SET is a signed bearer
+// artefact), so tokenNoStoreHeaders stamps no-store on every response.
+func (s *Server) handleSSFReceive(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if s.caepReceiver == nil {
+		// Defensive: the route is only mounted when the receiver is wired,
+		// but guard so a future refactor can't reach a nil receiver.
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return
+	}
+
+	// Read the compact-JWS SET from the body (bounded). The SET is the body
+	// per the SSF push-delivery profile; we don't require an exact
+	// Content-Type match (transmitters vary), but cap the size.
+	body, err := io.ReadAll(io.LimitReader(ctx.Request().Body, maxSETBodyBytes+1))
+	if err != nil || len(body) == 0 || len(body) > maxSETBodyBytes {
+		writeSSFError(ctx, caep.ErrReceiverInvalidRequest)
+		return
+	}
+
+	res, rerr := s.caepReceiver.Receive(ctx.Request().Context(), strings.TrimSpace(string(body)))
+	if rerr != nil {
+		// A transient internal failure AFTER full validation (the SET was
+		// authentic + addressed here, but the revoke/resolve store faltered).
+		// 500 so the transmitter retries — we must not ack a revocation we
+		// didn't perform. No oracle: the body is a generic internal error.
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	if !res.Acked {
+		writeSSFError(ctx, res.RejectCode)
+		return
+	}
+	// Valid + acked (acted or no-op). RFC 8935: 202 with no body.
+	ctx.JSON(http.StatusAccepted, struct{}{})
+}
+
+// writeSSFError renders an RFC 8935 §2.4 SSF error response: a 400 with a
+// minimal {err, description} body. The `err` is the COARSE SSF-standard
+// code from the receiver (invalid_request | invalid_key) — it never leaks
+// which precise validation gate failed (signature vs aud vs replay vs
+// expiry all collapse to invalid_key), so a probing transmitter learns
+// only the standard category. The description is a fixed, non-revealing
+// string (no per-failure detail).
+func writeSSFError(ctx HandlerContext, code string) {
+	if code == "" {
+		code = caep.ErrReceiverInvalidKey
+	}
+	desc := "the security event token could not be authenticated"
+	if code == caep.ErrReceiverInvalidRequest {
+		desc = "the request body is not a valid security event token"
+	}
+	ctx.JSON(http.StatusBadRequest, map[string]string{
+		"err":         code,
+		"description": desc,
+	})
 }
 
 // RevokeTenantRefreshTokens purges every refresh token issued to any client

@@ -951,9 +951,41 @@ ciba:
 # documented HTTP endpoint in v1. Disabled = byte-identical to no
 # transmitter.
 caep:
-  enabled: false
+  enabled: false             # OUTBOUND transmitter: push SETs to affected RPs
   receiver_timeout: 0s       # per-receiver SET POST timeout; 0 -> SDK default (10s)
   set_ttl: 0s                # SET lifetime; 0 -> SDK default (2m)
+
+  # INBOUND half of OpenID Shared Signals: the CAEP/SSF push-delivery
+  # RECEIVER (RFC 8935). When enabled, mounts an endpoint (default
+  # /ssf/receive) that CONSUMES signed Security Event Tokens from
+  # CONFIGURED trusted upstream transmitters and, on a fully-validated
+  # session-revoked / account-disabled / token-claims-change event for a
+  # PRECISELY-mapped local subject, revokes that subject's local access
+  # (sessions + refresh tokens) via the same seams /token/revoke-all uses.
+  # Independent of the transmitter above (run either, both, or neither).
+  #
+  # SECURITY: only a SET signed by a configured transmitter (the `issuer`
+  # allowlist + a signature against that transmitter's trust-bundle JWKS,
+  # asymmetric-only / alg=none-blocked) and addressed to `audience` can
+  # revoke anything; a forged / untrusted-iss / wrong-aud / expired /
+  # replayed SET, or one for an unknown local subject, does NOTHING (the
+  # unknown-subject case is acked but not acted on -- no wrongful
+  # revocation, which would be a targeted DoS). Disabled -> the route is
+  # NOT mounted, byte-identical to a build without it. When enabled,
+  # `audience` + at least one `transmitters[]` entry are REQUIRED (boot
+  # fails loud otherwise).
+  receiver:
+    enabled: false
+    path: ""                 # mount point; "" -> SDK default /ssf/receive
+    audience: ""             # THIS server's id the inbound SET `aud` MUST contain (no lax aud)
+    max_clock_skew: 0s       # SET iat/exp freshness window; 0 -> SDK default (60s)
+    transmitters: []         # the trusted-transmitter allowlist; each:
+      # - issuer: "https://upstream-idp.example"   # exact SET `iss`
+      #   jwks_file: /etc/sso/ssf-upstream-jwks.json # that transmitter's published signing JWKS (trust bundle)
+      #   subject_mode: opaque                      # opaque (sub_id.id IS the local user id) | iss_sub (federation link)
+      #   provider: ""                              # iss_sub only: local federation provider name; "" -> the issuer
+      #   allowed_events: []                        # restrict which SSF event URIs this transmitter may trigger; [] -> all known
+      #   allowed_algs: []                          # restrict asymmetric algs; [] -> ES256/RS256/PS256/EdDSA
 
 # SPIFFE JWT-SVID acceptance via RFC 8693 token-exchange (mesh-native
 # service-to-service identity). A mesh workload holding a SPIRE-issued

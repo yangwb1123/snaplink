@@ -75,6 +75,12 @@ tags:
       Service-mesh data-plane integrations (cluster C1). The ext_authz
       HTTP-mode endpoint is mesh-internal: only the trusted sidecar may
       call it, and the mesh MUST strip client-supplied X-Auth-* at ingress.
+  - name: ssf
+    description: |
+      OpenID Shared Signals (CAEP/SSF) push-delivery receiver — the inbound
+      half of Shared Signals. Consumes signed Security Event Tokens from
+      CONFIGURED trusted upstream transmitters and revokes local access for
+      the precisely-mapped subject. Opt-in; default-off (route unmounted).
   - name: admin
     description: |
       Operator-side REST surface. Admin endpoints are gated by the
@@ -1162,6 +1168,85 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /ssf/receive:
+    post:
+      tags: [ssf]
+      summary: OpenID Shared Signals (CAEP/SSF) push-delivery receiver (opt-in).
+      description: |
+        Opt-in (`WithCAEPReceiver`, config `caep.receiver.enabled`) inbound
+        half of OpenID Shared Signals — the SSF "push" delivery receiver
+        (RFC 8935). A CONFIGURED trusted upstream transmitter POSTs a signed
+        Security Event Token (a compact JWS, RFC 8417) in the request body
+        with `Content-Type: application/secevent+jwt`; the receiver validates
+        it FAIL-CLOSED and, on a session-revoked / account-disabled /
+        token-claims-change event for a PRECISELY-mapped local subject,
+        revokes that subject's local access (sessions + refresh tokens) via
+        the same seams `/token/revoke-all` uses.
+
+        Validation chain (every trust failure collapses to the SAME coarse
+        SSF error code — no oracle leak of which gate failed):
+
+        - **trusted-issuer allowlist** — the SET `iss` MUST name a configured
+          transmitter; an unknown issuer triggers nothing.
+        - **signature** — verified against THAT transmitter's published JWKS
+          via the same alg-confusion-safe verifier the SPIFFE JWT-SVID path
+          uses (asymmetric-only, `alg=none` and every HS* blocked).
+        - **typ** — the JOSE header `typ` MUST be `secevent+jwt`, so a plain
+          access/id token signed by the same upstream key cannot be replayed
+          as a SET.
+        - **aud-binding** — the SET `aud` MUST contain this server's
+          configured audience; a SET addressed to a different receiver does
+          NOT act here (no cross-receiver replay).
+        - **freshness** — `iat`/`exp` within a configurable skew.
+        - **jti replay** — a replayed SET (same `jti`) does NOT re-trigger.
+
+        Subject mapping is the precision crux: a subject that does NOT map to
+        a KNOWN local user is ACKED but NOT acted on — revoking a guessed /
+        partial-match subject would be wrongful revocation (a targeted DoS).
+
+        This is a credential-bearing endpoint; every response carries
+        `Cache-Control: no-store`. It is intended to be reached only by the
+        trusted upstream transmitter (operator network policy).
+      operationId: ssfReceive
+      requestBody:
+        required: true
+        description: The Security Event Token as a compact JWS.
+        content:
+          application/secevent+jwt:
+            schema:
+              type: string
+              description: A compact-JWS SET (`header.payload.signature`).
+      responses:
+        "202":
+          description: |
+            Accepted. The SET was VALID and processed — including the cases
+            where it mapped to no local subject or carried only unknown
+            events (the transmitter did its job; the receiver had nothing to
+            do, or revoked the mapped subject's local access). Empty body.
+        "400":
+          description: |
+            The SET was malformed, unsigned, from an untrusted issuer,
+            addressed to a different audience, expired, or replayed. The body
+            is a minimal SSF error object; `err` is a COARSE standard code
+            (`invalid_request` for a malformed body, `invalid_key` for any
+            authentication failure) that does NOT reveal which precise gate
+            failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  err:
+                    type: string
+                    enum: [invalid_request, invalid_key]
+                  description:
+                    type: string
+        "500":
+          description: |
+            A transient internal failure AFTER full validation (a
+            resolve/revoke store outage). The validated revocation intent is
+            real, so the transmitter should retry. Generic body (no detail).
 
   /permissions/me:
     get:

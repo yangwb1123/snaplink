@@ -256,6 +256,35 @@ never appear.
 
 ---
 
+## OpenID Shared Signals receiver (`/ssf/receive`)
+
+The opt-in CAEP/SSF push-delivery receiver (RFC 8935) — the inbound half
+of Shared Signals — consumes signed Security Event Tokens from CONFIGURED
+trusted upstream transmitters and revokes local access for the mapped
+subject. Mounted only when `WithCAEPReceiver` is wired (config
+`caep.receiver.enabled`); the route 404s otherwise.
+
+**Wire shape note:** unlike every other endpoint, the SSF error body uses
+the RFC 8935 §2.4 key **`err`** (not `error`) plus an optional
+`description`. The `err` codes below are DELIBERATELY COARSE — every trust
+failure (bad signature, untrusted issuer, wrong audience, expired,
+replayed) collapses to one code so the endpoint reveals no oracle of which
+gate failed (AGENTS.md §2). A VALID SET is always **acked (202)** even when
+it maps to no local subject or carries only unknown events; only the
+failures below return a 400.
+
+| Code              | HTTP | Emitted when                                                                                  |
+|-------------------|------|-----------------------------------------------------------------------------------------------|
+| `invalid_request` | 400  | The request body is not a parseable compact-JWS SET (malformed / empty / oversized)           |
+| `invalid_key`     | 400  | The SET could not be authenticated: bad signature, untrusted/unknown `iss`, wrong `aud`, wrong `typ`, expired, or replayed (all collapsed onto this one code — oracle-safe) |
+
+A transient internal failure AFTER full validation (a resolve/revoke store
+outage) returns `internal_error` (500, see Server / configuration) so the
+transmitter retries rather than the receiver silently dropping a real
+revocation.
+
+---
+
 ## Rate limiting + payload
 
 | Code                | HTTP | Emitted when                                          | Headers                  |

@@ -34,6 +34,8 @@ const (
 	NameCIBAPingTotal = "sso_ciba_ping_total"
 
 	NameCAEPSetsTotal = "sso_caep_sets_total"
+
+	NameSSFSetsReceivedTotal = "sso_ssf_sets_received_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

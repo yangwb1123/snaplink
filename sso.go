@@ -84,6 +84,20 @@ type Server struct {
 	spiffeValidator *security.SPIFFEValidator
 	spiffeAudience  string
 
+	// CAEP/SSF RECEIVER (the inbound half of OpenID Shared Signals — the
+	// inverse of caepTransmitter). When caepReceiver is wired
+	// (WithCAEPReceiver), the server mounts a push-delivery endpoint
+	// (PathSSFReceive) that consumes signed Security Event Tokens from
+	// CONFIGURED trusted upstream transmitters and, on a fully-validated
+	// session-revoked / account-disabled / token-claims-change event for a
+	// PRECISELY-mapped local subject, revokes that subject's local access
+	// (sessions + refresh tokens). Validation is fail-closed (iss-allowlist
+	// + VerifyCompactJWS signature + aud-binding + exp + jti-replay, all
+	// alg=none-safe); an unmapped subject is acked but NOT acted on (no
+	// wrongful revocation). Nil ⇒ the route is NOT mounted — byte-identical
+	// to a build without it.
+	caepReceiver *caep.Receiver
+
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate
@@ -1045,6 +1059,36 @@ func WithCAEPTransmitter(t *caep.Transmitter) Option {
 // can drain its in-flight async sends on shutdown via Close.
 func (s *Server) CAEPTransmitter() *caep.Transmitter { return s.caepTransmitter }
 
+// WithCAEPReceiver mounts the OpenID Shared Signals (CAEP/SSF) RECEIVER —
+// the inbound half of Shared Signals, the inverse of WithCAEPTransmitter.
+// It registers a push-delivery endpoint (PathSSFReceive, default
+// "/ssf/receive") that accepts a signed Security Event Token (a compact
+// JWS, Content-Type application/secevent+jwt) from a CONFIGURED trusted
+// upstream transmitter and, on a fully-validated revocation event for a
+// PRECISELY-mapped local subject, revokes that subject's local access
+// (sessions + refresh tokens) via the same seams /token/revoke-all uses.
+//
+// The receiver (built with caep.NewReceiver) carries its own trust:
+//
+//   - a trusted-transmitter allowlist (each: an `iss` + that transmitter's
+//     published JWKS). A SET whose `iss` is not configured, or whose
+//     signature doesn't verify against that transmitter's JWKS (via the
+//     SAME alg-confusion-safe security.VerifyCompactJWS the SPIFFE path
+//     uses), triggers NOTHING.
+//   - strict aud-binding (the SET `aud` MUST contain this server's
+//     configured audience — no cross-receiver replay), exp/iat freshness,
+//     and jti-replay (a replayed SET cannot re-trigger).
+//   - precise subject mapping (a subject with no KNOWN local user is acked
+//     but NOT acted on — no wrongful revocation, which would be a DoS).
+//
+// A validation failure returns an oracle-safe SSF error (400) that does
+// NOT reveal which gate failed; a valid SET (even one that maps to no
+// subject or carries only unknown events) is acked (202). Default-off:
+// nil ⇒ the route is NOT mounted, byte-identical to a build without it.
+func WithCAEPReceiver(rcv *caep.Receiver) Option {
+	return func(s *Server) { s.caepReceiver = rcv }
+}
+
 // WithAuditAPI mounts the audit query endpoints
 // (GET /api/v1/audit/events, GET /api/v1/audit/events/:id,
 // GET /api/v1/audit/facets). Requires a recorder to also be set. The
@@ -1523,6 +1567,15 @@ func (s *Server) Mount() {
 		}
 		s.router.GET(path, s.handleMeshExtAuthz)
 		s.router.POST(path, s.handleMeshExtAuthz)
+	}
+
+	// CAEP/SSF push-delivery RECEIVER (opt-in, the inbound half of OpenID
+	// Shared Signals). A trusted upstream transmitter POSTs a signed SET
+	// here; the receiver validates it fail-closed and revokes the mapped
+	// subject's local access. Not mounted unless WithCAEPReceiver is wired —
+	// byte-identical to a build without it.
+	if s.caepReceiver != nil {
+		s.router.POST(PathSSFReceive, s.handleSSFReceive)
 	}
 
 	api := s.router.Group(PathAPIPrefix)

@@ -172,6 +172,17 @@ type Metrics struct {
 	// before it widens the cross-RP revocation window. Zero traffic when no
 	// CAEP transmitter is wired.
 	CAEPSetsTotal *prometheus.CounterVec // labels: outcome
+
+	// SSFSetsReceivedTotal counts INBOUND OpenID Shared Signals (CAEP/SSF)
+	// Security Event Tokens processed by the receiver, by outcome ∈
+	// {revoked, noop, rejected} (bounded). `rejected` is a SET that failed
+	// validation (bad signature / untrusted iss / wrong aud / expired /
+	// replayed / malformed) — a rising rejected series can mean a
+	// misconfigured upstream OR a forged/replayed-SET probing attempt;
+	// `revoked` is a validated SET that drove a local revocation; `noop` is
+	// a valid SET that mapped to no local subject or carried only unknown
+	// events. Zero traffic when no CAEP receiver is wired.
+	SSFSetsReceivedTotal *prometheus.CounterVec // labels: outcome
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -411,6 +422,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 			prometheus.CounterOpts{
 				Name: NameCAEPSetsTotal,
 				Help: "OpenID Shared Signals (CAEP/RISC) Security Event Token push attempts from the detached transmitter goroutine, by outcome (success/failed/dropped). A failed/dropped SET means an affected RP missed a real-time revocation signal; alert on a rising failed/dropped series. Zero traffic when no CAEP transmitter is wired.",
+			},
+			[]string{LabelOutcome},
+		),
+
+		SSFSetsReceivedTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameSSFSetsReceivedTotal,
+				Help: "Inbound OpenID Shared Signals (CAEP/SSF) Security Event Tokens processed by the receiver, by outcome (revoked/noop/rejected). `rejected` is a SET that failed validation (bad signature/untrusted iss/wrong aud/expired/replayed/malformed) — a rising series can mean a misconfigured upstream or a forged/replayed-SET probe; `revoked` drove a local revocation; `noop` mapped to no local subject or only unknown events. Zero traffic when no CAEP receiver is wired.",
 			},
 			[]string{LabelOutcome},
 		),

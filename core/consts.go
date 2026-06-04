@@ -63,6 +63,17 @@ const (
 	// the /api/v1/admin/ prefix.
 	PathStorageHealth = "/api/v1/admin/storage-health"
 
+	// PathSSFReceive is the default mount point for the opt-in OpenID
+	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
+	// inbound half of Shared Signals. A CONFIGURED trusted upstream
+	// transmitter POSTs a signed Security Event Token (a compact JWS,
+	// Content-Type application/secevent+jwt) here; the receiver validates
+	// it fail-closed (trusted-iss allowlist + signature against that
+	// transmitter's JWKS + aud-binding + exp + jti-replay) and, for a
+	// PRECISELY-mapped local subject, revokes that subject's local access.
+	// Only mounted when WithCAEPReceiver is wired (byte-identical off).
+	PathSSFReceive = "/ssf/receive"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"
