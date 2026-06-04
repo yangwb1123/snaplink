@@ -44,10 +44,11 @@ import (
 //
 // FAIL-CLOSED: any fetch error, signature failure, expired/not-yet-valid
 // statement, iss/sub mismatch, typ mismatch, a chain that never reaches a
-// configured anchor, an over-long path, a cycle, or a metadata-policy
-// violation/merge-conflict REJECTS the whole resolution with one coarse error
-// (ErrTrustChainInvalid). Detail goes to the log seam, never the caller —
-// no partial trust, no untrusted-anchor fallback.
+// configured anchor, an over-long path, a cycle, a §6.2 constraint violation
+// (max_path_length / naming_constraints / allowed_entity_types), or a
+// metadata-policy violation/merge-conflict REJECTS the whole resolution with
+// one coarse error (ErrTrustChainInvalid). Detail goes to the log seam, never
+// the caller — no partial trust, no untrusted-anchor fallback.
 
 // ErrTrustChainInvalid is the single coarse error every trust-chain resolution
 // failure collapses into (a malformed/forged/expired/unanchored/policy-
@@ -494,8 +495,9 @@ func (r *TrustChainResolver) climbToAnchor(ctx context.Context, state *walkState
 
 // validate is the TRUST decision: it re-verifies every signature in the
 // assembled chain against the keys established higher in the chain (rooted in
-// the CONFIGURED anchor keys), and checks iss/sub/typ/exp/iat at every hop.
-// Returns the FIRST failure (fail-closed).
+// the CONFIGURED anchor keys), checks iss/sub/typ/exp/iat at every hop, and
+// finally enforces the §6.2 trust-chain constraints (from the now-verified
+// statements). Returns the FIRST failure (fail-closed).
 //
 // Canonical chain shape produced by assemble (leaf-first):
 //
@@ -591,6 +593,16 @@ func (r *TrustChainResolver) validate(links []chainLink, anchor TrustAnchor) err
 	}
 	if err := checkSelfSigned(leaf.claims, issuerID); err != nil {
 		return fmt.Errorf("leaf entity configuration: %w", err)
+	}
+
+	// 3) §6.2 trust-chain CONSTRAINTS. Enforced HERE — at the tail of validate,
+	//    after EVERY link's signature is re-verified — so the constraints are
+	//    read only from signature-validated statements (an attacker cannot forge
+	//    a relaxing constraint). ADDITIVE + fail-closed: this can only ADD a
+	//    rejection; a chain with no constraints makes it a no-op (slice-2
+	//    behavior byte-identical). See constraints.go.
+	if err := enforceConstraints(links); err != nil {
+		return fmt.Errorf("trust chain constraints: %w", err)
 	}
 	return nil
 }

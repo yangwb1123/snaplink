@@ -72,6 +72,48 @@ type EntityStatementClaims struct {
 	// parameter name to its operator object. Raw nested map so the policy
 	// engine owns interpretation. Set only on Subordinate Statements.
 	MetadataPolicy map[string]map[string]map[string]any `json:"metadata_policy,omitempty"`
+
+	// Constraints is the §6.2 (anchor chain_constraints) constraints claim: the
+	// trust-chain delegation limits a superior (a trust anchor or intermediate)
+	// imposes on the subtree of subordinates BELOW it — max_path_length,
+	// naming_constraints, allowed_entity_types. Set ONLY on Subordinate
+	// Statements (the entity-PUBLISHING path, slice 1, never sets it, so
+	// omitempty keeps that path byte-identical). Enforced by constraints.go
+	// AFTER the chain is signature-validated, so the limits come from TRUSTED
+	// statements. Per §6.2 each statement's constraints are applied
+	// INDEPENDENTLY; any failure invalidates the whole chain (fail-closed).
+	Constraints *EntityConstraints `json:"constraints,omitempty"`
+}
+
+// EntityConstraints is the §6.2 constraints object carried on a Subordinate
+// Statement. Every field is OPTIONAL/pointer so "absent" is distinguishable
+// from a meaningful zero value:
+//
+//   - MaxPathLength is a *int because 0 is MEANINGFUL (no Intermediates may
+//     appear between the constraining Entity and the Trust Chain subject —
+//     the subject must be a leaf directly below this Entity) whereas absent
+//     means "no path-length limit from this statement". A negative value is
+//     malformed (§6.2.1 requires >= 0) → fail-closed reject.
+//   - NamingConstraints is a *NamingConstraints (absent vs present-but-empty).
+//   - AllowedEntityTypes is a *[]string because the EMPTY array [] is
+//     MEANINGFUL (only federation_entity is allowed, §6.2.3) and must be
+//     distinguished from an absent claim (any Entity Type allowed). A nil
+//     pointer = absent; a non-nil pointer to an empty slice = "[]".
+type EntityConstraints struct {
+	MaxPathLength      *int               `json:"max_path_length,omitempty"`
+	NamingConstraints  *NamingConstraints `json:"naming_constraints,omitempty"`
+	AllowedEntityTypes *[]string          `json:"allowed_entity_types,omitempty"`
+}
+
+// NamingConstraints is the §6.2.2 naming_constraints object: permitted and/or
+// excluded URI name subtrees restricting the Entity Identifiers of Subordinate
+// Entities. Matching follows RFC 5280 §4.2.1.10 domain-name constraints
+// applied to the HOST component of each Entity Identifier (an https URL);
+// excluded beats permitted (a host matching ANY excluded entry is invalid
+// regardless of the permitted list). See constraints.go for the matcher.
+type NamingConstraints struct {
+	Permitted []string `json:"permitted,omitempty"`
+	Excluded  []string `json:"excluded,omitempty"`
 }
 
 // EntityJWKS is the inline JSON Web Key Set (RFC 7517) embedded in an
