@@ -27,6 +27,13 @@ import (
 // (secp256k1) curve is not a JWS-standard curve and is likewise rejected.
 var ErrUnsupportedKey = errors.New("azurekeyvault: unsupported key type or signing scheme")
 
+// minRSABits is the modulus-size floor enforced on a raw-JWK RSA public key.
+// RFC 7518 §3.3 requires RSA keys be >= 2048 bits; this mirrors
+// defaultimpl/cryptosigner's minRSABits and the spiffe trust-bundle floor so a
+// direct crypto.Signer consumer (not routed through cryptosigner's startup
+// check) cannot publish a weak modulus in JWKS.
+const minRSABits = 2048
+
 // keyVaultAPI is the minimal slice of the azkeys.Client this signer needs.
 // Declaring our own interface (rather than depending on *azkeys.Client
 // directly) keeps the seam test-injectable: the real *azkeys.Client from
@@ -264,8 +271,32 @@ func jwkToPublic(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 		if !eBig.IsInt64() || eBig.Int64() > int64(int(^uint(0)>>1)) || eBig.Sign() <= 0 {
 			return nil, fmt.Errorf("azurekeyvault: %w: RSA public exponent out of range", ErrUnsupportedKey)
 		}
+		// Validate the exponent is a cryptographically valid RSA public
+		// exponent on the FULL value (before the int truncation below). Unlike
+		// awskms/gcpkms, which parse a DER SubjectPublicKeyInfo through
+		// x509.ParsePKIXPublicKey and inherit its exponent checks, this module
+		// parses the RAW JWK N/E and so bypasses x509's validation — it MUST
+		// reject these itself. e<3 (e=1 is the identity exponent: ciphertext ==
+		// plaintext, trivially forgeable; e=2 is below the minimum) or an even e
+		// (RSA requires gcd(e, phi(N))==1, and phi(N) is even, so an even e is
+		// never coprime → invalid) is never a valid RSA public exponent. This
+		// keeps legitimate small odd exponents (e=3, e=65537). A misbehaving /
+		// compromised / misconfigured vault returning E=0x01 would otherwise
+		// yield an rsa.PublicKey{E:1} published in JWKS → forgeable tokens.
+		if eBig.Cmp(big.NewInt(3)) < 0 || eBig.Bit(0) == 0 {
+			return nil, fmt.Errorf("azurekeyvault: %w: invalid RSA public exponent (must be odd and >= 3)", ErrUnsupportedKey)
+		}
+		n := new(big.Int).SetBytes(jwk.N)
+		// Defense-in-depth modulus floor: reject a sub-2048-bit RSA key. The
+		// production path is already saved by cryptosigner.RSA's
+		// N.BitLen()>=2048 startup check, but a DIRECT crypto.Signer consumer of
+		// this Signer bypasses that — so floor it locally too, mirroring the
+		// cryptosigner + spiffe trust-bundle 2048-bit floor (RFC 7518 §3.3).
+		if n.BitLen() < minRSABits {
+			return nil, fmt.Errorf("azurekeyvault: %w: RSA modulus is %d bits, want >= %d", ErrUnsupportedKey, n.BitLen(), minRSABits)
+		}
 		return &rsa.PublicKey{
-			N: new(big.Int).SetBytes(jwk.N),
+			N: n,
 			E: int(eBig.Int64()),
 		}, nil
 	case azkeys.KeyTypeEC, azkeys.KeyTypeECHSM:
@@ -285,7 +316,16 @@ func jwkToPublic(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 			Y:     new(big.Int).SetBytes(jwk.Y),
 		}
 		// Reject a point that is not actually on the curve — a malformed JWK
-		// must fail loud, never produce a key that signs garbage.
+		// must fail loud, never produce a key that signs garbage. IsOnCurve is
+		// the direct on-curve validator for a raw JWK X/Y: it rejects off-curve
+		// points, out-of-range coordinates (each must lie in [0, P)), and the
+		// point at infinity (0,0) — the three checks that matter here, all
+		// empirically confirmed. Go 1.26 marks elliptic.Curve.IsOnCurve
+		// Deprecated ("low-level unsafe API"), but it remains functionally
+		// correct: awskms/gcpkms sidestep it because they parse a DER
+		// SubjectPublicKeyInfo via x509.ParsePKIXPublicKey (which validates
+		// internally), whereas this module parses the raw EC components, so the
+		// explicit on-curve check is necessary, not optional.
 		if !curve.IsOnCurve(pub.X, pub.Y) {
 			return nil, fmt.Errorf("azurekeyvault: %w: EC public point is not on curve %s", ErrUnsupportedKey, curve.Params().Name)
 		}

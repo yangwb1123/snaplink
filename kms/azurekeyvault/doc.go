@@ -65,15 +65,21 @@
 //
 // # Supported algorithms
 //
-//   - ECDSA: P-256 -> ES256, P-384 -> ES384, P-521 -> ES512.
+// What the standalone azurekeyvault.Signer (a [crypto.Signer]) drives:
+//
+//   - ECDSA: P-256 -> ES256, P-384 -> ES384, P-521 -> ES512. All three curves
+//     are signed + R||S->DER-converted by this type for ANY crypto.Signer
+//     consumer.
 //   - RSA:   RS256 (RSASSA-PKCS1-v1_5) and PS256 (RSASSA-PSS), both over
 //     SHA-256, key sizes 2048/3072/4096. RSA-HSM / EC-HSM keys (the
 //     non-exportable, FIPS-gate variants) are accepted identically.
 //
-// Note: the defaultimpl ECDSA issuer + the cryptosigner ECDSA bridge
-// currently support only P-256 (ES256) end to end; the azurekeyvault.Signer
-// itself can drive P-384/P-521 for any other crypto.Signer consumer. The
-// non-JWS P-256K (secp256k1) curve is rejected.
+// End-to-end through the SSO issuer is NARROWER for ECDSA: the defaultimpl
+// ECDSA issuer + the cryptosigner ECDSA bridge currently wire only P-256
+// (ES256) — so ES384/ES512 above are reachable as a standalone Signer but NOT
+// (yet) as a token-signing key through cryptosigner.ECDSA + the SSO issuer.
+// RSA (RS256/PS256) and ECDSA P-256 (ES256) are the end-to-end algorithms.
+// The non-JWS P-256K (secp256k1) curve is rejected outright.
 //
 // # ECDSA signature format: the R||S <-> DER inversion
 //

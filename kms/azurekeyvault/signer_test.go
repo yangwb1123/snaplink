@@ -56,6 +56,20 @@ type fakeVault struct {
 	signBlock <-chan struct{}
 }
 
+// fakeVaultJWK is a minimal keyVaultAPI that returns a CRAFTED JSON Web Key
+// verbatim from GetKey — used to drive jwkToPublic via the Public()/PublicKey()
+// path with inputs a live private key cannot produce (e.g. a forged E=1
+// exponent a misbehaving vault might return). Sign is unused here.
+type fakeVaultJWK struct{ jwk *azkeys.JSONWebKey }
+
+func (f *fakeVaultJWK) GetKey(_ context.Context, _ string, _ string, _ *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error) {
+	return azkeys.GetKeyResponse{KeyBundle: azkeys.KeyBundle{Key: f.jwk}}, nil
+}
+
+func (f *fakeVaultJWK) Sign(_ context.Context, _ string, _ string, _ azkeys.SignParameters, _ *azkeys.SignOptions) (azkeys.SignResponse, error) {
+	return azkeys.SignResponse{}, errors.New("fakeVaultJWK: Sign not supported")
+}
+
 func newFakeEC(t *testing.T, curve elliptic.Curve) *fakeVault {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(curve, rand.Reader)
@@ -630,6 +644,185 @@ func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
 	if !ecdsa.VerifyASN1(&f.ecKey.PublicKey, digest[:], der) {
 		t.Fatal("post-outage signature did not verify")
 	}
+}
+
+// rsaJWK builds an RSA JSON Web Key from explicit modulus + exponent bytes,
+// mirroring Azure's raw big-endian octet-string encoding. Used to feed
+// jwkToPublic crafted N/E that a misbehaving vault could return.
+func rsaJWK(n, e []byte) *azkeys.JSONWebKey {
+	return &azkeys.JSONWebKey{
+		Kty: to.Ptr(azkeys.KeyTypeRSA),
+		N:   n,
+		E:   e,
+	}
+}
+
+// TestRSAExponentValidation locks the MEDIUM-1 hardening: a raw-JWK RSA public
+// exponent below 3, or an even exponent, is rejected (e=1 is the forgeable
+// identity exponent; e=2/e=4 are even → never coprime with phi(N)). Legitimate
+// small odd exponents (e=3, e=65537) are accepted. A valid >=2048-bit modulus
+// is reused throughout so the EXPONENT is the only variable under test.
+func TestRSAExponentValidation(t *testing.T) {
+	good := newFakeRSA(t) // a real 2048-bit key supplies a valid modulus
+	nBytes := good.rsaKey.N.Bytes()
+
+	for _, tc := range []struct {
+		name   string
+		e      []byte
+		accept bool
+	}{
+		{"e=1 identity (forgeable)", []byte{0x01}, false},
+		{"e=2 even", []byte{0x02}, false},
+		{"e=4 even", []byte{0x04}, false},
+		{"e=0", []byte{0x00}, false}, // already covered by the <=0 guard
+		{"e=3 valid odd", []byte{0x03}, true},
+		{"e=65537 valid", []byte{0x01, 0x00, 0x01}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pub, err := jwkToPublic(rsaJWK(nBytes, tc.e))
+			if tc.accept {
+				if err != nil {
+					t.Fatalf("e=%x: jwkToPublic error = %v, want accepted", tc.e, err)
+				}
+				rp, ok := pub.(*rsa.PublicKey)
+				if !ok {
+					t.Fatalf("e=%x: got %T, want *rsa.PublicKey", tc.e, pub)
+				}
+				if rp.E != int(new(big.Int).SetBytes(tc.e).Int64()) {
+					t.Fatalf("e=%x: reconstructed E = %d", tc.e, rp.E)
+				}
+			} else if !errors.Is(err, ErrUnsupportedKey) {
+				t.Fatalf("e=%x: error = %v, want ErrUnsupportedKey", tc.e, err)
+			}
+		})
+	}
+}
+
+// TestRSAExponentValidationThroughPublic confirms the exponent guard also fires
+// on the GetKey-fed Public() path (not just the direct jwkToPublic call): a
+// vault returning E=1 yields a nil Public()/erroring PublicKey, never an
+// rsa.PublicKey{E:1}.
+func TestRSAExponentValidationThroughPublic(t *testing.T) {
+	good := newFakeRSA(t)
+	f := &fakeVaultJWK{jwk: rsaJWK(good.rsaKey.N.Bytes(), []byte{0x01})}
+	s, err := NewSigner(f, testKeyName, testKeyVersion)
+	if err != nil {
+		t.Fatalf("NewSigner: %v", err)
+	}
+	if _, err := s.PublicKey(context.Background()); !errors.Is(err, ErrUnsupportedKey) {
+		t.Fatalf("PublicKey for E=1 JWK error = %v, want ErrUnsupportedKey", err)
+	}
+	if pub := s.Public(); pub != nil {
+		t.Fatalf("Public() for E=1 JWK = %v, want nil (never an rsa.PublicKey{E:1})", pub)
+	}
+}
+
+// TestRSAModulusFloor locks the LOW-2 hardening: a sub-2048-bit RSA modulus is
+// rejected even with a valid exponent, protecting a direct crypto.Signer
+// consumer that bypasses cryptosigner.RSA's startup floor. A 2048-bit modulus
+// is accepted (and the existing happy-path RSA tests, which use 2048-bit keys,
+// stay green).
+func TestRSAModulusFloor(t *testing.T) {
+	e := []byte{0x01, 0x00, 0x01} // 65537, a valid exponent
+
+	weak, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generate 1024-bit key: %v", err)
+	}
+	if weak.N.BitLen() >= minRSABits {
+		t.Fatalf("1024-bit key reported %d bits, fixture invalid", weak.N.BitLen())
+	}
+	if _, err := jwkToPublic(rsaJWK(weak.N.Bytes(), e)); !errors.Is(err, ErrUnsupportedKey) {
+		t.Fatalf("1024-bit modulus error = %v, want ErrUnsupportedKey", err)
+	}
+
+	strong := newFakeRSA(t) // 2048-bit
+	if strong.rsaKey.N.BitLen() < minRSABits {
+		t.Fatalf("happy-path RSA fixture is %d bits, below the 2048 floor", strong.rsaKey.N.BitLen())
+	}
+	pub, err := jwkToPublic(rsaJWK(strong.rsaKey.N.Bytes(), e))
+	if err != nil {
+		t.Fatalf("2048-bit modulus: jwkToPublic error = %v, want accepted", err)
+	}
+	if _, ok := pub.(*rsa.PublicKey); !ok {
+		t.Fatalf("2048-bit modulus: got %T, want *rsa.PublicKey", pub)
+	}
+}
+
+// TestECPointValidation locks the LOW-1 on-curve guard (whichever
+// implementation): a JWK whose X/Y is off-curve, out-of-range ([0,P) violated),
+// or the point at infinity (0,0) is rejected — never assembled into a key that
+// would sign garbage. All three are fed through jwkToPublic against a real
+// curve's coordinate encoding.
+func TestECPointValidation(t *testing.T) {
+	curve := elliptic.P256()
+	curveName, coordLen := ecParams(curve)
+	p := curve.Params().P
+
+	// A real on-curve point, to perturb into the off-curve case.
+	valid, err := ecdsa.GenerateKey(curve, rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	ecJWK := func(x, y *big.Int) *azkeys.JSONWebKey {
+		// Left-pad to the curve coordinate width, exactly as Azure encodes the
+		// JWK. (An out-of-range coordinate may exceed coordLen; size to fit.)
+		xb := x.Bytes()
+		yb := y.Bytes()
+		if len(xb) < coordLen {
+			pad := make([]byte, coordLen)
+			x.FillBytes(pad)
+			xb = pad
+		}
+		if len(yb) < coordLen {
+			pad := make([]byte, coordLen)
+			y.FillBytes(pad)
+			yb = pad
+		}
+		return &azkeys.JSONWebKey{
+			Kty: to.Ptr(azkeys.KeyTypeEC),
+			Crv: to.Ptr(curveName),
+			X:   xb,
+			Y:   yb,
+		}
+	}
+
+	t.Run("off-curve", func(t *testing.T) {
+		// Flip Y by 1: overwhelmingly not on the curve for the same X.
+		badY := new(big.Int).Add(valid.Y, big.NewInt(1))
+		if _, err := jwkToPublic(ecJWK(valid.X, badY)); !errors.Is(err, ErrUnsupportedKey) {
+			t.Fatalf("off-curve point error = %v, want ErrUnsupportedKey", err)
+		}
+	})
+
+	t.Run("out-of-range coordinate (X == P)", func(t *testing.T) {
+		// X == field prime P is out of the valid [0, P) range and not on the
+		// curve; IsOnCurve rejects it.
+		if _, err := jwkToPublic(ecJWK(new(big.Int).Set(p), valid.Y)); !errors.Is(err, ErrUnsupportedKey) {
+			t.Fatalf("X==P error = %v, want ErrUnsupportedKey", err)
+		}
+	})
+
+	t.Run("point at infinity (0,0)", func(t *testing.T) {
+		if _, err := jwkToPublic(ecJWK(big.NewInt(0), big.NewInt(0))); !errors.Is(err, ErrUnsupportedKey) {
+			t.Fatalf("infinity (0,0) error = %v, want ErrUnsupportedKey", err)
+		}
+	})
+
+	t.Run("valid point still accepted", func(t *testing.T) {
+		pub, err := jwkToPublic(ecJWK(valid.X, valid.Y))
+		if err != nil {
+			t.Fatalf("valid on-curve point rejected: %v", err)
+		}
+		ep, ok := pub.(*ecdsa.PublicKey)
+		if !ok {
+			t.Fatalf("got %T, want *ecdsa.PublicKey", pub)
+		}
+		if ep.X.Cmp(valid.X) != 0 || ep.Y.Cmp(valid.Y) != 0 {
+			t.Fatal("reconstructed point does not match the source")
+		}
+	})
 }
 
 // TestSignCallTimeout: a vault round-trip that blocks longer than
