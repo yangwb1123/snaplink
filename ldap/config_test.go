@@ -163,6 +163,38 @@ func TestValidate_MemberOfPath_NoGroupSearchRequired(t *testing.T) {
 	}
 }
 
+// A GroupFilter set ALONGSIDE GroupAttribute (a misconfig: the memberOf path
+// wins, the GroupFilter is dead config) must STILL have its placeholder
+// validated — previously this slipped through boot silently because the check
+// was nested under `GroupAttribute == ""`. A missing %s now fails loud at boot.
+func TestValidate_GroupFilter_PlaceholderCheckedEvenWithGroupAttribute(t *testing.T) {
+	c := baseValidCfg()
+	c.GroupAttribute = "memberOf"
+	c.GroupFilter = "(objectClass=groupOfNames)" // no %s placeholder
+	mustValidateErr(t, c, "GroupFilter")
+}
+
+// Symmetric guard: a GroupFilter with MULTIPLE placeholders alongside
+// GroupAttribute is also rejected (fmt.Sprintf with one arg would corrupt it).
+func TestValidate_GroupFilter_MultiplePlaceholdersCheckedWithGroupAttribute(t *testing.T) {
+	c := baseValidCfg()
+	c.GroupAttribute = "memberOf"
+	c.GroupFilter = "(|(memberUid=%s)(member=%s))" // two placeholders
+	mustValidateErr(t, c, "exactly one")
+}
+
+// A well-formed GroupFilter (single %s) alongside GroupAttribute stays VALID —
+// the unconditional check only rejects a malformed placeholder count, not the
+// mere coexistence of the two fields.
+func TestValidate_GroupFilter_WellFormedWithGroupAttribute_OK(t *testing.T) {
+	c := baseValidCfg()
+	c.GroupAttribute = "memberOf"
+	c.GroupFilter = "(&(objectClass=posixGroup)(memberUid=%s))"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("well-formed GroupFilter alongside GroupAttribute rejected: %v", err)
+	}
+}
+
 // New() surfaces a Validate error (boot fails closed).
 func TestNew_InvalidConfig_FailsClosed(t *testing.T) {
 	c := baseValidCfg()

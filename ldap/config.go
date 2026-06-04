@@ -240,14 +240,23 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("ldap: UserFilter must contain exactly one %q placeholder, got %q", usernamePlaceholder, filter)
 	}
 
-	// The group second-search path needs both its base and its (placeholder-
-	// bearing) filter, with the same single-placeholder discipline.
+	// The GroupFilter placeholder discipline is validated UNCONDITIONALLY whenever
+	// a GroupFilter is set — even alongside GroupAttribute (a misconfig where the
+	// memberOf path wins and the GroupFilter is dead config). Previously this
+	// check was nested under `GroupAttribute == ""`, so a GroupFilter with a wrong
+	// placeholder count set next to a GroupAttribute passed boot SILENTLY; if the
+	// operator later removed GroupAttribute the broken filter would surface only
+	// at runtime as a corrupted "%!s(MISSING)" filter. Fail loud at boot instead.
+	if c.GroupFilter != "" && strings.Count(c.GroupFilter, usernamePlaceholder) != 1 {
+		return fmt.Errorf("ldap: GroupFilter must contain exactly one %q placeholder, got %q", usernamePlaceholder, c.GroupFilter)
+	}
+
+	// The group second-search path (only taken when GroupAttribute is empty) needs
+	// BOTH its base and its filter — one without the other can't perform the
+	// reverse-membership search. (The placeholder count is already enforced above.)
 	if c.GroupAttribute == "" && (c.GroupBaseDN != "" || c.GroupFilter != "") {
 		if c.GroupBaseDN == "" || c.GroupFilter == "" {
 			return errors.New("ldap: GroupBaseDN and GroupFilter must both be set for group-search resolution")
-		}
-		if strings.Count(c.GroupFilter, usernamePlaceholder) != 1 {
-			return fmt.Errorf("ldap: GroupFilter must contain exactly one %q placeholder, got %q", usernamePlaceholder, c.GroupFilter)
 		}
 	}
 	return nil

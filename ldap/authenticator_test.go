@@ -3,6 +3,7 @@ package ldapauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -401,6 +402,169 @@ func TestAuthenticate_GroupSearch_DNEscaped(t *testing.T) {
 				t.Errorf("group filter %q contains the unescaped '(' from the DN", f)
 			}
 		}
+	}
+}
+
+// TestAuthenticate_GroupSearch_MemberUid_UsernameEscaped guards the OTHER
+// group-second-search branch: a posixGroup/memberUid filter substitutes the
+// USERNAME (not the user DN), and that username — being user-controlled — must
+// be escaped with ldap.EscapeFilter before it reaches the directory. The DN
+// branch already has TestAuthenticate_GroupSearch_DNEscaped; without this test
+// the username/memberUid branch (where a malicious username flows into a group
+// filter) had no injection coverage, so a future refactor could drop the
+// escaping on this path undetected. We feed a username full of filter
+// metacharacters and assert the group filter the directory RECEIVED is exactly
+// the escaped form, the raw payload is absent, and it was the USERNAME (not the
+// DN) that was substituted.
+func TestAuthenticate_GroupSearch_MemberUid_UsernameEscaped(t *testing.T) {
+	dir := newFakeDirectory()
+
+	// The user lives at a DN that is intentionally UNRELATED to the username, so
+	// asserting the username (not the DN) reached the group filter is unambiguous.
+	const userDN = "uid=svc-account-7,dc=example,dc=com"
+	// A username carrying LDAP filter metacharacters: an attempt to break out of
+	// the memberUid clause and widen the group query.
+	const malicious = "*)(memberUid=*"
+	const groupFilter = "(&(objectClass=posixGroup)(memberUid=%s))"
+
+	// Route the two searches by filter shape: the posixGroup/memberUid filter is
+	// the group search (return one group); anything else is the user search
+	// (return the single user entry, so the flow proceeds to group resolution).
+	// The user search filter (uid=...) embeds the SAME escaped malicious value, so
+	// we cannot key on the metacharacters — we key on the posixGroup objectClass.
+	dir.searchEntriesFor = func(filter string) []*ldap.Entry {
+		if strings.Contains(filter, "posixGroup") {
+			return []*ldap.Entry{
+				ldap.NewEntry("cn=devs,ou=groups,dc=example,dc=com", map[string][]string{"cn": {"devs"}}),
+			}
+		}
+		return []*ldap.Entry{ldap.NewEntry(userDN, map[string][]string{"uid": {"svc-account-7"}})}
+	}
+	dir.addUser(userDN, "pw", map[string][]string{"uid": {"svc-account-7"}})
+
+	a, _ := newTestAuth(t, dir, Config{
+		UserFilter:  "(uid=%s)",
+		IDAttribute: "uid",
+		GroupBaseDN: "ou=groups,dc=example,dc=com",
+		// A memberUid (posixGroup) filter selects the USERNAME-substitution branch
+		// in resolveGroups (the "memberuid" case-insensitive match).
+		GroupFilter: groupFilter,
+	})
+
+	res, err := a.Authenticate(context.Background(), authReq(malicious, "pw"))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	// The group resolved despite the metacharacter username — escaping makes the
+	// payload an inert literal, it does not abort the lookup.
+	if gs := res.Attributes["groups"]; !strings.Contains(gs, "devs") {
+		t.Errorf("groups = %q, want devs", gs)
+	}
+
+	// Find the GROUP filter (the posixGroup one) among the recorded filters. The
+	// user search filter (uid=...) also carries the escaped username, so we must
+	// pick the group filter specifically.
+	filters, _ := dir.recorded()
+	var groupSent string
+	for _, f := range filters {
+		if strings.Contains(f, "posixGroup") {
+			groupSent = f
+		}
+	}
+	if groupSent == "" {
+		t.Fatal("group (posixGroup/memberUid) search filter not recorded")
+	}
+
+	// 1. The group filter MUST equal exactly the filter built from the
+	//    EscapeFilter'd USERNAME — the canonical defense on the memberUid branch.
+	//    Using the username (not userDN) here also proves the branch selection:
+	//    if the DN had been substituted, this exact-match would fail.
+	wantGroupFilter := fmt.Sprintf(groupFilter, ldap.EscapeFilter(malicious))
+	if groupSent != wantGroupFilter {
+		t.Errorf("group filter = %q, want escaped-username form %q", groupSent, wantGroupFilter)
+	}
+	// 2. The RAW payload must NOT appear verbatim — if it did, the parens/wildcard
+	//    would be live and the group query widened.
+	if strings.Contains(groupSent, malicious) {
+		t.Errorf("group filter %q contains the RAW injection payload — NOT escaped", groupSent)
+	}
+	// 3. It must be the USERNAME, not the user DN, that was substituted (the
+	//    memberUid branch). The DN must be absent from the group filter.
+	if strings.Contains(groupSent, userDN) {
+		t.Errorf("group filter %q contains the user DN — the memberUid branch must substitute the username, not the DN", groupSent)
+	}
+	// 4. Spot-check the live metacharacters were turned into their \HH sequences,
+	//    so the payload cannot alter the filter structure.
+	for _, meta := range []string{"*)", "*("} { // raw paren+wildcard pairs from the payload
+		if strings.Contains(groupSent, meta) {
+			t.Errorf("group filter %q still contains a live metacharacter sequence %q", groupSent, meta)
+		}
+	}
+	if !strings.Contains(groupSent, `\2a`) { // '*' -> \2a
+		t.Errorf("group filter %q missing \\2a escape for '*'", groupSent)
+	}
+}
+
+// TestResolveGroups_BranchSelection_DNvsUsername confirms the SELECTION between
+// the two group-second-search branches: a "member"-style filter routes the user
+// DN into the placeholder, while a "memberUid"-style filter routes the username.
+// This locks the routing rule the escaping tests each assert on one side.
+func TestResolveGroups_BranchSelection_DNvsUsername(t *testing.T) {
+	const userDN = "uid=zoe,dc=example,dc=com"
+	const username = "zoe"
+
+	cases := []struct {
+		name        string
+		groupFilter string
+		wantValue   string // the value EscapeFilter'd into the placeholder
+	}{
+		{
+			name:        "member filter substitutes the user DN",
+			groupFilter: "(&(objectClass=groupOfNames)(member=%s))",
+			wantValue:   userDN,
+		},
+		{
+			name:        "memberUid filter substitutes the username",
+			groupFilter: "(&(objectClass=posixGroup)(memberUid=%s))",
+			wantValue:   username,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newFakeDirectory()
+			dir.addUser(userDN, "pw", map[string][]string{"uid": {username}})
+			dir.searchEntriesFor = func(filter string) []*ldap.Entry {
+				// Group search yields nothing; we only inspect the filter shape.
+				if strings.Contains(filter, "groupOfNames") || strings.Contains(filter, "posixGroup") {
+					return nil
+				}
+				return []*ldap.Entry{ldap.NewEntry(userDN, map[string][]string{"uid": {username}})}
+			}
+			a, _ := newTestAuth(t, dir, Config{
+				UserFilter:  "(uid=%s)",
+				IDAttribute: "uid",
+				GroupBaseDN: "ou=groups,dc=example,dc=com",
+				GroupFilter: tc.groupFilter,
+			})
+
+			if _, err := a.Authenticate(context.Background(), authReq(username, "pw")); err != nil {
+				t.Fatalf("Authenticate: %v", err)
+			}
+			filters, _ := dir.recorded()
+			var groupSent string
+			for _, f := range filters {
+				if strings.Contains(f, "groupOfNames") || strings.Contains(f, "posixGroup") {
+					groupSent = f
+				}
+			}
+			if groupSent == "" {
+				t.Fatal("group search filter not recorded")
+			}
+			want := fmt.Sprintf(tc.groupFilter, ldap.EscapeFilter(tc.wantValue))
+			if groupSent != want {
+				t.Errorf("group filter = %q, want %q (value %q substituted)", groupSent, want, tc.wantValue)
+			}
+		})
 	}
 }
 
