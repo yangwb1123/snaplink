@@ -384,9 +384,21 @@ func TestJAR_DiscoveryAdvertisesSupport(t *testing.T) {
 	if doc["request_uri_parameter_supported"] != false {
 		t.Errorf("request_uri_parameter_supported = %v want false", doc["request_uri_parameter_supported"])
 	}
+	// JAR request objects now verify through the shared asymmetric
+	// verifier, so discovery advertises the full asymmetric allowlist
+	// (EdDSA + ES256/384/512 + RS256 + PS256), not EdDSA-only.
 	algs, ok := doc["request_object_signing_alg_values_supported"].([]any)
-	if !ok || len(algs) != 1 || algs[0] != "EdDSA" {
-		t.Errorf("request_object_signing_alg_values_supported = %v want [EdDSA]", doc["request_object_signing_alg_values_supported"])
+	if !ok {
+		t.Fatalf("request_object_signing_alg_values_supported missing/wrong type: %v", doc["request_object_signing_alg_values_supported"])
+	}
+	got := map[string]bool{}
+	for _, a := range algs {
+		got[a.(string)] = true
+	}
+	for _, want := range []string{"EdDSA", "ES256", "ES384", "ES512", "RS256", "PS256"} {
+		if !got[want] {
+			t.Errorf("request_object_signing_alg_values_supported = %v, want to contain %q", algs, want)
+		}
 	}
 }
 

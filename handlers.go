@@ -2139,9 +2139,13 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidcCon
 		// RFC 9101 §10.5: JAR `request` parameter accepted; URL
 		// fetched `request_uri` flips true when WithJARFetcher is
 		// wired (set below).
-		RequestParameterSupported:              true,
-		RequestURIParameterSupported:           false,
-		RequestObjectSigningAlgValuesSupported: []string{"EdDSA"},
+		RequestParameterSupported:    true,
+		RequestURIParameterSupported: false,
+		// JAR request objects (RFC 9101) verify through
+		// security.VerifyCompactJWS, which accepts the full asymmetric
+		// allowlist — advertise exactly what is accepted on the wire so
+		// RP metadata validation reflects reality.
+		RequestObjectSigningAlgValuesSupported: security.AsymmetricJWSAlgValues(),
 		ClaimsParameterSupported:               true,
 	}
 	if s.jarFetcher != nil {
@@ -2259,8 +2263,10 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidcCon
 	}
 	// DPoP advertisement is unconditional — the handler accepts
 	// the `DPoP` header on /token whenever it's present; there's
-	// no opt-in store to wire.
-	cfg.DPoPSigningAlgValuesSupported = []string{"EdDSA"}
+	// no opt-in store to wire. DPoP proofs verify through
+	// security.VerifyCompactJWS, so advertise the full asymmetric
+	// allowlist (DPoP clients are almost always ES256).
+	cfg.DPoPSigningAlgValuesSupported = security.AsymmetricJWSAlgValues()
 	if s.clientCertExtractor != nil {
 		cfg.TLSClientCertificateBoundAccessTokens = true
 		cfg.MTLSEndpointAliases = &MTLSEndpointAliases{
@@ -2283,11 +2289,16 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidcCon
 	if clientSnap.requireSignedRequestObject {
 		cfg.RequireSignedRequestObjectGlobal = true
 	}
-	cfg.TokenEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
-	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
-	cfg.RevocationEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+	// private_key_jwt (RFC 7523) client assertions verify through
+	// security.VerifyCompactJWS on every endpoint that accepts them, so
+	// the advertised signing-alg lists are the full asymmetric allowlist
+	// (was EdDSA-only) — RPs overwhelmingly hold RS256/ES256 keys.
+	authAlgs := security.AsymmetricJWSAlgValues()
+	cfg.TokenEndpointAuthSigningAlgValuesSupported = authAlgs
+	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = authAlgs
+	cfg.RevocationEndpointAuthSigningAlgValuesSupported = authAlgs
 	if s.parStore != nil {
-		cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported = []string{"EdDSA"}
+		cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported = authAlgs
 	}
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt

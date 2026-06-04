@@ -3,7 +3,6 @@ package sso
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -66,9 +65,17 @@ import (
 // does the same.
 //
 // Scope of this implementation:
-//   - Ed25519 (EdDSA) only. The signature-algorithm allowlist
-//     mirrors supportedJWTAlgs in defaultimpl/ — extending it
-//     requires updating both sites.
+//   - Asymmetric JWS only — EdDSA + ES256/384/512 + RS256 + PS256
+//     (security.AsymmetricJWSAlgs). Signature verification routes
+//     through the shared, alg-confusion-safe security.VerifyCompactJWS
+//     (the same verifier the SPIFFE / CAEP / federation paths use):
+//     the header `alg` is gated against the asymmetric allowlist
+//     BEFORE any signature work, the key is bound by `kid`, and the
+//     matched JWK's kty/crv MUST be consistent with the alg — so a
+//     symmetric (HS*) or `none` alg, or a kid pointing at a wrong-type
+//     key, fails closed. Real-world clients overwhelmingly sign with
+//     RS256/ES256, and OpenID Federation RPs may present RSA/ECDSA
+//     chain-vouched keys, so EdDSA-only rejected most of them.
 //   - Both `request` (inline JWT) and `request_uri` (URI-fetched
 //     JWT) are wired. The URI-fetch path lives in jar_fetch.go,
 //     opts in via WithJARFetcher + Client.AllowedRequestURIs, is
@@ -161,9 +168,12 @@ func (a *audClaim) UnmarshalJSON(data []byte) error {
 //
 // Verification gates per RFC 9101 §6.3:
 //   - JWT is 3 base64url segments
-//   - Header `alg` MUST be in the allowlist (EdDSA only today)
 //   - Header `typ` MUST be empty, "JWT", or "oauth-authz-req+jwt"
-//   - Header `kid` MUST match a JWK in client.JWKS
+//   - Header `alg` MUST be an asymmetric alg (security.AsymmetricJWSAlgs:
+//     EdDSA / ES256/384/512 / RS256 / PS256), gated BEFORE signature
+//     verify; `alg: none` + symmetric HS* fail closed
+//   - Header `kid` MUST match a JWK in client.JWKS, whose kty/crv MUST
+//     be consistent with the alg
 //   - Signature MUST verify against the matched public key
 //   - exp / nbf honored when present
 //   - aud MUST include the AS's identity (asIssuer)
@@ -182,20 +192,21 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 		return nil, errors.New("jar: malformed JWT (expected 3 segments)")
 	}
 
+	// The `typ` header is JAR-specific (RFC 9101 §10.8) and is NOT
+	// VerifyCompactJWS's concern, so it is checked here. `alg`, `kid`,
+	// the kty/crv↔alg consistency, and the signature itself are ALL
+	// owned by VerifyCompactJWS below — this header parse is only to
+	// reach `typ` and MUST NOT be trusted for any security decision (it
+	// reads an UNVERIFIED segment).
 	hraw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("jar: header decode: %w", err)
 	}
 	var h struct {
-		Alg string `json:"alg"`
 		Typ string `json:"typ"`
-		Kid string `json:"kid"`
 	}
 	if err := json.Unmarshal(hraw, &h); err != nil {
 		return nil, fmt.Errorf("jar: header parse: %w", err)
-	}
-	if h.Alg != "EdDSA" {
-		return nil, fmt.Errorf("jar: alg %q not supported", h.Alg)
 	}
 	switch h.Typ {
 	case "", "JWT", JARTypHeader:
@@ -204,27 +215,14 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 		return nil, fmt.Errorf("jar: typ %q not supported", h.Typ)
 	}
 
-	pub, kidMatched := jwkLookupEd25519(client.JWKS, h.Kid)
-	if pub == nil {
-		if h.Kid != "" {
-			return nil, fmt.Errorf("jar: no JWK matches kid %q", h.Kid)
-		}
-		return nil, errors.New("jar: no compatible JWK found")
-	}
-	_ = kidMatched
-
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	// Signature verification through the shared, alg-confusion-safe
+	// verifier: asymmetric-allowlist gate BEFORE verify (no alg=none, no
+	// HS*), kid-bound key selection, kty/crv↔alg consistency, EC
+	// on-curve, RSA>=2048. Returns the verified payload bytes; widening
+	// past EdDSA to ES*/RS*/PS* is a pure allowlist change here.
+	praw, err := security.VerifyCompactJWS(rawJWT, client.JWKS, security.AsymmetricJWSAlgs())
 	if err != nil {
-		return nil, fmt.Errorf("jar: signature decode: %w", err)
-	}
-	signingInput := parts[0] + "." + parts[1]
-	if !ed25519.Verify(pub, []byte(signingInput), sig) {
-		return nil, errors.New("jar: signature invalid")
-	}
-
-	praw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("jar: payload decode: %w", err)
+		return nil, fmt.Errorf("jar: %w", err)
 	}
 	var p jarPayload
 	if err := json.Unmarshal(praw, &p); err != nil {
@@ -285,27 +283,6 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 	}
 
 	return &p, nil
-}
-
-// jwkLookupEd25519 picks the Ed25519 public key matching kid
-// from a JWK set. When kid is empty, returns the first
-// compatible OKP/Ed25519 key (legacy clients with one key per
-// set). Returns (nil, false) when no compatible key found.
-func jwkLookupEd25519(set []JWK, kid string) (ed25519.PublicKey, bool) {
-	for _, jwk := range set {
-		if kid != "" && jwk.Kid != kid {
-			continue
-		}
-		if jwk.Kty != "OKP" || jwk.Crv != "Ed25519" {
-			continue
-		}
-		xb, err := base64.RawURLEncoding.DecodeString(jwk.X)
-		if err != nil || len(xb) != ed25519.PublicKeySize {
-			continue
-		}
-		return ed25519.PublicKey(xb), true
-	}
-	return nil, false
 }
 
 // bindOAuthParams delegates to oauth.BindParams. Kept as an unexported
@@ -557,10 +534,14 @@ const DefaultClientAssertionMaxLifetime = 5 * time.Minute
 //
 // Validation gates per RFC 7523 §3:
 //   - JWT MUST decode as 3 base64url segments
-//   - Header `alg` MUST be in the EdDSA allowlist (matches JAR)
 //   - Header `typ` MAY be present; if present MUST be "JWT" or
 //     "client-authentication+jwt"
-//   - Header `kid` selects the verification key from Client.JWKS
+//   - Header `alg` MUST be an asymmetric alg (security.AsymmetricJWSAlgs:
+//     EdDSA / ES256/384/512 / RS256 / PS256, same set as JAR + DPoP),
+//     gated BEFORE signature verify; `alg: none` + symmetric HS* fail
+//     closed
+//   - Header `kid` selects the verification key from Client.JWKS, whose
+//     kty/crv MUST be consistent with the alg
 //   - Signature MUST verify against the matched public key
 //   - iss + sub MUST be equal AND non-empty AND equal client_id
 //     (when the request-form client_id was supplied — when not, sub
@@ -590,20 +571,24 @@ func verifyJWTClientAssertion(
 	if len(parts) != 3 {
 		return "", errors.New("jwt_client_assertion: malformed JWT")
 	}
+	// The `typ` header is RFC 7523-specific and not VerifyCompactJWS's
+	// concern, so it is checked here. `alg`, `kid`, the kty/crv↔alg
+	// consistency, and the signature are ALL owned by VerifyCompactJWS
+	// below — this header parse and the payload parse that follows read
+	// UNVERIFIED segments and MUST NOT be trusted for any security
+	// decision beyond reaching `typ` and the self-asserted `sub` used to
+	// LOOK UP the client (whose registered JWKS then verifies the
+	// signature; an attacker who lies about `sub` simply fails that
+	// verification).
 	hraw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
 		return "", fmt.Errorf("jwt_client_assertion: header decode: %w", err)
 	}
 	var h struct {
-		Alg string `json:"alg"`
 		Typ string `json:"typ"`
-		Kid string `json:"kid"`
 	}
 	if err := json.Unmarshal(hraw, &h); err != nil {
 		return "", fmt.Errorf("jwt_client_assertion: header parse: %w", err)
-	}
-	if h.Alg != "EdDSA" {
-		return "", fmt.Errorf("jwt_client_assertion: alg %q not supported", h.Alg)
 	}
 	switch h.Typ {
 	case "", "JWT", "client-authentication+jwt":
@@ -654,17 +639,13 @@ func verifyJWTClientAssertion(
 	if len(client.JWKS) == 0 {
 		return "", errors.New("jwt_client_assertion: client has no registered JWKS")
 	}
-	pub, _ := jwkLookupEd25519(client.JWKS, h.Kid)
-	if pub == nil {
-		return "", errors.New("jwt_client_assertion: no JWK matches kid")
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return "", fmt.Errorf("jwt_client_assertion: signature decode: %w", err)
-	}
-	signingInput := parts[0] + "." + parts[1]
-	if !ed25519.Verify(pub, []byte(signingInput), sig) {
-		return "", errors.New("jwt_client_assertion: signature invalid")
+	// Signature verification through the shared, alg-confusion-safe
+	// verifier: asymmetric-allowlist gate BEFORE verify (no alg=none, no
+	// HS*), kid-bound key selection against the client's registered
+	// JWKS, kty/crv↔alg consistency, EC on-curve, RSA>=2048. Widening
+	// past EdDSA to ES*/RS*/PS* is a pure allowlist change here.
+	if _, err := security.VerifyCompactJWS(assertion, client.JWKS, security.AsymmetricJWSAlgs()); err != nil {
+		return "", fmt.Errorf("jwt_client_assertion: %w", err)
 	}
 
 	// Replay defense — when wired and the JWT carries a jti, refuse
@@ -699,10 +680,15 @@ func verifyJWTClientAssertion(
 //
 // Scope of THIS implementation (issuance side only):
 //   - Accept the `DPoP: <jwt>` HTTP header on /token requests.
-//   - Verify the proof JWT: typ=dpop+jwt, alg=EdDSA, jwk in
-//     header, htm=POST, htu=/token, iat in window, jti present.
-//   - Compute the JWK thumbprint (RFC 7638) and stamp it into
-//     the issued access token's `cnf.jkt` claim (RFC 7800).
+//   - Verify the proof JWT: typ=dpop+jwt, an asymmetric alg
+//     (security.AsymmetricJWSAlgs: EdDSA / ES256/384/512 / RS256 /
+//     PS256 — DPoP is almost always ES256 in the wild), the public
+//     jwk in the header, htm=POST, htu=/token, iat in window, jti
+//     present.
+//   - Compute the JWK thumbprint (RFC 7638) — over the canonical
+//     required members PER key type (OKP: crv/kty/x; EC: crv/kty/x/y;
+//     RSA: e/kty/n) — and stamp it into the issued access token's
+//     `cnf.jkt` claim (RFC 7800).
 //   - Change the response token_type from "Bearer" to "DPoP".
 //   - Reuse security.JTIReplayStore (when wired) for jti replay defense.
 //
@@ -750,9 +736,11 @@ type DPoPBinding struct {
 //
 // Validation gates per RFC 9449 §4.2:
 //   - header typ MUST be "dpop+jwt"
-//   - header alg MUST be EdDSA (this server's only signer today)
-//   - header jwk MUST be a public JWK whose private counterpart
-//     signed the proof
+//   - header alg MUST be an asymmetric alg (security.AsymmetricJWSAlgs:
+//     EdDSA / ES256/384/512 / RS256 / PS256), gated BEFORE signature
+//     verify; `alg: none` + symmetric HS* fail closed
+//   - header jwk MUST be a public JWK (OKP/EC/RSA), consistent with the
+//     alg, whose private counterpart signed the proof
 //   - payload htm MUST equal the request method
 //   - payload htu MUST equal the request URL (sans query/fragment)
 //   - payload iat MUST be within maxAge (past) / clockSkew (future)
@@ -783,7 +771,6 @@ func verifyDPoPProof(
 		return nil, fmt.Errorf("dpop: header decode: %w", err)
 	}
 	var h struct {
-		Alg string          `json:"alg"`
 		Typ string          `json:"typ"`
 		JWK json.RawMessage `json:"jwk"`
 	}
@@ -793,34 +780,23 @@ func verifyDPoPProof(
 	if h.Typ != dpopProofTyp {
 		return nil, fmt.Errorf("dpop: typ %q not %q", h.Typ, dpopProofTyp)
 	}
-	if h.Alg != "EdDSA" {
-		return nil, fmt.Errorf("dpop: alg %q not supported", h.Alg)
-	}
 	if len(h.JWK) == 0 {
 		return nil, errors.New("dpop: header missing jwk")
 	}
-	var jwk struct {
-		Kty string `json:"kty"`
-		Crv string `json:"crv"`
-		X   string `json:"x"`
-	}
-	if err := json.Unmarshal(h.JWK, &jwk); err != nil {
-		return nil, fmt.Errorf("dpop: jwk parse: %w", err)
-	}
-	if jwk.Kty != "OKP" || jwk.Crv != "Ed25519" || jwk.X == "" {
-		return nil, errors.New("dpop: only OKP/Ed25519 JWKs supported")
-	}
-	pub, err := base64.RawURLEncoding.DecodeString(jwk.X)
-	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return nil, errors.New("dpop: jwk x is not a valid Ed25519 public key")
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	// The DPoP proof carries its OWN ephemeral public key in the header
+	// `jwk` (unlike JAR / private_key_jwt, which verify against the
+	// client's REGISTERED JWKS). Parse it into a core.JWK so the SAME
+	// alg-confusion-safe verifier checks it: alg gated against the
+	// asymmetric allowlist BEFORE verify, kty/crv↔alg consistency (an
+	// EC jwk with alg=RS256, or alg=none/HS*, fails closed), EC
+	// on-curve, RSA>=2048. The proof JWK has no kid; passed as the sole
+	// key, VerifyCompactJWS selects it for the empty-kid case.
+	proofJWK, err := parseDPoPHeaderJWK(h.JWK)
 	if err != nil {
-		return nil, fmt.Errorf("dpop: signature decode: %w", err)
+		return nil, err
 	}
-	signingInput := parts[0] + "." + parts[1]
-	if !ed25519.Verify(ed25519.PublicKey(pub), []byte(signingInput), sig) {
-		return nil, errors.New("dpop: signature invalid")
+	if _, err := security.VerifyCompactJWS(proof, []JWK{proofJWK}, security.AsymmetricJWSAlgs()); err != nil {
+		return nil, fmt.Errorf("dpop: %w", err)
 	}
 	praw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
@@ -890,23 +866,92 @@ func verifyDPoPProof(
 		}
 	}
 
-	jkt, err := jwkThumbprintEd25519(jwk.X)
+	jkt, err := jwkThumbprintRFC7638(proofJWK)
 	if err != nil {
 		return nil, fmt.Errorf("dpop: thumbprint: %w", err)
 	}
 	return &DPoPBinding{JKT: jkt}, nil
 }
 
-// jwkThumbprintEd25519 computes the RFC 7638 §3.2 thumbprint of an
-// Ed25519 public JWK. The canonical JSON form for OKP keys is
-// `{"crv":"Ed25519","kty":"OKP","x":"<base64url-no-pad>"}`
-// — members sorted lexically with no whitespace. Returns the
-// base64url-no-pad encoding of the SHA-256 hash of that string.
-func jwkThumbprintEd25519(x string) (string, error) {
-	if x == "" {
-		return "", errors.New("dpop: empty jwk x")
+// parseDPoPHeaderJWK decodes the DPoP proof header's `jwk` member into a
+// core.JWK, carrying ONLY the public members each key type needs (so a
+// proof can never smuggle a private key component). The result is fed to
+// security.VerifyCompactJWS (which enforces kty/crv↔alg consistency, EC
+// on-curve, RSA>=2048) AND to the RFC 7638 thumbprint. Supported types:
+// OKP/Ed25519, EC (P-256/384/521), RSA. A type-specific required-member
+// presence check here gives a clear DPoP-shaped error before the verifier
+// runs.
+func parseDPoPHeaderJWK(raw json.RawMessage) (JWK, error) {
+	var j struct {
+		Kty string `json:"kty"`
+		Crv string `json:"crv"`
+		X   string `json:"x"`
+		Y   string `json:"y"`
+		N   string `json:"n"`
+		E   string `json:"e"`
 	}
-	canonical := `{"crv":"Ed25519","kty":"OKP","x":"` + x + `"}`
+	if err := json.Unmarshal(raw, &j); err != nil {
+		return JWK{}, fmt.Errorf("dpop: jwk parse: %w", err)
+	}
+	switch j.Kty {
+	case "OKP":
+		if j.Crv == "" || j.X == "" {
+			return JWK{}, errors.New("dpop: OKP jwk missing crv/x")
+		}
+		return JWK{Kty: "OKP", Crv: j.Crv, X: j.X}, nil
+	case "EC":
+		if j.Crv == "" || j.X == "" || j.Y == "" {
+			return JWK{}, errors.New("dpop: EC jwk missing crv/x/y")
+		}
+		return JWK{Kty: "EC", Crv: j.Crv, X: j.X, Y: j.Y}, nil
+	case "RSA":
+		if j.N == "" || j.E == "" {
+			return JWK{}, errors.New("dpop: RSA jwk missing n/e")
+		}
+		return JWK{Kty: "RSA", N: j.N, E: j.E}, nil
+	default:
+		return JWK{}, fmt.Errorf("dpop: unsupported jwk kty %q", j.Kty)
+	}
+}
+
+// jwkThumbprintRFC7638 computes the RFC 7638 §3 JWK thumbprint: the
+// base64url-no-pad SHA-256 of the canonical JSON of the REQUIRED members
+// for the key type, lexically ordered with no whitespace. The required
+// members differ per kty (§3.2), and computing the wrong member set yields
+// a DIFFERENT thumbprint — for DPoP a wrong thumbprint is a binding bypass
+// (a stolen token replayed with a different key would validate), so each
+// kty MUST use its own canonical form:
+//
+//	OKP: {"crv":...,"kty":"OKP","x":...}
+//	EC:  {"crv":...,"kty":"EC","x":...,"y":...}
+//	RSA: {"e":...,"kty":"RSA","n":...}
+//
+// The members are emitted in the exact lexical order RFC 7638 mandates;
+// the string is assembled directly (not via json.Marshal) so the member
+// ORDER and the absence of whitespace are guaranteed regardless of struct
+// field order or encoder behavior. Values are already base64url strings
+// from the (verified) JWK, so they are interpolated as-is.
+func jwkThumbprintRFC7638(jwk JWK) (string, error) {
+	var canonical string
+	switch jwk.Kty {
+	case "OKP":
+		if jwk.Crv == "" || jwk.X == "" {
+			return "", errors.New("dpop: OKP jwk missing crv/x for thumbprint")
+		}
+		canonical = `{"crv":"` + jwk.Crv + `","kty":"OKP","x":"` + jwk.X + `"}`
+	case "EC":
+		if jwk.Crv == "" || jwk.X == "" || jwk.Y == "" {
+			return "", errors.New("dpop: EC jwk missing crv/x/y for thumbprint")
+		}
+		canonical = `{"crv":"` + jwk.Crv + `","kty":"EC","x":"` + jwk.X + `","y":"` + jwk.Y + `"}`
+	case "RSA":
+		if jwk.E == "" || jwk.N == "" {
+			return "", errors.New("dpop: RSA jwk missing e/n for thumbprint")
+		}
+		canonical = `{"e":"` + jwk.E + `","kty":"RSA","n":"` + jwk.N + `"}`
+	default:
+		return "", fmt.Errorf("dpop: unsupported jwk kty %q for thumbprint", jwk.Kty)
+	}
 	h := sha256.Sum256([]byte(canonical))
 	return base64.RawURLEncoding.EncodeToString(h[:]), nil
 }

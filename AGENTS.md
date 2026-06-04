@@ -249,17 +249,17 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | OIDC Form Post Response Mode | `/auth/login`, `/par`, JAR | always | `oidc/form_post.go` |
 | JARM | `/auth/login` `response_mode={jwt,query.jwt,fragment.jwt,form_post.jwt}` | `WithJARM(signer)` (reuse signing issuer; fail-closed without) | `oidc/jarm.go` |
 | OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
-| RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `server_extensions.go` |
+| RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS`; assertion sig verified via `security.VerifyCompactJWS` (asymmetric allowlist `security.AsymmetricJWSAlgs`: EdDSA/ES256/384/512/RS256/PS256 — alg-confusion-safe, no alg=none/HS\*) | `server_extensions.go` |
 | RFC 9207 AS Issuer Id | every `/auth/login` | always | `handlers.go` |
 | RFC 9068 JWT Access Token | `{Ed25519,ECDSA,RSA}JWTIssuer` (EdDSA/ES256/RS256\|PS256) | always; alg gate `WithSupportedSigningAlgs`, strict per-issuer kid→alg; `Rotate`/`Retire`/`StartRotation` + `With{Algo}ExternalSigner` KMS/HSM seam (peers: `kms/{awskms,gcpkms,azurekeyvault,pkcs11}` + in-core `defaultimpl/vaulttransit`; EdDSA only on gcp/pkcs11/vault) + `CryptoSigner()` stdlib accessor (SAML XML-DSig) | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` + `defaultimpl/crypto_signer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
-| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider`; iat window via `WithDPoPProofMaxAge`/`WithDPoPMaxClockSkew` (default 60s each) | `server_extensions.go` |
+| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; proof sig (header `jwk`, OKP/EC/RSA) verified via `security.VerifyCompactJWS` (asymmetric allowlist `security.AsymmetricJWSAlgs`; DPoP usually ES256); `cnf.jkt` = RFC 7638 thumbprint per kty (OKP crv/kty/x · EC crv/kty/x/y · RSA e/kty/n); replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider`; iat window via `WithDPoPProofMaxAge`/`WithDPoPMaxClockSkew` (default 60s each) | `server_extensions.go` |
 | RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `handlers.go` |
 | OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
 | FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)`; rules: PAR-only, signed request, S256, code-only, sender-constrained, no shared secret | `fapi/` + `handler.go` |
 | RFC 9396 RAR | `authorization_details` | per-client allowlist | `oauth/rar.go` |
-| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `server_extensions.go` + `security/jar_fetch.go` |
+| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; request-object sig verified via `security.VerifyCompactJWS` (asymmetric allowlist `security.AsymmetricJWSAlgs`); URL fetch `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `server_extensions.go` + `security/jar_fetch.go` |
 | RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key auto-published in JWKS `use:enc` | `security/jwe.go` |
 | OIDC Core §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg`/`_Enc`; RP key from `Client.JWKS` `use:enc` | `oidc/userinfo_signing.go` + `server_extensions.go` |
 | OIDC Core §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg`/`_Enc` | `oidc/userinfo_signing.go` |

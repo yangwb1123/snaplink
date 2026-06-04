@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 
 	"github.com/snaplink/sso/core"
 )
@@ -328,6 +329,47 @@ func isAsymmetricJWSAlg(alg string) bool {
 	default:
 		return false
 	}
+}
+
+// AsymmetricJWSAlgs returns a fresh allowlist of the asymmetric JWS algs the
+// RP-facing client-authentication + request-integrity paths accept:
+// private_key_jwt client assertions (RFC 7523), JAR request objects (RFC
+// 9101), and DPoP proofs (RFC 9449). It is the shared input to
+// VerifyCompactJWS for all three, so they widen together and can never drift
+// apart.
+//
+// The set is asymmetric-only BY CONSTRUCTION — `none` and every symmetric
+// HS* alg are absent, so VerifyCompactJWS (which independently refuses any
+// non-asymmetric alg in the allowlist) never opens the public-key-as-HMAC
+// confusion attack. EdDSA stays first-class (the historical only-accepted
+// alg) and ES256/384/512 + RS256 + PS256 are added — the algs real-world RP
+// libraries and OpenID Federation chain-vouched keys overwhelmingly use
+// (DPoP is almost always ES256; federation RP keys may be RSA/ECDSA).
+//
+// A fresh map is returned per call so a caller cannot mutate the shared
+// allowlist of another path.
+func AsymmetricJWSAlgs() map[string]struct{} {
+	return map[string]struct{}{
+		jwsAlgEdDSA: {},
+		jwsAlgES256: {}, jwsAlgES384: {}, jwsAlgES512: {},
+		jwsAlgRS256: {},
+		jwsAlgPS256: {},
+	}
+}
+
+// AsymmetricJWSAlgValues returns AsymmetricJWSAlgs as a deterministically
+// sorted slice — for the discovery doc's *_signing_alg_values_supported
+// lists (token_endpoint_auth / request_object / dpop), which MUST reflect
+// the algs actually accepted on the wire rather than only what the server
+// signs with.
+func AsymmetricJWSAlgValues() []string {
+	algs := AsymmetricJWSAlgs()
+	out := make([]string, 0, len(algs))
+	for a := range algs {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // hashForAlg maps an RSA/EC JWS alg onto its SHA-2 hash.
