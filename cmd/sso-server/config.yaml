@@ -1098,6 +1098,12 @@ federation:
   cache_ttl: 0s              # body cache + Cache-Control max-age; 0 -> SDK default (5m)
   max_trust_chain_depth: 0   # authority-hint climb bound (cycle/DoS guard); 0 -> SDK default (5)
   max_clock_skew: 0s         # per-hop exp/iat skew allowance in chain validation; 0 -> SDK default (60s)
+  auto_register: false       # slice 3: a VALIDATED federation RP becomes a usable OAuth client with
+                             # no manual registration -- on an authz client-store MISS for a valid
+                             # HTTPS entity ID, resolve its chain + derive the client from the
+                             # POLICY-CONSTRAINED RP metadata (chain-vouched JWKS, no secret).
+                             # REQUIRES trust_anchors (boot error otherwise). false -> authz/token
+                             # flow byte-identical. SECURITY-SENSITIVE: admits token-getting clients.
 
 # SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
 # dependency stays OUT of this binary's core go.mod, the firm

@@ -43,6 +43,24 @@ type Client struct {
 	TokenStrategy         string   `json:"token_strategy,omitempty"`
 	Active                bool     `json:"active"`
 
+	// Federation marks this client as one DERIVED on-the-fly from a
+	// validated OpenID Federation 1.0 trust chain (the leaf RP's Entity
+	// Statement, resolved + policy-applied up to a configured trust
+	// anchor — slice 3) rather than persisted in the ClientStore. It is
+	// a PROVENANCE flag, not an access grant: such a client is admitted
+	// ONLY because its chain validated (the federation decorator never
+	// fabricates a client otherwise), its metadata is the POLICY-
+	// CONSTRAINED result (the trust anchor's metadata_policy bounds
+	// redirect_uris/response_types/scope), and it carries JWKS (the
+	// chain-vouched entity keys) but NO Secret — it authenticates
+	// asymmetrically via private_key_jwt / signed request objects, never
+	// a shared secret (a secret would be an unauthenticated-registration
+	// bypass). Set false for every operator-provisioned / DCR client;
+	// the field is purely informational for audit/diagnostics and does
+	// not relax any authorization check (the derived client runs the
+	// same /auth/login + /token validation as any other).
+	Federation bool `json:"federation,omitempty" yaml:"federation,omitempty"`
+
 	// TenantID binds this client to one tenant in multi-tenant
 	// deployments. When set, request handlers reject login /
 	// callback flows whose resolved tenant doesn't match (the

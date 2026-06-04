@@ -3343,11 +3343,25 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if len(fedCfg.TrustAnchors) > 0 {
 			// Slice 2: the trust-chain resolver is now LIVE (anchors loaded). It
 			// resolves + validates a remote entity's chain up to a configured
-			// anchor; slice 3 wires it into registration. No endpoint is mounted
-			// in slice 2.
+			// anchor. No endpoint is mounted in slice 2.
 			logger.Info("federation: trust-chain resolution enabled — remote entities validated up to a configured trust anchor",
 				"trust_anchors", len(fedCfg.TrustAnchors),
 				"max_chain_depth", fedCfg.MaxTrustChainDepth,
+			)
+		}
+		if cfg.Federation.AutoRegister {
+			// Slice 3: automatic client registration. A validated federation RP
+			// (chain rooted in a configured anchor) becomes a usable OAuth client
+			// with no manual registration — derived on-the-fly from the policy-
+			// constrained RP metadata when the authz endpoint misses its entity-id
+			// client_id in the store. REQUIRES trust anchors (no root of trust ⇒
+			// nothing to admit anyone), so fail loud rather than silently no-op.
+			if len(fedCfg.TrustAnchors) == 0 {
+				return nil, fmt.Errorf("federation: auto_register requires at least one trust_anchor (no root of trust to admit a federation client)")
+			}
+			opts = append(opts, sso.WithFederationAutoRegistration())
+			logger.Info("federation: AUTOMATIC client registration enabled — a validated federation RP becomes a usable OAuth client with no manual registration (chain-vouched keys, no shared secret; policy-constrained metadata)",
+				"trust_anchors", len(fedCfg.TrustAnchors),
 			)
 		}
 	}

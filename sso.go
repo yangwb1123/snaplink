@@ -123,6 +123,19 @@ type Server struct {
 	// slice.
 	federationEntity *federation.EntityHandler
 
+	// federationAutoRegister opts into OpenID Federation 1.0 AUTOMATIC client
+	// registration (WithFederationAutoRegistration, slice 3): when true AND a
+	// ClientStore is wired AND federationEntity carries a resolver with
+	// configured trust anchors, NewServer decorates s.clientStore with
+	// federation.RegistrationClientStore so an authorization-endpoint
+	// ClientStore MISS for a valid HTTPS federation entity ID triggers an
+	// on-the-fly trust-chain resolution that DERIVES the client from the
+	// policy-constrained RP metadata (chain-vouched JWKS, no secret). The
+	// decoration happens post-options (so order is irrelevant) and is INERT —
+	// byte-identical to off — without all three preconditions. False ⇒ no
+	// decoration; the authz/token flow is unchanged.
+	federationAutoRegister bool
+
 	// Opt-in per-store storage-health admin report (WithStorageHealth).
 	// Each source describes one wired store: a Name, a Ping for
 	// reachability, and an optional schema-version getter (a cmd-supplied
@@ -356,6 +369,32 @@ func NewServer(opts ...Option) *Server {
 	// is skipped entirely, so a build without it is byte-identical.
 	if s.caepTransmitter != nil && s.auditor != nil {
 		s.auditor.AddSink(s.caepTransmitter)
+	}
+	// OpenID Federation 1.0 automatic client registration (slice 3). Decorate
+	// the wired ClientStore so an authorization-endpoint Get MISS for a valid
+	// HTTPS federation entity ID resolves the RP's trust chain on-the-fly and
+	// derives a policy-constrained client. Done post-options (order between
+	// WithClientStore / WithFederationEntity / WithFederationAutoRegistration is
+	// irrelevant) and ONLY when all three preconditions hold: the opt-in flag,
+	// a wired ClientStore, and a federation resolver with configured trust
+	// anchors (Resolver().Enabled()). Absent any one, no decoration occurs and
+	// every s.clientStore.Get is byte-identical to a non-federation build (the
+	// decorator is never even constructed). The decorator forwards every other
+	// method to the wrapped store; only Get adds the on-miss federation
+	// fallback, and a pre-registered client always wins.
+	if s.federationAutoRegister && s.clientStore != nil &&
+		s.federationEntity != nil && s.federationEntity.Resolver().Enabled() {
+		s.clientStore = federation.NewRegistrationClientStore(
+			s.clientStore,
+			s.federationEntity.Resolver(),
+			federation.WithRegistrationLogger(func(msg string, args ...any) {
+				// A federation resolution/mapping miss is an EXPECTED,
+				// oracle-safe outcome (an unknown client_id that resembles an
+				// entity ID but doesn't validate), not a server error — log at
+				// Info for operator visibility without alerting noise.
+				s.logger.Info(msg, args...)
+			}),
+		)
 	}
 	return s
 }

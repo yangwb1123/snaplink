@@ -366,6 +366,20 @@ type FederationConfig struct {
 	// chain validation (clock drift between this resolver and remote entities).
 	// 0 ⇒ SDK default (60s).
 	MaxClockSkew time.Duration `yaml:"max_clock_skew"`
+
+	// AutoRegister opts into OpenID Federation 1.0 AUTOMATIC client
+	// registration (slice 3): when true (and trust_anchors are configured), an
+	// authorization-endpoint client-store MISS for a valid HTTPS federation
+	// entity ID triggers an on-the-fly trust-chain resolution that DERIVES the
+	// client from the POLICY-CONSTRAINED openid_relying_party metadata (chain-
+	// vouched JWKS for private_key_jwt auth, NO shared secret). A validated
+	// federation RP thus becomes a usable OAuth client with no manual
+	// registration; an invalid/forged/unanchored chain leaves the client_id
+	// unknown (oracle-safe). REQUIRES trust_anchors — enabling it without any
+	// is a boot error (there is no root of trust to admit anyone). False ⇒ the
+	// authz/token flow is byte-identical (no decoration). SECURITY-SENSITIVE: it
+	// admits token-getting clients on the strength of the validated chain.
+	AutoRegister bool `yaml:"auto_register"`
 }
 
 // TrustAnchorConfig names one configured federation trust anchor: its Entity

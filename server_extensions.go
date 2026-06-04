@@ -1202,13 +1202,47 @@ func WithMetadataSigner(s oidc.MetadataSigner) Option {
 // without it. This is the entity-PUBLISHING slice; trust-chain VALIDATION
 // (resolving authority_hints up to a trust anchor — the actual trust
 // boundary) and federation client registration are separate slices.
-func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner) Option {
+// resolverOpts are forwarded to the trust-chain resolver the handler builds
+// (the test seam: WithTrustChainFetcher injects a fake federation,
+// WithTrustChainClock a fixed instant; an operator may inject a proxy-aware
+// fetcher). They configure ONLY the slice-2 resolver — when no trust anchors
+// are configured the resolver is inert regardless, so passing options to a
+// no-anchor config stays byte-identical to slice 1.
+func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner, resolverOpts ...federation.TrustChainResolverOption) Option {
 	return func(srv *Server) {
 		if cfg == nil || signer == nil {
 			return
 		}
-		srv.federationEntity = federation.NewEntityHandler(cfg, signer)
+		srv.federationEntity = federation.NewEntityHandler(cfg, signer, resolverOpts...)
 	}
+}
+
+// WithFederationAutoRegistration opts into OpenID Federation 1.0 automatic
+// client registration (slice 3): when the authorization endpoint misses a
+// client_id in the ClientStore AND federation is wired with configured trust
+// anchors AND the client_id is a syntactically-valid HTTPS entity identifier,
+// the OP resolves that RP's trust chain on-the-fly (slice 2, fail-closed,
+// rooted in a configured anchor) and DERIVES a usable OAuth client from the
+// POLICY-CONSTRAINED openid_relying_party metadata — no manual registration.
+//
+// The derived client carries JWKS = the chain-validated entity keys (for
+// asymmetric private_key_jwt / signed-request-object auth) and NO secret; its
+// redirect_uris / response_types / scope are bounded by the trust anchor's
+// metadata_policy; it then runs the SAME /auth/login + /token validation as
+// any client. An invalid / forged / unanchored / expired chain leaves the
+// client_id UNKNOWN (the byte-identical unknown-client error — oracle-safe; no
+// federation-internal detail on the wire). Derived clients are cached per
+// entity ID, bounded by the chain's earliest exp, and re-resolved on expiry.
+//
+// Composition: it decorates whatever ClientStore is wired (WithClientStore)
+// with federation.RegistrationClientStore, applied AFTER all options run so
+// option order is irrelevant. A pre-registered client always wins (the wrapped
+// store's hit short-circuits before any federation work). REQUIRES both
+// WithClientStore and WithFederationEntity with configured trust anchors —
+// absent either, the option is INERT and the build is byte-identical (no
+// decoration, no resolution ever attempted). Default-off.
+func WithFederationAutoRegistration() Option {
+	return func(s *Server) { s.federationAutoRegister = true }
 }
 
 // FederationEntity returns the wired federation entity handler (nil when

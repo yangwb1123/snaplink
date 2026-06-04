@@ -63,8 +63,20 @@
 //     (its configured keys are the root of trust). Opt-in: with no trust
 //     anchors configured the resolver is inert (slice-1 behavior byte-
 //     identical). No resolver endpoint is mounted (it is a component).
-//   - Slice 3: automatic/explicit client registration via the federation
-//     trust chain (an RP's Entity Statement, validated to a trust anchor,
-//     stands in for out-of-band client registration) — wires
-//     TrustChainResolver.ResolveTrustChain into the registration/login path.
+//   - Slice 3 (registration.go): AUTOMATIC client registration via the
+//     federation trust chain. RegistrationClientStore decorates the operator's
+//     ClientStore; when the authorization endpoint misses a client_id that is a
+//     valid HTTPS entity identifier (and federation is active), it resolves the
+//     RP's trust chain (ResolveTrustChain) and DERIVES a usable core.Client from
+//     the POLICY-CONSTRAINED openid_relying_party metadata — JWKS = the chain-
+//     vouched entity keys (asymmetric private_key_jwt / JAR auth), NO shared
+//     secret. An invalid/forged/unanchored/expired chain leaves the client_id
+//     unknown (the byte-identical unknown-client error — oracle-safe). The
+//     derived client runs the SAME authz validation as any client; the metadata
+//     policy bounds it (a redirect_uri/response_type/scope the policy disallows
+//     is simply absent). Cached per entity ID, bounded by the chain exp. Opt-in
+//     via sso.WithFederationAutoRegistration (REQUIRES configured trust
+//     anchors); default-off is byte-identical (the decorator is a transparent
+//     pass-through when the resolver is inert). The automatic path adds NO new
+//     endpoint — it is the existing /auth/login (and /token for client auth).
 package federation

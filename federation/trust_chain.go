@@ -98,6 +98,42 @@ type TrustChain struct {
 	ResolvedRPMetadata map[string]any
 }
 
+// Expiry returns the instant this validated chain ceases to be trustworthy:
+// the EARLIEST exp across every statement in the chain (a chain is only as
+// fresh as its soonest-expiring link — once any statement expires the chain
+// must be re-resolved). Returns the zero Time when no statement carries a
+// positive exp (which validate() never admits — every link's exp is checked
+// and a zero exp is rejected — so a non-zero result is guaranteed for a chain
+// produced by ResolveTrustChain). Slice-3's registration cache reads this as
+// the cache TTL bound so a derived federation Client is NEVER served from an
+// expired chain.
+func (tc *TrustChain) Expiry() time.Time {
+	if tc == nil {
+		return time.Time{}
+	}
+	var min int64
+	for _, compact := range tc.Statements {
+		link, err := parseStatement(compact)
+		if err != nil {
+			// A statement that no longer parses cannot vouch for freshness;
+			// treat the chain as already-expired (defensive — these are the
+			// SAME compact strings validate() already parsed + verified, so
+			// this path is unreachable for a ResolveTrustChain result).
+			return time.Time{}
+		}
+		if link.claims.Exp <= 0 {
+			return time.Time{}
+		}
+		if min == 0 || link.claims.Exp < min {
+			min = link.claims.Exp
+		}
+	}
+	if min == 0 {
+		return time.Time{}
+	}
+	return time.Unix(min, 0)
+}
+
 // TrustChainResolver resolves + validates trust chains. Constructed once
 // (NewTrustChainResolver) and shared; immutable + concurrency-safe (the
 // fetcher's HTTP client is safe for concurrent use). A resolver with no
