@@ -1,0 +1,394 @@
+package sso
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"net/http"
+	neturl "net/url"
+	"strconv"
+	"strings"
+
+	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/region"
+)
+
+// MeshAuthorize is the dep-free, reusable mesh authorization decision —
+// Phase A of gRPC ext_authz support. It extracts the bearer, validates it
+// EXACTLY like /userinfo (validateAnyToken + the DPoP/mTLS sender-constraint
+// + read-side residency), and on ALLOW derives the X-Auth-* identity
+// (Subject/ClientID/Scopes/ExpiresAt/Roles) — all from the validated token
+// only, never from the inbound request. It performs NO HTTP writing: it is
+// a pure decision + identity over a stdlib-typed request abstraction
+// (method/URL/headers/cert), so the same logic backs two transports:
+//
+//   - handleMeshExtAuthz (this module) — the Envoy/Istio ext_authz
+//     HTTP-mode endpoint, a thin wrapper that renders this result to HTTP
+//     (200 + X-Auth-* on ALLOW; 401 invalid_token on DENY); its wire
+//     behavior is byte-identical to the pre-refactor inline handler.
+//   - the future Phase-B go-control-plane gRPC Authorization service — a
+//     SEPARATE nested module that builds a MeshAuthorizeRequest from the
+//     CheckRequest and reuses this EXACT validation + identity derivation,
+//     so go-control-plane never enters the core go.mod and the auth logic
+//     is never duplicated (a duplicated mesh-authz path is an auth-bypass
+//     risk — this seam is the single source of truth).
+//
+// SECURITY (AGENTS.md §2):
+//   - Sender-constraint preserved: a DPoP- or mTLS-bound token (cnf.jkt /
+//     cnf.x5t#S256) presented WITHOUT a matching proof / client cert is
+//     DENIED — a stolen sender-constrained token cannot replay as a plain
+//     bearer through the mesh.
+//   - Oracle-safe DENY: every validation failure collapses to one wire
+//     code (invalid_token); the missing-credentials case carries no
+//     error= (a bare challenge) exactly as /userinfo. No per-cause detail
+//     leaks; no X-Auth-* is derived on a denied request.
+//   - Edge-strip identity: every X-Auth-* is DERIVED here from the
+//     validated token; an inbound X-Auth-* is never trusted. The mesh MUST
+//     strip client-supplied X-Auth-* at ingress (same model as
+//     X-Forwarded-* / mtls.backend: header).
+
+// MeshAuthorizeRequest is the stdlib-typed, dependency-free request
+// abstraction MeshAuthorize operates on. It carries exactly enough request
+// context to reproduce the /userinfo validation path off the HTTP request:
+// the bearer + DPoP proof live in Header; Method + URL bind the DPoP proof
+// (htm/htu); the mTLS material (TLS state and/or an explicit peer cert)
+// feeds the sender-constraint. No transport type leaks in — the HTTP
+// handler and a future gRPC module both build this from their own request.
+type MeshAuthorizeRequest struct {
+	// Method is the HTTP method of the mesh-intercepted request, used as
+	// the DPoP proof's htm binding. For the HTTP endpoint this is the
+	// ext_authz request's own method (GET/POST at the mesh path); a gRPC
+	// ext_authz module supplies the intercepted request's method.
+	Method string
+
+	// URL is the absolute URL used as the DPoP proof's htu binding. The
+	// HTTP wrapper passes requestURLForDPoP(r) (the same X-Forwarded-aware
+	// public URL the rest of the server computes) so behavior is
+	// byte-identical to the inline handler.
+	URL string
+
+	// Header carries the inbound request headers: Authorization (bearer),
+	// DPoP (proof), the X-Forwarded-* chain (issuer/htu/region resolution),
+	// and — under security.mtls.backend: header — the client-cert header.
+	// Never read for X-Auth-* (those are derived from the token, not the
+	// request).
+	Header http.Header
+
+	// TLS is the connection's TLS state when the AS terminates mTLS
+	// directly (security.mtls.backend: tls reads TLS.PeerCertificates[0]).
+	// Optional; nil under header-mode mTLS or no mTLS.
+	TLS *tls.ConnectionState
+
+	// ClientCert is an explicit peer certificate for callers that have one
+	// outside r.TLS (e.g. a gRPC ext_authz module that receives the peer
+	// cert from the transport, not an *http.Request). When set it is
+	// installed as the synthetic request's TLS peer cert so the default
+	// TLS extractor finds it. Optional; ignored when nil.
+	ClientCert *x509.Certificate
+}
+
+// MeshAuthorizeResult is the outcome of MeshAuthorize: a binary ALLOW/DENY
+// plus, on ALLOW, the DERIVED identity the sidecar injects upstream. On
+// DENY it carries a single oracle-safe wire code (no per-cause detail).
+type MeshAuthorizeResult struct {
+	// Allowed is true iff the bearer validated (incl. the sender-constraint
+	// and residency gates). The identity fields below are populated ONLY
+	// when Allowed; on DENY they are zero.
+	Allowed bool
+
+	// Derived identity (ALLOW only) — all from the validated token, never
+	// echoed from the inbound request.
+	Subject   string   // X-Auth-Subject (token sub)
+	ClientID  string   // X-Auth-Client-Id (token client_id; omitted when empty)
+	Scopes    []string // X-Auth-Scopes (token scopes; omitted when empty)
+	ExpiresAt int64    // X-Auth-Expires (token exp, Unix seconds; 0 when the token has no exp)
+	Roles     []string // X-Auth-Roles (permissions provider lookup; nil when unwired / none / lookup error)
+
+	// DenyCode is the oracle-safe wire code on DENY: ErrInvalidToken for
+	// every validation/sender-constraint/residency failure, or "" for the
+	// missing-credentials case (which renders a bare Bearer challenge with
+	// no error= per RFC 6750 §3.1). Empty on ALLOW. NO per-cause detail is
+	// exposed here — the only observable distinction is the same one
+	// /userinfo already makes (missing vs invalid).
+	DenyCode string
+
+	// challengeHeader holds the response headers the existing
+	// setBearerChallenge / stampDPoPNonce helpers produced for a DENY
+	// (WWW-Authenticate, and DPoP-Nonce on a use_dpop_nonce challenge).
+	// Unexported: it is an HTTP-rendering detail the thin wrapper replays
+	// verbatim to stay byte-identical with the pre-refactor handler — it is
+	// NOT part of the reusable decision surface (a gRPC caller branches on
+	// Allowed/DenyCode, not on HTTP challenge headers).
+	challengeHeader http.Header
+}
+
+// meshHeaderRecorder is a minimal http.ResponseWriter that captures only
+// response HEADERS. The decision-path helpers reused by MeshAuthorize
+// (setBearerChallenge, stampDPoPNonce) write a DENY challenge solely via
+// Header().Set; they never write a status or body on the path MeshAuthorize
+// drives. WriteHeader/Write are implemented defensively (so the type is a
+// complete ResponseWriter) but are not expected to fire — MeshAuthorize
+// itself emits no body and lets the transport wrapper own status/body.
+type meshHeaderRecorder struct {
+	header http.Header
+}
+
+func newMeshHeaderRecorder() *meshHeaderRecorder {
+	return &meshHeaderRecorder{header: make(http.Header)}
+}
+
+func (m *meshHeaderRecorder) Header() http.Header         { return m.header }
+func (m *meshHeaderRecorder) WriteHeader(int)             {}
+func (m *meshHeaderRecorder) Write(b []byte) (int, error) { return len(b), nil }
+
+// MeshAuthorize runs the mesh authorization decision for req and returns the
+// ALLOW/DENY outcome plus the derived identity (on ALLOW). It reuses the
+// EXACT helpers the /userinfo and inline ext_authz paths use — bearerToken,
+// validateAnyToken, verifyDPoPBearer, verifyMTLSBearer,
+// residencyDeniedForAccess, and the permissions Roles lookup — by building a
+// synthetic HandlerContext over a synthetic *http.Request reconstructed from
+// req. The synthetic request carries the same Method, URL (Host +
+// X-Forwarded-* via the cloned Header), DPoP proof, TLS state, and client
+// cert the real request did, so every read those helpers perform — DPoP
+// htm/htu, mTLS thumbprint, issuer/region resolution — yields an identical
+// result. No HTTP is written here.
+//
+// ctx is the request context (deadlines/cancellation/values for the issuer +
+// permissions lookups). req carries the wire-level request material.
+func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) MeshAuthorizeResult {
+	// Build the synthetic request the reused helpers read from. Method +
+	// Header + Host + URL.Path + TLS reproduce every field DPoP/mTLS/issuer/
+	// region resolution touch.
+	hr := &http.Request{
+		Method: req.Method,
+		Header: cloneMeshHeader(req.Header),
+	}
+	// Parse the absolute URL so r.URL.Path (DPoP htu, base-URL path) and
+	// r.Host (issuer/htu host) match the wire. A parse failure leaves an
+	// empty URL/Host, which only weakens htu/issuer resolution toward the
+	// deny side — never a bypass.
+	if req.URL != "" {
+		if u, err := neturl.Parse(req.URL); err == nil {
+			hr.URL = u
+			hr.Host = u.Host
+		}
+	}
+	if hr.URL == nil {
+		hr.URL = &neturl.URL{}
+	}
+	// mTLS material. r.TLS feeds the TLS-backend extractor
+	// (r.TLS.PeerCertificates[0]); an explicit ClientCert is installed as a
+	// synthetic peer cert so the same default extractor finds it without a
+	// real TLS handshake (the gRPC-module path).
+	hr.TLS = req.TLS
+	if req.ClientCert != nil {
+		if hr.TLS == nil {
+			hr.TLS = &tls.ConnectionState{}
+		}
+		// Copy so we never mutate a caller-shared ConnectionState; the
+		// extractor reads PeerCertificates[0].
+		st := *hr.TLS
+		st.PeerCertificates = append([]*x509.Certificate{req.ClientCert}, st.PeerCertificates...)
+		hr.TLS = &st
+	}
+	// Bind the request context so the synthetic request carries the caller's
+	// deadline/cancellation into validateAnyToken / the ClientStore /
+	// permissions lookups.
+	if ctx != nil {
+		hr = hr.WithContext(ctx)
+	} else {
+		ctx = context.Background()
+	}
+
+	rec := newMeshHeaderRecorder()
+	hctx := core.NewContext(rec, hr)
+
+	// Resolve + stash the serving region on the synthetic context exactly as
+	// region.Middleware would for the real request, so the read-side
+	// residency gate sees the same region. The resolver + AllowedRegions
+	// backstop are pure functions of the request headers, so re-resolving
+	// against the synthetic request (identical headers) is equivalent to the
+	// middleware run on the real one — and it makes MeshAuthorize
+	// self-contained for the gRPC path, where no region middleware ran. A
+	// nil resolver stashes nothing (residency disabled ⇒ byte-identical).
+	s.stashMeshServingRegion(hctx)
+
+	res := MeshAuthorizeResult{challengeHeader: rec.header}
+
+	// Misconfiguration (no token issuer) is handled by the transport wrapper
+	// as a 500 — here a missing issuer simply makes validateAnyToken fail,
+	// which the wrapper never reaches because it checks requireDeps first.
+
+	tokenString := bearerToken(hr)
+	if tokenString == "" {
+		// RFC 6750 §3.1 — no credentials presented. Bare Bearer challenge
+		// (no error=). DENY with an empty DenyCode (the missing-vs-invalid
+		// distinction /userinfo already exposes).
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), "", "")
+		res.DenyCode = ""
+		return res
+	}
+
+	claims, _, err := s.validateAnyToken(ctx, tokenString)
+	if err != nil {
+		// Opaque validation failure → invalid_token, identical to /userinfo
+		// (no oracle leak).
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "The access token is invalid or expired")
+		res.DenyCode = ErrInvalidToken
+		return res
+	}
+
+	// Sender-constraint enforcement, mirrored EXACTLY from /userinfo so a
+	// stolen DPoP- or mTLS-bound token cannot be replayed as a plain bearer.
+	// A bound token (cnf.jkt / cnf.x5t#S256) without a matching proof /
+	// client cert collapses to the same invalid_token DENY as any other
+	// invalid bearer — binding is not probeable.
+	if derr := s.verifyDPoPBearer(hctx, claims); derr != nil {
+		if errors.Is(derr, ErrDPoPNonceRequired) {
+			// RFC 9449 §8 — challenge for a fresh nonce. Stamp it onto the
+			// recorder so the wrapper replays the DPoP-Nonce + use_dpop_nonce
+			// challenge headers verbatim. Still a DENY (invalid_token wire
+			// code class).
+			s.stampDPoPNonce(hctx)
+			setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
+			res.DenyCode = ErrInvalidToken
+			return res
+		}
+		s.logger.Error("mesh authorize dpop bearer verification failed", "error", derr, "subject", claims.Subject)
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
+		res.DenyCode = ErrInvalidToken
+		return res
+	}
+	if merr := s.verifyMTLSBearer(hctx, claims); merr != nil {
+		s.logger.Error("mesh authorize mtls bearer verification failed", "error", merr, "subject", claims.Subject)
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
+		res.DenyCode = ErrInvalidToken
+		return res
+	}
+
+	// Data-residency READ-gate. Binary ALLOW/DENY: a residency-denied
+	// request takes the DENY path (invalid_token, oracle-safe — no detail,
+	// no X-Auth-* derived). Runs AFTER bearer + sender-constraint. Zero-cost
+	// + byte-identical when residency is disabled.
+	if _, denied := s.residencyDeniedForAccess(hctx, claims); denied {
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "Access denied")
+		res.DenyCode = ErrInvalidToken
+		return res
+	}
+
+	// ALLOW. Derive the identity from the validated token only.
+	res.Allowed = true
+	res.Subject = claims.Subject
+	res.ClientID = claims.ClientID
+	res.Scopes = claims.Scopes
+	if !claims.ExpiresAt.IsZero() {
+		res.ExpiresAt = claims.ExpiresAt.Unix()
+	}
+	// Optional roles — only when a permissions provider is wired AND the
+	// lookup succeeds with a non-empty result. Lookup failure is non-fatal:
+	// ALLOW still holds (the token is valid); we simply omit roles. Mirrors
+	// the inline handler's behavior exactly.
+	if s.permissions != nil && claims.Subject != "" {
+		if roles, rerr := s.permissions.Roles(ctx, claims.Subject, claims.ClientID); rerr == nil && len(roles) > 0 {
+			codes := make([]string, 0, len(roles))
+			for _, r := range roles {
+				codes = append(codes, r.Code)
+			}
+			res.Roles = codes
+		}
+	}
+	return res
+}
+
+// stashMeshServingRegion resolves the serving region for the synthetic mesh
+// request and stashes it on the HandlerContext exactly as region.Middleware
+// does, so the read-side residency gate sees the same region without the
+// middleware having run. It replicates the middleware's resolve →
+// AllowedRegions backstop → stash sequence (region/middleware.go is the
+// source of truth) because the closure body isn't reachable directly. A nil
+// resolver stashes nothing — residency disabled stays byte-identical.
+func (s *Server) stashMeshServingRegion(hctx core.HandlerContext) {
+	if s.regionResolver == nil {
+		return
+	}
+	id, err := s.regionResolver.Resolve(hctx.Request())
+	if err != nil {
+		if s.regionMiddlewareOpts.OnError != nil {
+			s.regionMiddlewareOpts.OnError(hctx.Request(), err)
+		}
+		region.WithHandlerContext(hctx, region.ID(""))
+		return
+	}
+	if len(s.regionMiddlewareOpts.AllowedRegions) > 0 && id != "" && !meshRegionAllowed(s.regionMiddlewareOpts.AllowedRegions, id) {
+		id = ""
+	}
+	region.WithHandlerContext(hctx, id)
+}
+
+func meshRegionAllowed(set []region.ID, want region.ID) bool {
+	for _, id := range set {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+// cloneMeshHeader returns a deep copy of h so the synthetic request never
+// shares (or mutates) the caller's header map. nil → an empty, non-nil
+// header (the helpers call Header.Get, which is nil-safe, but the synthetic
+// request keeps a real map for consistency).
+func cloneMeshHeader(h http.Header) http.Header {
+	if h == nil {
+		return make(http.Header)
+	}
+	out := make(http.Header, len(h))
+	for k, vs := range h {
+		cp := make([]string, len(vs))
+		copy(cp, vs)
+		out[k] = cp
+	}
+	return out
+}
+
+// writeMeshAuthzResponse renders a MeshAuthorizeResult to the HTTP
+// ext_authz response on hctx, byte-identically to the pre-refactor inline
+// handler. On ALLOW it stamps the DERIVED X-Auth-* identity headers + a 200
+// (empty body — Envoy reads status + headers). On DENY it replays the
+// challenge headers MeshAuthorize captured (WWW-Authenticate, and DPoP-Nonce
+// for a use_dpop_nonce challenge) + a 401 (empty body, oracle-safe). The
+// X-Auth-* roles header is comma-joined; scopes space-joined — the exact
+// formats the sidecar expects.
+func (s *Server) writeMeshAuthzResponse(hctx HandlerContext, res MeshAuthorizeResult) {
+	if !res.Allowed {
+		// Replay the captured DENY challenge headers verbatim (the existing
+		// setBearerChallenge / stampDPoPNonce produced them via Header().Set,
+		// so copy the exact key→values), then 401 with no body (oracle-safe
+		// — no detail, no identity). tokenNoStoreHeaders never sets
+		// WWW-Authenticate / DPoP-Nonce, so this is a faithful replay of what
+		// the inline handler wrote directly.
+		dst := hctx.ResponseWriter().Header()
+		for k, vs := range res.challengeHeader {
+			dst[k] = append([]string(nil), vs...)
+		}
+		hctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	h := hctx.ResponseWriter().Header()
+	h.Set(HeaderAuthSubject, res.Subject)
+	if res.ClientID != "" {
+		h.Set(HeaderAuthClientID, res.ClientID)
+	}
+	if len(res.Scopes) > 0 {
+		h.Set(HeaderAuthScopes, strings.Join(res.Scopes, " "))
+	}
+	if res.ExpiresAt != 0 {
+		h.Set(HeaderAuthExpires, strconv.FormatInt(res.ExpiresAt, 10))
+	}
+	if len(res.Roles) > 0 {
+		h.Set(HeaderAuthRoles, strings.Join(res.Roles, ","))
+	}
+	// Empty body — Envoy reads the 2xx status + the response headers.
+	hctx.ResponseWriter().WriteHeader(http.StatusOK)
+}

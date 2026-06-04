@@ -19,7 +19,6 @@ import (
 	"net/http"
 	neturl "net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1915,90 +1914,26 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 		return
 	}
 
-	tokenString := bearerToken(ctx.Request())
-	if tokenString == "" {
-		// RFC 6750 §3.1 — no credentials presented: 401 + a bare Bearer
-		// challenge (no error= parameter). DENY.
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
-		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
-	if err != nil {
-		// RFC 6750 §3.1 — validation failure carries error="invalid_token".
-		// Same opaque failure shape as /userinfo (no oracle leak). DENY.
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
-		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	// Sender-constraint enforcement, mirrored EXACTLY from /userinfo so a
-	// stolen DPoP- or mTLS-bound token cannot be replayed through the mesh
-	// as a plain bearer. A token with cnf.jkt / cnf.x5t#S256 but no
-	// matching proof / client cert collapses to the same invalid_token
-	// 401 as any other invalid bearer — attackers can't probe binding.
-	if err := s.verifyDPoPBearer(ctx, claims); err != nil {
-		if errors.Is(err, ErrDPoPNonceRequired) {
-			s.stampDPoPNonce(ctx)
-			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
-			ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		s.logger.Error("mesh ext_authz dpop bearer verification failed", "error", err, "subject", claims.Subject)
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
-		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
-		s.logger.Error("mesh ext_authz mtls bearer verification failed", "error", err, "subject", claims.Subject)
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
-		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	// Data-residency READ-gate. Same decision as /userinfo, but the mesh
-	// contract is binary ALLOW/DENY, so a residency-denied request takes the
-	// existing DENY path: a body-less 401, indistinguishable from an
-	// invalid-token DENY (oracle-safe — no detail leaks, no X-Auth-* stamped
-	// on a denied request). Runs only AFTER the bearer + sender-constraint
-	// are validated. Zero-cost + byte-identical when residency is disabled.
-	if _, denied := s.residencyDeniedForAccess(ctx, claims); denied {
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Access denied")
-		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	// ALLOW. Stamp the DERIVED identity headers for the sidecar to inject
-	// upstream. These are computed from the validated token only — never
-	// echoed from the inbound request.
-	h := ctx.ResponseWriter().Header()
-	h.Set(HeaderAuthSubject, claims.Subject)
-	if claims.ClientID != "" {
-		h.Set(HeaderAuthClientID, claims.ClientID)
-	}
-	if len(claims.Scopes) > 0 {
-		h.Set(HeaderAuthScopes, strings.Join(claims.Scopes, " "))
-	}
-	if !claims.ExpiresAt.IsZero() {
-		h.Set(HeaderAuthExpires, strconv.FormatInt(claims.ExpiresAt.Unix(), 10))
-	}
-	// Optional roles — only when a permissions provider is wired AND a
-	// role lookup succeeds. The token's scopes are the cheap default; a
-	// richer downstream can pull the OPA policy-bundle instead. Role
-	// lookup failure is non-fatal here: ALLOW still holds (the token is
-	// valid); we simply omit X-Auth-Roles rather than fail the request.
-	if s.permissions != nil && claims.Subject != "" {
-		if roles, rerr := s.permissions.Roles(ctx.Request().Context(), claims.Subject, claims.ClientID); rerr == nil && len(roles) > 0 {
-			codes := make([]string, 0, len(roles))
-			for _, r := range roles {
-				codes = append(codes, r.Code)
-			}
-			h.Set(HeaderAuthRoles, strings.Join(codes, ","))
-		}
-	}
-	// Empty body — Envoy reads the status (2xx) + the response headers.
-	ctx.ResponseWriter().WriteHeader(http.StatusOK)
+	// Thin HTTP wrapper over the dep-free MeshAuthorize seam (mesh_authz.go).
+	// The decision (bearer validation + DPoP/mTLS sender-constraint +
+	// residency + identity derivation) lives in MeshAuthorize so a future
+	// Phase-B go-control-plane gRPC Authorization service reuses the EXACT
+	// same logic without duplicating it (and without go-control-plane in the
+	// core go.mod). Build the request abstraction from the *http.Request —
+	// requestURLForDPoP(r) supplies the same X-Forwarded-aware htu the inline
+	// path used, the cloned Header carries the bearer + DPoP proof +
+	// X-Forwarded-* + header-mode mTLS cert, and r.TLS feeds TLS-backend
+	// mTLS — so MeshAuthorize reads exactly what the inline handler did. The
+	// HTTP response is then rendered byte-identically by
+	// writeMeshAuthzResponse.
+	r := ctx.Request()
+	res := s.MeshAuthorize(r.Context(), MeshAuthorizeRequest{
+		Method: r.Method,
+		URL:    requestURLForDPoP(r),
+		Header: r.Header,
+		TLS:    r.TLS,
+	})
+	s.writeMeshAuthzResponse(ctx, res)
 }
 
 // projectUserInfoForOIDC returns the OIDC-standard claim set for a user
