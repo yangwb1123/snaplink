@@ -15,12 +15,19 @@
 // already trusts that key (e.g. an RP that has cached this OP's JWKS)
 // validates the configuration with NO extra trust setup.
 //
-// The crux of the spec — building a trust CHAIN from this entity up through
-// its authority_hints to a configured trust anchor, and validating each
-// link's signature + metadata policy — is the actual trust boundary and is
-// a SEPARATE slice. This slice serves the leaf statement only; it performs
-// NO chain resolution and grants NO trust. authority_hints are emitted (so
-// a resolver knows where to climb) but not followed.
+// The crux of the spec — building a trust CHAIN from an entity up through its
+// authority_hints to a configured trust anchor, and validating each link's
+// signature + metadata policy — is the actual trust boundary. It is
+// implemented by the TrustChainResolver (trust_chain.go + fetcher.go +
+// metadata_policy.go): given a remote leaf Entity Identifier it fetches the
+// leaf's Entity Configuration, walks authority_hints up to an operator-
+// CONFIGURED trust anchor over SSRF-safe fetches, validates every hop's
+// signature against the keys established higher in the chain (the anchor's
+// config against the CONFIGURED anchor keys — the root of trust — NEVER the
+// fetched keys), checks exp/iat + iss/sub + typ per hop, bounds path length +
+// detects cycles, then applies the merged metadata_policy. The well-known
+// handler in this file still serves only THIS server's leaf statement; it
+// performs no chain resolution itself.
 //
 // # How it reuses existing machinery (zero new deps)
 //
@@ -47,14 +54,17 @@
 // root depends on federation for the option, so the edge must point one
 // way) — mirroring the caep package's acyclic boundary.
 //
-// # Slices beyond this one
+// # Slices
 //
-//   - Slice 2: trust-chain validation — fetch + verify the chain from this
-//     entity's authority_hints up to a configured TrustAnchor, applying
-//     metadata policy. THAT is the trust boundary. The Config already
-//     carries TrustAnchors (present-but-inert here) so the operator config
-//     format is forward-compatible.
+//   - Slice 1 (this file): entity PUBLISHING — serve the OP's self-signed
+//     Entity Configuration at the well-known endpoint.
+//   - Slice 2 (trust_chain.go, fetcher.go, metadata_policy.go): trust-chain
+//     RESOLUTION + VALIDATION — the trust boundary. TrustAnchor is now LIVE
+//     (its configured keys are the root of trust). Opt-in: with no trust
+//     anchors configured the resolver is inert (slice-1 behavior byte-
+//     identical). No resolver endpoint is mounted (it is a component).
 //   - Slice 3: automatic/explicit client registration via the federation
 //     trust chain (an RP's Entity Statement, validated to a trust anchor,
-//     stands in for out-of-band client registration).
+//     stands in for out-of-band client registration) — wires
+//     TrustChainResolver.ResolveTrustChain into the registration/login path.
 package federation

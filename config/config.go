@@ -321,9 +321,11 @@ type CAEPTransmitterConfig struct {
 // is signed by the SAME key already in JWKS (the OP signing issuer's generic
 // SignJWT seam), so no extra signing config is needed.
 //
-// This config wires the entity-PUBLISHING slice only. TrustAnchors is
-// present-but-inert here (forward-compatible for the trust-chain-validation
-// slice, which will resolve authority_hints up to one of these anchors).
+// This config wires BOTH the entity-PUBLISHING surface and the trust-chain
+// RESOLUTION surface. TrustAnchors, empty by default, is now LIVE: each anchor's
+// jwks_file is loaded as the root-of-trust key set the resolver validates a
+// remote entity's chain against. With no anchors configured the resolver is
+// inert (entity-publishing behavior is byte-identical).
 type FederationConfig struct {
 	Enabled bool `yaml:"enabled"`
 
@@ -334,9 +336,11 @@ type FederationConfig struct {
 	// trust-anchor-only entity.
 	AuthorityHints []string `yaml:"authority_hints"`
 
-	// TrustAnchors is the configured set of federation trust anchors. INERT
-	// in this slice (loaded + used by the future trust-chain-validation
-	// slice). Defining it now keeps the config schema stable across slices.
+	// TrustAnchors is the configured set of federation trust anchors. LIVE:
+	// each anchor's jwks_file is loaded at boot as the root-of-trust key set the
+	// resolver validates a remote entity's chain against (a chain not reaching a
+	// configured anchor is rejected). A configured-but-unloadable anchor is a
+	// boot error. Empty ⇒ the resolver is inert (entity-publishing only).
 	TrustAnchors []TrustAnchorConfig `yaml:"trust_anchors"`
 
 	// OrganizationName + Contacts populate the federation_entity metadata
@@ -352,16 +356,29 @@ type FederationConfig struct {
 	// CacheTTL controls the in-process body cache + the Cache-Control
 	// max-age advertised to downstream caches. 0 ⇒ SDK default (5m).
 	CacheTTL time.Duration `yaml:"cache_ttl"`
+
+	// MaxTrustChainDepth bounds how many superiors the trust-chain resolver
+	// climbs from a leaf before giving up (a DoS/loop guard alongside cycle
+	// detection). 0 ⇒ SDK default (5).
+	MaxTrustChainDepth int `yaml:"max_trust_chain_depth"`
+
+	// MaxClockSkew widens the exp/iat freshness check at every hop of trust-
+	// chain validation (clock drift between this resolver and remote entities).
+	// 0 ⇒ SDK default (60s).
+	MaxClockSkew time.Duration `yaml:"max_clock_skew"`
 }
 
-// TrustAnchorConfig names one configured federation trust anchor. INERT in
-// the entity-publishing slice (consumed by the future trust-chain-validation
-// slice, which verifies each chain link against the anchor's keys).
+// TrustAnchorConfig names one configured federation trust anchor: its Entity
+// Identifier + its published JWKS. Both are REQUIRED when an anchor is listed;
+// the trust-chain resolver verifies the anchor's fetched Entity Configuration
+// against the loaded JWKS (the root of trust), so a missing/empty key set is a
+// boot error, not a silent no-anchor.
 type TrustAnchorConfig struct {
-	// EntityID is the trust anchor's Entity Identifier (an HTTPS URL).
+	// EntityID is the trust anchor's Entity Identifier (an HTTPS URL). A chain
+	// is trusted only if it terminates at an entity matching this id.
 	EntityID string `yaml:"entity_id"`
 	// JWKSFile is the local path to the anchor's published JWKS document
-	// (`{"keys":[...]}`, its trust bundle).
+	// (`{"keys":[...]}`, its trust bundle) — the root-of-trust key set.
 	JWKSFile string `yaml:"jwks_file"`
 }
 

@@ -1065,23 +1065,39 @@ mesh:
 # federation consumer validates it with no new trust setup. It is PUBLIC
 # metadata (Cache-Control public, max-age -- not a credential).
 #
-# This is the entity-PUBLISHING slice only. Trust-chain VALIDATION (resolving
-# authority_hints up to a configured trust_anchor -- the actual trust
-# boundary) and federation-based client registration are later slices.
-# trust_anchors below are parsed but INERT in this slice (present so enabling
-# the validation slice needs no config change). Disabled (the default) ->
-# the route is NOT mounted, byte-identical to a build without it.
+# Enabling federation wires BOTH the entity-PUBLISHING surface (above) and the
+# trust-chain RESOLUTION surface: trust_anchors below are now LIVE -- each
+# anchor's jwks_file is loaded at boot as the ROOT OF TRUST. The resolver
+# fetches a remote entity's Entity Configuration, walks its authority_hints up
+# to a configured trust anchor over SSRF-safe (https-only, no-redirect,
+# bounded) fetches, and validates the chain FAIL-CLOSED: every hop's signature
+# is verified against the keys established higher in the chain (the anchor's
+# config against the CONFIGURED jwks_file keys, NEVER the fetched keys), exp/iat
+# per hop, path-length + cycle bounded, then the metadata_policy is applied. A
+# chain not rooting in a configured anchor, any bad signature/expiry, a cycle,
+# or an over-long path is rejected. A configured-but-unloadable anchor is a BOOT
+# error. No resolver ENDPOINT is mounted yet (a later slice wires it into
+# registration). With trust_anchors empty the resolver is inert. Disabled (the
+# default) -> the federation route is NOT mounted, byte-identical.
+#
+# SSRF NOTE: the https-only + no-redirect + bounded fetch + best-effort
+# internal-IP-host block raise the bar but are NOT a complete SSRF control (a
+# hostname resolving to an internal IP still passes). FULL containment REQUIRES
+# the operator's egress network policy (deny-by-default egress firewall/proxy),
+# same as the JAR request_uri fetcher.
 federation:
   enabled: false
   authority_hints: []        # superiors' Entity Identifiers (HTTPS URLs) whose chains this OP joins
   # - "https://federation.example.org"
-  trust_anchors: []          # INERT in this slice (forward-compat for trust-chain validation)
+  trust_anchors: []          # LIVE: roots of trust for chain validation (jwks_file = root keys)
   # - entity_id: "https://anchor.example.org"
   #   jwks_file: "/etc/sso/anchor-jwks.json"
   organization_name: ""      # federation_entity metadata (optional)
   contacts: []               # federation_entity contacts, e.g. ["mailto:admin@example.org"]
   entity_statement_ttl: 0s   # exp - iat stamped into the statement; 0 -> SDK default (24h)
   cache_ttl: 0s              # body cache + Cache-Control max-age; 0 -> SDK default (5m)
+  max_trust_chain_depth: 0   # authority-hint climb bound (cycle/DoS guard); 0 -> SDK default (5)
+  max_clock_skew: 0s         # per-hop exp/iat skew allowance in chain validation; 0 -> SDK default (60s)
 
 # SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
 # dependency stays OUT of this binary's core go.mod, the firm

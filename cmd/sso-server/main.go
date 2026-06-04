@@ -1080,13 +1080,40 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 // SVID acceptance is on when it isn't (or, worse, accepting tokens it
 // shouldn't).
 // buildFederationConfig translates the YAML federation block onto the SDK
-// federation.Config. TrustAnchors are carried through verbatim (inert in the
-// entity-publishing slice). Unset TTLs stay zero so the SDK applies its
-// defaults (24h statement TTL, 5m cache).
-func buildFederationConfig(cfg config.FederationConfig) *federation.Config {
+// federation.Config. Each configured trust anchor's JWKSFile is loaded into
+// TrustAnchor.Keys at boot — those keys are the ROOT OF TRUST the trust-chain
+// resolver (slice 2) verifies the anchor's fetched Entity Configuration
+// against, NEVER the keys the fetched statement self-asserts. A configured-but-
+// unloadable anchor (missing file, malformed/empty JWKS) is a BOOT ERROR: the
+// resolver must never silently run without its root keys (a chain rooted in an
+// empty key set would fail closed, but failing loud at boot names the misconfig
+// instead of every resolution mysteriously rejecting). With no anchors
+// configured the resolver is inert (slice-1 behavior, byte-identical).
+//
+// Unset TTLs stay zero so the SDK applies its defaults (24h statement TTL, 5m
+// cache); unset depth/skew likewise default in the SDK.
+func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, error) {
 	anchors := make([]federation.TrustAnchor, 0, len(cfg.TrustAnchors))
-	for _, ta := range cfg.TrustAnchors {
-		anchors = append(anchors, federation.TrustAnchor{EntityID: ta.EntityID, JWKSFile: ta.JWKSFile})
+	for i, ta := range cfg.TrustAnchors {
+		if ta.EntityID == "" {
+			return nil, fmt.Errorf("federation.trust_anchors[%d].entity_id required", i)
+		}
+		if ta.JWKSFile == "" {
+			return nil, fmt.Errorf("federation.trust_anchors[%d].jwks_file required (the anchor's root-of-trust keys)", i)
+		}
+		doc, err := os.ReadFile(ta.JWKSFile)
+		if err != nil {
+			return nil, fmt.Errorf("read federation.trust_anchors[%d].jwks_file: %w", i, err)
+		}
+		source, err := security.ParseStaticJWKS(doc)
+		if err != nil {
+			return nil, fmt.Errorf("parse federation.trust_anchors[%d] anchor JWKS: %w", i, err)
+		}
+		keys, err := source.GetJWKS(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("federation.trust_anchors[%d] anchor JWKS: %w", i, err)
+		}
+		anchors = append(anchors, federation.TrustAnchor{EntityID: ta.EntityID, JWKSFile: ta.JWKSFile, Keys: keys})
 	}
 	return &federation.Config{
 		AuthorityHints:     append([]string(nil), cfg.AuthorityHints...),
@@ -1095,7 +1122,9 @@ func buildFederationConfig(cfg config.FederationConfig) *federation.Config {
 		Contacts:           append([]string(nil), cfg.Contacts...),
 		EntityStatementTTL: cfg.EntityStatementTTL,
 		CacheTTL:           cfg.CacheTTL,
-	}
+		MaxTrustChainDepth: cfg.MaxTrustChainDepth,
+		MaxClockSkew:       cfg.MaxClockSkew,
+	}, nil
 }
 
 func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
@@ -3302,12 +3331,25 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		// the entity statement verifies against a key already in JWKS (no new
 		// trust setup). TrustAnchors are loaded into the config but inert in
 		// this slice (trust-chain validation is a later slice).
-		fedCfg := buildFederationConfig(cfg.Federation)
+		fedCfg, err := buildFederationConfig(cfg.Federation)
+		if err != nil {
+			return nil, fmt.Errorf("federation: %w", err)
+		}
 		opts = append(opts, sso.WithFederationEntity(fedCfg, jwtIssuer))
 		logger.Info("federation: OpenID Federation 1.0 entity configuration enabled — self-signed Entity Statement served at /.well-known/openid-federation",
 			"authority_hints", len(fedCfg.AuthorityHints),
 			"trust_anchors", len(fedCfg.TrustAnchors),
 		)
+		if len(fedCfg.TrustAnchors) > 0 {
+			// Slice 2: the trust-chain resolver is now LIVE (anchors loaded). It
+			// resolves + validates a remote entity's chain up to a configured
+			// anchor; slice 3 wires it into registration. No endpoint is mounted
+			// in slice 2.
+			logger.Info("federation: trust-chain resolution enabled — remote entities validated up to a configured trust anchor",
+				"trust_anchors", len(fedCfg.TrustAnchors),
+				"max_chain_depth", fedCfg.MaxTrustChainDepth,
+			)
+		}
 	}
 	if cfg.Server.OAuth21StrictMode {
 		opts = append(opts, sso.WithOAuth21StrictMode(true))
