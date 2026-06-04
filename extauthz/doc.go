@@ -39,7 +39,12 @@
 //     HeadersToRemove strip any client-supplied X-Auth-* inbound.
 //   - On DENY: a CheckResponse with grpc-status PERMISSION_DENIED and a
 //     DeniedHttpResponse of 401 + a WWW-Authenticate Bearer challenge and
-//     NO body (oracle-safe — no per-cause detail).
+//     NO body (oracle-safe — no per-cause detail). The sole exception is the
+//     RFC 9449 §8/§9 DPoP nonce handshake: when the seam reports a fresh
+//     nonce is required (a DPoP-bound token whose proof lacked a valid
+//     nonce), the DENY additionally carries a DPoP-Nonce header + the
+//     use_dpop_nonce challenge so a mesh-only DPoP client can reissue —
+//     matching HTTP mode, and protocol-required rather than an oracle leak.
 //
 // Because the seam is the single source of truth, a stolen DPoP- or
 // mTLS-bound token presented as a plain bearer is DENIED over gRPC just as

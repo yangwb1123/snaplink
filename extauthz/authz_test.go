@@ -281,6 +281,98 @@ func TestCheck_Deny_MissingCredentials_BareChallenge(t *testing.T) {
 	}
 }
 
+// TestCheck_Deny_DPoPNonceHandshake_SurfacesNonceAndUseDPoPNonce proves the
+// gRPC DENY surfaces the RFC 9449 §8/§9 nonce handshake when the seam reports
+// one (res.DPoPNonce set): the DeniedHttpResponse carries a DPoP-Nonce header
+// with the fresh nonce VALUE AND a WWW-Authenticate challenge whose error is
+// use_dpop_nonce (NOT invalid_token), so a mesh-only DPoP client can reissue
+// a nonce-bound proof. This is the HIGH fix — without it the fresh nonce
+// (which lives only in the seam's unexported challengeHeader) never reaches a
+// gRPC-mode DPoP client, permanently breaking it after a nonce expiry. It is
+// NOT an oracle leak: the nonce + use_dpop_nonce is the protocol-required
+// handshake, exactly what HTTP mode emits.
+func TestCheck_Deny_DPoPNonceHandshake_SurfacesNonceAndUseDPoPNonce(t *testing.T) {
+	const freshNonce = "fresh-server-nonce-abc123"
+	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
+		Allowed: false,
+		// The seam collapses the HTTP wire code to invalid_token but ALSO sets
+		// DPoPNonce on the nonce-required cause; DPoPNonce != "" is the signal.
+		DenyCode:  sso.ErrInvalidToken,
+		DPoPNonce: freshNonce,
+	}}
+	srv := NewAuthorizationServer(fake)
+
+	resp, err := srv.Check(context.Background(), checkRequest("GET", "https", "sso.test", "/x", map[string]string{
+		"authorization": "Bearer dpop-bound-token",
+		"dpop":          "proof-without-a-nonce",
+	}))
+	if err != nil {
+		t.Fatalf("Check returned a Go error: %v", err)
+	}
+	if resp.GetStatus().GetCode() != int32(codes.PermissionDenied) {
+		t.Fatalf("status = %d want PERMISSION_DENIED (still a DENY)", resp.GetStatus().GetCode())
+	}
+	denied := resp.GetDeniedResponse()
+	if denied == nil {
+		t.Fatalf("no DeniedHttpResponse")
+	}
+	if denied.GetStatus().GetCode() != typev3.StatusCode_Unauthorized {
+		t.Errorf("denied HTTP status = %v want 401", denied.GetStatus().GetCode())
+	}
+	if denied.GetBody() != "" {
+		t.Errorf("denied body = %q want empty (oracle-safe)", denied.GetBody())
+	}
+	// The fresh nonce is surfaced as a DPoP-Nonce header carrying the VALUE.
+	if v, present := headerOptValue(t, denied.GetHeaders(), sso.HeaderDPoPNonce); !present || v != freshNonce {
+		t.Errorf("DPoP-Nonce = %q present=%v want %q (the fresh nonce the client reissues with)", v, present, freshNonce)
+	}
+	// The challenge error is use_dpop_nonce (the handshake), NOT invalid_token.
+	wantChallenge := `Bearer realm="sso", error="use_dpop_nonce"`
+	if v, present := headerOptValue(t, denied.GetHeaders(), "WWW-Authenticate"); !present || v != wantChallenge {
+		t.Errorf("WWW-Authenticate = %q present=%v want %q", v, present, wantChallenge)
+	}
+	// No identity leaks on the handshake DENY either.
+	for _, h := range []string{sso.HeaderAuthSubject, sso.HeaderAuthClientID, sso.HeaderAuthScopes, sso.HeaderAuthExpires, sso.HeaderAuthRoles} {
+		if _, present := headerOptValue(t, denied.GetHeaders(), h); present {
+			t.Errorf("nonce-handshake DENY leaked identity header %q", h)
+		}
+	}
+}
+
+// TestCheck_Deny_InvalidToken_NoDPoPNonceHeader proves the contrapositive:
+// an ordinary invalid_token DENY (res.DPoPNonce empty — every NON-nonce
+// cause) carries NO DPoP-Nonce header and keeps the invalid_token challenge.
+// This locks the oracle-safety boundary: only the genuine nonce handshake
+// gets the nonce signal; binding/validity/residency stay non-probeable.
+func TestCheck_Deny_InvalidToken_NoDPoPNonceHeader(t *testing.T) {
+	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
+		Allowed:  false,
+		DenyCode: sso.ErrInvalidToken,
+		// DPoPNonce intentionally empty — not the handshake case.
+	}}
+	srv := NewAuthorizationServer(fake)
+
+	resp, err := srv.Check(context.Background(), checkRequest("GET", "https", "sso.test", "/x", map[string]string{
+		"authorization": "Bearer bad-token",
+	}))
+	if err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+	denied := resp.GetDeniedResponse()
+	if denied == nil {
+		t.Fatalf("no DeniedHttpResponse")
+	}
+	// No DPoP-Nonce header on a non-handshake DENY.
+	if v, present := headerOptValue(t, denied.GetHeaders(), sso.HeaderDPoPNonce); present {
+		t.Errorf("DPoP-Nonce = %q present on a plain invalid_token DENY — must be absent (oracle-safe)", v)
+	}
+	// Challenge stays invalid_token, NOT use_dpop_nonce.
+	wantChallenge := `Bearer realm="sso", error="invalid_token"`
+	if v, present := headerOptValue(t, denied.GetHeaders(), "WWW-Authenticate"); !present || v != wantChallenge {
+		t.Errorf("WWW-Authenticate = %q present=%v want %q", v, present, wantChallenge)
+	}
+}
+
 // TestCheck_RequestMapping_MethodURLHeadersReachSeam: the CheckRequest's
 // Method, scheme/host/path (-> reconstructed URL), and headers all reach the
 // MeshAuthorizeRequest the seam sees. Asserted via the fake recording its
@@ -325,21 +417,62 @@ func TestCheck_RequestMapping_MethodURLHeadersReachSeam(t *testing.T) {
 	}
 }
 
-// TestCheck_RequestMapping_URLWithQuery: the reconstructed URL carries the
-// query string when Envoy provides one (faithful htu), and defaults the
-// scheme to https when Envoy omits it.
-func TestCheck_RequestMapping_URLWithQuery(t *testing.T) {
+// TestCheck_RequestMapping_URLWithQueryInPath is the PRODUCTION shape: Envoy
+// embeds the query INSIDE GetPath() (`/path?a=1&b=2`) and leaves GetQuery()
+// EMPTY (the ext_authz AttributeContext never splits the query out). The
+// reconstructed URL must carry the query as a real RawQuery — NOT percent-
+// encode the '?' into the path (`/path%3Fa=1`, which the old code produced).
+// We assert via url.Parse that Path and RawQuery come back distinct, and that
+// the seam's htu normalization would still see the bare path.
+func TestCheck_RequestMapping_URLWithQueryInPath(t *testing.T) {
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
 	srv := NewAuthorizationServer(fake)
 
-	req := checkRequest("GET", "", "api.example", "/v1/resource", nil) // empty scheme
-	req.GetAttributes().GetRequest().GetHttp().Query = "a=1&b=2"
+	// Production shape: query lives in Path; GetQuery() is empty.
+	req := checkRequest("GET", "https", "api.example", "/mesh/ext-authz?a=1&b=2", nil)
+	if _, err := srv.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+	got, _ := fake.lastRequest()
+	if got.URL != "https://api.example/mesh/ext-authz?a=1&b=2" {
+		t.Fatalf("seam URL = %q want %q (query split out of path, NOT %%3F-encoded)", got.URL, "https://api.example/mesh/ext-authz?a=1&b=2")
+	}
+	// The '?' must NOT have been percent-encoded into the path.
+	if strings.Contains(got.URL, "%3F") || strings.Contains(got.URL, "%3f") {
+		t.Errorf("seam URL = %q percent-encoded the '?' into the path (the bug)", got.URL)
+	}
+	// Parse the reconstructed URL the way the seam's neturl.Parse does and
+	// confirm Path/RawQuery are distinct — so r.URL.Path is the bare path the
+	// htu binding (after normalizeDPoPHTU) and the base-URL path rely on.
+	u, err := url.Parse(got.URL)
+	if err != nil {
+		t.Fatalf("reconstructed URL did not parse: %v", err)
+	}
+	if u.Path != "/mesh/ext-authz" {
+		t.Errorf("parsed Path = %q want %q (must not contain the query)", u.Path, "/mesh/ext-authz")
+	}
+	if u.RawQuery != "a=1&b=2" {
+		t.Errorf("parsed RawQuery = %q want %q", u.RawQuery, "a=1&b=2")
+	}
+}
+
+// TestCheck_RequestMapping_QueryFallbackFromGetQuery is the DEFENSIVE path:
+// Envoy's documented behavior puts the query in GetPath(), but a non-
+// conformant data plane might populate GetQuery() instead with a bare path.
+// The fallback still carries the query (we never silently drop it), and the
+// scheme defaults to https when omitted.
+func TestCheck_RequestMapping_QueryFallbackFromGetQuery(t *testing.T) {
+	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
+	srv := NewAuthorizationServer(fake)
+
+	req := checkRequest("GET", "", "api.example", "/v1/resource", nil) // empty scheme, no '?' in path
+	req.GetAttributes().GetRequest().GetHttp().Query = "a=1&b=2"       // query only in GetQuery()
 	if _, err := srv.Check(context.Background(), req); err != nil {
 		t.Fatalf("Check error: %v", err)
 	}
 	got, _ := fake.lastRequest()
 	if got.URL != "https://api.example/v1/resource?a=1&b=2" {
-		t.Errorf("seam URL = %q want %q (scheme defaulted to https, query carried)", got.URL, "https://api.example/v1/resource?a=1&b=2")
+		t.Errorf("seam URL = %q want %q (scheme defaulted https, query from GetQuery fallback)", got.URL, "https://api.example/v1/resource?a=1&b=2")
 	}
 }
 

@@ -512,6 +512,146 @@ func TestMeshAuthorize_Residency_DisallowedRegionDenies(t *testing.T) {
 	}
 }
 
+// TestMeshAuthorize_DPoPNonceRequired_SurfacesFreshNonce proves the HIGH fix
+// at the seam: with a DPoPNonceProvider wired, a DPoP-bound token presented
+// with a proof that has the correct htm/htu but NO nonce takes the nonce
+// handshake branch — MeshAuthorize returns Allowed=false AND a NON-empty
+// DPoPNonce (the fresh server nonce stampDPoPNonce just emitted). That field
+// is what lets the gRPC DENY surface the DPoP-Nonce + use_dpop_nonce
+// handshake; before the fix the fresh nonce lived only in the unexported
+// challengeHeader and a mesh-only DPoP client could never reissue.
+//
+// To get a DPoP-bound token while a nonce provider is wired, the mint at
+// /token itself must complete the nonce dance (harvest the 400's nonce, retry
+// with it embedded). The mesh proof is then deliberately nonce-LESS so it
+// hits the nonce-required branch.
+func TestMeshAuthorize_DPoPNonceRequired_SurfacesFreshNonce(t *testing.T) {
+	nonceProvider, err := sso.NewHMACNonceProvider(time.Minute)
+	if err != nil {
+		t.Fatalf("nonce provider: %v", err)
+	}
+	srv, httpSrv, _ := newMeshAuthorizeServer(t,
+		sso.WithMeshExtAuthz(""),
+		sso.WithDPoPNonceProvider(nonceProvider),
+	)
+	priv, x := dpopGenKey(t)
+	access := mintDPoPBoundTokenWithNonce(t, httpSrv, priv, x)
+
+	const meshURL = "https://sso.test" + sso.PathMeshExtAuthz
+	fwd := func(tok string) http.Header {
+		h := bearerHeader(tok)
+		h.Set("X-Forwarded-Proto", "https")
+		h.Set("X-Forwarded-Host", "sso.test")
+		return h
+	}
+
+	// Proof correctly bound to GET meshURL but carrying NO nonce → with a
+	// nonce provider wired this is the use_dpop_nonce handshake, not a plain
+	// rejection: Allowed=false AND DPoPNonce set.
+	h := fwd(access)
+	h.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL)) // no nonce claim
+	res := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
+		Method: http.MethodGet,
+		URL:    meshURL,
+		Header: h,
+	})
+	if res.Allowed {
+		t.Fatalf("Allowed = true want false (nonce-required handshake is still a DENY)")
+	}
+	if res.DPoPNonce == "" {
+		t.Fatalf("DPoPNonce = empty want the fresh server nonce (the HIGH fix — the gRPC DENY needs it to reissue)")
+	}
+	// The surfaced nonce must be a real, server-verifiable nonce (the same one
+	// the client copies into its next proof), not a placeholder.
+	if verr := nonceProvider.Verify(res.DPoPNonce); verr != nil {
+		t.Errorf("surfaced DPoPNonce does not Verify against the provider: %v", verr)
+	}
+	// Still oracle-safe at the wire-code layer: the HTTP DenyCode stays
+	// invalid_token (the HTTP path renders use_dpop_nonce from challengeHeader,
+	// not DenyCode), and no identity leaks.
+	if res.DenyCode != sso.ErrInvalidToken {
+		t.Errorf("DenyCode = %q want invalid_token (HTTP wire-code class unchanged)", res.DenyCode)
+	}
+	if res.Subject != "" {
+		t.Errorf("Subject leaked on the nonce-handshake DENY: %q", res.Subject)
+	}
+
+	// Positive control: embed a VALID nonce in the proof → ALLOW, proving the
+	// deny above was the missing nonce and the token+key are otherwise good.
+	nonce, err := nonceProvider.Issue()
+	if err != nil {
+		t.Fatalf("issue control nonce: %v", err)
+	}
+	hOK := fwd(access)
+	hOK.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL, func(p map[string]any) {
+		p["nonce"] = nonce
+	}))
+	resOK := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
+		Method: http.MethodGet,
+		URL:    meshURL,
+		Header: hOK,
+	})
+	if !resOK.Allowed {
+		t.Fatalf("Allowed = false want true (valid nonce in proof) deny=%q nonce=%q", resOK.DenyCode, resOK.DPoPNonce)
+	}
+	if resOK.DPoPNonce != "" {
+		t.Errorf("DPoPNonce = %q want empty on ALLOW", resOK.DPoPNonce)
+	}
+}
+
+// TestMeshAuthorize_HTTPNonceResponseByteIdentical proves the HTTP-mode nonce
+// response is UNCHANGED by the new DPoPNonce field: the HTTP handler still
+// emits the DPoP-Nonce header + a use_dpop_nonce WWW-Authenticate challenge +
+// 401 for a DPoP-bound token whose proof lacks a nonce — driven entirely off
+// the replayed challengeHeader, NOT the new DPoPNonce result field (which the
+// HTTP path ignores). This locks the byte-identical HTTP guarantee for the
+// fix's touched branch.
+func TestMeshAuthorize_HTTPNonceResponseByteIdentical(t *testing.T) {
+	nonceProvider, err := sso.NewHMACNonceProvider(time.Minute)
+	if err != nil {
+		t.Fatalf("nonce provider: %v", err)
+	}
+	_, httpSrv, _ := newMeshAuthorizeServer(t,
+		sso.WithMeshExtAuthz(""),
+		sso.WithDPoPNonceProvider(nonceProvider),
+	)
+	priv, x := dpopGenKey(t)
+	access := mintDPoPBoundTokenWithNonce(t, httpSrv, priv, x)
+
+	// Drive the real HTTP ext_authz endpoint with a nonce-less proof bound to
+	// the actual request URL (requestURLForDPoP rebuilds it from the test
+	// server's host; no X-Forwarded-* needed since the request hits httpSrv
+	// directly).
+	meshURL := httpSrv.URL + sso.PathMeshExtAuthz
+	req, _ := http.NewRequest(http.MethodGet, meshURL, nil)
+	req.Header.Set("Authorization", "Bearer "+access)
+	req.Header.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL)) // no nonce
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http ext_authz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d want 401 (nonce required), body=%s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(sso.HeaderDPoPNonce); got == "" {
+		t.Errorf("DPoP-Nonce header empty on the HTTP nonce challenge (must be unchanged by the fix)")
+	}
+	if wa := resp.Header.Get("WWW-Authenticate"); !strings.Contains(wa, `error="use_dpop_nonce"`) {
+		t.Errorf("WWW-Authenticate = %q want use_dpop_nonce (HTTP nonce response unchanged)", wa)
+	}
+	// Body stays empty + no identity leaks (oracle-safe, unchanged).
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) != 0 {
+		t.Errorf("body = %q want empty", body)
+	}
+	if resp.Header.Get(sso.HeaderAuthSubject) != "" {
+		t.Errorf("X-Auth-Subject leaked on the nonce-handshake DENY")
+	}
+}
+
 // --- helpers ---
 
 func meshContains(ss []string, want string) bool {
@@ -550,6 +690,55 @@ func mintDPoPBoundTokenWithKey(t *testing.T, srv *httptest.Server, priv ed25519.
 	_ = json.Unmarshal(rb, &out)
 	if out["token_type"] != "DPoP" {
 		t.Fatalf("expected DPoP-bound token, got %v", out)
+	}
+	access, _ := out["access_token"].(string)
+	if access == "" {
+		t.Fatalf("no access_token: %s", rb)
+	}
+	return access
+}
+
+// mintDPoPBoundTokenWithNonce mints a DPoP-bound access token at /token while
+// a DPoPNonceProvider is wired: it runs the RFC 9449 §8 two-step nonce dance
+// (first request harvests the fresh nonce from the 400 use_dpop_nonce
+// challenge; the retry embeds it), since /token itself demands the nonce when
+// a provider is installed. Returns the access token, bound to (priv, x).
+func mintDPoPBoundTokenWithNonce(t *testing.T, srv *httptest.Server, priv ed25519.PrivateKey, x string) string {
+	t.Helper()
+	form := "grant_type=client_credentials&client_id=" + meshClient +
+		"&client_secret=" + meshSecret + "&scope=openid"
+	tokenURL := srv.URL + "/token"
+
+	// Step 1: nonce-less request → 400 carrying a fresh DPoP-Nonce.
+	req1, _ := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(form))
+	req1.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req1.Header.Set("DPoP", signDPoPProof(t, priv, x, http.MethodPost, tokenURL))
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatalf("token step 1: %v", err)
+	}
+	nonce := resp1.Header.Get(sso.HeaderDPoPNonce)
+	resp1.Body.Close()
+	if nonce == "" {
+		t.Fatalf("token step 1 yielded no DPoP-Nonce (nonce provider not enforcing?)")
+	}
+
+	// Step 2: retry with the nonce embedded → 200 + DPoP-bound token.
+	req2, _ := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(form))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("DPoP", signDPoPProof(t, priv, x, http.MethodPost, tokenURL, func(p map[string]any) {
+		p["nonce"] = nonce
+	}))
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("token step 2: %v", err)
+	}
+	rb, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	var out map[string]any
+	_ = json.Unmarshal(rb, &out)
+	if out["token_type"] != "DPoP" {
+		t.Fatalf("expected DPoP-bound token, got %v (body=%s)", out, rb)
 	}
 	access, _ := out["access_token"].(string)
 	if access == "" {

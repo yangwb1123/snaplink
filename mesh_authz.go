@@ -113,6 +113,25 @@ type MeshAuthorizeResult struct {
 	// /userinfo already makes (missing vs invalid).
 	DenyCode string
 
+	// DPoPNonce carries the fresh server-issued DPoP nonce (RFC 9449 §8/§9)
+	// on the ONE deny cause that is a protocol handshake rather than an
+	// authorization failure: a DPoP-bound token whose proof is missing/has a
+	// stale nonce while a nonce provider is wired. It is NON-empty ONLY in
+	// that nonce-required case, and it IS the signal for it (DPoPNonce != ""
+	// ⇒ the use_dpop_nonce handshake).
+	//
+	// This is deliberately NOT an oracle leak: the nonce + use_dpop_nonce is
+	// the standard DPoP nonce handshake the client MUST receive to reissue a
+	// nonce-bound proof — exactly what /userinfo and /token already emit in
+	// HTTP mode. Every OTHER deny cause still collapses to DenyCode alone
+	// (""|invalid_token) with no DPoPNonce, so binding/validity/residency
+	// remain non-probeable. The HTTP path does NOT consume this field (it
+	// replays challengeHeader verbatim, where stampDPoPNonce already wrote
+	// the same value), so HTTP-mode output stays byte-identical; only the
+	// gRPC transport reads DPoPNonce to surface the handshake header it
+	// cannot otherwise see (challengeHeader is unexported).
+	DPoPNonce string
+
 	// challengeHeader holds the response headers the existing
 	// setBearerChallenge / stampDPoPNonce helpers produced for a DENY
 	// (WWW-Authenticate, and DPoP-Nonce on a use_dpop_nonce challenge).
@@ -247,12 +266,22 @@ func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) Me
 	if derr := s.verifyDPoPBearer(hctx, claims); derr != nil {
 		if errors.Is(derr, ErrDPoPNonceRequired) {
 			// RFC 9449 §8 — challenge for a fresh nonce. Stamp it onto the
-			// recorder so the wrapper replays the DPoP-Nonce + use_dpop_nonce
-			// challenge headers verbatim. Still a DENY (invalid_token wire
-			// code class).
+			// recorder so the HTTP wrapper replays the DPoP-Nonce +
+			// use_dpop_nonce challenge headers verbatim. Still a DENY
+			// (invalid_token wire code class for the HTTP path's challenge).
 			s.stampDPoPNonce(hctx)
 			setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
 			res.DenyCode = ErrInvalidToken
+			// Surface the fresh nonce VALUE on the result for transports that
+			// cannot read the unexported challengeHeader (the gRPC path):
+			// stampDPoPNonce wrote it to the recorder's DPoP-Nonce header, so
+			// read back the SAME value it emitted. The HTTP path ignores this
+			// field (it replays challengeHeader), so HTTP output is unchanged;
+			// the gRPC DENY uses it to emit the DPoP-Nonce + use_dpop_nonce
+			// handshake a mesh-only DPoP client needs to reissue. Empty if no
+			// nonce provider is wired (stampDPoPNonce no-ops) — then this is
+			// an ordinary missing-proof DENY, not the handshake case.
+			res.DPoPNonce = rec.header.Get(HeaderDPoPNonce)
 			return res
 		}
 		s.logger.Error("mesh authorize dpop bearer verification failed", "error", derr, "subject", claims.Subject)

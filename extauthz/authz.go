@@ -97,7 +97,7 @@ func NewAuthorizationServer(authorizer MeshAuthorizer) *AuthorizationServer {
 //
 //	CheckRequest.Attributes.Request.Http  ->  sso.MeshAuthorizeRequest
 //	  .Method                              ->    .Method   (DPoP htm)
-//	  .Scheme + .Host + .Path[ + ?Query]   ->    .URL      (DPoP htu)
+//	  .Scheme + .Host + .Path (Path carries ?query) -> .URL (DPoP htu)
 //	  .Headers (lower-cased map)           ->    .Header   (bearer/DPoP/XFF)
 //	CheckRequest.Attributes.Source.Certificate (URL+PEM) -> .ClientCert (mTLS)
 //	                          |
@@ -108,7 +108,9 @@ func NewAuthorizationServer(authorizer MeshAuthorizer) *AuthorizationServer {
 //	  Allowed -> CheckResponse{ OK, OkHttpResponse{ X-Auth-* injected,
 //	                                                 inbound X-Auth-* stripped } }
 //	  else    -> CheckResponse{ PERMISSION_DENIED,
-//	                            DeniedHttpResponse{ 401, WWW-Authenticate, no body } }
+//	                            DeniedHttpResponse{ 401, WWW-Authenticate, no body
+//	                              [ + DPoP-Nonce + use_dpop_nonce on the nonce
+//	                                handshake — the one non-invalid_token deny ] } }
 //
 // We ALWAYS return a nil Go error and carry the verdict in the
 // CheckResponse.Status field (OK vs PERMISSION_DENIED). Returning a non-nil
@@ -160,12 +162,20 @@ func buildMeshRequest(req *authv3.CheckRequest) sso.MeshAuthorizeRequest {
 // downstream request (the public-facing values at the mesh edge), the same
 // values requestURLForDPoP derives from X-Forwarded-* on the HTTP path.
 //
-// Query is included because RFC 9449 htu is the request URI WITHOUT the
-// fragment but WITH the query in some client implementations; the seam's
-// htu comparison normalizes (strips query+fragment) on its side, so
-// carrying the query here is harmless and keeps the reconstructed URL
-// faithful to the wire. Host already carries the authority (host[:port]);
-// we do not re-add a port.
+// Envoy's GetPath() carries the FULL request target INCLUDING the query
+// (`/x?a=1`), and GetQuery() is ALWAYS empty in the ext_authz
+// AttributeContext (the query is not split out). So we strings.Cut the path
+// on the first '?' into Path + RawQuery and assign them to the distinct
+// url.URL fields — assigning the whole `/x?a=1` to url.URL.Path would
+// percent-encode the '?' into the path (`/x%3Fa=1`), a semantically wrong
+// (though, with the seam's normalizeDPoPHTU stripping the query on both
+// sides, today harmless) reconstruction.
+//
+// The query is preserved (faithful to the wire) but the seam's htu
+// comparison normalizes it away (strips query+fragment) on its side, so it
+// is not load-bearing for the binding; carrying it keeps the reconstructed
+// URL accurate. Host already carries the authority (host[:port]); we do not
+// re-add a port.
 func reconstructURL(h *authv3.AttributeContext_HttpRequest) string {
 	scheme := h.GetScheme()
 	if scheme == "" {
@@ -175,20 +185,26 @@ func reconstructURL(h *authv3.AttributeContext_HttpRequest) string {
 		scheme = "https"
 	}
 	host := h.GetHost()
-	path := h.GetPath()
+	// Envoy embeds the query inside GetPath(); split it off so url.URL keeps
+	// Path and RawQuery distinct (no '?' percent-encoded into the path).
+	path, rawQuery, _ := strings.Cut(h.GetPath(), "?")
+	// Defensive fallback ONLY when GetPath() had no '?' yet a separate
+	// GetQuery() is somehow populated (Envoy's documented behavior won't do
+	// this, but a non-conformant data plane shouldn't silently drop a query).
+	if rawQuery == "" {
+		rawQuery = h.GetQuery()
+	}
 	if host == "" {
 		// No authority -> we cannot build an absolute URL. Return the path
 		// alone (or empty); the seam's neturl.Parse yields an empty Host,
-		// which only degrades htu/issuer resolution toward DENY.
+		// which only degrades htu/issuer resolution toward DENY. (Drop any
+		// query: without a host the value isn't a usable absolute URL anyway,
+		// and the seam normalizes the query out regardless.)
 		return path
 	}
-	u := url.URL{Scheme: scheme, Host: host, Path: path}
+	u := url.URL{Scheme: scheme, Host: host, Path: path, RawQuery: rawQuery}
 	// Path may already include a leading '/'; url.URL.String handles that.
-	out := u.String()
-	if q := h.GetQuery(); q != "" {
-		out += "?" + q
-	}
-	return out
+	return u.String()
 }
 
 // headersToHTTP converts Envoy's lower-cased header map into a canonical
@@ -320,26 +336,52 @@ func allowResponse(res sso.MeshAuthorizeResult) *authv3.CheckResponse {
 // not exposed on the result). DenyCode == "" is the missing-credentials
 // case -> a bare `Bearer realm="..."` (no error=, per RFC 6750 §3.1);
 // DenyCode == invalid_token -> `Bearer realm="...", error="invalid_token"`.
-// We intentionally do NOT reproduce the HTTP path's DPoP-Nonce renewal
-// header: over gRPC ext_authz the verdict is binary and oracle-safe, and a
-// DPoP nonce handshake is an HTTP-mode nicety the client resolves directly
-// against the AS — surfacing it here would add a per-cause signal with no
-// gRPC consumer.
+//
+// The ONE exception to the invalid_token collapse is the DPoP nonce
+// handshake: when the seam set res.DPoPNonce (a DPoP-bound token whose proof
+// lacked a fresh nonce while a nonce provider is wired), we emit the
+// DPoP-Nonce response header carrying that fresh nonce AND set the
+// WWW-Authenticate error to use_dpop_nonce — exactly the RFC 9449 §8/§9
+// handshake the HTTP mode emits. This is NOT a per-cause oracle leak: it is
+// protocol-REQUIRED for the client to reissue a nonce-bound proof, and
+// without it a DPoP client behind a mesh-only deployment could never recover
+// after a nonce expiry (the fresh nonce lives only in the seam's unexported
+// challengeHeader, unreadable over gRPC). Every OTHER deny cause still
+// collapses to invalid_token / a bare challenge with NO DPoP-Nonce, so
+// binding/validity/residency stay non-probeable.
 func denyResponse(res sso.MeshAuthorizeResult) *authv3.CheckResponse {
+	headers := make([]*corev3.HeaderValueOption, 0, 2)
+
+	// DPoP nonce handshake: surface the fresh nonce + the use_dpop_nonce
+	// challenge so a mesh-only DPoP client can reissue (matching HTTP mode).
+	// DPoPNonce != "" IS the signal for this case.
+	challengeCode := res.DenyCode
+	if res.DPoPNonce != "" {
+		challengeCode = sso.ErrUseDPoPNonce
+		headers = append(headers, &corev3.HeaderValueOption{
+			Header: &corev3.HeaderValue{
+				Key:   sso.HeaderDPoPNonce,
+				Value: res.DPoPNonce,
+			},
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+		})
+	}
+	headers = append(headers, &corev3.HeaderValueOption{
+		Header: &corev3.HeaderValue{
+			Key:   "WWW-Authenticate",
+			Value: bearerChallenge(challengeCode),
+		},
+		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+	})
+
 	return &authv3.CheckResponse{
 		// The grpc-status carries the authorization verdict; this is the
 		// field Envoy reads to ALLOW vs DENY. PERMISSION_DENIED == DENY.
 		Status: &rpcstatus.Status{Code: int32(codes.PermissionDenied)},
 		HttpResponse: &authv3.CheckResponse_DeniedResponse{
 			DeniedResponse: &authv3.DeniedHttpResponse{
-				Status: &typev3.HttpStatus{Code: typev3.StatusCode_Unauthorized},
-				Headers: []*corev3.HeaderValueOption{{
-					Header: &corev3.HeaderValue{
-						Key:   "WWW-Authenticate",
-						Value: bearerChallenge(res.DenyCode),
-					},
-					AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
-				}},
+				Status:  &typev3.HttpStatus{Code: typev3.StatusCode_Unauthorized},
+				Headers: headers,
 				// No body — oracle-safe. Envoy returns the 401 + challenge.
 				Body: "",
 			},
