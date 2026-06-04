@@ -71,14 +71,15 @@ playground: ## Run the interactive Web UI playground on localhost:8090.
 # github.com/miekg/pkcs11 [cgo], redis carries go-redis, saml carries
 # github.com/crewjam/saml [XML/DSig], ldap carries github.com/go-ldap/ldap/v3,
 # extauthz carries github.com/envoyproxy/go-control-plane [Envoy ext_authz
-# gRPC API], kerberos carries github.com/jcmturner/gokrb5/v8 [SPNEGO/Kerberos]
+# gRPC API], kerberos carries github.com/jcmturner/gokrb5/v8 [SPNEGO/Kerberos],
+# radius carries layeh.com/radius [RADIUS/RFC 2865 client]
 # — none MUST enter the core go.mod), so CI
 # must enter each submodule explicitly. There is deliberately
 # no go.work: a workspace would merge the build lists and surface those SDKs
 # in the root module graph (`go list -m all`), blurring the core's
 # zero-external-SDK invariant. Each submodule resolves the core module via
 # its own `replace => ../` (or ../../).
-ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms/azurekeyvault, kms/pkcs11, redis, saml, ldap, extauthz, kerberos).
+ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms/azurekeyvault, kms/pkcs11, redis, saml, ldap, extauthz, kerberos, radius).
 	cd kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/gcpkms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/azurekeyvault && $(GO) build ./... && $(GO) test -race -count=1 ./...
@@ -88,6 +89,7 @@ ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms
 	cd ldap && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd extauthz && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kerberos && $(GO) build ./... && $(GO) test -race -count=1 ./...
+	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
 ci: fmt vet race build proto-lint ci-modules ## Run the same checks CI runs.
 
