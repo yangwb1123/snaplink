@@ -1092,6 +1092,26 @@ federation:
   trust_anchors: []          # LIVE: roots of trust for chain validation (jwks_file = root keys)
   # - entity_id: "https://anchor.example.org"
   #   jwks_file: "/etc/sso/anchor-jwks.json"
+  # OpenID Federation 1.0 §8 SUPERIOR/INTERMEDIATE role -- this server issues SIGNED Subordinate
+  # Statements about these entities at /fetch (?sub=<subordinate>), so a subordinate can list this
+  # server in its authority_hints and a resolver can climb THROUGH it. Each statement: iss=this server,
+  # sub=the subordinate, jwks=the subordinate's keys this server vouches for (jwks_file, loaded at boot;
+  # unloadable=boot error), + the optional metadata_policy/constraints this superior IMPOSES. The /fetch
+  # request supplies ONLY sub (looked up against entity_id; unknown -> 404 not_found); the vouched keys
+  # are OPERATOR CONFIG, never request input. Empty (default) -> this server is a LEAF only: /fetch is
+  # NOT mounted AND the entity config advertises NO federation_fetch_endpoint (byte-identical leaf OP).
+  subordinates: []
+  # - entity_id: "https://leaf-rp.example.org"
+  #   jwks_file: "/etc/sso/leaf-rp-jwks.json"   # the subordinate's keys this server vouches for
+  #   metadata_policy:                          # optional §10 policy this superior imposes (authored into the SS)
+  #     openid_relying_party:
+  #       token_endpoint_auth_method:
+  #         value: "private_key_jwt"
+  #   constraints:                              # optional §6.2 constraints this superior imposes
+  #     max_path_length: 0                      # 0 = the subordinate must be a leaf (no intermediates below)
+  #     naming_constraints_permitted: []        # permitted URI name subtrees for entities below
+  #     naming_constraints_excluded: []         # excluded subtrees (excluded beats permitted)
+  #     allowed_entity_types: null              # null=any; [] = only federation_entity; [..]=the listed types
   organization_name: ""      # federation_entity metadata (optional)
   contacts: []               # federation_entity contacts, e.g. ["mailto:admin@example.org"]
   entity_statement_ttl: 0s   # exp - iat stamped into the statement; 0 -> SDK default (24h)

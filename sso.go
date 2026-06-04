@@ -1652,6 +1652,15 @@ func (s *Server) Mount() {
 	// WithFederationEntity is wired — byte-identical to a build without it.
 	if s.federationEntity != nil {
 		s.router.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
+		// OpenID Federation 1.0 §8 Federation Fetch endpoint — mounted ONLY when
+		// this server is configured as a SUPERIOR (≥1 subordinate). It issues
+		// SIGNED Subordinate Statements about configured subordinates so a
+		// resolver can climb THROUGH this server. With no subordinates the route
+		// is NOT mounted AND the entity config advertises no
+		// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP.
+		if s.federationEntity.HasSubordinates() {
+			s.router.GET(PathFederationFetch, s.handleFederationFetch)
+		}
 	}
 
 	api := s.router.Group(PathAPIPrefix)

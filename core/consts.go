@@ -88,6 +88,24 @@ const (
 	// trust anchor) is a separate slice and is NOT performed here.
 	PathFederationEntityConfig = "/.well-known/openid-federation"
 
+	// PathFederationFetch is the OpenID Federation 1.0 §8 Federation Fetch
+	// endpoint. When this server is configured as a federation SUPERIOR /
+	// INTERMEDIATE (one or more subordinate entities configured), it serves a
+	// SIGNED Subordinate Statement about a requested subordinate here:
+	// GET <fetch>?sub=<subordinate entity id> (optional iss = this server's
+	// entity id). The response is a compact JWS (typ "entity-statement+jwt",
+	// media type application/entity-statement+jwt) with iss == this server,
+	// sub == the subordinate, and jwks == the subordinate's OPERATOR-CONFIGURED
+	// keys this server vouches for (NOT request input — the request only
+	// supplies sub, which is looked up). A missing sub → 400 invalid_request; an
+	// unknown/unregistered sub → 404 not_found (the §8 federation error JSON).
+	// Advertised in this server's Entity Configuration as
+	// metadata.federation_entity.federation_fetch_endpoint ONLY when
+	// subordinates are configured; only mounted when subordinates are configured
+	// (byte-identical off otherwise). Public metadata (Cache-Control public,
+	// max-age — NOT a credential endpoint).
+	PathFederationFetch = "/fetch"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"

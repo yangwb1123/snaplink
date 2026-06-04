@@ -86,8 +86,13 @@ tags:
       OpenID Federation 1.0 surface. The entity configuration endpoint serves
       the OP's self-signed Entity Statement (iss == sub == issuer, signed by a
       key already in JWKS) so the OP is discoverable as a federation ENTITY.
-      Opt-in; default-off (route unmounted). Trust-chain validation is a
-      separate slice.
+      The §8 Federation Fetch endpoint (`/fetch`, mounted only when this server
+      is configured as a SUPERIOR with ≥1 subordinate) issues SIGNED
+      Subordinate Statements (iss == this server, sub == the looked-up
+      subordinate, jwks == the subordinate's operator-configured keys) so a
+      resolver can climb THROUGH this server. Opt-in; default-off (routes
+      unmounted, no `federation_fetch_endpoint` advertised). Trust-chain
+      validation is a separate slice.
   - name: admin
     description: |
       Operator-side REST surface. Admin endpoints are gated by the
@@ -1449,6 +1454,107 @@ paths:
           description: Not Modified — body matches the supplied If-None-Match.
         "500":
           description: Entity statement signing failed.
+
+  /fetch:
+    get:
+      tags: [federation]
+      summary: OpenID Federation 1.0 §8 Federation Fetch endpoint.
+      description: |
+        Issues a SIGNED Subordinate Statement about a requested subordinate
+        entity (OpenID Federation 1.0 §8), letting THIS server act as a
+        federation SUPERIOR / INTERMEDIATE. Mounted ONLY when
+        `WithFederationEntity` is wired AND at least one subordinate is
+        configured (opt-in; the route is unmounted otherwise — a request then
+        404s — and the Entity Configuration advertises no
+        `federation_fetch_endpoint`).
+
+        The request supplies the required `sub` (the subordinate's Entity
+        Identifier) and an OPTIONAL `iss` (which, when present, MUST equal this
+        server's entity id). `sub` is LOOKED UP in the operator-configured
+        subordinates: the response is a compact JWS (media type
+        `application/entity-statement+jwt`, JOSE `typ` `entity-statement+jwt`)
+        whose payload has `iss` == this server (the issuing superior), `sub` ==
+        the subordinate, `jwks` == the subordinate's OPERATOR-CONFIGURED keys
+        this server vouches for (NOT request input), and optionally the
+        `metadata_policy` / `constraints` this superior imposes. It is signed
+        with a key already in this server's JWKS, so a resolver validates it
+        against this server's entity-config `jwks` (chained trust).
+
+        Security: this server NEVER issues a statement about an entity it was
+        not configured to vouch for — an unknown/unregistered `sub` → 404
+        `not_found`. The error body is the §8 federation error JSON
+        (`{"error": ..., "error_description": ...}`), NOT the OAuth error shape
+        of a credential endpoint. This is PUBLIC metadata (Cache-Control
+        `public, max-age`, NOT no-store), ETag-cached per `(iss, sub)` with
+        `If-None-Match` → 304.
+      operationId: getFederationFetch
+      parameters:
+        - name: sub
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The subordinate entity's Entity Identifier (an HTTPS URL).
+        - name: iss
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional expected issuer. When present it MUST equal this server's
+            entity id, else 400 `invalid_request`.
+      responses:
+        "200":
+          description: |
+            The signed Subordinate Statement as a compact JWS (the body is the
+            JWS itself, not JSON). Decode + verify it against this server's
+            JWKS.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: '`public, max-age=<ttl>` (public metadata, not a credential).'
+            ETag:
+              schema:
+                type: string
+              description: Short sha256 prefix of the signed body.
+          content:
+            application/entity-statement+jwt:
+              schema:
+                type: string
+                description: Compact JWS (header.payload.signature).
+        "304":
+          description: Not Modified — body matches the supplied If-None-Match.
+        "400":
+          description: |
+            §8 `invalid_request` (federation error JSON) — `sub` is missing, or a
+            supplied `iss` does not equal this server's entity id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: invalid_request
+                  error_description:
+                    type: string
+        "404":
+          description: |
+            §8 `not_found` (federation error JSON) — the requested `sub` is not a
+            configured subordinate of this entity. No statement is issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: not_found
+                  error_description:
+                    type: string
+        "500":
+          description: Subordinate statement signing failed.
 
   /end_session:
     get:

@@ -1156,9 +1156,47 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		return nil, errors.New("federation.required_trust_mark_types set but no federation.trust_mark_issuers configured (a required trust mark with no authorized issuer would admit no RP)")
 	}
 
+	// §8 SUPERIOR role: load each configured subordinate's JWKS into Keys — the
+	// keys this server VOUCHES FOR in the Subordinate Statement it issues about
+	// the subordinate at /fetch. A configured-but-unloadable subordinate is a
+	// BOOT ERROR: a statement vouching for an empty key set is useless and would
+	// fail every downstream chain validation, so fail loud at boot rather than
+	// silently issue an unusable statement. With no subordinates the §8 route is
+	// unmounted + the entity config advertises no fetch endpoint (byte-identical
+	// to a leaf OP).
+	subordinates := make([]federation.SubordinateEntity, 0, len(cfg.Subordinates))
+	for i, sub := range cfg.Subordinates {
+		if sub.EntityID == "" {
+			return nil, fmt.Errorf("federation.subordinates[%d].entity_id required", i)
+		}
+		if sub.JWKSFile == "" {
+			return nil, fmt.Errorf("federation.subordinates[%d].jwks_file required (the keys this server vouches for the subordinate)", i)
+		}
+		doc, err := os.ReadFile(sub.JWKSFile)
+		if err != nil {
+			return nil, fmt.Errorf("read federation.subordinates[%d].jwks_file: %w", i, err)
+		}
+		source, err := security.ParseStaticJWKS(doc)
+		if err != nil {
+			return nil, fmt.Errorf("parse federation.subordinates[%d] subordinate JWKS: %w", i, err)
+		}
+		keys, err := source.GetJWKS(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("federation.subordinates[%d] subordinate JWKS: %w", i, err)
+		}
+		subordinates = append(subordinates, federation.SubordinateEntity{
+			EntityID:       sub.EntityID,
+			JWKSFile:       sub.JWKSFile,
+			Keys:           keys,
+			MetadataPolicy: sub.MetadataPolicy,
+			Constraints:    subordinateConstraints(sub.Constraints),
+		})
+	}
+
 	return &federation.Config{
 		AuthorityHints:     append([]string(nil), cfg.AuthorityHints...),
 		TrustAnchors:       anchors,
+		Subordinates:       subordinates,
 		OrganizationName:   cfg.OrganizationName,
 		Contacts:           append([]string(nil), cfg.Contacts...),
 		EntityStatementTTL: cfg.EntityStatementTTL,
@@ -1177,6 +1215,31 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		RequiredTrustMarkTypes: append([]string(nil), cfg.RequiredTrustMarkTypes...),
 		TrustMarkIssuers:       tmIssuers,
 	}, nil
+}
+
+// subordinateConstraints translates the YAML §6.2 constraints config onto the
+// SDK federation.EntityConstraints authored into a Subordinate Statement.
+// Returns nil when the operator configured no constraints (so the statement
+// carries no constraints claim). Preserves the pointer/empty-slice distinctions
+// the SDK relies on (max_path_length 0 = "no intermediates"; a non-nil empty
+// allowed_entity_types = "only federation_entity"); a naming_constraints object
+// is emitted only when at least one of permitted/excluded is non-empty.
+func subordinateConstraints(c *config.SubordinateConstraintsConfig) *federation.EntityConstraints {
+	if c == nil {
+		return nil
+	}
+	out := &federation.EntityConstraints{MaxPathLength: c.MaxPathLength}
+	if len(c.NamingConstraintsPermitted) > 0 || len(c.NamingConstraintsExcluded) > 0 {
+		out.NamingConstraints = &federation.NamingConstraints{
+			Permitted: append([]string(nil), c.NamingConstraintsPermitted...),
+			Excluded:  append([]string(nil), c.NamingConstraintsExcluded...),
+		}
+	}
+	if c.AllowedEntityTypes != nil {
+		types := append([]string(nil), (*c.AllowedEntityTypes)...)
+		out.AllowedEntityTypes = &types
+	}
+	return out
 }
 
 func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
@@ -3391,7 +3454,18 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		logger.Info("federation: OpenID Federation 1.0 entity configuration enabled — self-signed Entity Statement served at /.well-known/openid-federation",
 			"authority_hints", len(fedCfg.AuthorityHints),
 			"trust_anchors", len(fedCfg.TrustAnchors),
+			"subordinates", len(fedCfg.Subordinates),
 		)
+		if len(fedCfg.Subordinates) > 0 {
+			// §8 SUPERIOR / INTERMEDIATE role: this server issues SIGNED
+			// Subordinate Statements about its configured subordinates so a
+			// resolver can climb THROUGH it. The /fetch route is mounted + the
+			// entity config advertises federation_fetch_endpoint (gated on
+			// subordinates; byte-identical leaf OP when none).
+			logger.Info("federation: §8 Federation Fetch endpoint enabled — this server acts as a federation SUPERIOR/INTERMEDIATE, issuing signed Subordinate Statements about configured subordinates at /fetch (iss=this server, sub=looked-up subordinate, jwks=operator-configured vouched keys)",
+				"subordinates", len(fedCfg.Subordinates),
+			)
+		}
 		if len(fedCfg.TrustAnchors) > 0 {
 			// Slice 2: the trust-chain resolver is now LIVE (anchors loaded). It
 			// resolves + validates a remote entity's chain up to a configured

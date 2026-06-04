@@ -343,6 +343,21 @@ type FederationConfig struct {
 	// boot error. Empty ⇒ the resolver is inert (entity-publishing only).
 	TrustAnchors []TrustAnchorConfig `yaml:"trust_anchors"`
 
+	// Subordinates opts this server into the OpenID Federation 1.0 §8 role of a
+	// federation SUPERIOR / INTERMEDIATE: it issues SIGNED Subordinate
+	// Statements about these entities at the §8 Federation Fetch endpoint
+	// (/fetch), so a subordinate can list this server in its authority_hints and
+	// a resolver can climb THROUGH this server up to a higher anchor. Each
+	// entry's jwks_file is loaded at boot as the subordinate's keys this server
+	// VOUCHES FOR (a configured-but-unloadable subordinate is a boot error);
+	// optional metadata_policy / constraints (this superior's imposed limits) are
+	// authored into the statement. The §8 request supplies only `sub` (looked up
+	// against entity_id), never the vouched keys. Empty (default) ⇒ this server
+	// is a LEAF only: the §8 route is NOT mounted AND the Entity Configuration
+	// advertises NO federation_fetch_endpoint — byte-identical to a build with no
+	// subordinates.
+	Subordinates []SubordinateConfig `yaml:"subordinates"`
+
 	// OrganizationName + Contacts populate the federation_entity metadata
 	// entry in the Entity Statement. Both optional (omitted when empty).
 	OrganizationName string   `yaml:"organization_name"`
@@ -470,6 +485,61 @@ type TrustAnchorConfig struct {
 	// JWKSFile is the local path to the anchor's published JWKS document
 	// (`{"keys":[...]}`, its trust bundle) — the root-of-trust key set.
 	JWKSFile string `yaml:"jwks_file"`
+}
+
+// SubordinateConfig names one entity this server vouches for as an OpenID
+// Federation 1.0 §8 SUPERIOR: the entity it issues a SIGNED Subordinate
+// Statement about at /fetch. EntityID + JWKSFile are REQUIRED (the statement's
+// `jwks` is the loaded key set this server vouches FOR the subordinate, so a
+// missing/empty set is a boot error, not a silent vouch-for-nothing). The
+// optional MetadataPolicy + Constraints are this superior's imposed limits,
+// authored INTO the statement (what metadata_policy.go / constraints.go enforce
+// on the consuming side). The §8 request supplies only `sub` (looked up against
+// EntityID), never these.
+type SubordinateConfig struct {
+	// EntityID is the subordinate's Entity Identifier (an HTTPS URL) — the value
+	// a §8 Fetch request's `sub` MUST equal to receive a statement.
+	EntityID string `yaml:"entity_id"`
+	// JWKSFile is the local path to the subordinate's published JWKS document
+	// (`{"keys":[...]}`) — the keys this server VOUCHES FOR in the Subordinate
+	// Statement's `jwks` (a resolver climbing through this server verifies the
+	// subordinate's own Entity Configuration against THESE keys, not its self-
+	// asserted ones).
+	JWKSFile string `yaml:"jwks_file"`
+	// MetadataPolicy is the OPTIONAL §10 metadata_policy this superior imposes on
+	// the subordinate's subtree, authored into the statement verbatim. Keyed by
+	// metadata type → parameter name → operator object (value/add/default/
+	// one_of/subset_of/superset_of/essential), the SAME nested shape the resolver
+	// enforces. nil/omitted ⇒ the statement carries no metadata_policy.
+	MetadataPolicy map[string]map[string]map[string]any `yaml:"metadata_policy"`
+	// Constraints is the OPTIONAL §6.2 constraints this superior imposes on the
+	// subtree below the subordinate, authored into the statement. nil/omitted ⇒
+	// no constraints.
+	Constraints *SubordinateConstraintsConfig `yaml:"constraints"`
+}
+
+// SubordinateConstraintsConfig is the YAML projection of the §6.2
+// constraints a superior imposes on a subordinate's subtree (max_path_length /
+// naming_constraints / allowed_entity_types). Pointer/omitempty fields preserve
+// the "absent vs meaningful-zero" distinction the SDK's EntityConstraints
+// relies on (e.g. max_path_length 0 = "no intermediates", an EMPTY
+// allowed_entity_types = "only federation_entity"). cmd translates this onto
+// federation.EntityConstraints.
+type SubordinateConstraintsConfig struct {
+	// MaxPathLength bounds the intermediates allowed below the subordinate. A
+	// pointer because 0 is MEANINGFUL (no intermediates) vs absent (no limit).
+	MaxPathLength *int `yaml:"max_path_length"`
+	// NamingConstraintsPermitted / Excluded are the §6.2.2 permitted/excluded URI
+	// name subtrees restricting subordinate Entity Identifiers (excluded beats
+	// permitted). Either empty ⇒ that side is unconstrained; both empty ⇒ no
+	// naming_constraints object is emitted.
+	NamingConstraintsPermitted []string `yaml:"naming_constraints_permitted"`
+	NamingConstraintsExcluded  []string `yaml:"naming_constraints_excluded"`
+	// AllowedEntityTypes restricts the §6.2.3 Entity Types below the subordinate.
+	// A pointer to a slice because the EMPTY array [] is MEANINGFUL (only
+	// federation_entity) vs absent (any type). nil ⇒ absent; a non-nil pointer
+	// (even to an empty slice) ⇒ the claim is emitted.
+	AllowedEntityTypes *[]string `yaml:"allowed_entity_types"`
 }
 
 // DPoPConfig tunes the RFC 9449 DPoP proof iat-window validation. Both

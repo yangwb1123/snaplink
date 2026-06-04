@@ -112,7 +112,12 @@ func HandleEntityConfiguration(deps Deps, ctx core.HandlerContext) {
 	// the federation-level contact/org metadata from config.
 	opMeta := deps.BuildOPMetadata(ctx, base)
 	meta := &EntityMetadata{OP: &opMeta}
-	if fe := federationEntityMeta(cfg); fe != nil {
+	// federation_entity carries the org/contacts AND — when this server is a
+	// SUPERIOR (subordinates configured) — the §8 federation_fetch_endpoint so a
+	// resolver/subordinate discovers where to fetch this server's Subordinate
+	// Statements. With NO subordinates the endpoint is omitted (and the §8 route
+	// is unmounted), keeping the slice-1 leaf-OP entity config byte-identical.
+	if fe := federationEntityMeta(cfg, base); fe != nil {
 		meta.FederationEntity = fe
 	}
 
@@ -148,19 +153,32 @@ func HandleEntityConfiguration(deps Deps, ctx core.HandlerContext) {
 }
 
 // federationEntityMeta builds the federation_entity metadata entry from
-// config, or nil when the operator configured neither field (so the entry
-// is omitted from the statement rather than emitted empty).
-func federationEntityMeta(cfg *Config) *FederationEntityMeta {
+// config, or nil when the operator configured neither org/contacts NOR any
+// subordinate (so the entry is omitted from the statement rather than emitted
+// empty — keeping the slice-1 leaf-OP entity config byte-identical).
+//
+// When subordinates ARE configured this server is a federation SUPERIOR, so the
+// entry additionally advertises the §8 federation_fetch_endpoint
+// (base + PathFederationFetch) — that is the ONLY thing that makes a resolver
+// climb THROUGH this server (superiorFetchEndpoint reads exactly this field).
+// The endpoint must therefore be present whenever subordinates are, even if
+// org/contacts are empty.
+func federationEntityMeta(cfg *Config, base string) *FederationEntityMeta {
 	if cfg == nil {
 		return nil
 	}
-	if cfg.OrganizationName == "" && len(cfg.Contacts) == 0 {
+	hasSubs := cfg.hasSubordinates()
+	if cfg.OrganizationName == "" && len(cfg.Contacts) == 0 && !hasSubs {
 		return nil
 	}
-	return &FederationEntityMeta{
+	fe := &FederationEntityMeta{
 		OrganizationName: cfg.OrganizationName,
 		Contacts:         append([]string(nil), cfg.Contacts...),
 	}
+	if hasSubs {
+		fe.FederationFetchEndpoint = base + core.PathFederationFetch
+	}
+	return fe
 }
 
 // authorityHints returns a defensive copy of the configured authority_hints

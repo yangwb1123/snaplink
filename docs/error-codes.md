@@ -285,6 +285,33 @@ revocation.
 
 ---
 
+## OpenID Federation 1.0 §8 Federation Fetch (`/fetch`)
+
+The opt-in §8 Federation Fetch endpoint — this server acting as a federation
+SUPERIOR / INTERMEDIATE, issuing SIGNED Subordinate Statements about its
+operator-configured subordinates. Mounted only when `WithFederationEntity`
+is wired AND at least one subordinate is configured (`federation.subordinates`);
+the route 404s otherwise (and the Entity Configuration advertises no
+`federation_fetch_endpoint`).
+
+**Wire shape note:** the error body is the OpenID Federation 1.0 §8 federation
+error response — a JSON object with `error` + optional `error_description`. The
+JSON member names coincide with the OAuth error shape, but the CODE catalog is
+the federation one (`not_found` / `invalid_request`), and — unlike a credential
+endpoint — the response carries NO `no-store` (federation membership is public
+metadata). On success the body is the signed Subordinate Statement itself (a
+compact JWS, `application/entity-statement+jwt`), not JSON.
+
+| Code              | HTTP | Emitted when                                                                                  |
+|-------------------|------|-----------------------------------------------------------------------------------------------|
+| `invalid_request` | 400  | The required `sub` query parameter is missing, OR a supplied `iss` does not equal this server's entity id |
+| `not_found`       | 404  | The requested `sub` is not a configured subordinate of this entity — NO statement is issued (this server vouches only for operator-configured subordinates) |
+
+A signing failure AFTER the subordinate is matched returns `internal_error`
+(500, see Server / configuration).
+
+---
+
 ## Rate limiting + payload
 
 | Code                | HTTP | Emitted when                                          | Headers                  |

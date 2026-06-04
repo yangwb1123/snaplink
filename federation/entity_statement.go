@@ -263,6 +263,20 @@ type Config struct {
 	// entry. Both optional.
 	OrganizationName string
 	Contacts         []string
+
+	// Subordinates is the operator-configured set of subordinate entities this
+	// server vouches for as a federation SUPERIOR / INTERMEDIATE (OpenID
+	// Federation 1.0 §8). Each entry's keys (+ optional metadata_policy /
+	// constraints) are AUTHORED into the SIGNED Subordinate Statement the §8
+	// Federation Fetch endpoint (PathFederationFetch) issues about it — iss ==
+	// this server, sub == the subordinate. EVERYTHING here is OPERATOR CONFIG; a
+	// §8 request supplies only `sub` (looked up against EntityID), never the
+	// vouched keys. Empty (default) ⇒ this server is a LEAF only: the §8 route
+	// is NOT mounted AND the Entity Configuration advertises NO
+	// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP. cmd
+	// loads each subordinate's jwks_file into Keys at boot (unloadable ⇒ boot
+	// error). See fetch.go.
+	Subordinates []SubordinateEntity
 	// EntityStatementTTL bounds the lifetime stamped into each Entity
 	// Configuration (exp - iat). Federation consumers re-fetch after exp.
 	// Defaults to DefaultEntityStatementTTL when zero/negative.
@@ -485,10 +499,11 @@ func (c *Config) resolutionNegativeCacheMaxSize() int {
 // resolver are concurrency-safe). A nil *EntityHandler on the Server means the
 // federation route is not mounted.
 type EntityHandler struct {
-	cfg      *Config
-	signer   JWTSigner
-	cache    *EntityConfigCache
-	resolver *TrustChainResolver
+	cfg        *Config
+	signer     JWTSigner
+	cache      *EntityConfigCache
+	fetchCache *SubordinateStatementCache
+	resolver   *TrustChainResolver
 }
 
 // NewEntityHandler builds an EntityHandler. Both cfg and signer MUST be
@@ -500,10 +515,11 @@ type EntityHandler struct {
 // identical.
 func NewEntityHandler(cfg *Config, signer JWTSigner, resolverOpts ...TrustChainResolverOption) *EntityHandler {
 	return &EntityHandler{
-		cfg:      cfg,
-		signer:   signer,
-		cache:    NewEntityConfigCache(),
-		resolver: NewTrustChainResolver(cfg, resolverOpts...),
+		cfg:        cfg,
+		signer:     signer,
+		cache:      NewEntityConfigCache(),
+		fetchCache: NewSubordinateStatementCache(),
+		resolver:   NewTrustChainResolver(cfg, resolverOpts...),
 	}
 }
 
@@ -516,6 +532,16 @@ func (h *EntityHandler) Signer() JWTSigner { return h.signer }
 
 // Cache returns the per-issuer Entity Configuration cache.
 func (h *EntityHandler) Cache() *EntityConfigCache { return h.cache }
+
+// FetchCache returns the per-(issuer, subordinate) Subordinate Statement cache
+// the §8 Federation Fetch endpoint (fetch.go) uses. Never nil for a
+// constructed handler.
+func (h *EntityHandler) FetchCache() *SubordinateStatementCache { return h.fetchCache }
+
+// HasSubordinates reports whether this server is configured as a federation
+// SUPERIOR (≥1 subordinate). Gates the §8 route mount + the
+// federation_fetch_endpoint advertisement (slice-1 byte-identical when false).
+func (h *EntityHandler) HasSubordinates() bool { return h.cfg.hasSubordinates() }
 
 // Resolver returns the trust-chain resolver (slice 2). Slice 3 (federation
 // client registration) calls Resolver().ResolveTrustChain to validate a remote

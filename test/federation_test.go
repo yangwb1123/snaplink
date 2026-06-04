@@ -1,11 +1,13 @@
 package ssotest
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -184,5 +186,182 @@ func TestFederation_DefaultOff_NotMounted(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (federation route must not be mounted when unwired)", resp.StatusCode)
+	}
+}
+
+const fedSubID = "https://leaf.subordinate.test"
+
+// fedFetchEntityConfigMeta GETs the server's entity config, verifies it against
+// the published JWKS, and returns the federation_entity metadata entry (nil if
+// absent). Used to assert federation_fetch_endpoint advertisement gating.
+func fedFetchEntityConfigMeta(t *testing.T, base string) *federation.FederationEntityMeta {
+	t.Helper()
+	resp, err := http.Get(base + "/.well-known/openid-federation")
+	if err != nil {
+		t.Fatalf("get entity config: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("entity config status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	payload, err := security.VerifyCompactJWS(string(body), fedFetchJWKS(t, base), fedAsymmetricAlgs)
+	if err != nil {
+		t.Fatalf("verify entity config: %v", err)
+	}
+	var claims federation.EntityStatementClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("unmarshal entity config claims: %v", err)
+	}
+	if claims.Metadata == nil {
+		return nil
+	}
+	return claims.Metadata.FederationEntity
+}
+
+// TestFederation_Superior_FetchEndpoint is the full-server §8 proof: a real
+// *sso.Server configured with a subordinate (a) MOUNTS /fetch which issues a
+// signed Subordinate Statement (iss=this server, sub=the subordinate,
+// jwks=the configured subordinate keys) that round-trips through the server's
+// OWN published JWKS, and (b) ADVERTISES federation_fetch_endpoint in its
+// Entity Configuration.
+func TestFederation_Superior_FetchEndpoint(t *testing.T) {
+	t.Parallel()
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{ID: "fed-sup", Secret: "s", Active: true, TokenStrategy: "jwt"})
+
+	// The superior's signing issuer (signs both tokens AND the statement).
+	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer(fedFullIssuer))
+	// The subordinate's OWN keypair — the keys the superior vouches for.
+	subIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer(fedSubID))
+	subKeys, err := subIssuer.JWKS(context.Background())
+	if err != nil {
+		t.Fatalf("subordinate JWKS: %v", err)
+	}
+
+	maxPath := 0
+	srv := sso.NewServer(
+		sso.WithIssuer(fedFullIssuer),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", iss),
+		sso.WithIDTokenIssuer(iss),
+		sso.WithFederationEntity(&federation.Config{
+			OrganizationName: "Superior Org",
+			Subordinates: []federation.SubordinateEntity{{
+				EntityID:    fedSubID,
+				Keys:        subKeys,
+				Constraints: &federation.EntityConstraints{MaxPathLength: &maxPath},
+			}},
+		}, iss),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// (a) The entity config advertises federation_fetch_endpoint.
+	fe := fedFetchEntityConfigMeta(t, httpSrv.URL)
+	if fe == nil || fe.FederationFetchEndpoint == "" {
+		t.Fatalf("entity config must advertise federation_fetch_endpoint when subordinates configured, got %+v", fe)
+	}
+	if fe.FederationFetchEndpoint != httpSrv.URL+"/fetch" {
+		t.Errorf("federation_fetch_endpoint = %q, want %q", fe.FederationFetchEndpoint, httpSrv.URL+"/fetch")
+	}
+
+	// (b) /fetch issues a valid Subordinate Statement about the subordinate.
+	resp, err := http.Get(httpSrv.URL + "/fetch?sub=" + url.QueryEscape(fedSubID))
+	if err != nil {
+		t.Fatalf("get /fetch: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/fetch status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/entity-statement+jwt" {
+		t.Errorf("Content-Type = %q, want application/entity-statement+jwt", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); !strings.HasPrefix(cc, "public, max-age=") {
+		t.Errorf("Cache-Control = %q, want public max-age", cc)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// The Subordinate Statement verifies against the SERVER's own JWKS (chained
+	// trust — a resolver validates it against the server's entity-config jwks).
+	payload, err := security.VerifyCompactJWS(string(body), fedFetchJWKS(t, httpSrv.URL), fedAsymmetricAlgs)
+	if err != nil {
+		t.Fatalf("verify Subordinate Statement against server JWKS: %v", err)
+	}
+	var claims federation.EntityStatementClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if claims.Iss != fedFullIssuer {
+		t.Errorf("iss = %q, want the superior %q", claims.Iss, fedFullIssuer)
+	}
+	if claims.Sub != fedSubID {
+		t.Errorf("sub = %q, want the subordinate %q", claims.Sub, fedSubID)
+	}
+	if len(claims.JWKS.Keys) == 0 || claims.JWKS.Keys[0].Kid != subKeys[0].Kid {
+		t.Errorf("jwks must carry the subordinate's vouched keys, got %+v", claims.JWKS.Keys)
+	}
+	if claims.Constraints == nil || claims.Constraints.MaxPathLength == nil || *claims.Constraints.MaxPathLength != 0 {
+		t.Errorf("imposed constraints not authored into the statement: %+v", claims.Constraints)
+	}
+
+	// An unknown sub → 404 not_found (the federation error JSON).
+	bad, err := http.Get(httpSrv.URL + "/fetch?sub=" + url.QueryEscape("https://stranger.test"))
+	if err != nil {
+		t.Fatalf("get /fetch unknown: %v", err)
+	}
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown sub status = %d, want 404", bad.StatusCode)
+	}
+	var errBody map[string]string
+	if derr := json.NewDecoder(bad.Body).Decode(&errBody); derr != nil {
+		t.Fatalf("error body not JSON: %v", derr)
+	}
+	if errBody["error"] != "not_found" {
+		t.Errorf("error = %q, want not_found", errBody["error"])
+	}
+}
+
+// TestFederation_NoSubordinates_FetchNotMountedAndNotAdvertised proves the
+// §8 default-off byte-identical contract: WithFederationEntity but NO
+// subordinates ⇒ the entity config is the slice-1 leaf OP (NO
+// federation_fetch_endpoint) AND /fetch is NOT mounted (404).
+func TestFederation_NoSubordinates_FetchNotMountedAndNotAdvertised(t *testing.T) {
+	t.Parallel()
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{ID: "fed-leaf", Secret: "s", Active: true, TokenStrategy: "jwt"})
+	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer(fedFullIssuer))
+	srv := sso.NewServer(
+		sso.WithIssuer(fedFullIssuer),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", iss),
+		sso.WithIDTokenIssuer(iss),
+		// Federation wired, but NO subordinates → leaf OP only.
+		sso.WithFederationEntity(&federation.Config{OrganizationName: "Leaf Org"}, iss),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// The entity config must NOT advertise federation_fetch_endpoint.
+	fe := fedFetchEntityConfigMeta(t, httpSrv.URL)
+	if fe != nil && fe.FederationFetchEndpoint != "" {
+		t.Errorf("federation_fetch_endpoint must be absent with no subordinates, got %q", fe.FederationFetchEndpoint)
+	}
+
+	// /fetch must NOT be mounted (404).
+	resp, err := http.Get(httpSrv.URL + "/fetch?sub=" + url.QueryEscape(fedSubID))
+	if err != nil {
+		t.Fatalf("get /fetch: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/fetch status = %d, want 404 (route must not be mounted without subordinates)", resp.StatusCode)
 	}
 }

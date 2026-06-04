@@ -278,6 +278,16 @@ func (s *Server) FederationCache() *federation.EntityConfigCache {
 	return s.federationEntity.Cache()
 }
 
+// FederationFetchCache returns the per-(issuer, subordinate) Subordinate
+// Statement cache the OpenID Federation 1.0 §8 Federation Fetch endpoint uses
+// (nil when WithFederationEntity is not wired). Backs federation.FetchDeps.
+func (s *Server) FederationFetchCache() *federation.SubordinateStatementCache {
+	if s.federationEntity == nil {
+		return nil
+	}
+	return s.federationEntity.FetchCache()
+}
+
 // FederationNow is the clock the federation handler stamps the Entity
 // Configuration's iat/exp from. Real wall clock in production; a test wiring
 // its own federation.Deps injects a fixed time so exp stays deterministic.

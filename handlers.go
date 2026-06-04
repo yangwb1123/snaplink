@@ -2392,6 +2392,15 @@ func (s *Server) handleFederationEntityConfig(ctx HandlerContext) {
 	federation.HandleEntityConfiguration(s, ctx)
 }
 
+// handleFederationFetch delegates to the hexagonal OpenID Federation 1.0 §8
+// Federation Fetch handler (*Server satisfies federation.FetchDeps via
+// accessors.go). Only mounted when WithFederationEntity is wired AND
+// subordinates are configured (this server acts as a federation SUPERIOR) —
+// byte-identical off otherwise.
+func (s *Server) handleFederationFetch(ctx HandlerContext) {
+	federation.HandleFederationFetch(s, ctx)
+}
+
 // requestBaseURL delegates to middleware.BaseURL — see that function
 // for the X-Forwarded-Proto / X-Forwarded-Host edge trust contract.
 func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
