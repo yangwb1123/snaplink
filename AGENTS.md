@@ -64,10 +64,28 @@ middleware/    Auth, CORS, Logger, Tracing, RequestID, no-store, base-URL
 admin/         Admin auth: HTTP middleware + gRPC interceptor + scope rules
 tenant/ geo/   Tenant resolution + Geo enrichment middleware
 authenticators/  9 pluggable + webauthn/ helper
-defaultimpl/   Default issuers (Ed25519/ECDSA/RSA) + Memory* stores + JWE
-               (RSA/ECDH/Multi) + cryptosigner KMS bridge; /sqlite (pure-Go); /detectors
+defaultimpl/   Default issuers (Ed25519/ECDSA/RSA, each w/ CryptoSigner() stdlib
+               seam) + Memory* stores + JWE (RSA/ECDH/Multi) + cryptosigner KMS
+               bridge; /sqlite (pure-Go); /detectors; /vaulttransit (DEP-FREE
+               net/http HashiCorp Vault transit crypto.Signer — HIBP precedent) (§3,§4)
+authenticators/webauthn/  WebAuthn helper + AAGUID attestation policy + FIDO MDS (§3,§4)
+region/{memory}/   IN-CORE multi-region / data-residency SPI + resolvers (§3,§4)
 kms/awskms/    SEPARATE nested module — concrete AWS KMS crypto.Signer peer
                for the cryptosigner bridge (aws-sdk-go-v2 stays OUT of core go.mod) (§3,§4)
+kms/gcpkms/    SEPARATE nested module — GCP Cloud KMS crypto.Signer peer; supports
+               Ed25519 (cloud.google.com/go/kms stays OUT of core go.mod) (§3,§4)
+kms/azurekeyvault/  SEPARATE nested module — Azure Key Vault crypto.Signer peer
+               (azure-sdk-for-go stays OUT of core go.mod) (§3,§4)
+kms/pkcs11/    SEPARATE nested module — PKCS#11 HSM/smart-card crypto.Signer peer,
+               CGO (miekg/pkcs11 stays OUT of core go.mod) (§3,§4)
+saml/          SEPARATE nested module — full SAML 2.0 SP+IdP (SSO+SLO), own
+               importable Deps/HandlerSpec (crewjam/saml stays OUT of core go.mod) (§3,§4)
+ldap/          SEPARATE nested module — LDAP/AD sso.Authenticator, search-then-bind
+               over TLS (go-ldap/ldap/v3 stays OUT of core go.mod) (§3,§4)
+kerberos/      SEPARATE nested module — SPNEGO/Kerberos Negotiate handler (Windows
+               Integrated Auth) (gokrb5/v8 stays OUT of core go.mod) (§3,§4)
+extauthz/      SEPARATE nested module — gRPC Envoy ext_authz over the in-core
+               MeshAuthorize seam (go-control-plane stays OUT of core go.mod) (§3,§4)
 redis/         SEPARATE nested module — Redis hot-path store peers (session/
                refresh/authcode/par/jti/ratelimit/device/mfa/ciba) for the
                >1k-QPS multi-replica scale layer; Lua/GETDEL/SETNX/INCR atomics
@@ -233,7 +251,7 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
 | RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS` | `server_extensions.go` |
 | RFC 9207 AS Issuer Id | every `/auth/login` | always | `handlers.go` |
-| RFC 9068 JWT Access Token | `{Ed25519,ECDSA,RSA}JWTIssuer` (EdDSA/ES256/RS256\|PS256) | always; alg gate `WithSupportedSigningAlgs`, strict per-issuer kid→alg; `Rotate`/`Retire`/`StartRotation` + KMS seam | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` |
+| RFC 9068 JWT Access Token | `{Ed25519,ECDSA,RSA}JWTIssuer` (EdDSA/ES256/RS256\|PS256) | always; alg gate `WithSupportedSigningAlgs`, strict per-issuer kid→alg; `Rotate`/`Retire`/`StartRotation` + `With{Algo}ExternalSigner` KMS/HSM seam (peers: `kms/{awskms,gcpkms,azurekeyvault,pkcs11}` + in-core `defaultimpl/vaulttransit`; EdDSA only on gcp/pkcs11/vault) + `CryptoSigner()` stdlib accessor (SAML XML-DSig) | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` + `defaultimpl/crypto_signer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
 | RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider`; iat window via `WithDPoPProofMaxAge`/`WithDPoPMaxClockSkew` (default 60s each) | `server_extensions.go` |
@@ -250,7 +268,12 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
 | SPIFFE JWT-SVID token-exchange | `/token` (`subject_token_type=jwt`, `sub` a `spiffe://` URI) | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` — validates the SVID against the operator-supplied SPIRE trust-bundle JWKS via the shared `security.VerifyCompactJWS` (asymmetric alg-allowlist, no alg=none); strict `aud` + trust-domain; maps `spiffe://` → Subject (AMR `["spiffe"]`, RFC 9068 ClientID set); tried ONLY as a fallback after the local-issuer path (local `:jwt` unchanged); all failures → `invalid_grant` (oracle-safe); nil = byte-identical off; JWT-SVID only (x509/Workload-API out) | `security/spiffe_svid.go` + `security/jwks_verify.go` + `handlers.go` |
 | OpenID SSF v1 (CAEP+RISC) SET push | none (push transmitter; receiver in `Client.Attributes`) | `WithCAEPTransmitter`; SET via issuer `SignJWT` (`typ:secevent+jwt`); scoped to affected client/tenant; async best-effort | `caep/` |
-| Envoy/Istio ext_authz (HTTP mode) | `/mesh/ext-authz` (GET+POST, default path) | `WithMeshExtAuthz(path)` — per-request mesh authz: validates the bearer EXACTLY like `/userinfo` (`validateAnyToken` + DPoP/mTLS sender-constraint enforced, so a stolen sender-constrained token can't replay as a plain bearer), 200 ALLOW with DERIVED `X-Auth-{Subject,Client-Id,Scopes,Expires}` (+ `X-Auth-Roles` when a permissions provider is wired) identity headers the sidecar injects upstream, else 401 DENY (`invalid_token`, oracle-safe; no body); `tokenNoStoreHeaders`; mesh-internal + mesh MUST strip client-supplied `X-Auth-*` (edge-strip, §2); nil = byte-identical off; gRPC variant (needs go-control-plane) is a separate operator module | `handler.go` |
+| Envoy/Istio ext_authz (HTTP mode) | `/mesh/ext-authz` (GET+POST, default path) | `WithMeshExtAuthz(path)` — per-request mesh authz: validates the bearer EXACTLY like `/userinfo` (`validateAnyToken` + DPoP/mTLS sender-constraint enforced, so a stolen sender-constrained token can't replay as a plain bearer), 200 ALLOW with DERIVED `X-Auth-{Subject,Client-Id,Scopes,Expires}` (+ `X-Auth-Roles` when a permissions provider is wired) identity headers the sidecar injects upstream, else 401 DENY (`invalid_token`, oracle-safe; no body); `tokenNoStoreHeaders`; mesh-internal + mesh MUST strip client-supplied `X-Auth-*` (edge-strip, §2); nil = byte-identical off; read-side residency gate (§4); the dep-free decision is the `MeshAuthorize` core seam reused by the gRPC variant | `handler.go` + `mesh_authz.go` |
+| Envoy/Istio ext_authz (gRPC mode) | `envoy.service.auth.v3.Authorization` | `extauthz` nested module (`NewAuthorizationServer(srv)`); maps `CheckRequest`↔`MeshAuthorize`↔`CheckResponse`: ALLOW injects derived `X-Auth-*` (`HeadersToRemove` + OVERWRITE edge-strip), DENY=`PERMISSION_DENIED` 401 (no fail-open, no body); surfaces the RFC 9449 §8 `DPoP-Nonce` on the gRPC DENY; go-control-plane stays OUT of core go.mod | `extauthz/authz.go` |
+| SAML 2.0 (SP+IdP, SSO+SLO) | `/auth/saml/callback`+`/auth/saml/slo` (SP); `/saml/{metadata,sso,sso/finish,slo,slo/continue}` (IdP) | `saml` nested module (`saml.Build(deps,cfg)`→operator-fork mounts); SP consumes a pinned-cert IdP assertion (XSW-resistant: SignedInfo-ref'd, boot-pinned cert, ≠1-assertion reject), IdP mints enveloped-XML-DSig assertions per-tenant (`CryptoSigner()`; RSA/ECDSA-DER only, EdDSA→`saml_assertion_failed`); SLO back-channel fan-out + front-channel chain (detached §3.4.4.1 sigs, single-use rotating state); oracle-safe (`saml_assertion_invalid`/`saml_request_invalid`); ACS/SLO URL allowlist + https-only SSRF gate; sqlite replay/index peers | `saml/saml.go` |
+| Kerberos/SPNEGO (Windows Integrated Auth) | `/auth/kerberos` (Negotiate, cmd-mounted) | `kerberos` nested module (`kerberosauth.Build(deps,cfg,validator)`); RFC 4559 401-Negotiate handshake; validates AP-REQ against the KEYTAB (fail-closed: sig+lifetime+per-process replay cache), maps `principal@REALM`→Subject (AMR `["krb5"]`, RFC 9068 ClientID), mints via per-tenant issuer/session seams; oracle-safe `invalid_token`+retry; NO refresh; gokrb5 replay cache is PER-PROCESS → multi-replica needs sticky affinity; optional `MaxClockSkew`; secret-free `login_failure` audit | `kerberos/handler.go` |
+| WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}`; AAGUID allowlist/denylist gated at `FinishRegistration` AFTER go-webauthn verifies attestation; active policy requires conveyance≥direct (boot guard) + rejects `none`-attestation; optional FIDO MDS (`BuildMDSProvider`, JWS-rooted at FIDO ProductionMDSRoot) makes the gate adversary-resistant; new code `attestation_denied` (403, oracle-safe) | `authenticators/webauthn/{attestation_policy,mds}.go` |
+| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck(ttl)`; tenant `HomeRegion`/`AllowedRegions`/`EnforceWrites` gate the serving region: write-gate on every login mint (`residencyGateLogin`), read-gate on resource access (`residencyDeniedForAccess`); fail-OPEN on tenant-store outage (AP/governance); `region_not_allowed`/`residency_violation` are governance codes (reveal residency binding like `tenant_mismatch`, NOT credential oracles); `/token` grant-side + introspect deliberately uncovered | `region/region.go` + `server_extensions.go` |
 
 **JWE decrypters/encrypters** (JAR-in, id_token-out, userinfo-out):
 `RSA` (RSA-OAEP-256 + A256GCM, default), `ECDH` (ECDH-ES), or `Multi`
@@ -265,9 +288,15 @@ stateless, signed + JWKS (pass one `Ed25519JWTIssuer` to both
 route signing through a `{Algo}Signer` seam — default in-process, or
 `With{Algo}ExternalSigner` for a KMS/HSM key that never enters the process
 (`defaultimpl/cryptosigner` bridges any `crypto.Signer`; ECDSA DER→R‖S).
-A concrete **AWS KMS** peer ships in the `kms/awskms/` nested module
-(ECDSA ES256/384/512 + RSA RS256/PS256; KMS has **no Ed25519** → clear
-error; KMS sign is 5-50ms, so extend token TTL / cache — §4).
+Concrete external-signer peers: **AWS KMS** (`kms/awskms/`), **GCP Cloud
+KMS** (`kms/gcpkms/`, +Ed25519), **Azure Key Vault** (`kms/azurekeyvault/`),
+**PKCS#11** HSM/smart-card (`kms/pkcs11/`, +EdDSA where the token has CKM_EDDSA),
+each a SEPARATE nested module; plus IN-CORE dep-free **HashiCorp Vault transit**
+(`defaultimpl/vaulttransit/`, +Ed25519, net/http only). ES256/384/512 + RS256/PS256
+across all; AWS+Azure have **no Ed25519** → `ErrUnsupportedKey`. KMS/HSM/Vault
+sign is a 5-50ms round-trip, so extend token TTL / cache — §4. The 3 issuers also
+expose `CryptoSigner()` to hand the key out as a stdlib `crypto.Signer` (SAML
+XML-DSig).
 `RotateKey`/`RetireKey` do overlap-window rotation (demoted key stays
 verify-only in JWKS through its TTL); `StartRotation` runs the scheduled
 loop. cmd wires `keys.rotation.*` → `signing_key_rotated` audit +
@@ -318,6 +347,34 @@ no EdDSA spec → `ErrUnsupportedKey`); KMS errors fail closed. The
 dep-free) — **no `go.work`** (a workspace would surface aws in the root
 `go list -m all`); `make ci` runs `ci-modules` which `cd`s in to
 build+race-test it.
+
+**Cloud-KMS + HSM + Vault signer peers** (the rest of the
+`With{Algo}ExternalSigner` fleet — all bridge via `defaultimpl/cryptosigner`,
+all fail closed, all amortized by token TTL/cache like AWS KMS). The ECDSA
+hash↔curve pairing is enforced fail-closed in every peer (a caller can't sign
+under a hash disagreeing with the curve's ES\* alg JWKS publishes).
+- **`kms/gcpkms/`** (SEPARATE nested module, `cloud.google.com/go/kms`). Key =
+  a fully-qualified `CryptoKeyVersion` (the version fixes the scheme). ECDSA DER,
+  RSA raw. **Supports Ed25519** (`EC_SIGN_ED25519`, sent un-prehashed in the
+  `Data` field) — the differentiator over AWS. ES256/384 end-to-end caps at
+  P-256 through the issuer; ES384/521 reachable only as a bare `crypto.Signer`.
+- **`kms/pkcs11/`** (SEPARATE nested module, `github.com/miekg/pkcs11`, **CGO** —
+  needs `CGO_ENABLED=1` + a C toolchain even to build). `CKM_ECDSA` returns RAW
+  R‖S → this Signer converts to DER for the stdlib ECDSA contract (the
+  cryptosigner bridge converts back to R‖S — deliberate double-convert keeps it a
+  faithful `crypto.Signer`). RS256 over DigestInfo, PSS salt=hashlen. **EdDSA via
+  `CKM_EDDSA`** where the token implements it.
+- **`kms/azurekeyvault/`** (SEPARATE nested module,
+  `github.com/Azure/azure-sdk-for-go` `azkeys`). Vault returns ECDSA as RAW R‖S →
+  converts to DER (inverse of the cryptosigner bridge). Parses the RP key from a
+  raw JWK (N/E/X/Y, not x509 SPKI) with on-curve + small-exponent (`e<3`/even) +
+  2048-bit-modulus rejection. **No Ed25519** (`ErrUnsupportedKey`, like AWS).
+- **`defaultimpl/vaulttransit/`** (IN THE CORE — DEP-FREE: net/http + json +
+  stdlib crypto only, NO nested module, NO dep; the HIBP precedent that a runtime
+  HTTPS call ≠ a go.mod dep). HashiCorp Vault transit engine. ECDSA asks
+  `marshaling_algorithm=asn1` → DER; RSA `pss`/`pkcs1v15`; **Ed25519** signs the
+  RAW message un-prehashed. `TokenSource` is called PER request (operator owns
+  renewal); `https`-only + verifying TLS default; the Vault token is never logged.
 
 **SQLite substrate** (`defaultimpl/sqlite/`). Pure-Go
 (`modernc.org/sqlite`). Race-free via `DELETE … RETURNING` (single-use
@@ -538,6 +595,25 @@ lookup, Suspended → `ErrTenantSuspended` (cached, default 30s; admin
 `SetStatus` MUST call `InvalidateTenantSuspensionCache`; outage
 fail-open). Without it, existing tokens survive suspension.
 
+**Multi-region / data residency** (`region/`, IN-CORE). Mirrors `geo/`'s
+discipline: opt-in, nil-default byte-identical, non-fatal middleware
+(`region.Middleware` after geo). SPI = `ID`/`Resolver`/`ResidencyPolicy`/
+`PolicyStore` + `ConfigPinned`/`Header`/`Chain` resolvers (header path is
+anti-injection allowlisted — the serving region is a `X-Forwarded-*`-class edge
+header, §2) + a `memory` peer. The serving region (which DEPLOYMENT served the
+request) is a DELIBERATELY DIFFERENT namespace from `geo.Region` (where the
+CLIENT is). Tenant gains `HomeRegion`/`AllowedRegions`/`EnforceWrites` (sqlite
+migration). `WithTenantResidencyCheck(ttl)` arms `s.checkTenantResidency` (cached,
+default TTL; admin tenant-mutation MUST call `InvalidateTenantResidencyCache`):
+WRITE-gate (`residencyGateLogin`) on every interactive-login mint (direct/code +
+silent-renewal + `/auth/mfa` 2nd leg), READ-gate (`residencyDeniedForAccess`) on
+`/userinfo` + mesh ext_authz; WebAuthn login closes the hole via the context-free
+`ResidencyDecision` seam (cmd resolves the region off the raw request). FAIL-OPEN
+on tenant-store outage (AP/governance, like suspension). `region_not_allowed`
+(serving region ∉ AllowedRegions) + `residency_violation` (write leaves HomeRegion
+under EnforceWrites) are governance codes, NOT credential oracles (§2). `/token`
+grant-side + introspect deliberately uncovered (no `HandlerContext` in scope).
+
 **CAEP / Shared Signals** (`caep/`). OpenID SSF v1 (CAEP + RISC) push
 transmitter for real-time cross-RP revocation. Opt-in
 `WithCAEPTransmitter` (nil ⇒ no-op, byte-identical); the `Transmitter` is
@@ -558,6 +634,89 @@ from the ClientStore per send (no cache, no bus). Async + best-effort +
 fail-open (a dead receiver drops the SET — metric + `caep_broadcast_failed`
 audit; bounded per-receiver timeout + `recover()`, no hot-path retry —
 the revocation already happened). jti unique per SET (RP replay defense).
+
+**SAML 2.0** (`saml/`, SEPARATE nested module, `crewjam/saml` + goxmldsig +
+etree). Full SP+IdP, SSO+SLO — the SAML mirror of `oidc_federation`. A nested
+module CANNOT import cmd `package main`, so it exports its OWN importable
+`Deps`/`Config`/`HandlerSpec`/`BuildResult` + `Build(deps,cfg)` (root-module +
+stdlib + crewjam types only); the operator's fork adapts the result onto cmd's
+`SAMLHandlerSet`. **SP**: consumes an upstream IdP's signed assertion —
+XSW-resistant (crewjam resolves the signed element by DSig SignedInfo ref +
+verifies against the IdP cert PINNED at boot from metadata, NEVER a
+request-embedded cert; rejects >1 assertion), oracle-safe (every failure →
+`saml_assertion_invalid`), bounded per-replica AssertionID replay store (NOT the
+OAuth JTI store). **IdP** (`cfg.IdP.Enabled`): signs assertions per-tenant via
+`deps.IssuerForClient` + `CryptoSigner()` (RSA RS256/PS256 or ECDSA ES256, DER
+not R‖S; **EdDSA → `saml_assertion_failed`** — goxmldsig has no EdDSA method,
+fail-closed, never cross-tenant fallback); SP registration is per-client
+`Attributes` (`saml_sp_entity_id`/`_acs_urls`/`_slo_url`/`_signing_cert`/…, read
+at request time, never request input); ACS + SLO URL allowlists are the
+exfil/injection defense. **SLO**: SP-side + IdP-side, back-channel fan-out
+(async/bounded/best-effort, gated by the opt-in `SAMLSessionIndex`) + front-channel
+browser chain (single-use rotating 256-bit state, detached §3.4.4.1 sigs,
+verify-before-advance); LogoutRequest signing is MANDATORY (a destructive action).
+Multi-replica sqlite peers for the replay/index stores (FAIL-CLOSED — guards an
+auth/destructive action; `saml/samltest` locks memory==sqlite); the two
+sticky-session-covered browser-flow stores stay memory-only by design. https-only
+SSRF gate throughout.
+
+**LDAP / AD** (`ldap/`, SEPARATE nested module, `go-ldap/ldap/v3`). An
+`sso.Authenticator` (search-then-bind over TLS), registered via the normal
+`WithAuthenticator`/`allowed_authenticators` seam from the operator's fork.
+Injection-safe (`ldap.EscapeFilter` on every user value — the raw value is NEVER
+formatted into a filter); anti-enumeration (unknown user ≡ wrong password → one
+`ErrAuthFailed`, both pay a dummy-bind timing cost like the password
+authenticator's dummy bcrypt); TLS-required default (plaintext/InsecureSkipVerify
+needs an explicit dev opt-out); bind creds + user password never logged;
+DialTimeout/RequestTimeout bound a dead directory.
+
+**Kerberos / SPNEGO** (`kerberos/`, SEPARATE nested module, `gokrb5/v8`). Windows
+Integrated Auth / desktop SSO. SPNEGO is a Negotiate-HEADER handshake, not a
+credential map, so it's a cmd-MOUNTED handler (like WebAuthn/SAML), exporting its
+own `Deps`/`Config`/`SPNEGOValidator`/`HandlerSpec`/`Build`. RFC 4559: 401
+`WWW-Authenticate: Negotiate` challenge (also returned on validation failure for
+retry); validates the AP-REQ against the **KEYTAB** (the trust anchor + a
+high-value secret loaded once, never logged) — fail-closed on bad
+sig/expired/replayed/wrong-realm; maps `principal@REALM` → Subject (AMR `["krb5"]`,
+RFC 9068 ClientID, ONLY the 2 derived realm+PAC-group attrs — a ticket can't
+smuggle a claim), mints via the per-tenant issuer/session seams. Oracle-safe
+(`invalid_token` + retry); no-store; NO refresh (desktop SSO re-runs the silent
+handshake). **gokrb5's AP-REQ replay cache is PER-PROCESS** (in-memory, not
+cross-replica) → multi-replica MUST pin Negotiate traffic to one replica
+(sticky affinity), mirroring the redis "single-use on the primary" precedent;
+window bounded by clock-skew (`MaxClockSkew`, default 5m). The minimal validator
+seam keeps handler tests KDC-free.
+
+**gRPC ext_authz** (`extauthz/`, SEPARATE nested module, `go-control-plane`).
+The gRPC-mode companion to the in-core HTTP-mode mesh ext_authz; ALL auth logic
+lives in the dep-free `MeshAuthorize` core seam (`mesh_authz.go`) — `*sso.Server`
+satisfies the package's `MeshAuthorizer`, and `Check` does ONLY
+`CheckRequest`↔seam↔`CheckResponse` wire-mapping (URL rebuilt for the DPoP htu
+binding; Envoy peer cert → `*x509.Certificate` for mTLS). ALLOW → derived
+`X-Auth-*` injected (`OVERWRITE_IF_EXISTS_OR_ADD` + listed in `HeadersToRemove`,
+edge-strip §2); DENY → `PERMISSION_DENIED` 401 + Bearer challenge, NO body
+(oracle-safe, no fail-open); the sole DENY detail is the RFC 9449 §8 `DPoP-Nonce`
+handshake (protocol-required, not a leak). Single source of truth ⇒ a stolen
+DPoP/mTLS-bound token presented as a plain bearer is DENIED over gRPC exactly as
+over HTTP. Operator fork constructs `NewAuthorizationServer(srv)` + registers it
+on its own grpc.Server (mesh-internal).
+
+**WebAuthn attestation policy** (`authenticators/webauthn/`). Operator-configured
+AAGUID `allowlist`/`denylist` + conveyance, gated at `FinishRegistration` AFTER
+go-webauthn verifies the attestation (so the AAGUID is the attestation-verified
+value). An active policy REQUIRES conveyance `direct|enterprise` (`NewHelper`
+boot guard — under none/indirect most authenticators report the zero AAGUID an
+allowlist rejects) and rejects `none`-attestation (go-webauthn accepts that format
+with ZERO sig verification → its AAGUID is untrustworthy). New wire error
+`attestation_denied` (403, oracle-safe; AAGUID + reason go to audit, never the
+client). **Without MDS the gate is an OPERATIONAL control** (honest-client gating
++ audit visibility), NOT adversary-resistant — a hostile registrant can craft a
+self-signed x5c asserting an allowlisted AAGUID. Wiring `Config.MDS`
+(`BuildMDSProvider` → go-webauthn `metadata.Provider`, JWS-rooted at the built-in
+FIDO `ProductionMDSRoot`, or a test `CustomRootPEM`; file or dep-free https fetch;
+STARTUP SNAPSHOT, reload by restart) makes it adversary-resistant: the attestation
+cert chain must root in the FIDO MDS. AAGUID canonicalization is in-tree (avoids
+promoting `google/uuid` to a direct dep). Nil/off = byte-identical.
 
 **ssoclient.** Per-capability `ssoclient/local` (in-process) or
 `ssoclient/remote` (gRPC + JWKS); mix freely on one `appcore.Handler`.
@@ -692,6 +851,45 @@ knob; below is only the non-obvious operator surface.
   `clients[].attributes.caep_receiver_endpoint` (https, validated at boot)
   + `caep_receiver_auth`; NO documented HTTP endpoint in v1. Disabled =
   byte-identical.
+- **External signers** (`RegisterExternalSigner` in the operator's fork, like
+  SAML's `RegisterSAMLHandlers`) — `kms/{awskms,gcpkms,azurekeyvault,pkcs11}` +
+  in-core `defaultimpl/vaulttransit` bridge a `crypto.Signer` into the issuers
+  via `With{Algo}ExternalSigner`; the nested modules carry the vendor SDK, so
+  the operator forks cmd to import them (`kms/pkcs11` additionally needs
+  `CGO_ENABLED=1`). The signing alg still comes from `keys.signing.alg`; the
+  key reference is the cloud/HSM/Vault resource id.
+- **saml.{handler,sp_providers[]}** — `handler` is the registered
+  `SAMLHandlerFactory` name (`""` mounts NOTHING, byte-identical); the operator
+  FORKS cmd, imports their SAML module, calls
+  `RegisterSAMLHandlers("<name>", factory)`, and the factory borrows the issuer
+  key off `CryptoSigner()` (assertions signed with the JWKS-published key). The
+  SAML/XML/DSig dep stays OUT of the core go.mod (§4). Per-SP/IdP details + the
+  downstream-SP `saml_sp_*` client `Attributes` live in the module (§3/§4). LDAP
+  + Kerberos are likewise operator-fork-wired (no top-level YAML block) — LDAP
+  via `WithAuthenticator` + `allowed_authenticators`, Kerberos via a cmd-mounted
+  Negotiate handler over the per-tenant seams (keytab path + optional
+  `MaxClockSkew` in its own `Config`).
+- **mesh.ext_authz.{enabled,path}** governs the HTTP-mode endpoint (above); the
+  **gRPC**-mode variant is the `extauthz` nested module (`go-control-plane`),
+  wired by the operator's fork as a standalone grpc.Server — same
+  `MeshAuthorize` decision, no extra YAML (§3/§4).
+- **region.{serving_region,header_name,allowed_regions,residency_check_cache_ttl}**
+  — opt into the serving-region middleware + data-residency gate (§3/§4).
+  Neither `serving_region` nor `header_name` set ⇒ middleware NOT installed +
+  gate inert (byte-identical). `header_name` reads the serving region off a
+  trusted edge header (allowlisted via `allowed_regions`, anti-injection — same
+  edge-strip model as XFF, §2); `serving_region` is this deployment's pinned
+  fallback. The per-tenant policy is `tenant.{home_region,allowed_regions,
+  enforce_writes}`; `residency_check_cache_ttl` caches it (admin tenant-mutation
+  MUST `InvalidateTenantResidencyCache`). Outage fail-open.
+- **webauthn.attestation.{conveyance,policy_mode,aaguids,mds}** — AAGUID gate
+  (§3/§4). `policy_mode` `""/off|allowlist|denylist`; an active mode REQUIRES
+  `conveyance: direct|enterprise` (boot fails otherwise) + at least one AAGUID
+  (canonical-UUID or bare-32-hex; include the all-zero AAGUID to admit
+  self/no-attestation). `mds.{file|fetch_url,custom_root_pem,fetch_timeout}`
+  (EXACTLY ONE of file/fetch_url; both empty ⇒ MDS off) turns the gate
+  adversary-resistant via FIDO-root-validated metadata; `custom_root_pem` is
+  ONLY for a non-prod/test MDS.
 
 **Multi-source loader.** `config.Loader` composes prioritized `Source`s
 (lowest first, last wins): `NewFileSource` (baseline) → `NewEnvSource`
