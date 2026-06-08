@@ -125,8 +125,37 @@ type trustMarkRequirement struct {
 	// anchor's trust_mark_issuers), bounded by the issuer-chain exp so a mark is
 	// never validated against an expired chain. WHY a dedicated cache: the
 	// resolution is a multi-fetch trust-chain walk; without it, EVERY presented
-	// mark from a resolved issuer would re-resolve. Concurrency-safe.
+	// mark from a resolved issuer would re-resolve. It also holds a SHORT-TTL
+	// NEGATIVE cache so a FAILED/slow issuer resolution is not retried on every
+	// request (the positive cache alone never memoizes a dead iss → an attacker's
+	// distinct-iss marks would each re-resolve). Concurrency-safe.
 	resolvedIssuers *resolvedIssuerCache
+
+	// ----- federation-resolved issuer DoS bounds (slice 4c hardening) ---------
+	//
+	// The nested issuer resolution is a NEW outbound trigger fired BEFORE the
+	// mark signature check; an already-chained-but-malicious RP can carry ~1500
+	// distinct-iss marks, each a full ~chain-depth nested resolution. These bound
+	// the per-call fan-out, the GLOBAL concurrency, and re-resolution of dead
+	// issuers. All fail-CLOSED + oracle-safe (an unresolvable/shed issuer simply
+	// does not satisfy a required type). Only the federation-resolved path
+	// touches them; default-off leaves them dormant.
+
+	// maxResolvedIssuersPerRequest caps DISTINCT issuer resolutions per validate
+	// call (deduped). Beyond it, further distinct-iss resolutions are not
+	// attempted (fail-closed). Bounds the per-RP fan-out regardless of how many
+	// distinct-iss marks the leaf carries.
+	maxResolvedIssuersPerRequest int
+	// issuerResolveSem is the GLOBAL counting semaphore (a buffered channel)
+	// bounding CONCURRENT nested issuer resolutions across ALL in-flight
+	// registrations — independent of the slice-3 resolveSem (the OUTER RP
+	// resolution, already consumed by the time the trust-mark gate runs).
+	// Non-blocking acquire, fail-closed when saturated. nil ⇒ unbounded
+	// (defensive; constructor always sets it on the resolved path).
+	issuerResolveSem chan struct{}
+	// maxLeafTrustMarks caps a validated leaf's trust_marks entries before the
+	// scan is bounded (defense-in-depth against an absurd-cardinality leaf).
+	maxLeafTrustMarks int
 }
 
 // resolvedIssuerEntry is one cached federation-resolution OUTCOME for a Trust
@@ -156,21 +185,41 @@ func (e *resolvedIssuerEntry) fresh(now time.Time) bool {
 	return e != nil && now.Before(e.expiresAt)
 }
 
-// resolvedIssuerCache is a small bounded TTL cache of federation-resolution
+// resolvedIssuerCache is a small bounded cache of federation-resolution
 // outcomes keyed by issuer Entity ID. It mirrors the registration cache's
-// shape (sync.Map for lock-free reads + a per-key resolve lock so a burst for
-// one issuer resolves once). Bounded by entry TTL (the issuer-chain exp); a
-// hard size cap is unnecessary here because resolution only ever runs for an
-// issuer named in a mark inside an ALREADY chain-validated leaf (the slice-3
-// registration path that calls this is itself concurrency- and negative-cache-
-// bounded), so the key space is not attacker-unbounded the way the unauth
-// client_id space is.
+// shape (sync.Map for lock-free POSITIVE reads + a per-key resolve lock so a
+// burst for one issuer resolves once) PLUS a short-TTL bounded NEGATIVE cache
+// (a plain map + mutex, like the slice-3 registration negative cache) so a
+// FAILED/slow issuer resolution is not retried on every distinct request.
+//
+// WHY the negative cache (slice 4c hardening): the positive cache alone holds
+// only SUCCESSFUL resolutions, so a dead-or-slow iss is never memoized — an
+// already-chained-but-malicious RP carrying many distinct-iss marks (or a
+// repeated probe) would re-fire a full nested ResolveTrustChain(iss) every
+// time, before the mark signature check. Memoizing the FAILURE (short TTL,
+// bounded size) blunts that while the SHORT TTL re-attempts a legit issuer
+// whose superior was transiently down (never permanently pinned).
 type resolvedIssuerCache struct {
 	m           sync.Map // issuerEntityID(string) -> *resolvedIssuerEntry
 	resolveLock keyedMutex
+
+	// negative (failed-resolution) cache: a plain map + mutex (writes only on
+	// resolution FAILURE/shed; lookups sit on the miss/failure path, not the
+	// positive hot path) so size accounting + oldest-eviction for the cap are
+	// clean. negTTL/negMax bound it.
+	negMu    sync.Mutex
+	negCache map[string]time.Time // issuerEntityID -> negative-entry expiry
+	negTTL   time.Duration
+	negMax   int
 }
 
-func newResolvedIssuerCache() *resolvedIssuerCache { return &resolvedIssuerCache{} }
+func newResolvedIssuerCache(negTTL time.Duration, negMax int) *resolvedIssuerCache {
+	return &resolvedIssuerCache{
+		negCache: make(map[string]time.Time),
+		negTTL:   negTTL,
+		negMax:   negMax,
+	}
+}
 
 // lookup returns a fresh cached entry for the issuer, or nil on miss/stale.
 func (c *resolvedIssuerCache) lookup(issuerID string, now time.Time) *resolvedIssuerEntry {
@@ -185,9 +234,123 @@ func (c *resolvedIssuerCache) lookup(issuerID string, now time.Time) *resolvedIs
 	return e
 }
 
-// store publishes an entry for the issuer.
+// store publishes a positive entry for the issuer (and clears any stale
+// negative entry — a just-resolved issuer is no longer dead).
 func (c *resolvedIssuerCache) store(issuerID string, e *resolvedIssuerEntry) {
 	c.m.Store(issuerID, e)
+	c.clearNegative(issuerID)
+}
+
+// negativeHit reports whether issuerID has a FRESH negative entry (a recent
+// failed/shed resolution within negTTL). A stale entry is lazily evicted.
+func (c *resolvedIssuerCache) negativeHit(issuerID string, now time.Time) bool {
+	if c.negTTL <= 0 {
+		return false
+	}
+	c.negMu.Lock()
+	defer c.negMu.Unlock()
+	exp, ok := c.negCache[issuerID]
+	if !ok {
+		return false
+	}
+	if now.Before(exp) {
+		return true
+	}
+	delete(c.negCache, issuerID)
+	return false
+}
+
+// recordNegative remembers a FAILED/shed resolution for issuerID with a short
+// TTL, enforcing the entry cap (sweep expired, then evict the soonest-to-expire)
+// so the negative cache cannot itself become an unbounded-memory DoS.
+func (c *resolvedIssuerCache) recordNegative(issuerID string, now time.Time) {
+	if c.negTTL <= 0 {
+		return
+	}
+	c.negMu.Lock()
+	defer c.negMu.Unlock()
+	if _, exists := c.negCache[issuerID]; !exists && c.negMax > 0 && len(c.negCache) >= c.negMax {
+		c.evictNegativeLocked(now)
+	}
+	c.negCache[issuerID] = now.Add(c.negTTL)
+}
+
+// clearNegative drops any negative entry for issuerID.
+func (c *resolvedIssuerCache) clearNegative(issuerID string) {
+	c.negMu.Lock()
+	delete(c.negCache, issuerID)
+	c.negMu.Unlock()
+}
+
+// evictNegativeLocked makes room under the entry cap. Caller holds negMu. It
+// sweeps every expired entry first (cheap, bounded — the map is capped); if
+// that frees nothing (all still fresh under a sustained distinct-iss flood) it
+// evicts the soonest-to-expire entry so a bounded amount of memory is reclaimed
+// deterministically. Mirrors the slice-3 registration negative-cache eviction.
+func (c *resolvedIssuerCache) evictNegativeLocked(now time.Time) {
+	freed := false
+	for k, exp := range c.negCache {
+		if !now.Before(exp) {
+			delete(c.negCache, k)
+			freed = true
+		}
+	}
+	if freed {
+		return
+	}
+	var oldestKey string
+	var oldestExp time.Time
+	first := true
+	for k, exp := range c.negCache {
+		if first || exp.Before(oldestExp) {
+			oldestKey, oldestExp, first = k, exp, false
+		}
+	}
+	if !first {
+		delete(c.negCache, oldestKey)
+	}
+}
+
+// resolutionBudget is the per-validate-call DISTINCT-issuer resolution budget
+// (slice 4c hardening). It is created ONCE per trust-mark validation (one RP
+// registration) and threaded through satisfiedBy → validateMark →
+// federationResolvedIssuerKeys so the cap spans every required type's scan, not
+// just one. It bounds how many DISTINCT issuers this call will federation-
+// RESOLVE: a malicious leaf carrying ~1500 distinct-iss marks would otherwise
+// fire ~1500 full nested trust-chain resolutions. tryAcquire dedups (the same
+// iss across N marks costs ONE slot) and fails closed once `max` distinct
+// issuers have been granted — over-budget issuers do not resolve, so the
+// required types they would have satisfied go unsatisfied (the RP stays
+// unknown). Not safe for concurrent use; a single validate call is sequential.
+type resolutionBudget struct {
+	max     int                 // distinct-issuer cap (<=0 ⇒ unbounded; never constructed that way)
+	granted map[string]struct{} // issuers already granted a resolution slot this call
+}
+
+// newResolutionBudget returns a budget capping distinct issuer resolutions at
+// max. A non-positive max is treated as unbounded (defensive; the gate always
+// passes a positive cap).
+func newResolutionBudget(max int) *resolutionBudget {
+	return &resolutionBudget{max: max, granted: make(map[string]struct{})}
+}
+
+// tryAcquire reserves a resolution slot for iss. It returns true when iss has
+// ALREADY been granted this call (dedup — no new spend) or when a slot remains;
+// false when iss is a NEW distinct issuer and the budget is exhausted. A
+// non-positive max is unbounded. WHY dedup: two marks naming the same iss must
+// cost one resolution, so the budget bounds DISTINCT issuers, not marks.
+func (b *resolutionBudget) tryAcquire(iss string) bool {
+	if b == nil {
+		return true
+	}
+	if _, ok := b.granted[iss]; ok {
+		return true
+	}
+	if b.max > 0 && len(b.granted) >= b.max {
+		return false
+	}
+	b.granted[iss] = struct{}{}
+	return true
 }
 
 // newTrustMarkRequirement compiles the trust-mark gate from a Config. Returns
@@ -208,19 +371,25 @@ func newTrustMarkRequirement(cfg *Config, resolver *TrustChainResolver) *trustMa
 		return nil
 	}
 	r := &trustMarkRequirement{
-		requiredTypes: append([]string(nil), cfg.RequiredTrustMarkTypes...),
-		issuers:       cfg.TrustMarkIssuers,
-		allowedAlgs:   federationAsymmetricAlgs(),
-		skew:          cfg.maxClockSkew(),
+		requiredTypes:     append([]string(nil), cfg.RequiredTrustMarkTypes...),
+		issuers:           cfg.TrustMarkIssuers,
+		allowedAlgs:       federationAsymmetricAlgs(),
+		skew:              cfg.maxClockSkew(),
+		maxLeafTrustMarks: cfg.maxLeafTrustMarks(),
 	}
 	// Federation-resolved issuer path is OPT-IN and needs a live resolver (a
 	// configured trust anchor is the root of trust the issuer's chain must reach
 	// AND whose trust_mark_issuers authorizes it). Absent the flag or a usable
-	// resolver the path stays dormant — the gate is byte-identical to slice 4b.
+	// resolver the path stays dormant — the gate is byte-identical to slice 4b
+	// (the DoS bounds below are constructed ONLY here, so a default-off build
+	// allocates none of them).
 	if cfg.AllowFederationResolvedTrustMarkIssuers && resolver != nil && resolver.Enabled() {
 		r.allowFederationResolved = true
 		r.resolver = resolver
-		r.resolvedIssuers = newResolvedIssuerCache()
+		r.resolvedIssuers = newResolvedIssuerCache(
+			cfg.resolvedIssuerNegativeCacheTTL(), cfg.resolvedIssuerNegativeCacheMaxSize())
+		r.maxResolvedIssuersPerRequest = cfg.maxResolvedIssuersPerRequest()
+		r.issuerResolveSem = make(chan struct{}, cfg.maxConcurrentIssuerResolutions())
 	}
 	return r
 }
@@ -253,8 +422,25 @@ func (r *trustMarkRequirement) validate(ctx context.Context, leafEntityID string
 	if logError == nil {
 		logError = func(string, ...any) {}
 	}
+	// Defense-in-depth: an absurd-cardinality leaf (the 256KiB cap permits ~1500
+	// trust_marks entries) is rejected CLOSED before any per-type scan — a
+	// malicious already-chained RP cannot force a thousands-deep scan + nested
+	// resolution fan-out. A legitimate RP carries a handful of marks, far under
+	// the cap. Oracle-safe (the RP stays unknown, the same as any unsatisfied
+	// requirement).
+	if r.maxLeafTrustMarks > 0 && len(marks) > r.maxLeafTrustMarks {
+		logError("federation: leaf trust_marks count exceeds cap; rejecting",
+			"leaf", leafEntityID, "count", len(marks), "cap", r.maxLeafTrustMarks)
+		return fmt.Errorf("%w: leaf carries %d trust marks (cap %d)", ErrTrustMarkRequirementUnmet, len(marks), r.maxLeafTrustMarks)
+	}
+	// One PER-CALL distinct-issuer resolution budget spans EVERY required type's
+	// scan (a malicious leaf could otherwise spread distinct-iss marks across
+	// types to multiply the fan-out). Deduped + capped. On the configured-only
+	// path (the budget is never consulted) this allocates a tiny map and is
+	// untouched.
+	budget := newResolutionBudget(r.maxResolvedIssuersPerRequest)
 	for _, reqType := range r.requiredTypes {
-		if !r.satisfiedBy(ctx, leafEntityID, reqType, marks, now, logError) {
+		if !r.satisfiedBy(ctx, leafEntityID, reqType, marks, now, budget, logError) {
 			// One unmet required type fails the whole admission (fail-closed). The
 			// per-candidate cause was already logged inside satisfiedBy.
 			logError("federation: required trust mark not satisfied", "leaf", leafEntityID, "trust_mark_type", reqType)
@@ -271,9 +457,9 @@ func (r *trustMarkRequirement) validate(ctx context.Context, leafEntityID string
 // validateMark). So a correctly-signed mark satisfies even if its wrapper type
 // is mislabeled, and a wrapper that merely CLAIMS reqType over a different
 // signed type does NOT satisfy (the signed type is authoritative).
-func (r *trustMarkRequirement) satisfiedBy(ctx context.Context, leafEntityID, reqType string, marks []TrustMarkEntry, now time.Time, logError func(msg string, args ...any)) bool {
+func (r *trustMarkRequirement) satisfiedBy(ctx context.Context, leafEntityID, reqType string, marks []TrustMarkEntry, now time.Time, budget *resolutionBudget, logError func(msg string, args ...any)) bool {
 	for i := range marks {
-		if err := r.validateMark(ctx, leafEntityID, reqType, marks[i].TrustMark, now, logError); err != nil {
+		if err := r.validateMark(ctx, leafEntityID, reqType, marks[i].TrustMark, now, budget, logError); err != nil {
 			// Not a valid mark FOR THIS TYPE (wrong type, wrong subject, forged,
 			// unauthorized issuer, expired, ...). Log + keep looking — another
 			// entry may satisfy this type.
@@ -294,7 +480,7 @@ func (r *trustMarkRequirement) satisfiedBy(ctx context.Context, leafEntityID, re
 // signed type, freshness) — so every trusted claim comes from a signature-
 // validated mark. Returns nil only when the mark is a valid, authorized, fresh,
 // correctly-bound mark of reqType.
-func (r *trustMarkRequirement) validateMark(ctx context.Context, leafEntityID, reqType, compact string, now time.Time, logError func(msg string, args ...any)) error {
+func (r *trustMarkRequirement) validateMark(ctx context.Context, leafEntityID, reqType, compact string, now time.Time, budget *resolutionBudget, logError func(msg string, args ...any)) error {
 	if compact == "" {
 		return errors.New("empty trust mark")
 	}
@@ -329,7 +515,7 @@ func (r *trustMarkRequirement) validateMark(ctx context.Context, leafEntityID, r
 	// equals iss AND whose AllowedTypes permits reqType. (The AllowedTypes check
 	// is on reqType, which validateMark also pins to the SIGNED type below, so an
 	// issuer cannot be tricked via a relabeled wrapper.)
-	verifyKeys, err := r.resolveIssuerKeys(ctx, claims.Iss, reqType, now, logError)
+	verifyKeys, err := r.resolveIssuerKeys(ctx, claims.Iss, reqType, now, budget, logError)
 	if err != nil {
 		return err
 	}
@@ -355,8 +541,11 @@ func (r *trustMarkRequirement) validateMark(ctx context.Context, leafEntityID, r
 // when opted in — the federation-resolved path (the issuer discovered via its
 // trust chain to a configured anchor that lists it for reqType). The returned
 // keys are then used to verify the mark's signature by the caller.
-func (r *trustMarkRequirement) resolveIssuerKeys(ctx context.Context, iss, reqType string, now time.Time, logError func(msg string, args ...any)) ([]core.JWK, error) {
-	// PRIMARY: operator-configured authorized issuer.
+func (r *trustMarkRequirement) resolveIssuerKeys(ctx context.Context, iss, reqType string, now time.Time, budget *resolutionBudget, logError func(msg string, args ...any)) ([]core.JWK, error) {
+	// PRIMARY: operator-configured authorized issuer. This path NEVER consults
+	// the per-call resolution budget / semaphore / negative cache — it runs no
+	// nested resolution (operator-pinned keys), so a configured-issuer mark is
+	// unaffected by the DoS bounds.
 	if issuer, ok := r.authorizedIssuer(iss, reqType); ok {
 		if len(issuer.Keys) == 0 {
 			return nil, fmt.Errorf("authorized issuer %q has no configured keys", issuer.EntityID)
@@ -369,7 +558,7 @@ func (r *trustMarkRequirement) resolveIssuerKeys(ctx context.Context, iss, reqTy
 	// require the configured anchor to authorize it for reqType. Default-off ⇒
 	// this branch never runs (the gate is byte-identical to slice 4b).
 	if r.allowFederationResolved {
-		keys, err := r.federationResolvedIssuerKeys(ctx, iss, reqType, now, logError)
+		keys, err := r.federationResolvedIssuerKeys(ctx, iss, reqType, now, budget, logError)
 		if err == nil {
 			return keys, nil
 		}
@@ -428,7 +617,26 @@ func (r *trustMarkRequirement) checkMarkBindings(claims trustMarkClaims, leafEnt
 // chain exp so repeated marks from a resolved issuer don't re-resolve. Any
 // failure returns an error (the caller collapses it to not-authorized;
 // oracle-safe — the RP stays unknown).
-func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context, iss, reqType string, now time.Time, logError func(msg string, args ...any)) ([]core.JWK, error) {
+//
+// DoS bounds (slice 4c hardening), gating the nested ResolveTrustChain — a NEW
+// outbound trigger fired BEFORE the mark signature check — so an already-chained
+// but malicious RP carrying many distinct-iss marks cannot amplify one
+// registration into an unbounded nested-resolution flood:
+//
+//   - NEGATIVE cache: a recently-FAILED resolution for iss is not retried (the
+//     positive cache alone never memoizes a dead/slow iss).
+//   - per-call BUDGET: caps DISTINCT issuers resolved this validate call
+//     (deduped); over-budget issuers are not resolved (fail-closed).
+//   - global SEMAPHORE: caps CONCURRENT nested resolutions across all
+//     registrations; saturated ⇒ shed (fail-closed), independent of the slice-3
+//     outer-resolution semaphore.
+//
+// budget-exceeded + semaphore-saturated are LOAD-SHEDDING (not an issuer
+// failure), so they do NOT poison the negative cache — a legit issuer must not
+// be pinned out by a transient flood; it re-attempts on a later, unsaturated
+// call. A genuine resolution FAILURE (no chain / no anchor-auth / no keys) IS
+// negative-cached.
+func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context, iss, reqType string, now time.Time, budget *resolutionBudget, logError func(msg string, args ...any)) ([]core.JWK, error) {
 	if logError == nil {
 		logError = func(string, ...any) {}
 	}
@@ -438,12 +646,21 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 
 	// Cache HIT: a fresh prior resolution of this issuer. The cached entry holds
 	// the issuer's chain-validated keys + the types the anchor authorized it for;
-	// authorize reqType against that set without re-resolving.
+	// authorize reqType against that set without re-resolving (and without
+	// spending the budget/semaphore — no resolution happens).
 	if entry := r.resolvedIssuers.lookup(iss, now); entry != nil {
 		if _, ok := entry.authorizedTypes[reqType]; !ok {
 			return nil, fmt.Errorf("federation-resolved issuer %q not anchor-authorized for type %q", iss, reqType)
 		}
 		return entry.keys, nil
+	}
+
+	// NEGATIVE-cache check BEFORE the per-issuer lock or any resolution: a
+	// recently-failed iss must not re-trigger a nested resolution (the cheap
+	// defense against a distinct-iss-mark flood / repeated probe). Oracle-safe
+	// (the same not-resolved error as any miss). Spends NO budget/semaphore.
+	if r.resolvedIssuers.negativeHit(iss, now) {
+		return nil, fmt.Errorf("federation-resolved issuer %q recently failed resolution (negative-cached)", iss)
 	}
 
 	// Cache MISS: resolve under a per-issuer lock so a burst of marks from the
@@ -457,12 +674,44 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 		}
 		return entry.keys, nil
 	}
+	// Re-check the negative cache under the lock too: a sibling resolution for
+	// THIS iss may have just recorded a failure while we waited.
+	if r.resolvedIssuers.negativeHit(iss, now) {
+		return nil, fmt.Errorf("federation-resolved issuer %q recently failed resolution (negative-cached)", iss)
+	}
+
+	// PER-CALL BUDGET (fix a): cap DISTINCT issuers this validate call will
+	// resolve. Deduped — the same iss across N marks already short-circuits on the
+	// cache above, but the budget bounds the DISTINCT-iss fan-out regardless. Over
+	// budget ⇒ shed WITHOUT negative-caching (this is per-call load-shedding, not
+	// an issuer failure; a legit issuer beyond budget in a flooded call resolves
+	// on a later, smaller call). The required type goes unsatisfied → fail-closed.
+	if !budget.tryAcquire(iss) {
+		logError("federation: per-request issuer-resolution budget exhausted; shedding (unknown-client)",
+			"issuer", iss, "trust_mark_type", reqType, "budget", r.maxResolvedIssuersPerRequest)
+		return nil, fmt.Errorf("federation-resolved issuer %q: per-request resolution budget exhausted", iss)
+	}
+
+	// GLOBAL SEMAPHORE (fix b): bound CONCURRENT nested resolutions across ALL
+	// in-flight registrations (independent of the slice-3 resolveSem, the OUTER RP
+	// resolution). Non-blocking acquire; saturated ⇒ shed WITHOUT negative-caching
+	// (load-shedding, not an issuer failure). Released on completion (defer).
+	if !r.acquireIssuerResolveSlot() {
+		logError("federation: nested issuer-resolution concurrency limit reached; shedding (unknown-client)",
+			"issuer", iss, "trust_mark_type", reqType)
+		return nil, fmt.Errorf("federation-resolved issuer %q: nested-resolution concurrency limit reached", iss)
+	}
+	defer r.releaseIssuerResolveSlot()
 
 	// 1) Resolve the ISSUER's trust chain to a CONFIGURED anchor (slice 2,
 	//    fail-closed). Failure = not a federation member / no configured anchor /
-	//    forged chain → this issuer is not trusted → reject.
+	//    forged chain → this issuer is not trusted → reject. NEGATIVE-cache the
+	//    failure (short TTL) so a repeated/distinct-request dead-or-slow iss is
+	//    not re-resolved every time (fix c); the short TTL re-attempts a legit
+	//    issuer whose superior was transiently down.
 	chain, err := r.resolver.ResolveTrustChain(ctx, iss)
 	if err != nil {
+		r.resolvedIssuers.recordNegative(iss, now)
 		logError("federation: trust-mark issuer chain resolution failed", "issuer", iss, "trust_mark_type", reqType, "error", err)
 		return nil, fmt.Errorf("federation-resolved issuer %q: chain resolution failed: %w", iss, err)
 	}
@@ -478,6 +727,9 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 	if _, ok := authorizedTypes[reqType]; !ok {
 		// The issuer chains to a configured anchor but that anchor does not
 		// authorize it for reqType (not listed, or no trust_mark_issuers at all).
+		// A genuine authorization MISS (the resolution succeeded but the issuer is
+		// not authorized) — negative-cache it so a repeated probe doesn't re-resolve.
+		r.resolvedIssuers.recordNegative(iss, now)
 		logError("federation: anchor does not authorize trust-mark issuer for type",
 			"issuer", iss, "anchor", chain.AnchorEntityID, "trust_mark_type", reqType)
 		return nil, fmt.Errorf("federation-resolved issuer %q not anchor-authorized for type %q", iss, reqType)
@@ -489,6 +741,9 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 	// the keys it carries are chain-vouched.
 	keys := issuerChainKeys(chain)
 	if len(keys) == 0 {
+		// Resolved but unusable (no keys) — negative-cache so it isn't re-resolved
+		// on every probe.
+		r.resolvedIssuers.recordNegative(iss, now)
 		logError("federation: resolved trust-mark issuer has no chain-validated keys", "issuer", iss)
 		return nil, fmt.Errorf("federation-resolved issuer %q has no chain-validated keys", iss)
 	}
@@ -506,6 +761,31 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 		})
 	}
 	return keys, nil
+}
+
+// acquireIssuerResolveSlot tries to take one of the bounded GLOBAL nested-
+// resolution slots WITHOUT blocking. true ⇒ a slot was acquired (the caller MUST
+// releaseIssuerResolveSlot); false ⇒ the semaphore is saturated (fail-closed:
+// the caller sheds the resolution and the mark goes unsatisfied — oracle-safe).
+// A nil semaphore (never constructed on the active path) is treated as unbounded.
+func (r *trustMarkRequirement) acquireIssuerResolveSlot() bool {
+	if r.issuerResolveSem == nil {
+		return true
+	}
+	select {
+	case r.issuerResolveSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseIssuerResolveSlot returns a slot taken by acquireIssuerResolveSlot.
+func (r *trustMarkRequirement) releaseIssuerResolveSlot() {
+	if r.issuerResolveSem == nil {
+		return
+	}
+	<-r.issuerResolveSem
 }
 
 // anchorAuthorizedTypes computes, from the matched anchor's validated

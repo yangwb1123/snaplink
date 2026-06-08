@@ -1229,6 +1229,16 @@ func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, err
 		// slice-4b configured-issuer gate is byte-identical). Only consulted when
 		// RequiredTrustMarkTypes is non-empty.
 		AllowFederationResolvedTrustMarkIssuers: cfg.AllowFederationResolvedTrustMarkIssuers,
+		// Slice-4c DoS bounds on the NESTED issuer-resolution fan-out (only
+		// consulted on the federation-resolved path). Unset ⇒ the SDK applies its
+		// defaults (4 distinct issuers/request, 8 concurrent nested resolutions,
+		// 30s/1024 negative cache, 64 leaf-mark cap). Bound a malicious already-
+		// chained RP's distinct-iss-mark amplification.
+		MaxResolvedIssuersPerRequest:       cfg.ResolutionMaxResolvedIssuersPerRequest,
+		MaxConcurrentIssuerResolutions:     cfg.ResolutionMaxConcurrentIssuerResolutions,
+		ResolvedIssuerNegativeCacheTTL:     cfg.ResolvedIssuerNegativeCacheTTL,
+		ResolvedIssuerNegativeCacheMaxSize: cfg.ResolvedIssuerNegativeCacheMaxSize,
+		MaxLeafTrustMarks:                  cfg.MaxLeafTrustMarks,
 	}, nil
 }
 

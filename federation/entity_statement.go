@@ -399,6 +399,69 @@ type Config struct {
 	// Requires a resolver with configured trust anchors (otherwise inert). Only
 	// consulted when RequiredTrustMarkTypes is non-empty.
 	AllowFederationResolvedTrustMarkIssuers bool
+
+	// ----- federation-resolved issuer DoS bounds (slice 4c hardening) ---------
+	//
+	// The federation-resolved issuer path is a NEW outbound trigger DEEPER than
+	// the slice-3 surface: an already-chain-validated leaf can carry an arbitrary
+	// `trust_marks` array (the 256KiB leaf cap allows ~1500 entries), and each
+	// mark with a DISTINCT iss that is not operator-configured fires its OWN full
+	// nested ResolveTrustChain(iss) (~a chain-depth-fanout of fetches, each with
+	// its own timeout) BEFORE the mark's signature is even checked. Without a
+	// bound, one already-trusted-but-malicious RP amplifies a single registration
+	// into hundreds of uncached, concurrency-unbounded nested resolutions — a DoS
+	// on the registration/login path. These three knobs bound the per-call
+	// fan-out, the global concurrency, and re-resolution of dead issuers. They
+	// are consulted ONLY on the federation-resolved path (the flag ON); with the
+	// flag off they are never touched (byte-identical to slice 4b). All are
+	// fail-CLOSED + oracle-safe: a budget-exceeded / semaphore-saturated /
+	// negative-cached issuer simply does not satisfy the required type (the RP
+	// stays unknown — the same path as any unsatisfied mark).
+
+	// MaxResolvedIssuersPerRequest bounds the number of DISTINCT issuers a single
+	// trust-mark validation (one RP registration) will federation-RESOLVE. The
+	// candidate iss values are deduped, so N marks naming the SAME iss cost ONE
+	// resolution; beyond the cap, further distinct-iss resolutions are NOT
+	// attempted (the required types they would have satisfied go unsatisfied →
+	// fail-closed). This caps the per-RP fan-out regardless of how many
+	// distinct-iss marks the leaf carries. 0 ⇒ DefaultMaxResolvedIssuersPerRequest
+	// (4). Only consulted on the federation-resolved path.
+	MaxResolvedIssuersPerRequest int
+
+	// MaxConcurrentIssuerResolutions bounds the GLOBAL number of CONCURRENT
+	// nested issuer resolutions across ALL in-flight registrations (independent of
+	// the slice-3 resolveSem, which governs the OUTER RP resolution — already
+	// consumed by the time the trust-mark gate runs). A non-blocking acquire that
+	// FAILS CLOSED when saturated (the resolution is shed, the mark not satisfied,
+	// oracle-safe). 0 ⇒ DefaultMaxConcurrentIssuerResolutions (8). Only consulted
+	// on the federation-resolved path.
+	MaxConcurrentIssuerResolutions int
+
+	// ResolvedIssuerNegativeCacheTTL is how long a FAILED/shed nested issuer
+	// resolution is remembered (keyed by issuer Entity ID) so a repeated or
+	// distinct-request dead/slow iss is not re-resolved every time. SHORT on
+	// purpose (it only DELAYS re-attempts; a legit issuer whose superior was
+	// transiently down re-attempts soon — never permanently pinned out). 0 ⇒
+	// DefaultResolvedIssuerNegativeCacheTTL (30s). Only consulted on the
+	// federation-resolved path.
+	ResolvedIssuerNegativeCacheTTL time.Duration
+
+	// ResolvedIssuerNegativeCacheMaxSize caps the resolved-issuer negative cache's
+	// entry count so the cache itself cannot become an unbounded-memory DoS. At
+	// the cap, expired entries are swept then the soonest-to-expire is evicted. 0
+	// ⇒ DefaultResolvedIssuerNegativeCacheMaxSize (1024). Only consulted on the
+	// federation-resolved path.
+	ResolvedIssuerNegativeCacheMaxSize int
+
+	// MaxLeafTrustMarks caps how many trust_marks entries a validated leaf may
+	// carry before the trust-mark scan is bounded (defense-in-depth against an
+	// absurd-cardinality leaf — the 256KiB cap permits ~1500 entries, far beyond
+	// any legitimate RP). A leaf exceeding the cap fails the trust-mark gate
+	// CLOSED (oracle-safe; the RP stays unknown) rather than scanning + resolving
+	// thousands of marks. 0 ⇒ DefaultMaxLeafTrustMarks (64). Consulted on BOTH
+	// paths (it is a cheap structural bound), but only ever exercised when the
+	// trust-mark gate is live (RequiredTrustMarkTypes non-empty).
+	MaxLeafTrustMarks int
 }
 
 // TrustMarkIssuer names one operator-AUTHORIZED Trust Mark Issuer: its Entity
@@ -470,6 +533,34 @@ const (
 	// when Config.ResolutionNegativeCacheMaxSize is unset, so the cache cannot
 	// itself become an unbounded-memory DoS.
 	DefaultResolutionNegativeCacheMaxSize = 1024
+
+	// DefaultMaxResolvedIssuersPerRequest bounds DISTINCT federation-resolved
+	// issuers per trust-mark validation when
+	// Config.MaxResolvedIssuersPerRequest is unset. SMALL (4): a legitimate RP
+	// carries marks from a handful of issuers at most, so 4 distinct nested
+	// resolutions per registration is generous while capping a malicious leaf's
+	// ~1500-distinct-iss fan-out.
+	DefaultMaxResolvedIssuersPerRequest = 4
+	// DefaultMaxConcurrentIssuerResolutions bounds GLOBAL concurrent nested issuer
+	// resolutions when Config.MaxConcurrentIssuerResolutions is unset. 8 caps the
+	// aggregate nested-resolution fan-out across all in-flight registrations
+	// independent of the slice-3 outer-resolution semaphore.
+	DefaultMaxConcurrentIssuerResolutions = 8
+	// DefaultResolvedIssuerNegativeCacheTTL is the default lifetime of a cached
+	// FAILED/shed nested issuer resolution when
+	// Config.ResolvedIssuerNegativeCacheTTL is unset. SHORT (30s) so a dead/slow
+	// iss is blunted without pinning a legit issuer out long (mirrors the slice-3
+	// resolution negative-cache TTL).
+	DefaultResolvedIssuerNegativeCacheTTL = 30 * time.Second
+	// DefaultResolvedIssuerNegativeCacheMaxSize caps the resolved-issuer negative
+	// cache's entries when Config.ResolvedIssuerNegativeCacheMaxSize is unset, so
+	// the cache cannot itself become an unbounded-memory DoS.
+	DefaultResolvedIssuerNegativeCacheMaxSize = 1024
+	// DefaultMaxLeafTrustMarks caps a validated leaf's trust_marks entries when
+	// Config.MaxLeafTrustMarks is unset. 64 is far beyond any legitimate RP
+	// (which carries a handful of conformance marks) yet a hard ceiling against an
+	// absurd-cardinality leaf (the 256KiB cap allows ~1500 entries).
+	DefaultMaxLeafTrustMarks = 64
 )
 
 // entityStatementTTL returns the configured statement TTL or the default.
@@ -530,6 +621,51 @@ func (c *Config) resolutionNegativeCacheMaxSize() int {
 		return DefaultResolutionNegativeCacheMaxSize
 	}
 	return c.ResolutionNegativeCacheMaxSize
+}
+
+// maxResolvedIssuersPerRequest returns the configured per-call distinct-issuer
+// resolution budget or the default.
+func (c *Config) maxResolvedIssuersPerRequest() int {
+	if c == nil || c.MaxResolvedIssuersPerRequest <= 0 {
+		return DefaultMaxResolvedIssuersPerRequest
+	}
+	return c.MaxResolvedIssuersPerRequest
+}
+
+// maxConcurrentIssuerResolutions returns the configured global nested-resolution
+// concurrency bound or the default.
+func (c *Config) maxConcurrentIssuerResolutions() int {
+	if c == nil || c.MaxConcurrentIssuerResolutions <= 0 {
+		return DefaultMaxConcurrentIssuerResolutions
+	}
+	return c.MaxConcurrentIssuerResolutions
+}
+
+// resolvedIssuerNegativeCacheTTL returns the configured resolved-issuer negative
+// cache TTL or the default.
+func (c *Config) resolvedIssuerNegativeCacheTTL() time.Duration {
+	if c == nil || c.ResolvedIssuerNegativeCacheTTL <= 0 {
+		return DefaultResolvedIssuerNegativeCacheTTL
+	}
+	return c.ResolvedIssuerNegativeCacheTTL
+}
+
+// resolvedIssuerNegativeCacheMaxSize returns the configured resolved-issuer
+// negative cache entry cap or the default.
+func (c *Config) resolvedIssuerNegativeCacheMaxSize() int {
+	if c == nil || c.ResolvedIssuerNegativeCacheMaxSize <= 0 {
+		return DefaultResolvedIssuerNegativeCacheMaxSize
+	}
+	return c.ResolvedIssuerNegativeCacheMaxSize
+}
+
+// maxLeafTrustMarks returns the configured leaf trust_marks count cap or the
+// default.
+func (c *Config) maxLeafTrustMarks() int {
+	if c == nil || c.MaxLeafTrustMarks <= 0 {
+		return DefaultMaxLeafTrustMarks
+	}
+	return c.MaxLeafTrustMarks
 }
 
 // EntityHandler holds the immutable federation-entity wiring: the operator

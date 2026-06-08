@@ -472,6 +472,48 @@ type FederationConfig struct {
 	// is the gate. Only relevant when required_trust_mark_types is non-empty +
 	// auto_register is enabled.
 	AllowFederationResolvedTrustMarkIssuers bool `yaml:"allow_federation_resolved_trust_mark_issuers"`
+
+	// ----- federation-resolved issuer DoS bounds (slice 4c hardening) ---------
+	//
+	// The federation-resolved issuer path fires a NESTED trust-chain resolution
+	// for each distinct, non-configured mark iss BEFORE the mark signature check.
+	// An already-chained but malicious RP can carry many distinct-iss marks (the
+	// 256KiB leaf cap allows ~1500), amplifying one registration into hundreds of
+	// uncached, concurrency-unbounded nested resolutions — a DoS on the
+	// registration/login path. These bound the per-request fan-out, the global
+	// concurrency, and re-resolution of dead issuers. All fail-closed +
+	// oracle-safe; only consulted on the federation-resolved path (the flag ON).
+	// Each 0 ⇒ the SDK default. Only relevant when
+	// allow_federation_resolved_trust_mark_issuers is true.
+
+	// ResolutionMaxResolvedIssuersPerRequest bounds DISTINCT issuers a single RP
+	// registration will federation-RESOLVE (deduped); beyond it, further
+	// distinct-iss resolutions are not attempted (the required types they would
+	// satisfy go unsatisfied → fail-closed). 0 ⇒ SDK default (4).
+	ResolutionMaxResolvedIssuersPerRequest int `yaml:"resolution_max_resolved_issuers_per_request"`
+
+	// ResolutionMaxConcurrentIssuerResolutions bounds GLOBAL concurrent NESTED
+	// issuer resolutions across all in-flight registrations (independent of
+	// resolution_max_concurrency, which governs the OUTER RP resolution).
+	// Saturated ⇒ the nested resolution is shed (fail-closed). 0 ⇒ SDK default (8).
+	ResolutionMaxConcurrentIssuerResolutions int `yaml:"resolution_max_concurrent_issuer_resolutions"`
+
+	// ResolvedIssuerNegativeCacheTTL is how long a FAILED/shed nested issuer
+	// resolution is remembered (keyed by issuer Entity ID) so a dead/slow iss is
+	// not re-resolved on every distinct request. SHORT on purpose. 0 ⇒ SDK
+	// default (30s).
+	ResolvedIssuerNegativeCacheTTL time.Duration `yaml:"resolved_issuer_negative_cache_ttl"`
+
+	// ResolvedIssuerNegativeCacheMaxSize caps the resolved-issuer negative cache's
+	// entries so it cannot itself become an unbounded-memory DoS. 0 ⇒ SDK default
+	// (1024).
+	ResolvedIssuerNegativeCacheMaxSize int `yaml:"resolved_issuer_negative_cache_max_size"`
+
+	// MaxLeafTrustMarks caps how many trust_marks entries a validated leaf may
+	// carry before the trust-mark scan is bounded (defense-in-depth against an
+	// absurd-cardinality leaf). A leaf over the cap fails the gate closed. 0 ⇒ SDK
+	// default (64). Relevant whenever required_trust_mark_types is non-empty.
+	MaxLeafTrustMarks int `yaml:"max_leaf_trust_marks"`
 }
 
 // TrustMarkIssuerConfig names one operator-authorized Trust Mark Issuer for the
