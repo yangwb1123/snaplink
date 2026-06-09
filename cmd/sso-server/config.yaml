@@ -563,8 +563,11 @@ authenticators:
 security:
   body_limit:
     # Cap request body size. Generous for any auth-flow payload,
-    # blocks gigabyte-class DoS.
-    max_bytes: 1048576       # 1 MiB
+    # blocks gigabyte-class DoS. SECURE-BY-DEFAULT: omitting this (or 0)
+    # applies the conservative 1 MiB default so an omitted block is bounded,
+    # not unbounded. Set max_bytes: -1 for the explicit unlimited escape
+    # hatch (e.g. when a trusted edge already caps bodies).
+    max_bytes: 1048576       # 1 MiB (0/omitted = same default; -1 = unlimited)
     # Per-prefix overrides (longest-match wins). 0 = unlimited for
     # that prefix — escape hatch for endpoints that legitimately
     # accept large bodies (PAR request objects, WebAuthn

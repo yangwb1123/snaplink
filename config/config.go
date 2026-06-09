@@ -1634,10 +1634,22 @@ type DPoPNonceConfig struct {
 	TTL     time.Duration `yaml:"ttl"`
 }
 
-// BodyLimitConfig caps request body size. MaxBytes=0 disables the
-// global limit (sso.WithBodyLimit is not wired). Typical production
-// value: 1048576 (1 MiB) — generous for any auth-flow payload,
-// blocks gigabyte-class DoS.
+// DefaultBodyLimitBytes is the conservative global request-body cap applied
+// when body_limit.max_bytes is omitted (0). 1 MiB is generous for any
+// auth-flow payload (even a signed+encrypted JAR request object) while
+// blocking the gigabyte-class allocation a malicious /token `request` could
+// otherwise force before size validation. Secure-by-default: an operator who
+// omits the body_limit block is bounded, not unbounded; the explicit
+// unlimited escape hatch is max_bytes: -1 (e.g. when a trusted edge already
+// caps bodies), and per-prefix overrides relax it for legitimately-large
+// endpoints (PAR, WebAuthn attestation).
+const DefaultBodyLimitBytes int64 = 1 << 20
+
+// BodyLimitConfig caps request body size. MaxBytes=0 (or omitted) applies the
+// conservative [DefaultBodyLimitBytes] (1 MiB) default; MaxBytes<0 is the
+// explicit "unlimited" escape hatch (no global cap wired); MaxBytes>0 sets
+// that exact cap. applyDefaults normalizes these into the >0 / 0 that the two
+// wiring sites (ServerOptions + cmd) read. Typical production value: 1048576.
 //
 // Overrides applies a per-prefix override (longest-match wins). Use
 // a value of 0 in an override to mean "unlimited for this prefix"
@@ -2740,6 +2752,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Authenticators.KeyPair != nil && c.Authenticators.KeyPair.MaxClockSkew == 0 {
 		c.Authenticators.KeyPair.MaxClockSkew = authenticators.DefaultKeyPairClockSkew
+	}
+	// Body-limit secure-by-default (ROADMAP footgun fix): omitted (0) → the
+	// conservative [DefaultBodyLimitBytes] cap; negative → explicit unlimited
+	// (normalized to 0 so the >0 wiring gates skip). See [BodyLimitConfig].
+	switch {
+	case c.Security.BodyLimit.MaxBytes == 0:
+		c.Security.BodyLimit.MaxBytes = DefaultBodyLimitBytes
+	case c.Security.BodyLimit.MaxBytes < 0:
+		c.Security.BodyLimit.MaxBytes = 0
 	}
 }
 

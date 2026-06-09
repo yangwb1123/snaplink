@@ -87,14 +87,33 @@ func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
 	}
 }
 
-func TestSecurityConfig_EmptyBlockSkipsAllThree(t *testing.T) {
-	// Absent security: block → no middleware options emitted.
+func TestSecurityConfig_EmptyBlockAppliesBodyLimitDefault(t *testing.T) {
+	// Absent security: block → rate-limit + CORS stay skipped, but the
+	// conservative body-limit DEFAULT is now applied by applyDefaults
+	// (secure-by-default: an omitted body_limit is bounded, not unbounded).
+	// So WithIssuer + WithBodyLimit(default) = exactly 2 opts.
 	p := writeTemp(t, "no-sec.yaml", "server: {issuer: t, listen: :8080}\n")
 	cfg, _ := LoadFromSources(context.Background(), NewFileSource(p))
+	if cfg.Security.BodyLimit.MaxBytes != DefaultBodyLimitBytes {
+		t.Errorf("omitted body_limit normalized to %d, want default %d",
+			cfg.Security.BodyLimit.MaxBytes, DefaultBodyLimitBytes)
+	}
 	opts := cfg.ServerOptions()
-	// Only WithIssuer survives — the three deprecated TTL/base-url
-	// options no longer emit.
+	if len(opts) != 2 {
+		t.Errorf("got %d opts; expected exactly 2 (WithIssuer + WithBodyLimit default)", len(opts))
+	}
+}
+
+func TestSecurityConfig_NegativeBodyLimitIsUnlimited(t *testing.T) {
+	// max_bytes: -1 is the explicit unlimited escape hatch — normalized to
+	// 0 so no WithBodyLimit is wired (just WithIssuer survives).
+	p := writeTemp(t, "unlimited.yaml", "server: {issuer: t, listen: :8080}\nsecurity: {body_limit: {max_bytes: -1}}\n")
+	cfg, _ := LoadFromSources(context.Background(), NewFileSource(p))
+	if cfg.Security.BodyLimit.MaxBytes != 0 {
+		t.Errorf("negative body_limit normalized to %d, want 0 (unlimited)", cfg.Security.BodyLimit.MaxBytes)
+	}
+	opts := cfg.ServerOptions()
 	if len(opts) != 1 {
-		t.Errorf("got %d opts; expected exactly 1 (just WithIssuer)", len(opts))
+		t.Errorf("got %d opts; expected exactly 1 (just WithIssuer, body limit unwired)", len(opts))
 	}
 }
