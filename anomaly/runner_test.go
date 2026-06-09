@@ -243,6 +243,99 @@ func TestAsyncAnomalyRunner_MultipleAnomaliesPerEvent(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return sink.count() == 2 })
 }
 
+// blockingDetector blocks in Inspect until either its release channel
+// is closed OR the ctx the runner handed it is cancelled. It records
+// which path it took so a test can prove the inspect deadline fired.
+type blockingDetector struct {
+	name     string
+	release  chan struct{}
+	ctxErr   atomic.Value // error: the ctx.Err() observed when cut off
+	finished atomic.Bool
+}
+
+func (b *blockingDetector) Name() string { return b.name }
+func (b *blockingDetector) Inspect(ctx context.Context, _ *LoginEvent) ([]Signal, error) {
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		b.ctxErr.Store(ctx.Err())
+	}
+	b.finished.Store(true)
+	return nil, nil
+}
+
+func TestWithInspectTimeout_CutsOffSlowDetector(t *testing.T) {
+	// A detector that would block indefinitely must be cut off by the
+	// configured per-detector inspect deadline — not hang the worker.
+	d := &blockingDetector{name: "slow", release: make(chan struct{})}
+	defer close(d.release) // never actually released — deadline must fire
+	r := NewRunner([]Detector{d}, nil,
+		WithInspectTimeout(20*time.Millisecond),
+	)
+	if r.inspectTimeout != 20*time.Millisecond {
+		t.Fatalf("WithInspectTimeout not applied: got %v", r.inspectTimeout)
+	}
+	r.Start()
+	defer func() { _ = r.Close(context.Background()) }()
+
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice"})
+	// The detector must finish via the ctx-deadline path, not hang.
+	waitFor(t, time.Second, func() bool { return d.finished.Load() })
+	if got := d.ctxErr.Load(); got == nil || got.(error) != context.DeadlineExceeded {
+		t.Fatalf("detector should have been cut off by inspect deadline; ctxErr=%v", got)
+	}
+}
+
+func TestWithInspectTimeout_DefaultsToFiveSeconds(t *testing.T) {
+	// Unset → SDK default 5s (honor the 0→default convention).
+	r := NewRunner([]Detector{&recordingDetector{name: "d"}}, nil)
+	if r.inspectTimeout != 5*time.Second {
+		t.Fatalf("default inspect timeout should be 5s; got %v", r.inspectTimeout)
+	}
+	// A non-positive value is rejected (guard), leaving the default.
+	r2 := NewRunner([]Detector{&recordingDetector{name: "d"}}, nil,
+		WithInspectTimeout(0),
+		WithInspectTimeout(-1),
+	)
+	if r2.inspectTimeout != 5*time.Second {
+		t.Fatalf("non-positive inspect timeout must be ignored; got %v", r2.inspectTimeout)
+	}
+}
+
+func TestWithMetricsCallbacks_DispatchedFiresPerOfferedEvent(t *testing.T) {
+	// The dispatched (received) counter is the offered-load denominator:
+	// one Inc per event actually offered to the queue — including events
+	// that then get dropped — but NOT for nil events or a closed runner.
+	var dispatched atomic.Int32
+	d := &recordingDetector{name: "d"}
+	r := NewRunner([]Detector{d}, nil,
+		WithQueueSize(1),
+		WithMetricsCallbacks(
+			nil,                          // detected
+			nil,                          // dropped
+			nil,                          // inspectError
+			func() { dispatched.Add(1) }, // dispatched
+		),
+	)
+	// NOT starting workers — events pile into the queue / drop, but the
+	// dispatched counter must still count every offered event.
+	for range 5 {
+		r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice"})
+	}
+	// A nil event is a no-op and must NOT increment.
+	r.Dispatch(context.Background(), nil)
+	if got := dispatched.Load(); got != 5 {
+		t.Fatalf("dispatched should fire once per offered event (5); got %d", got)
+	}
+
+	// After Close, Dispatch is a no-op and must NOT increment.
+	_ = r.Close(context.Background())
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "bob"})
+	if got := dispatched.Load(); got != 5 {
+		t.Fatalf("post-close Dispatch must not increment dispatched; got %d", got)
+	}
+}
+
 func TestRecorderAnomalySink_NilRecorderReturnsNil(t *testing.T) {
 	// Defensive: NewRecorderSink with nil recorder returns
 	// nil so embedders can wire `NewRecorderSink(maybeNil)`

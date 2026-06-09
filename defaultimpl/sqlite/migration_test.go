@@ -15,7 +15,8 @@ import (
 // TestMigration_RefreshTokensBackfillsLegacyColumns proves the
 // refresh_tokens Func migration upgrades a pre-family-tracker database:
 // an old table missing family_id/resources/authorization_details/sid
-// gets them added (preserving existing rows), and is stamped v1.
+// gets them added (preserving existing rows), then the additive v2
+// rotation-velocity ledger is applied, stamping the namespace at v2.
 func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "rt.db"))
@@ -50,8 +51,12 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 1 {
-		t.Errorf("version = %d, want 1", v)
+	// The v2 rotation-velocity table must also exist + be stamped.
+	if _, err := db.Exec(`SELECT family_id, count, window_start_ns FROM refresh_token_rotations`); err != nil {
+		t.Errorf("v2 rotation table not created: %v", err)
+	}
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 2 {
+		t.Errorf("version = %d, want 2", v)
 	}
 }
 

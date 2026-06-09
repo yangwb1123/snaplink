@@ -71,6 +71,18 @@ type Server struct {
 	regionMiddlewareOpts    region.MiddlewareOptions
 	invalidationBus         cluster.Bus
 
+	// clientStoreCacheTTL opts into the per-login ClientStore metadata
+	// cache (WithClientStoreCache). > 0 ⇒ NewServer decorates s.clientStore
+	// with clientStoreCache post-options (the same slot as the federation
+	// registration decorator, so it composes order-independently and wraps
+	// the federation store too). <= 0 (the default) ⇒ NO wrapper, every
+	// s.clientStore.Get is byte-identical to a non-caching build. The cache
+	// is metadata-only: ValidateSecret always bypasses it (§2). clientStoreCacheRef
+	// is the constructed decorator (nil when unwired), retained so
+	// InvalidateClientCache can evict locally without re-asserting the type.
+	clientStoreCacheTTL time.Duration
+	clientStoreCacheRef *clientStoreCache
+
 	// SPIFFE JWT-SVID acceptance (cluster C1, mesh-native service-to-
 	// service identity). When spiffeValidator is wired
 	// (WithSPIFFEJWTSVID), a token-exchange subject_token_type=jwt whose
@@ -185,14 +197,56 @@ type Server struct {
 	// wiring time) so the event handler can route an announced key to the
 	// matching-alg issuer without re-querying JWKS per event. Built lazily,
 	// once, by ensureIssuerAlgs.
-	issuerAlgsOnce                 sync.Once
-	issuerAlgs                     map[string]string
+	issuerAlgsOnce sync.Once
+	issuerAlgs     map[string]string
+
+	// coordinatedKeyRotation opts this Server into deadline-coordinated
+	// same-kid signing-key rotation cutover (WithCoordinatedKeyRotation). When
+	// true AND an invalidation bus is wired, a local rotation PUBLISHES a
+	// cluster.KindSigningKeyRotation Event (the demoted + new kid + a
+	// now+GracePeriod retire deadline) and a received such Event DEFERS the
+	// demoted kid's retirement to that deadline (only ever widening the verify
+	// window — see deferSigningKeyRetire) while adopting the new kid verify-only
+	// at once. False (the default) ⇒ the publish side is a no-op and a received
+	// KindSigningKeyRotation Event is ignored, so behavior is byte-identical to
+	// a build without the feature. The bus carries the Event regardless, but no
+	// armed subscriber acts on it — safe for a mixed-armed cluster.
+	coordinatedKeyRotation bool
+	// pendingSigningRetires tracks the deferred-retire timers this replica has
+	// scheduled in response to coordinated-rotation Events, keyed by the demoted
+	// kid, so a clean shutdown (the subscriber ctx cancel) stops every pending
+	// retire (no leaked goroutine) and a duplicate Event for the same kid never
+	// stacks two timers. pendingSigningRetireDeadlines holds each timer's
+	// currently-promised target instant so an EXTEND only ever pushes it LATER
+	// (the fail-safe never-shorten rule). Both guarded by pendingSigningRetireMu.
+	pendingSigningRetireMu        sync.Mutex
+	pendingSigningRetires         map[string]*pendingRetire
+	pendingSigningRetireDeadlines map[string]time.Time
+
+	// crossReplicaRevocation opts this Server into cross-replica access-token
+	// revocation propagation (WithCrossReplicaRevocation). When true AND an
+	// invalidation bus is wired, a local /token/revoke that hit at least one
+	// issuer PUBLISHES a cluster.KindTokenRevoked Event, and a received such
+	// Event ADDS the carried token to this replica's per-issuer deny-set WITHOUT
+	// re-publishing (the adopt path is local-only — no broadcast loop). False
+	// (the default) ⇒ the publish side is a no-op and a received
+	// KindTokenRevoked Event is ignored, so revocation stays per-process,
+	// byte-identical to a build without the feature.
+	crossReplicaRevocation bool
+	// coordinatedRetireMinDeferralOverride / MaxOverride let tests shrink the
+	// clamp floor/ceiling so the retire fires in milliseconds instead of the
+	// 1-minute production floor. 0 ⇒ the production const. Never set in
+	// production (no Option wires them — only the test seam does).
+	coordinatedRetireMinDeferralOverride time.Duration
+	coordinatedRetireMaxDeferralOverride time.Duration
+
 	riskScorer                     spi.RiskScorer
 	mfaProvider                    spi.MFAProvider
 	mfaChallengeStore              spi.MFAChallengeStore
 	mfaChallengeTTL                time.Duration
 	anomalyRunner                  *anomaly.Runner
 	metrics                        *metrics.Metrics
+	tenantMetricsAllowlist         map[string]struct{} // nil/empty = per-tenant metrics off (§5)
 	rateLimitPolicy                *ratelimit.Policy
 	bodyLimit                      int64
 	bodyLimitByPath                map[string]int64 // exact-prefix overrides; longest prefix wins
@@ -370,6 +424,14 @@ func NewServer(opts ...Option) *Server {
 	if s.caepTransmitter != nil && s.auditor != nil {
 		s.auditor.AddSink(s.caepTransmitter)
 	}
+	// Per-tenant metrics (§5): register the opt-in vectors when BOTH a
+	// tenant allowlist AND a metrics registry are wired. Done post-options
+	// (order between WithMetrics and WithTenantMetricsAllowlist is
+	// irrelevant); EnableTenantMetrics is idempotent. Without both, the
+	// vectors stay nil and nothing is registered or emitted (byte-identical).
+	if len(s.tenantMetricsAllowlist) > 0 && s.metrics != nil {
+		s.metrics.EnableTenantMetrics()
+	}
 	// OpenID Federation 1.0 automatic client registration (slice 3). Decorate
 	// the wired ClientStore so an authorization-endpoint Get MISS for a valid
 	// HTTPS federation entity ID resolves the RP's trust chain on-the-fly and
@@ -412,6 +474,24 @@ func NewServer(opts ...Option) *Server {
 			// configured-issuer-signed mark of each required type.
 			federation.WithRegistrationTrustMarks(fedCfg),
 		)
+	}
+	// Opt-in per-login ClientStore metadata cache (WithClientStoreCache).
+	// Decorate LAST (after the federation registration decorator above) so
+	// the cache is the OUTERMOST layer: a Get hit short-circuits before the
+	// inner federation/operator store, and the cache transparently caches
+	// the federation decorator's on-miss derived clients too. Done
+	// post-options so order between WithClientStore / WithClientStoreCache /
+	// WithFederationAutoRegistration is irrelevant. Only when a positive TTL
+	// was requested AND a ClientStore is wired; otherwise no wrapper is
+	// constructed and every s.clientStore.Get is byte-identical to a
+	// non-caching build. ValidateSecret bypasses the cache (§2).
+	if s.clientStoreCacheTTL > 0 && s.clientStore != nil {
+		var onOutcome func(string)
+		if s.metrics != nil {
+			onOutcome = s.metrics.ObserveClientStoreCache
+		}
+		s.clientStoreCacheRef = newClientStoreCache(s.clientStore, s.clientStoreCacheTTL, onOutcome)
+		s.clientStore = s.clientStoreCacheRef
 	}
 	return s
 }
@@ -603,6 +683,44 @@ func WithUserProvider(up UserProvider) Option {
 // WithClientStore sets the client application store.
 func WithClientStore(cs ClientStore) Option {
 	return func(s *Server) { s.clientStore = cs }
+}
+
+// WithClientStoreCache opts into an OPTIONAL per-login TTL cache over the
+// wired ClientStore. Every interactive login, /token grant, and
+// tenant-bound request reads the client metadata via clientStore.Get; at
+// high QPS with a SQLite/Redis backend that is a measurable per-request
+// round-trip. This decorator caches successful Gets of EXISTING clients
+// for ttl (default DefaultClientStoreCacheTTL when ttl <= 0), so the hot
+// path skips the store read within the window.
+//
+// It is SECURITY-PRESERVING by construction (§2):
+//
+//   - ValidateSecret (the credential / HTTP-Basic decision) ALWAYS
+//     bypasses the cache and hits the inner store — a stale cached secret
+//     check is forbidden.
+//   - MISSES are never cached: a just-created client is visible
+//     immediately, and a deleted client reverts to the inner store's
+//     unknown -> invalid_client behavior on the next Get.
+//   - Returned clients are deep CLONES, so a caller mutating its result
+//     can't corrupt the cached snapshot.
+//   - Update/Delete/RotateSecret evict the affected entry; admin + DCR
+//     mutation paths additionally call InvalidateClientCache, which evicts
+//     locally AND publishes a cross-replica bus Event so peers converge
+//     before their own TTL elapses.
+//
+// The accepted tradeoff (same as tenant.suspension_check.cache_ttl): a
+// client deactivated, or whose metadata changed, mid-window keeps being
+// served the prior value for at most ttl unless an explicit invalidation
+// evicts it sooner.
+//
+// ttl <= 0 / option absent ⇒ NO wrapper is constructed (byte-identical to
+// a non-caching build). Decoration happens post-options in NewServer, the
+// SAME slot as the federation registration decorator, so it composes
+// order-independently with WithClientStore / WithFederationAutoRegistration
+// (the cache wraps the federation store, caching its on-miss derived
+// clients too).
+func WithClientStoreCache(ttl time.Duration) Option {
+	return func(s *Server) { s.clientStoreCacheTTL = ttl }
 }
 
 // WithSessionManager sets the session manager.
@@ -1281,6 +1399,79 @@ func WithInvalidationBus(bus cluster.Bus) Option {
 	return func(srv *Server) { srv.invalidationBus = bus }
 }
 
+// WithCoordinatedKeyRotation opts this Server into deadline-coordinated
+// same-kid signing-key rotation cutover. It REQUIRES an invalidation bus
+// ([WithInvalidationBus]); without one it is inert.
+//
+// THE PROBLEM it closes: signing-key rotation + retirement run on INDEPENDENT
+// per-replica timers (defaultimpl.StartRotation/scheduleRetire). During a
+// rolling deploy a kid demoted-then-retired early on replica A leaves a token
+// A signed under it hitting a hard "unknown kid" 401 on a lagging replica B
+// that already advanced its own retire timer (or whose grace window was shorter
+// in clock terms). The leaderless aggregation (signingkeys/) answers "can B
+// verify A's kid", but NOT "do all replicas retire the OLD kid at the same
+// instant".
+//
+// THE FIX: when armed, [RotationConfig.OnRotate]'s cmd callback publishes a
+// cluster.KindSigningKeyRotation Event carrying the demoted kid, the new kid,
+// and a retire deadline (= now + the SAME RotationConfig.GracePeriod). Every
+// armed replica that receives it DEFERS the demoted kid's retirement to that
+// deadline (adopting the new kid verify-only at once). The deferral only ever
+// WIDENS a replica's verify window — a dropped or garbage Event merely lets the
+// replica's own per-replica grace-window retire fire as the fallback. It can
+// never cause a replica to drop the old kid EARLY (the 401 this exists to
+// prevent), honoring the AGENTS.md §2 "rotation serves outgoing+incoming keys"
+// invariant.
+//
+// The deadline is wall-clock-coordinated, so the same NTP discipline AGENTS.md
+// §2 mandates for session expiry applies: ops MUST slew, never step, the clock
+// (chrony). A backward step only DELAYS a retire (fail-safe), never advances it.
+//
+// No-op when unset (the default) OR when no bus is wired: the publish side
+// emits nothing and a received KindSigningKeyRotation Event is ignored, so
+// behavior is byte-identical to a build without the feature — no goroutine, no
+// metric, no timer.
+func WithCoordinatedKeyRotation() Option {
+	return func(srv *Server) { srv.coordinatedKeyRotation = true }
+}
+
+// WithCrossReplicaRevocation opts this Server into cross-replica access-token
+// revocation propagation. It REQUIRES an invalidation bus
+// ([WithInvalidationBus]); without one it is inert.
+//
+// THE PROBLEM it closes: each JWT issuer holds an IN-PROCESS revocation
+// deny-set (the `revoked` map keyed by the full token). /token/revoke adds the
+// presented token to that deny-set on the replica that handled the request —
+// but ONLY that replica. A token revoked on replica A keeps validating on
+// replica B until its own exp. The Redis hot-path peers cover session/refresh/
+// PAR/etc. but NOT this deny-set, and the CAEP transmitter pushes revocation
+// signals to external RPs, not to the server's own replicas.
+//
+// THE FIX: when armed, a /token/revoke (or /end_session id_token_hint revoke)
+// that hit at least one local issuer PUBLISHES a cluster.KindTokenRevoked Event
+// carrying the token + its exp. Every armed replica that receives it ADDS the
+// token to its own per-issuer deny-set (the same local revoke-across-issuers
+// path, WITHOUT re-publishing — the adopt is local-only, so there is no
+// broadcast loop).
+//
+// SAFETY: the propagation is purely ADDITIVE — applying an Event only ever ADDS
+// a token to a deny-set (more tokens rejected, never fewer), and a token
+// rejected because it's in the deny-set returns the SAME invalid_token response
+// as any other validation failure (no caller-observable new code path). A
+// dropped or garbage Event merely leaves that replica at today's per-replica
+// behavior (the token still expires on its own exp) — fail-open, never a valid
+// token wrongly rejected (beyond the mesh-internal trusted bus surface, which
+// is trusted exactly like KindTenantSuspension). The adopt path never accepts
+// revocations from request-facing input — only the bus and the local
+// /token/revoke.
+//
+// No-op when unset (the default) OR when no bus is wired: the publish side
+// emits nothing and a received KindTokenRevoked Event is ignored, so behavior
+// is byte-identical to a build without the feature — no goroutine, no metric.
+func WithCrossReplicaRevocation() Option {
+	return func(srv *Server) { srv.crossReplicaRevocation = true }
+}
+
 // WithTenantMiddlewareOptions tunes how the tenant middleware
 // extracts the request hostname and bounds the lookup. Optional
 // — defaults are XFH first-hop → r.Host (port stripped),
@@ -1353,6 +1544,42 @@ func WithMFAChallengeStore(store spi.MFAChallengeStore, ttl time.Duration) Optio
 // option for zero overhead (no middleware, no counters).
 func WithMetrics(m *metrics.Metrics) Option {
 	return func(s *Server) { s.metrics = m }
+}
+
+// WithTenantMetricsAllowlist opts into the per-tenant login + token-issue
+// metrics (sso_login_attempts_by_tenant_total + sso_tokens_issued_by_tenant_total),
+// labeled by tenant. CARDINALITY-GATED by design (§5): the tenant label is
+// emitted ONLY for the tenant ids in this bounded allowlist; every other
+// tenant — and every untenanted client — folds into the single tenant="other"
+// bucket, so the label cardinality is len(allowlist)+1, never the unbounded
+// SaaS-tenant set. This mirrors how MFA-method labels are restricted to the
+// provider's SupportedMethods() before they reach the registry.
+//
+// A nil/empty allowlist (the default) is byte-identical OFF: the two vectors
+// are never registered and never emitted (zero series). REQUIRES
+// [WithMetrics] — without a wired *metrics.Metrics there is nothing to
+// register the vectors on, so the option is inert. Never label by raw user
+// id or unbounded client_id.
+func WithTenantMetricsAllowlist(tenants []string) Option {
+	return func(s *Server) {
+		if len(tenants) == 0 {
+			return
+		}
+		set := make(map[string]struct{}, len(tenants))
+		for _, t := range tenants {
+			if t == "" {
+				continue
+			}
+			set[t] = struct{}{}
+		}
+		if len(set) == 0 {
+			return
+		}
+		s.tenantMetricsAllowlist = set
+		if s.metrics != nil {
+			s.metrics.EnableTenantMetrics()
+		}
+	}
 }
 
 // ReadyCheck reports whether a dependency / subsystem is ready to

@@ -20,6 +20,13 @@ type RegisterDeps interface {
 	ResolveIssuer(ctx core.HandlerContext) string
 	SetBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDesc string)
 	RequireClientStore() error
+
+	// InvalidateClientCache evicts a client from the opt-in per-login
+	// ClientStore cache (local + cross-replica bus). *sso.Server satisfies
+	// it; it is a no-op when no cache is wired. Called after every DCR
+	// mutation (register / update / delete) so a metadata edit takes effect
+	// on the next Get rather than after the cache TTL.
+	InvalidateClientCache(clientID string)
 }
 
 // DCRRequest mirrors the RFC 7591 §2 client metadata subset this
@@ -222,6 +229,10 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	// Newly-registered ID was never a cached HIT (misses aren't cached), but
+	// evict defensively + publish so peers converge — guards a register
+	// immediately after a delete within the same TTL window.
+	d.InvalidateClientCache(client.ID)
 
 	now := time.Now().Unix()
 	resp := DCRResponse{
@@ -319,6 +330,9 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	// Evict the now-stale cached snapshot (local + bus) so the next Get sees
+	// the new metadata immediately, not after the cache TTL.
+	d.InvalidateClientCache(updated.ID)
 	ctx.JSON(http.StatusOK, projectClientToDCRResponse(updated, ctx))
 }
 
@@ -337,6 +351,9 @@ func HandleRegistrationDelete(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	// Evict the cached snapshot (local + bus) so the deleted client reverts
+	// to the inner store's not-found behavior on the next Get immediately.
+	d.InvalidateClientCache(client.ID)
 	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
 }
 

@@ -1531,6 +1531,7 @@ func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reas
 	if s.metrics != nil {
 		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "failure").Inc()
 	}
+	s.recordTenantLoginAttempt(ctx, clientID, "failure")
 	s.observeLoginDuration(ctx, provider, "failure")
 	s.dispatchLoginAnomaly(ctx, "", clientID, provider, "failure", reason)
 	if s.auditor == nil {
@@ -1578,6 +1579,8 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "success").Inc()
 		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
 	}
+	s.recordTenantLoginAttempt(ctx, clientID, "success")
+	s.recordTenantTokenIssued(ctx, clientID, strategy)
 	s.observeLoginDuration(ctx, provider, "success")
 	s.dispatchLoginAnomaly(ctx, userID, clientID, provider, "success", "")
 	if s.auditor == nil {
@@ -1647,6 +1650,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 
 // recordTokenIssued emits a token_issued event (used for grant flows).
 func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
+	s.recordTenantTokenIssued(ctx, clientID, strategy)
 	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID)
 }
 
@@ -1681,6 +1685,15 @@ func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClie
 // oauth.ErrRefreshTokenReused — a security signal worth routing to alerting.
 func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
 	audit.RecordRefreshTokenReuse(s.auditor, ctx, clientID, familyID, killed)
+}
+
+// recordRefreshRotationVelocity emits a refresh_rotation_velocity_exceeded
+// event after the per-family rotation-velocity cap trips and the family is
+// killed. The wire response stays the generic invalid_grant — this audit
+// event (plus sso_refresh_rotation_velocity_exceeded_total) is the only
+// place the velocity detail surfaces.
+func (s *Server) recordRefreshRotationVelocity(ctx HandlerContext, clientID, familyID string, count, killed int) {
+	audit.RecordRefreshRotationVelocityExceeded(s.auditor, ctx, clientID, familyID, count, killed)
 }
 
 // itoa is a tiny strconv-free int formatter — keeps audit_handler.go

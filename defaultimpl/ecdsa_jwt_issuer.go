@@ -109,8 +109,10 @@ type ECDSAJWTIssuer struct {
 	// too so Validate has one lookup path.
 	verifyKeys map[string]*ecdsa.PublicKey
 
+	// revoked is the exp-bounded revocation deny-set (full token -> `exp` in
+	// unix seconds); see the Ed25519 issuer + revocation_set.go.
 	revokedMu sync.RWMutex
-	revoked   map[string]struct{}
+	revoked   map[string]int64
 
 	// keyMu guards the active signing key + verifyKeys for runtime
 	// rotation, matching the Ed25519 issuer's locking discipline.
@@ -205,7 +207,7 @@ func NewECDSAJWTIssuer(opts ...ECDSAOption) *ECDSAJWTIssuer {
 	j := &ECDSAJWTIssuer{
 		issuer:   sso.DefaultIssuer,
 		tokenTTL: defaultTokenTTL,
-		revoked:  make(map[string]struct{}),
+		revoked:  make(map[string]int64),
 	}
 	for _, opt := range opts {
 		opt(j)
@@ -560,16 +562,18 @@ func ecdsaVerifyJWS(pub *ecdsa.PublicKey, message, sig []byte) bool {
 	return ecdsa.Verify(pub, digest[:], r, s)
 }
 
-// Revoke adds the token to the in-memory deny list. Returns an error when
-// the token wasn't signed by this issuer, so revokeAcrossIssuers
-// correctly attributes ownership.
+// Revoke adds the token to the in-memory, exp-bounded deny list. Returns an
+// error when the token wasn't signed by this issuer, so revokeAcrossIssuers
+// correctly attributes ownership. Keyed by the token's `exp` so markRevoked
+// can lazily prune past-exp entries (prune-not-early; see revocation_set.go).
 func (j *ECDSAJWTIssuer) Revoke(ctx context.Context, token string) error {
-	if _, err := j.Validate(ctx, token); err != nil {
+	claims, err := j.Validate(ctx, token)
+	if err != nil {
 		return err
 	}
 	j.revokedMu.Lock()
 	defer j.revokedMu.Unlock()
-	j.revoked[token] = struct{}{}
+	markRevoked(j.revoked, token, claims.ExpiresAt.Unix())
 	return nil
 }
 

@@ -186,6 +186,18 @@ const (
 	EventSigningKeyAggregationDegraded  EventType = "signing_key_aggregation_degraded"
 	EventSigningKeyAggregationRecovered EventType = "signing_key_aggregation_recovered"
 
+	// EventSigningKeyRotationCoordinated fires on a replica that RECEIVED a
+	// cross-replica KindSigningKeyRotation Event and acted on it: it deferred the
+	// demoted kid's retirement to the carried wall-clock deadline (only ever
+	// widening its verify window) and adopted the new kid verify-only. Metadata
+	// "outcome" records what it did — "deferred" (a retire timer was armed),
+	// "extended" (a later deadline replaced an earlier pending one),
+	// "adopted_only" (the old kid was already gone / never local, so only the
+	// new-kid adoption applied), or "noop" (a garbage/empty Event that changed
+	// nothing — the fail-safe path). It carries NO kid (cardinality/secrecy) and
+	// is an INTERNAL audit event, not a wire error code.
+	EventSigningKeyRotationCoordinated EventType = "signing_key_rotation_coordinated"
+
 	// OAuth/OIDC token lifecycle beyond the legacy EventTokenIssued.
 	// Refresh + ID Token + device-flow events let SIEMs build per-grant
 	// dashboards (how often is refresh rotating? are device flows being
@@ -247,6 +259,20 @@ const (
 	// Outcome is OutcomeFailure — a reuse event is always a security
 	// signal, never a happy-path operation.
 	EventRefreshTokenReuse EventType = "refresh_token_reuse_detected"
+
+	// EventRefreshRotationVelocityExceeded fires when the rotation grant
+	// observes a refresh-token FAMILY rotating faster than the configured
+	// per-window cap (the store implements
+	// oauth.RefreshTokenRotationLimiter). Like a reuse, this kills the
+	// whole family — the velocity is the tell that an attacker and the
+	// victim are BOTH rotating the same family — but the WIRE response is
+	// the SAME invalid_grant a reuse / bad refresh returns (no distinct
+	// code, no Retry-After, no rate/velocity/family hint in the body): the
+	// detail lives ONLY here. Reason carries the family id; Metadata
+	// carries "count=<n>" (rotations seen in the window) and "killed=<n>"
+	// (active descendants invalidated). Outcome is OutcomeFailure — a
+	// velocity breach is always a security signal.
+	EventRefreshRotationVelocityExceeded EventType = "refresh_rotation_velocity_exceeded"
 
 	// EventPasswordWeak / EventPasswordCompromised — non-blocking
 	// login-time credential-health signals emitted AFTER a successful

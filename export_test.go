@@ -1,9 +1,11 @@
 package sso
 
 import (
+	"context"
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/signingkeys"
 )
 
@@ -50,4 +52,50 @@ func (s *Server) SetSigningKeyAggBackoffBaseForTest(d time.Duration) {
 // assert the state-machine transitions without depending on /readyz wiring.
 func (s *Server) SigningKeyAggDegradedForTest() bool {
 	return s.signingKeyAggDegraded.Load()
+}
+
+// --- Coordinated signing-key rotation cutover test seams ---
+
+// ApplyCoordinatedKeyRotationForTest drives the bus-subscriber arm directly with
+// a controllable ctx + Event, so a test exercises the receive side without
+// standing up a real subscriber goroutine. Lives in package sso (not sso_test)
+// to reach the unexported method; imports only cluster.
+func (s *Server) ApplyCoordinatedKeyRotationForTest(ctx context.Context, evt cluster.Event) {
+	s.applyCoordinatedKeyRotation(ctx, evt)
+}
+
+// SetCoordinatedRetireBoundsForTest shrinks the deferred-retire clamp floor +
+// ceiling so a test's retire fires in milliseconds instead of the 1-minute
+// production floor. Production leaves both 0 (the consts). The floor is still
+// the fail-safe lower bound: a past/garbage deadline clamps UP to it, so even
+// here the kid stays verifiable for at least `floor`.
+func (s *Server) SetCoordinatedRetireBoundsForTest(floor, ceiling time.Duration) {
+	s.coordinatedRetireMinDeferralOverride = floor
+	s.coordinatedRetireMaxDeferralOverride = ceiling
+}
+
+// PendingSigningRetireCountForTest reports how many deferred retires are
+// currently armed, so a test can assert a clean shutdown / cancel drained them
+// (no leaked timers).
+func (s *Server) PendingSigningRetireCountForTest() int {
+	s.pendingSigningRetireMu.Lock()
+	defer s.pendingSigningRetireMu.Unlock()
+	return len(s.pendingSigningRetires)
+}
+
+// BuildSigningKeyRotationEventForTest constructs the cluster.Event the publish
+// side would emit, WITHOUT going through the bus, so the receive-side tests can
+// feed a precisely-shaped (or deliberately-garbage) Event. retireDeadline is the
+// raw MetaRetireDeadline string (a test passes a past/garbage value to exercise
+// the fail-safe clamp). newJWKJSON, when non-empty, is the MetaNewJWK payload.
+func BuildSigningKeyRotationEventForTest(oldKID, newKID, retireDeadline, newJWKJSON string) cluster.Event {
+	payload := map[string]string{
+		cluster.MetaOldKid:         oldKID,
+		cluster.MetaNewKid:         newKID,
+		cluster.MetaRetireDeadline: retireDeadline,
+	}
+	if newJWKJSON != "" {
+		payload[cluster.MetaNewJWK] = newJWKJSON
+	}
+	return cluster.Event{Kind: cluster.KindSigningKeyRotation, Payload: payload}
 }

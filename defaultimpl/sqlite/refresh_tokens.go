@@ -69,6 +69,15 @@ CREATE INDEX IF NOT EXISTS idx_refresh_token_families_family
 // box — same contract the memory backend exposes.
 type RefreshTokenStore struct {
 	db *sql.DB
+
+	// MaxRotationsPerWindow + RotationWindow configure the OPTIONAL
+	// per-family rotation-VELOCITY cap (oauth.RefreshTokenRotationLimiter),
+	// mirroring the memory peer's exported field-config. Both must be
+	// positive for RecordRotation to ever report windowExceeded; a store
+	// constructed without setting them is byte-identical to a build without
+	// the feature. Set them BEFORE the store sees traffic.
+	MaxRotationsPerWindow int
+	RotationWindow        time.Duration
 }
 
 func NewRefreshTokenStore(dsn string) (*RefreshTokenStore, error) {
@@ -94,6 +103,20 @@ func NewRefreshTokenStoreWithDB(db *sql.DB) *RefreshTokenStore {
 	return &RefreshTokenStore{db: db}
 }
 
+// refreshTokenRotationsDDL backs the OPTIONAL per-family rotation-VELOCITY
+// cap (oauth.RefreshTokenRotationLimiter). One fixed-window counter per
+// family_id: `count` rotations since `window_start_ns`. A rotation arriving
+// after window_start_ns + window rolls the window over to a fresh count of 1
+// (the rollover is computed in RecordRotation, not the schema). Separate
+// from refresh_token_families so it can be added as a forward-only v2
+// migration without touching the v1 ledger.
+const refreshTokenRotationsDDL = `
+CREATE TABLE IF NOT EXISTS refresh_token_rotations (
+    family_id       TEXT    PRIMARY KEY,
+    count           INTEGER NOT NULL DEFAULT 0,
+    window_start_ns INTEGER NOT NULL DEFAULT 0
+);`
+
 // refreshTokenMigrations is the schema history. v1 is a Func migration
 // rather than plain SQL because legacy databases predate the
 // family_id / resources / authorization_details / sid columns and
@@ -102,8 +125,14 @@ func NewRefreshTokenStoreWithDB(db *sql.DB) *RefreshTokenStore {
 // full table from the CREATE and skip every add; pre-family-tracker
 // databases get the missing columns backfilled — the same outcome the
 // old error-tolerant ALTER dance produced, now version-tracked + atomic.
+//
+// v2 appends the per-family rotation-velocity ledger (additive, forward-
+// only): a populated DB just gains an empty table. Per AGENTS.md §4
+// Migrations the runner applies it under the schema_migrations_refresh_tokens
+// namespace inside one BEGIN IMMEDIATE txn.
 var refreshTokenMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_refresh_tokens", Func: ensureRefreshTokenSchema},
+	{Version: 2, Name: "refresh_token_rotations_velocity", SQL: refreshTokenRotationsDDL},
 }
 
 func ensureRefreshTokenSchema(ctx context.Context, x migrate.Execer) error {
@@ -413,8 +442,76 @@ func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (
 		`DELETE FROM refresh_token_families WHERE family_id = ?`, familyID); err != nil {
 		return 0, fmt.Errorf("sqlite: delete family ledger: %w", err)
 	}
+	// Drop the velocity-window row — a revoked family can never rotate
+	// again, so its counter is dead weight (and clearing it prevents a
+	// brand-new family that reused the (random) id from inheriting a stale
+	// count). Best-effort: a failure here doesn't undo the revocation.
+	_, _ = s.db.ExecContext(ctx,
+		`DELETE FROM refresh_token_rotations WHERE family_id = ?`, familyID)
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// RecordRotation implements [oauth.RefreshTokenRotationLimiter]: it bumps
+// family_id's fixed-window rotation counter and reports the post-increment
+// count + whether the configured per-window cap was exceeded.
+//
+// The increment is atomic via INSERT ... ON CONFLICT ... DO UPDATE ...
+// RETURNING — the SQLite analogue of the memory peer's locked RMW. The
+// fixed-window rollover is expressed IN the UPDATE: when the stored window
+// started more than RotationWindow ago, count resets to 1 and the window
+// restarts at `now`; otherwise count increments and the window start is
+// preserved. RETURNING hands back the post-update (count, window_start) so
+// the read-modify-write is a single statement (no separate SELECT race).
+//
+// FAIL-OPEN: any store error returns (0, false, err) — windowExceeded is
+// NEVER reported true on an error path, so the handler proceeds with the
+// rotation (the velocity cap is a defense layer, not a correctness gate).
+// An empty family_id is a no-op (0, false, nil).
+func (s *RefreshTokenStore) RecordRotation(ctx context.Context, familyID string) (int, bool, error) {
+	if familyID == "" {
+		return 0, false, nil
+	}
+	now := time.Now()
+	nowNs := now.UnixNano()
+	// windowNs: when positive, a row whose window started before
+	// (now - windowNs) has its window rolled over (count back to 1). When
+	// the window is non-positive (limiter unconfigured) we never roll over;
+	// it doesn't matter because windowExceeded is gated on a positive
+	// window below.
+	windowNs := int64(0)
+	if s.RotationWindow > 0 {
+		windowNs = s.RotationWindow.Nanoseconds()
+	}
+	var (
+		count         int
+		windowStartNs int64
+	)
+	err := s.db.QueryRowContext(ctx, `
+        INSERT INTO refresh_token_rotations (family_id, count, window_start_ns)
+        VALUES (?, 1, ?)
+        ON CONFLICT(family_id) DO UPDATE SET
+            count = CASE
+                WHEN ? > 0 AND ? - refresh_token_rotations.window_start_ns >= ?
+                    THEN 1
+                ELSE refresh_token_rotations.count + 1
+            END,
+            window_start_ns = CASE
+                WHEN ? > 0 AND ? - refresh_token_rotations.window_start_ns >= ?
+                    THEN ?
+                ELSE refresh_token_rotations.window_start_ns
+            END
+        RETURNING count, window_start_ns`,
+		familyID, nowNs,
+		windowNs, nowNs, windowNs,
+		windowNs, nowNs, windowNs, nowNs,
+	).Scan(&count, &windowStartNs)
+	if err != nil {
+		// Fail-open per the SPI contract.
+		return 0, false, fmt.Errorf("sqlite: record rotation: %w", err)
+	}
+	exceeded := s.MaxRotationsPerWindow > 0 && s.RotationWindow > 0 && count > s.MaxRotationsPerWindow
+	return count, exceeded, nil
 }
 
 func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
@@ -460,9 +557,10 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 }
 
 var (
-	_ oauth.RefreshTokenStore         = (*RefreshTokenStore)(nil)
-	_ oauth.RefreshTokenInspector     = (*RefreshTokenStore)(nil)
-	_ oauth.RefreshTokenSubjectIndex  = (*RefreshTokenStore)(nil)
-	_ oauth.RefreshTokenFamilyTracker = (*RefreshTokenStore)(nil)
-	_ oauth.RefreshTokenClientPurger  = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenStore           = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenInspector       = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenSubjectIndex    = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenFamilyTracker   = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenClientPurger    = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenRotationLimiter = (*RefreshTokenStore)(nil)
 )

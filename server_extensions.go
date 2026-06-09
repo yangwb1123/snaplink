@@ -1370,7 +1370,7 @@ func (s *Server) stampDPoPNonce(ctx HandlerContext) {
 	}
 	n, err := s.dpopNonceProvider.Issue()
 	if err != nil {
-		s.logger.Error("dpop nonce issue failed", "error", err)
+		s.logErrorCtx(ctx, "dpop nonce issue failed", "error", err)
 		return
 	}
 	ctx.ResponseWriter().Header().Set(HeaderDPoPNonce, n)
@@ -2169,6 +2169,37 @@ func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
 	}
 }
 
+// InvalidateClientCache evicts the cached client entity for clientID from
+// the opt-in per-login ClientStore cache (WithClientStoreCache). Wire this
+// into every client-mutation path — admin ClientAdminService
+// Create/Update/Delete/RotateSecret and the RFC 7591/7592 DCR
+// register/update/delete handlers — so a metadata edit (redirect_uri /
+// scopes / active flag / secret) takes effect on the next Get, not after
+// the TTL expires.
+//
+// When an invalidation bus is wired ([WithInvalidationBus]), this also
+// publishes the change so every other replica evicts its local cache too —
+// closing the cross-replica window where a just-edited client is still
+// served stale elsewhere until that node's TTL elapses. Publish failures
+// are logged, not propagated: the local eviction already succeeded and
+// peers fall back to their TTL, matching the suspension cache's fail-open
+// design.
+//
+// Safe to call when no cache is configured (no-op). Note this affects only
+// the METADATA cache — ValidateSecret bypasses the cache entirely (§2), so
+// a credential decision is never stale to begin with.
+func (s *Server) InvalidateClientCache(clientID string) {
+	if s.clientStoreCacheRef != nil {
+		s.clientStoreCacheRef.evict(clientID)
+	}
+	if s.invalidationBus != nil {
+		evt := cluster.Event{Kind: cluster.KindClientChange, Key: clientID}
+		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", clientID, "error", err)
+		}
+	}
+}
+
 // StartInvalidationBus begins consuming cross-replica invalidation
 // Events on this replica. Call it once with the process run context;
 // the returned channel closes when the subscriber goroutine exits (ctx
@@ -2191,7 +2222,7 @@ func (s *Server) StartInvalidationBus(ctx context.Context) (<-chan struct{}, err
 	go func() {
 		defer close(done)
 		for evt := range events {
-			s.applyInvalidation(evt)
+			s.applyInvalidation(ctx, evt)
 		}
 	}()
 	return done, nil
@@ -2317,8 +2348,11 @@ func (s *Server) recordCIBAPingFailure(clientID, authReqID, reason string) {
 
 // applyInvalidation clears the local cache a received Event targets. It
 // MUST NOT re-publish — only the originating admin mutation publishes,
-// so receivers clearing their cache here can't trigger a fan-out loop.
-func (s *Server) applyInvalidation(evt cluster.Event) {
+// so receivers clearing their cache here can't trigger a fan-out loop. ctx is
+// the subscriber's run context, threaded so the coordinated-rotation arm can
+// bind its deferred-retire timers to it (a clean shutdown cancels them); the
+// cache-invalidation arms ignore it (they are synchronous).
+func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 	switch evt.Kind {
 	case cluster.KindTenantSuspension:
 		if s.tenantSuspensionCache != nil {
@@ -2328,12 +2362,32 @@ func (s *Server) applyInvalidation(evt cluster.Event) {
 		if s.tenantResidencyCache != nil {
 			s.tenantResidencyCache.invalidate(evt.Key)
 		}
+	case cluster.KindClientChange:
+		// evt.Key is the clientID whose metadata changed; drop this replica's
+		// cached client snapshot so the next Get re-reads the authoritative
+		// store. No-op when the opt-in client cache isn't wired.
+		if s.clientStoreCacheRef != nil {
+			s.clientStoreCacheRef.evict(evt.Key)
+		}
 	case cluster.KindDiscoveryReload:
 		s.invalidateDiscoveryCaches()
 	case cluster.KindAuthzPolicyChange:
 		// evt.Key is the clientID whose role definitions changed; drop this
 		// replica's cached bundle so the sidecar's next pull re-renders.
 		s.invalidateAuthzPolicyBundleCacheLocal(evt.Key)
+	case cluster.KindSigningKeyRotation:
+		// A peer rotated its signing key: adopt the new kid verify-only now and
+		// DEFER the demoted kid's retirement to the carried deadline (only ever
+		// widening this replica's verify window — see coordinated_key_rotation.go).
+		// No-op unless WithCoordinatedKeyRotation armed this replica.
+		s.applyCoordinatedKeyRotation(ctx, evt)
+	case cluster.KindTokenRevoked:
+		// A peer revoked an access token: ADD it to this replica's per-issuer
+		// in-process deny-set via the LOCAL-only revoke path (which never
+		// re-publishes — no broadcast loop). Purely additive + fail-open; no-op
+		// unless WithCrossReplicaRevocation armed this replica. See
+		// cross_replica_revocation.go.
+		s.applyTokenRevocation(ctx, evt)
 	default:
 		// Unknown kind from a newer peer — ignore rather than error, so a
 		// mixed-version cluster degrades gracefully during a rollout.

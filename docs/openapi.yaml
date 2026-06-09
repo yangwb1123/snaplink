@@ -93,6 +93,19 @@ tags:
       resolver can climb THROUGH this server. Opt-in; default-off (routes
       unmounted, no `federation_fetch_endpoint` advertised). Trust-chain
       validation is a separate slice.
+  - name: scim
+    description: |
+      SCIM 2.0 (RFC 7643 schema / RFC 7644 protocol) user + group
+      provisioning, mounted under `/api/v1/scim/v2`. Composed over the
+      existing `core.UserProvider` (no new datastore); SCIM-only
+      attributes round-trip through `core.User.Attributes` under a
+      `scim:` namespace. Admin-gated by the AdminMiddleware (GET needs
+      `admin:read`, POST/PUT/PATCH/DELETE need `admin:write`) — the whole
+      surface reads + mutates the user directory. Errors use the SCIM
+      `application/scim+json` envelope (RFC 7644 §3.12) with a `scimType`
+      code, NOT the OAuth `error` body (see `docs/error-codes.md`). The
+      `/Groups` resource is opt-in (`scim.groups.enabled`, requires a
+      `permissions.Provider`); `/Users` always mounts.
   - name: admin
     description: |
       Operator-side REST surface. Admin endpoints are gated by the
@@ -855,7 +868,7 @@ paths:
         a rate-limit + admin-cleanup story).
 
         Requires `WithDynamicClientRegistration` at boot; otherwise
-        returns 501 `registration_disabled`.
+        returns 501 `registration_not_configured`.
       operationId: postRegister
       security:
         - bearerAuth: []
@@ -894,7 +907,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "501":
-          description: DCR not enabled. Wire code `registration_disabled`.
+          description: DCR not enabled. Wire code `registration_not_configured`.
           content:
             application/json:
               schema:
@@ -3611,6 +3624,470 @@ paths:
                 type: object
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/scim/v2/ServiceProviderConfig:
+    get:
+      tags: [scim]
+      summary: SCIM service-provider configuration (RFC 7643 §5).
+      description: |
+        Advertises the supported SCIM features (patch, filter,
+        pagination caps, etc.). Admin-gated — `admin:read`. Response is
+        `application/scim+json`.
+      operationId: scimServiceProviderConfig
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Service-provider configuration.
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+
+  /api/v1/scim/v2/Schemas:
+    get:
+      tags: [scim]
+      summary: SCIM resource schemas (RFC 7643 §7).
+      description: |
+        Returns the implemented resource schemas (always `User`; `Group`
+        only when `scim.groups.enabled`) wrapped in the SCIM
+        `ListResponse` envelope. Admin-gated — `admin:read`.
+      operationId: scimSchemas
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Schema ListResponse.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+
+  /api/v1/scim/v2/Users:
+    get:
+      tags: [scim]
+      summary: List / search SCIM Users (RFC 7644 §3.4).
+      description: |
+        Returns Users in the SCIM `ListResponse` envelope. Supports the
+        optional `filter` query parameter (RFC 7644 §3.4.2.2) — applied
+        BEFORE pagination so `totalResults` reflects the filtered set — and
+        1-based `startIndex` / `count` pagination (§3.4.2.4; `count` is
+        clamped to 200, default 100). Admin-gated — `admin:read`.
+      operationId: scimListUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: filter
+          in: query
+          schema: { type: string }
+          description: |
+            SCIM filter expression (RFC 7644 §3.4.2.2), e.g.
+            `userName eq "alice"`. A malformed expression yields HTTP 400
+            `invalidFilter`.
+          example: userName eq "alice"
+        - name: startIndex
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+          description: 1-based index of the first result (values < 1 are treated as 1).
+        - name: count
+          in: query
+          schema: { type: integer, default: 100, maximum: 200 }
+          description: Page size; clamped to 200. `count=0` returns only the total.
+      responses:
+        "200":
+          description: User ListResponse.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+        "400":
+          description: Malformed `filter` / `startIndex` / `count` (scimType invalidFilter or invalidValue).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+    post:
+      tags: [scim]
+      summary: Create a SCIM User (RFC 7644 §3.3).
+      description: |
+        Provisions a new User. `userName` is REQUIRED; the server mints the
+        `id` (read-only). `userName` must be unique across users
+        (HTTP 409 `uniqueness`). `active` defaults to true when omitted.
+        Admin-gated — `admin:write`.
+      operationId: scimCreateUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimUser"
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          description: Missing `userName` / invalid SCIM JSON (scimType invalidValue or invalidSyntax).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "409":
+          description: A user with that `userName` already exists (scimType uniqueness).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+
+  /api/v1/scim/v2/Users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Server-minted User resource id.
+    get:
+      tags: [scim]
+      summary: Fetch one SCIM User (RFC 7644 §3.4.1).
+      description: Admin-gated — `admin:read`.
+      operationId: scimGetUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User resource.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown user id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    put:
+      tags: [scim]
+      summary: Replace a SCIM User (RFC 7644 §3.5.1).
+      description: |
+        Full overwrite of an EXISTING resource (PUT to an unknown id is a
+        404, not an upsert). `userName` is REQUIRED; a body carrying a
+        DIFFERENT `id` is a 400 `mutability` violation (id is read-only).
+        `userName` uniqueness is enforced against other users (409). The
+        creation timestamp is preserved. Admin-gated — `admin:write`.
+      operationId: scimReplaceUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimUser"
+      responses:
+        "200":
+          description: User replaced.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          description: Missing `userName`, invalid SCIM JSON, or a changed `id` (scimType invalidValue / invalidSyntax / mutability).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown user id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "409":
+          description: "`userName` already used by another user (scimType uniqueness)."
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    patch:
+      tags: [scim]
+      summary: Patch a SCIM User (RFC 7644 §3.5.2).
+      description: |
+        Applies an ordered list of `add`/`replace`/`remove` operations
+        (all-or-nothing — a failing op aborts before any write). Supports
+        top-level paths (`active`, `userName`, `displayName`, `externalId`,
+        `emails`) and the nested `name.<sub>` form; an unsupported path is a
+        400 `invalidPath`, and a `remove` with no path is a 400 `noTarget`.
+        The common deprovision case (`replace active=false`) flows straight
+        through. Admin-gated — `admin:write`.
+      operationId: scimPatchUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimPatchOp"
+      responses:
+        "200":
+          description: User patched.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          description: |
+            Invalid PATCH (scimType invalidValue / invalidSyntax /
+            invalidPath / noTarget / mutability), or empty Operations.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown user id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "409":
+          description: Resulting `userName` collides with another user (scimType uniqueness).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    delete:
+      tags: [scim]
+      summary: Delete a SCIM User (RFC 7644 §3.6).
+      description: |
+        Deletes the User. DELETE on an unknown id is a 404 (not a silent
+        204). Admin-gated — `admin:write`.
+      operationId: scimDeleteUser
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: User deleted (no body).
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown user id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+
+  /api/v1/scim/v2/Groups:
+    get:
+      tags: [scim]
+      summary: List / search SCIM Groups (RFC 7644 §3.4).
+      description: |
+        Returns Groups in the SCIM `ListResponse` envelope, with the same
+        `filter` / `startIndex` / `count` semantics as `/Users`. A SCIM
+        Group maps onto a `permissions.Role`; members are the users
+        assigned that role. Mounted ONLY when `scim.groups.enabled` (a
+        `permissions.Provider` is wired) — otherwise the route is absent
+        (404). Admin-gated — `admin:read`.
+      operationId: scimListGroups
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: filter
+          in: query
+          schema: { type: string }
+          description: SCIM filter expression (RFC 7644 §3.4.2.2); malformed → 400 `invalidFilter`.
+          example: displayName eq "admins"
+        - name: startIndex
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+          description: 1-based index of the first result.
+        - name: count
+          in: query
+          schema: { type: integer, default: 100, maximum: 200 }
+          description: Page size; clamped to 200.
+      responses:
+        "200":
+          description: Group ListResponse.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+        "400":
+          description: Malformed `filter` / pagination (scimType invalidFilter or invalidValue).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+    post:
+      tags: [scim]
+      summary: Create a SCIM Group (RFC 7643 §4.2).
+      description: |
+        Provisions a new Group (a `permissions.Role`). `displayName` is
+        REQUIRED; the server mints the `id`. Mounted only when
+        `scim.groups.enabled`. Admin-gated — `admin:write`.
+      operationId: scimCreateGroup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimGroup"
+      responses:
+        "201":
+          description: Group created.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+        "400":
+          description: Missing `displayName` / invalid SCIM JSON (scimType invalidValue or invalidSyntax).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "409":
+          description: A group with that id already exists (scimType uniqueness).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+
+  /api/v1/scim/v2/Groups/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Group resource id (the underlying role code).
+    get:
+      tags: [scim]
+      summary: Fetch one SCIM Group.
+      description: Mounted only when `scim.groups.enabled`. Admin-gated — `admin:read`.
+      operationId: scimGetGroup
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Group resource.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown group id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    put:
+      tags: [scim]
+      summary: Replace a SCIM Group (RFC 7644 §3.5.1).
+      description: |
+        Full overwrite of an EXISTING group (404 on unknown id).
+        `displayName` is REQUIRED; a changed `id` is a 400 `mutability`
+        violation. Mounted only when `scim.groups.enabled`. Admin-gated —
+        `admin:write`.
+      operationId: scimReplaceGroup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimGroup"
+      responses:
+        "200":
+          description: Group replaced.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+        "400":
+          description: Missing `displayName`, invalid SCIM JSON, or a changed `id` (scimType invalidValue / invalidSyntax / mutability).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown group id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    patch:
+      tags: [scim]
+      summary: Patch a SCIM Group (RFC 7644 §3.5.2).
+      description: |
+        Applies `add`/`replace`/`remove` operations to `displayName` or the
+        `members` array (the group-membership delta connectors push).
+        Unsupported path → 400 `invalidPath`; a `remove` with no path → 400
+        `noTarget`. Mounted only when `scim.groups.enabled`. Admin-gated —
+        `admin:write`.
+      operationId: scimPatchGroup
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimPatchOp"
+      responses:
+        "200":
+          description: Group patched.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+        "400":
+          description: Invalid PATCH (scimType invalidValue / invalidSyntax / invalidPath / noTarget).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown group id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    delete:
+      tags: [scim]
+      summary: Delete a SCIM Group (RFC 7644 §3.6).
+      description: |
+        Deletes the Group (role). DELETE on an unknown id is a 404.
+        Mounted only when `scim.groups.enabled`. Admin-gated — `admin:write`.
+      operationId: scimDeleteGroup
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Group deleted (no body).
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: Unknown group id.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+
 components:
 
   securitySchemes:
@@ -3632,6 +4109,20 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Unauthorized:
       description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ScimUnauthorized:
+      description: |
+        Missing / invalid admin bearer (401), or a bearer lacking the
+        required `admin:read` / `admin:write` scope (403). This response
+        comes from the AdminMiddleware, which fronts the SCIM handler, so
+        it carries the OAuth-style `{"error": ...}` body
+        (`missing_token` / `invalid_token` / `forbidden`) and a
+        `WWW-Authenticate: Bearer realm="admin"` challenge — NOT the SCIM
+        `application/scim+json` envelope (the request never reaches the
+        SCIM handler).
       content:
         application/json:
           schema:
@@ -5772,3 +6263,237 @@ components:
             resolved client's `allowed_scopes` contains `openid`
             AND an IDTokenIssuer is wired. Ed25519 JWT with `amr`
             of `["webauthn"]`.
+
+    ScimError:
+      type: object
+      description: |
+        SCIM 2.0 error envelope (RFC 7644 §3.12), served as
+        `application/scim+json`. This is a SEPARATE taxonomy from the
+        OAuth `error` body — SPAs/connectors branch on `scimType` (and the
+        repeated `status`), never the human-readable `detail`. See
+        `docs/error-codes.md` for the full scimType catalog.
+      required: [schemas, status]
+      properties:
+        schemas:
+          type: array
+          items: { type: string }
+          example: ["urn:ietf:params:scim:api:messages:2.0:Error"]
+        status:
+          type: string
+          description: HTTP status repeated as a STRING per the spec ("404", not 404).
+          example: "409"
+        scimType:
+          type: string
+          description: |
+            Machine-readable refinement code (RFC 7644 §3.12, Table 9).
+            Present on the 4xx cases this server emits; omitted for
+            404/405/500.
+          enum: [invalidValue, invalidSyntax, uniqueness, mutability, invalidPath, noTarget, invalidFilter]
+          example: uniqueness
+        detail:
+          type: string
+          description: Human-readable explanation. Not machine-stable; do not branch on it.
+          example: userName already exists
+
+    ScimMeta:
+      type: object
+      description: Common SCIM resource metadata (RFC 7643 §3.1).
+      properties:
+        resourceType:
+          type: string
+          enum: [User, Group]
+          example: User
+        created:
+          type: string
+          format: date-time
+        lastModified:
+          type: string
+          format: date-time
+        location:
+          type: string
+          description: Absolute resource URL (omitted when the handler is mounted relative).
+          example: https://sso.example.com/api/v1/scim/v2/Users/2819c223...
+
+    ScimUser:
+      type: object
+      description: |
+        SCIM 2.0 core User (RFC 7643 §4.1). Only the attributes this server
+        reads/writes are modeled; unknown inbound attributes are ignored
+        (RFC 7644 §3.3). `id` is server-minted + read-only. Attributes
+        without a dedicated `core.User` field (userName, active, name
+        sub-attributes, non-primary emails) round-trip through
+        `core.User.Attributes` under a `scim:` namespace.
+      required: [schemas, userName]
+      properties:
+        schemas:
+          type: array
+          items: { type: string }
+          example: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+        id:
+          type: string
+          description: Server-assigned, read-only (RFC 7643 §3.1).
+          example: 2819c223-7f76-453a-919d-413861904646
+        externalId:
+          type: string
+          description: The provisioning client's own identifier for the resource.
+        userName:
+          type: string
+          description: REQUIRED. Unique across users (collision → 409 uniqueness).
+          example: alice@example.com
+        displayName:
+          type: string
+          description: Free-form label; backed by `core.User.Name`.
+        name:
+          $ref: "#/components/schemas/ScimName"
+        emails:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScimEmail"
+        active:
+          type: boolean
+          description: Deprovision flag (RFC 7643 §4.1.1). Defaults to true on create when omitted.
+          default: true
+        meta:
+          $ref: "#/components/schemas/ScimMeta"
+
+    ScimName:
+      type: object
+      description: SCIM complex "name" attribute (RFC 7643 §4.1.1).
+      properties:
+        formatted: { type: string }
+        familyName: { type: string }
+        givenName: { type: string }
+        middleName: { type: string }
+        honorificPrefix: { type: string }
+        honorificSuffix: { type: string }
+
+    ScimEmail:
+      type: object
+      description: One element of the multi-valued "emails" attribute (RFC 7643 §4.1.2).
+      required: [value]
+      properties:
+        value:
+          type: string
+          example: alice@example.com
+        type:
+          type: string
+          example: work
+        primary:
+          type: boolean
+          description: At most one true per RFC 7643 §2.4.
+
+    ScimGroup:
+      type: object
+      description: |
+        SCIM 2.0 core Group (RFC 7643 §4.2), mapped onto a
+        `permissions.Role`: the server-minted `id` is the role code,
+        `displayName` is the role name, and `members` are the users
+        assigned that role. Only present when `scim.groups.enabled`.
+      required: [schemas, displayName]
+      properties:
+        schemas:
+          type: array
+          items: { type: string }
+          example: ["urn:ietf:params:scim:schemas:core:2.0:Group"]
+        id:
+          type: string
+          description: Server-assigned, read-only.
+        displayName:
+          type: string
+          description: REQUIRED.
+          example: admins
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScimGroupMember"
+        meta:
+          $ref: "#/components/schemas/ScimMeta"
+
+    ScimGroupMember:
+      type: object
+      description: One element of the multi-valued "members" attribute (RFC 7643 §4.2).
+      required: [value]
+      properties:
+        value:
+          type: string
+          description: The member's resource id (a User id). Load-bearing for the role-assignment mapping.
+        $ref:
+          type: string
+          description: Optional reference URL to the member resource.
+        type:
+          type: string
+          example: User
+        display:
+          type: string
+
+    ScimListResponse:
+      type: object
+      description: |
+        SCIM multi-valued GET envelope (RFC 7644 §3.4.2), returned by the
+        list/search and `/Schemas` endpoints. `startIndex` /
+        `itemsPerPage` are 1-based. `totalResults` reflects the FILTERED
+        set when a `filter` is supplied.
+      required: [schemas, totalResults, Resources]
+      properties:
+        schemas:
+          type: array
+          items: { type: string }
+          example: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+        totalResults:
+          type: integer
+          example: 1
+        startIndex:
+          type: integer
+          example: 1
+        itemsPerPage:
+          type: integer
+          example: 1
+        Resources:
+          type: array
+          description: User or Group resources (or schema definitions on `/Schemas`).
+          items:
+            type: object
+            additionalProperties: true
+
+    ScimPatchOp:
+      type: object
+      description: |
+        SCIM PATCH request body (RFC 7644 §3.5.2): a `schemas` array naming
+        PatchOp plus an ORDERED list of operations applied in sequence
+        (all-or-nothing — a failing op aborts before any write). At least
+        one operation is required (an empty Operations array is a 400
+        invalidValue).
+      required: [schemas, Operations]
+      properties:
+        schemas:
+          type: array
+          items: { type: string }
+          example: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+        Operations:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [op]
+            properties:
+              op:
+                type: string
+                description: One of add | replace | remove (case-insensitive).
+                example: replace
+              path:
+                type: string
+                description: |
+                  Optional attribute path. Supported: a top-level attribute
+                  (`active`, `userName`, `displayName`, `externalId`,
+                  `emails`, `members`) or the nested `name.<sub>` form. A
+                  value filter (`members[value eq "x"]`) or schema-qualified
+                  path is unsupported (400 invalidPath). `remove` requires a
+                  path (else 400 noTarget).
+                example: active
+              value:
+                description: |
+                  Operation value — a scalar, string, object, or array
+                  decoded against the target attribute's type. When `path`
+                  is empty on add/replace, this is a `{attr: val}` object
+                  applied to the resource root.
+                example: false

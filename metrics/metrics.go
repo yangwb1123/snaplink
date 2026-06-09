@@ -43,8 +43,24 @@ type Metrics struct {
 	LoginAttemptsTotal *prometheus.CounterVec // labels: provider, outcome
 	TokensIssuedTotal  *prometheus.CounterVec // labels: strategy
 
+	// Per-tenant login + issuance breakdowns. OPT-IN and CARDINALITY-
+	// GATED: emitted ONLY through an operator-supplied bounded allowlist
+	// (sso.WithTenantMetricsAllowlist). Every tenant NOT on the allowlist
+	// maps to the single LabelTenant=TenantLabelOther bucket, so the tenant
+	// label cardinality is len(allowlist)+1 — never the unbounded SaaS-
+	// tenant set (§5). Both vectors are nil when no allowlist is wired (the
+	// metrics are not registered or emitted — byte-identical off); this
+	// mirrors the MFA-method restriction to SupportedMethods() before the
+	// label reaches the registry.
+	LoginAttemptsByTenantTotal *prometheus.CounterVec // labels: tenant, outcome
+	TokensIssuedByTenantTotal  *prometheus.CounterVec // labels: tenant, strategy
+
 	// Risk scoring (zero traffic when no RiskScorer wired).
 	RiskDecisionsTotal *prometheus.CounterVec // labels: decision
+
+	// Per-login ClientStore cache (zero traffic when WithClientStoreCache
+	// isn't wired). Bounded {outcome} ∈ {hit, miss} — NO per-client_id label.
+	ClientStoreCacheTotal *prometheus.CounterVec // labels: outcome
 
 	// MFA orchestration (zero traffic when no MFAProvider wired).
 	// MFAChallengesTotal counts every challenge issued at
@@ -90,13 +106,18 @@ type Metrics struct {
 
 	// Anomaly detection (zero traffic when no AnomalyRunner wired).
 	// AnomaliesDetectedTotal counts each Anomaly surfaced by a
-	// detector, labeled by type + severity. AnomalyDispatchDropsTotal
+	// detector, labeled by type + severity. AnomalyDispatchedTotal
+	// counts every event OFFERED to the dispatcher (the offered-load
+	// denominator) — no labels (bounded cardinality); pair it with
+	// AnomalyDispatchDropsTotal to derive a drop RATE (drops/offered)
+	// rather than only an absolute drop count. AnomalyDispatchDropsTotal
 	// counts events dropped by the bounded-queue dispatcher (load-
 	// shedding metric — non-zero = login traffic outpaces detector
 	// capacity). AnomalyInspectErrorsTotal counts per-detector
 	// failures (DB timeout, store unreachable) — surfaces the
 	// "anomaly detection silently broken" failure mode.
 	AnomaliesDetectedTotal    *prometheus.CounterVec // labels: anomaly_type, severity
+	AnomalyDispatchedTotal    prometheus.Counter     // no labels
 	AnomalyDispatchDropsTotal *prometheus.CounterVec // labels: reason
 	AnomalyInspectErrorsTotal *prometheus.CounterVec // labels: detector
 
@@ -163,6 +184,19 @@ type Metrics struct {
 	// single per-replica condition. Never set when no registry is wired.
 	SigningKeyAggregationUp prometheus.Gauge
 
+	// SigningKeyCutoverTotal counts deadline-coordinated signing-key rotation
+	// cutovers this replica ENACTED on receiving a cross-replica
+	// KindSigningKeyRotation Event, by outcome ∈ {deferred, extended,
+	// adopted_only, noop} (bounded). The feature defers a demoted kid's
+	// retirement to a cluster-coordinated deadline so a rolling deploy can't
+	// strand a token under an early-retired kid ("unknown kid" 401). A healthy
+	// rotation shows a deferred (or adopted_only) tick on each peer; a rising
+	// noop series means peers are sending garbage/superseded Events (the
+	// fail-safe absorbs them — the local grace fallback still retires). No kid /
+	// replica label (§5 bounded cardinality). Zero traffic when coordinated
+	// rotation isn't armed (WithCoordinatedKeyRotation + a bus).
+	SigningKeyCutoverTotal *prometheus.CounterVec // labels: outcome
+
 	// CAEPSetsTotal counts OpenID Shared Signals (CAEP/RISC) Security
 	// Event Token push attempts from the detached transmitter goroutine, by
 	// outcome ∈ {success, failed, dropped} (bounded). A failed/dropped SET
@@ -183,6 +217,29 @@ type Metrics struct {
 	// a valid SET that mapped to no local subject or carried only unknown
 	// events. Zero traffic when no CAEP receiver is wired.
 	SSFSetsReceivedTotal *prometheus.CounterVec // labels: outcome
+
+	// RefreshRotationVelocityExceededTotal counts refresh-token families
+	// killed by the per-family rotation-VELOCITY cap (the store implements
+	// oauth.RefreshTokenRotationLimiter and a family exceeded the configured
+	// per-window rotation count). No labels — a velocity breach is a single
+	// global security condition, and a familyID/user/client label would be
+	// unbounded (§5). Each increment is one family that rotated too fast and
+	// was revoked; the wire response stays the generic invalid_grant, so this
+	// counter (plus the refresh_rotation_velocity_exceeded audit event) is the
+	// only operator visibility. Zero traffic when no rotation limiter is wired.
+	RefreshRotationVelocityExceededTotal prometheus.Counter
+
+	// TokenRevocationsPropagatedTotal counts cross-replica access-token
+	// revocation propagation events, by direction ∈ {published, adopted}
+	// (bounded). `published` = this replica broadcast a KindTokenRevoked Event
+	// after a local /token/revoke; `adopted` = this replica added a
+	// peer-published revoked token to its own in-process deny-set. No token/jti
+	// label (§5 bounded cardinality). The propagation is purely additive
+	// (revocation only ever ADDS to a deny-set) and best-effort, so this counter
+	// is the operator's visibility into whether revocations are converging
+	// across replicas. Zero traffic when WithCrossReplicaRevocation isn't armed
+	// (or no bus is wired).
+	TokenRevocationsPropagatedTotal *prometheus.CounterVec // labels: direction
 }
 
 // New returns a Metrics bound to a fresh isolated Registry. This is
@@ -255,6 +312,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "RiskScorer decisions, by decision value (allow/deny/require_mfa). Zero traffic when no scorer is configured.",
 			},
 			[]string{LabelDecision},
+		),
+
+		ClientStoreCacheTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameClientStoreCacheTotal,
+				Help: "Per-login ClientStore metadata cache lookups, by outcome (hit/miss). Zero traffic when WithClientStoreCache isn't wired. ValidateSecret bypasses the cache and is not counted here.",
+			},
+			[]string{LabelOutcome},
 		),
 
 		MFAChallengesTotal: factory.NewCounterVec(
@@ -339,6 +404,13 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 			[]string{LabelAnomalyType, LabelSeverity},
 		),
 
+		AnomalyDispatchedTotal: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: NameAnomalyDispatchedTotal,
+				Help: "Login events OFFERED to the AsyncAnomalyRunner dispatcher (the offered-load denominator). No labels. Divide sso_anomaly_dispatch_drops_total by this to get the drop RATE (drops/offered) rather than only an absolute drop count. Zero traffic when no AnomalyRunner is wired.",
+			},
+		),
+
 		AnomalyDispatchDropsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: NameAnomalyDispatchDropsTotal,
@@ -418,6 +490,14 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 			},
 		),
 
+		SigningKeyCutoverTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameSigningKeyCutoverTotal,
+				Help: "Deadline-coordinated signing-key rotation cutovers this replica enacted on a received cross-replica rotation Event, by outcome (deferred/extended/adopted_only/noop). The feature defers a demoted kid's retirement to a cluster-coordinated deadline so a rolling deploy can't strand a token under an early-retired kid (unknown-kid 401). A rising noop series means peers send garbage/superseded Events (fail-safe absorbs them). Zero when coordinated rotation isn't armed.",
+			},
+			[]string{LabelOutcome},
+		),
+
 		CAEPSetsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: NameCAEPSetsTotal,
@@ -433,5 +513,63 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 			},
 			[]string{LabelOutcome},
 		),
+
+		RefreshRotationVelocityExceededTotal: factory.NewCounter(
+			prometheus.CounterOpts{
+				Name: NameRefreshRotationVelocityExceededTotal,
+				Help: "Refresh-token families revoked by the per-family rotation-velocity cap (a family rotated faster than the configured per-window limit). No labels (a familyID/user/client label would be unbounded). The wire response stays the generic invalid_grant, so this counter plus the refresh_rotation_velocity_exceeded audit event are the only operator visibility. Zero traffic when no rotation limiter is wired.",
+			},
+		),
+
+		TokenRevocationsPropagatedTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameTokenRevocationsPropagatedTotal,
+				Help: "Cross-replica access-token revocation propagation events, by direction (published/adopted). published = this replica broadcast a token-revoked Event after a local /token/revoke; adopted = this replica added a peer-published revoked token to its own in-process deny-set. No token/jti label (bounded cardinality). Purely additive + best-effort. Zero traffic when cross-replica revocation isn't armed.",
+			},
+			[]string{LabelDirection},
+		),
 	}
+}
+
+// EnableTenantMetrics lazily constructs + registers the two opt-in
+// per-tenant counters (LoginAttemptsByTenantTotal + TokensIssuedByTenantTotal)
+// on this Metrics' Registry. It is called by the Server ONLY when an
+// operator supplies a bounded tenant allowlist (sso.WithTenantMetricsAllowlist)
+// — so without that option the vectors stay nil and the metrics are never
+// registered or emitted (zero series, byte-identical off, §5).
+//
+// Idempotent: a second call is a no-op (the vectors are already built).
+// Bounded cardinality is the CALLER's responsibility — the Server maps any
+// tenant outside the allowlist to TenantLabelOther before touching the
+// label, capping the tenant dimension at len(allowlist)+1.
+func (m *Metrics) EnableTenantMetrics() {
+	if m == nil || m.LoginAttemptsByTenantTotal != nil {
+		return
+	}
+	factory := promauto.With(m.Registry)
+	m.LoginAttemptsByTenantTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameLoginAttemptsByTenantTotal,
+			Help: "Login attempts at /auth/login broken down by tenant + outcome (success/failure). OPT-IN + cardinality-gated: the tenant label is restricted to an operator-supplied allowlist, with every other tenant folded into the single tenant=\"other\" bucket. Zero traffic (and no series) when no allowlist is wired.",
+		},
+		[]string{LabelTenant, LabelOutcome},
+	)
+	m.TokensIssuedByTenantTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameTokensIssuedByTenantTotal,
+			Help: "Tokens issued broken down by tenant + token strategy (jwt/session). OPT-IN + cardinality-gated: the tenant label is restricted to an operator-supplied allowlist, with every other tenant folded into the single tenant=\"other\" bucket. Zero traffic (and no series) when no allowlist is wired.",
+		},
+		[]string{LabelTenant, LabelStrategy},
+	)
+}
+
+// ObserveClientStoreCache bumps the per-login ClientStore cache counter for
+// outcome ("hit" or "miss"). Nil-safe so the decorator can call it
+// unconditionally whether or not metrics are wired. outcome is a bounded
+// 2-value dimension (§5) — never a per-client label.
+func (m *Metrics) ObserveClientStoreCache(outcome string) {
+	if m == nil || m.ClientStoreCacheTotal == nil {
+		return
+	}
+	m.ClientStoreCacheTotal.WithLabelValues(outcome).Inc()
 }

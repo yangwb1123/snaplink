@@ -96,6 +96,23 @@ identity:
   backend: memory       # memory | sqlite
   sqlite:
     dsn: ""             # e.g. file:/var/lib/sso/sso.db?_journal=WAL
+  # Opt-in per-login ClientStore metadata cache. Every interactive login,
+  # /token grant, and tenant-bound request reads client metadata via
+  # ClientStore.Get; at high QPS against a SQLite/Redis backend that is a
+  # measurable per-request round-trip. When enabled, successful Gets of
+  # existing clients are cached for `ttl` (default 30s when unset).
+  #
+  # SECURITY-PRESERVING: credential verification (ValidateSecret) ALWAYS
+  # bypasses the cache, misses are never cached (a just-created client is
+  # visible immediately), and admin/DCR client mutations evict the affected
+  # entry locally AND across replicas (the invalidation bus). The accepted
+  # tradeoff (same as tenant.suspension_check.cache_ttl): a client
+  # deactivated, or whose metadata changed, mid-window keeps being served the
+  # prior value for at most `ttl` unless an admin/DCR mutation evicts it
+  # sooner. Disabled (the default) = byte-identical to a non-caching build.
+  client_cache:
+    enabled: false
+    ttl: 30s
 
 # First-boot init. The Runner applies pending Steps (seed admin role +
 # user + client + default netpolicy) idempotently — already-applied
@@ -317,7 +334,15 @@ network:
         exposed_via: frp
 
 # Each client = one APP. Per-app policy lives here:
-#   allowed_authenticators: which login methods this app accepts
+#   allowed_authenticators: which login methods this app accepts.
+#                          Built-ins: password, phone, email, temp_token,
+#                          keypair, apikey, certificate, totp,
+#                          oidc_federation. The LDAP/AD and RADIUS
+#                          authenticators are SEPARATE nested modules
+#                          (ldap/, radius/) wired via the operator's cmd
+#                          fork (sso.WithAuthenticator); whitelist them here
+#                          by their registered name once wired. See
+#                          radius/doc.go + ldap/ for config + security model.
 #   token_strategy:        which TokenIssuer mints this app's tokens
 #                          (must match a name registered in code via
 #                          sso.WithTokenIssuer(name, issuer))
@@ -639,6 +664,14 @@ security:
 # registry automatically (no extra config).
 metrics:
   enabled: true
+  # Opt-in per-tenant login + token-issue metrics
+  # (sso_login_attempts_by_tenant_total / sso_tokens_issued_by_tenant_total).
+  # CARDINALITY-GATED: only the tenant ids listed here get their own label;
+  # every other tenant folds into a single tenant="other" bucket, so the
+  # label cardinality is len(list)+1 — bounded. Empty (default) leaves these
+  # metrics OFF entirely (never registered, never emitted). NEVER add a raw
+  # user id or an unbounded client_id here.
+  tenant_label_allowlist: []
 
 # OAuth/OIDC grant stores. Each block opts into one grant; without
 # any of these flags the corresponding /token branch (or /par) returns
@@ -657,6 +690,14 @@ oauth:
   refresh_token:
     enabled: true       # grant_type=refresh_token, single-use rotation
     ttl: 720h           # 30d; SDK default when <=0
+    # Optional per-family rotation-VELOCITY cap (BCP §4.13/§4.14 hardening).
+    # Both must be >0 to arm; either 0 leaves it OFF. A family that rotates
+    # more than max_rotations_per_window times within rotation_window is
+    # killed (DeleteFamily) and the rotation rejected with invalid_grant
+    # (oracle-safe), emitting refresh_rotation_velocity_exceeded +
+    # sso_refresh_rotation_velocity_exceeded_total. Fail-OPEN on store error.
+    max_rotations_per_window: 0   # e.g. 20
+    rotation_window: 0s           # e.g. 1m
   device_code:
     enabled: false      # grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
     ttl: 10m
@@ -869,6 +910,12 @@ cluster:
     # etcd_event_ttl: 10s     # published-key lease; short by design
     # etcd_username: ""
     # etcd_password: ""
+  # Cross-replica access-token revocation propagation. When true (and a bus
+  # is wired above), a /token/revoke that hit a local issuer broadcasts the
+  # revoked token + exp so every replica adds it to its deny-set — closing
+  # the window where a token revoked on replica A keeps validating on B until
+  # its own exp. Additive + oracle-safe + fail-open. INERT without a bus.
+  cross_replica_revocation: false
 
 # Signing-key lifecycle. Automatic rotation promotes a fresh Ed25519
 # signing key every `interval`, keeping the demoted key verify-only (in
@@ -890,6 +937,12 @@ keys:
     enabled: false
     interval: 2160h           # 90d
     grace_period: 168h        # 7d (>= max access-token TTL)
+    # Deadline-coordinated same-kid cutover: broadcast each rotation over
+    # cluster.bus so every replica retires the demoted kid at the SAME
+    # instant (no rolling-deploy "unknown kid" 401). Requires cluster.bus;
+    # fail-safe (only ever widens the verify window). Needs a shared signer
+    # (KMS) so all replicas share one kid.
+    coordinated_cutover: false
   # Opt-in leaderless multi-replica JWKS public-key aggregation. When each
   # replica holds its OWN per-process signing key (distinct kid, no shared
   # KMS), a token signed by one replica fails verification on a peer (or on
@@ -1575,6 +1628,7 @@ anomaly:
     queue_size: 1024     # 0 = SDK default
     workers: 4           # 0 = SDK default
     drop_policy: "drop_newest"  # drop_newest | block
+    inspect_timeout: 5s  # 0 = SDK default; per-event detector sweep deadline
 
   # Background prune loop. Mirrors audit / snapshot / push_approvals
   # retention pattern. Each store has its own age threshold —

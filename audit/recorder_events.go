@@ -169,6 +169,31 @@ func RecordRefreshTokenReuse(rec *Recorder, ctx core.HandlerContext, clientID, f
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordRefreshRotationVelocityExceeded emits a
+// refresh_rotation_velocity_exceeded event after the rotation grant
+// trips the per-family velocity cap and kills the family. The wire
+// response stays the generic invalid_grant — this audit event is the
+// ONLY place the velocity detail surfaces (count = rotations seen in the
+// window, killed = active descendants invalidated). Metadata is set via
+// SetMeta so geo/tenant enrichment is preserved.
+func RecordRefreshRotationVelocityExceeded(rec *Recorder, ctx core.HandlerContext, clientID, familyID string, count, killed int) {
+	if rec == nil {
+		return
+	}
+	e := EventFromRequest(ctx)
+	e.Type = EventRefreshRotationVelocityExceeded
+	e.Outcome = OutcomeFailure
+	e.ClientID = clientID
+	e.Reason = "family=" + familyID
+	if count > 0 {
+		SetMeta(e, "count", itoa(count))
+	}
+	if killed > 0 {
+		SetMeta(e, "killed", itoa(killed))
+	}
+	rec.Record(ctx.Request().Context(), e)
+}
+
 // RecordCredentialHealth emits a non-blocking credential-health signal
 // after a successful login. A Weak signal yields a password_weak event; a
 // Compromised signal yields a password_compromised event (Compromised
@@ -460,6 +485,28 @@ func RecordSigningKeyAggregationRecovered(rec *Recorder, ctx context.Context) {
 		Type:    EventSigningKeyAggregationRecovered,
 		Outcome: OutcomeSuccess,
 	})
+}
+
+// RecordSigningKeyRotationCoordinated emits a signing_key_rotation_coordinated
+// event when this replica acted on a received cross-replica
+// cluster.KindSigningKeyRotation Event (deferring the demoted kid's retirement
+// to the carried deadline and/or adopting the new kid verify-only). Runs off
+// the request path (the bus subscriber goroutine), so it takes a plain
+// context.Context like its aggregation siblings. outcome ∈ {deferred, extended,
+// adopted_only, noop} lands in Metadata via SetMeta — NO kid is recorded
+// (bounded cardinality + no key-timeline leak; the originating
+// signing_key_rotated event already carries the from/to kids on the rotating
+// replica).
+func RecordSigningKeyRotationCoordinated(rec *Recorder, ctx context.Context, outcome string) {
+	if rec == nil {
+		return
+	}
+	e := &Event{
+		Type:    EventSigningKeyRotationCoordinated,
+		Outcome: OutcomeSuccess,
+	}
+	SetMeta(e, "outcome", outcome)
+	rec.Record(ctx, e)
 }
 
 func joinComma(s []string) string {

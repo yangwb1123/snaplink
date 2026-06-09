@@ -564,7 +564,7 @@ func newGRPCServer(a *app) *grpc.Server {
 		netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
 	}
 	if a.adminMW != nil {
-		adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache))
+		adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache))
 		adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
 		adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
 			Sessions:  a.sessionMgr,
@@ -759,7 +759,7 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	}
 	gw := runtime.NewServeMux()
 	ctx := context.Background()
-	if err := adminv1.RegisterClientAdminServiceHandlerServer(ctx, gw, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache)); err != nil {
+	if err := adminv1.RegisterClientAdminServiceHandlerServer(ctx, gw, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache)); err != nil {
 		return nil, fmt.Errorf("gateway clients: %w", err)
 	}
 	if err := adminv1.RegisterUserAdminServiceHandlerServer(ctx, gw, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder)); err != nil {
@@ -1664,12 +1664,21 @@ func buildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
 func buildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
-		return defaultimpl.NewMemoryRefreshTokenStore(), nil
+		s := defaultimpl.NewMemoryRefreshTokenStore()
+		s.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
+		s.RotationWindow = cfg.RefreshToken.RotationWindow
+		return s, nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
-		return sqlitestores.NewRefreshTokenStore(cfg.SQLite.DSN)
+		s, err := sqlitestores.NewRefreshTokenStore(cfg.SQLite.DSN)
+		if err != nil {
+			return nil, err
+		}
+		s.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
+		s.RotationWindow = cfg.RefreshToken.RotationWindow
+		return s, nil
 	default:
 		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
 	}
@@ -3263,6 +3272,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			opts = append(opts, sso.WithTenantSuspensionCheck(cfg.Tenant.SuspensionCheck.CacheTTL))
 		}
 	}
+	// Opt-in per-login ClientStore metadata cache (identity.client_cache).
+	// TTL 0 falls back to sso.DefaultClientStoreCacheTTL inside the SDK.
+	// ValidateSecret bypasses it (§2); admin/DCR mutations evict via the
+	// InvalidateClientCache bus wiring above.
+	if cfg.Identity.ClientCache.Enabled {
+		opts = append(opts, sso.WithClientStoreCache(cfg.Identity.ClientCache.TTL))
+	}
 	if cfg.Server.DiscoveryDocCacheTTL != 0 {
 		// Negative TTL also passes through — the SDK treats <= 0 as
 		// "disable body cache" so operators can flip caching off
@@ -3577,6 +3593,12 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithMetrics(metricsRegistry))
 		logger.Info("metrics: prometheus /metrics enabled")
+		// Opt-in per-tenant login/issue metrics. Cardinality-gated by the
+		// operator allowlist (§5): empty = OFF (vectors never registered).
+		if len(cfg.Metrics.TenantLabelAllowlist) > 0 {
+			opts = append(opts, sso.WithTenantMetricsAllowlist(cfg.Metrics.TenantLabelAllowlist))
+			logger.Info("metrics: per-tenant breakdown enabled", "tenants", len(cfg.Metrics.TenantLabelAllowlist))
+		}
 	}
 	if n := cfg.Security.BodyLimit.MaxBytes; n > 0 {
 		opts = append(opts, sso.WithBodyLimit(n))
@@ -3719,6 +3741,23 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	}
 	if invalidationBus != nil {
 		opts = append(opts, sso.WithInvalidationBus(invalidationBus))
+		// Deadline-coordinated same-kid rotation cutover rides the same bus.
+		if cfg.Keys.Rotation.CoordinatedCutover {
+			opts = append(opts, sso.WithCoordinatedKeyRotation())
+			logger.Info("signing-key rotation: deadline-coordinated cutover armed")
+		}
+		// Cross-replica access-token revocation propagation rides the same bus.
+		if cfg.Cluster.CrossReplicaRevocation {
+			opts = append(opts, sso.WithCrossReplicaRevocation())
+			logger.Info("revocation: cross-replica access-token propagation armed")
+		}
+	} else {
+		if cfg.Keys.Rotation.CoordinatedCutover {
+			logger.Error("keys.rotation.coordinated_cutover set but no cluster.bus wired — coordinated cutover is INERT")
+		}
+		if cfg.Cluster.CrossReplicaRevocation {
+			logger.Error("cluster.cross_replica_revocation set but no cluster.bus wired — cross-replica revocation is INERT")
+		}
 	}
 
 	// Shared signing-key registry (opt-in leaderless multi-replica JWKS
@@ -3801,6 +3840,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		logger.Info("keys.rotation enabled but ignored: an external signer (keys.signing.external) manages its own key lifecycle; in-process scheduled rotation disabled")
 	} else if ok {
 		rec := recorder
+		grace := rc.GracePeriod
 		rc.OnRotate = func(oldKID, newKID string) {
 			if rec != nil {
 				rec.Record(context.Background(), &audit.Event{
@@ -3821,6 +3861,12 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			if err := srv.PublishSigningKeys(context.Background()); err != nil {
 				logger.Error("signingkeys: re-publish after rotation failed", "error", err)
 			}
+			// Deadline-coordinated cutover: broadcast the demoted+new kids and a
+			// now+grace retire deadline so every armed peer defers the demoted
+			// kid's retirement to the SAME instant (no rolling-deploy "unknown
+			// kid" 401). Best-effort + no-op unless WithCoordinatedKeyRotation +
+			// an invalidation bus are wired.
+			srv.PublishSigningKeyRotation(context.Background(), oldKID, newKID, grace)
 			logger.Info("signing key rotated", "from", oldKID, "to", newKID)
 		}
 		// All four built-in signing algs (EdDSA/ES256/RS256/PS256) ship a
@@ -4754,6 +4800,34 @@ func newSlogLogger(level string) *slogLogger {
 func (l *slogLogger) Info(msg string, kv ...any)  { l.inner.Info(msg, kv...) }
 func (l *slogLogger) Error(msg string, kv ...any) { l.inner.Error(msg, kv...) }
 func (l *slogLogger) Debug(msg string, kv ...any) { l.inner.Debug(msg, kv...) }
+
+// slogLogger implements spi.ContextLogger: the *Ctx variants append the
+// W3C trace_id the SDK stamped onto ctx (parsed from the request's
+// traceparent — the same id that lands on audit Event.TraceID), so ops
+// log lines join to traces + audit. Absent trace → no field emitted.
+// trace_id is LOG-ONLY; it never touches a wire response.
+var _ spi.ContextLogger = (*slogLogger)(nil)
+
+func (l *slogLogger) InfoCtx(ctx context.Context, msg string, kv ...any) {
+	l.inner.Info(msg, withTraceID(ctx, kv)...)
+}
+
+func (l *slogLogger) ErrorCtx(ctx context.Context, msg string, kv ...any) {
+	l.inner.Error(msg, withTraceID(ctx, kv)...)
+}
+
+func (l *slogLogger) DebugCtx(ctx context.Context, msg string, kv ...any) {
+	l.inner.Debug(msg, withTraceID(ctx, kv)...)
+}
+
+// withTraceID appends a trace_id key/value to kv when ctx carries a W3C
+// trace id, otherwise returns kv unchanged.
+func withTraceID(ctx context.Context, kv []any) []any {
+	if tid := spi.TraceIDFromContext(ctx); tid != "" {
+		return append(kv, slog.String("trace_id", tid))
+	}
+	return kv
+}
 
 // progName prefixes every diagnostic so multi-binary deployments can
 // tell which tool emitted a line.

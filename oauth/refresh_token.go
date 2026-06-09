@@ -208,3 +208,45 @@ type RefreshTokenFamilyTracker interface {
 // returning, so an attacker who replays a stolen leaf can't continue
 // rotating from a sibling they already obtained.
 var ErrRefreshTokenReused = errors.New("sso: refresh token already consumed (reuse detected)")
+
+// RefreshTokenRotationLimiter is an OPTIONAL extension that caps how
+// FAST a single refresh-token FAMILY may rotate. It closes the gap left
+// by RefreshTokenFamilyTracker: family-reuse detection only fires when
+// the SAME leaf is presented twice, so an attacker who steals a refresh
+// token and rotates ONCE — while the victim keeps rotating the original
+// chain — produces TWO live, diverging leaves whose siblings are never
+// double-presented. Both parties rotating the same family at a combined
+// rate above any one client's normal cadence is the classic tell; a
+// per-family velocity cap turns that tell into an actionable signal.
+//
+// The limiter is keyed by FamilyID and counts rotations within a
+// sliding-or-fixed window. The handler calls RecordRotation AFTER the
+// successful single-use Consume of the presented token and BEFORE
+// issuing the rotated token. On windowExceeded the handler treats the
+// family as compromised — exactly the reuse-class response — and kills
+// it via the existing DeleteFamily path.
+//
+// Implement it on the concrete store type (type-asserted like
+// RefreshTokenInspector / RefreshTokenFamilyTracker). Stores that don't
+// implement it, or a limiter that's configured with a non-positive cap,
+// are byte-identical to a build without the feature.
+//
+// FAIL-OPEN contract: a RecordRotation transport/store error MUST NOT
+// block a legitimate refresh. The velocity cap is a defense layer, not a
+// correctness gate (the opposite of family-reuse fail-closed) — the
+// handler logs the error and lets the rotation proceed, exactly like the
+// JTI-replay default and ratelimit.Allow. An impl MUST therefore return
+// windowExceeded=false alongside a non-nil err on any store failure (never
+// fail closed by reporting the window exceeded on an error path).
+//
+// (A Redis peer — out of scope for the in-core change — can satisfy this
+// with an atomic INCR + conditional EXPIRE per FamilyID, the same
+// fixed-window primitive as ratelimit.Allow; left shaped for that.)
+type RefreshTokenRotationLimiter interface {
+	// RecordRotation records one rotation of familyID and reports the
+	// post-increment count within the current window plus whether the
+	// configured per-window cap was exceeded. An empty familyID is a
+	// no-op: (0, false, nil) — a family-untracked store can't velocity-
+	// limit, mirroring DeleteFamily's empty-id contract.
+	RecordRotation(ctx context.Context, familyID string) (count int, windowExceeded bool, err error)
+}

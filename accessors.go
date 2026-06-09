@@ -337,8 +337,23 @@ func (s *Server) ResolveLocalSubject(ctx context.Context, sub string) (string, e
 // RevokeAcrossIssuers asks every registered TokenIssuer to revoke
 // the supplied access token. Returns (revoked, failed) issuer-name
 // lists so callers can emit partial-revoke audit on failure.
+//
+// This is the user-driven revocation seam (/token/revoke, /token/revoke-all,
+// /end_session id_token_hint). When WithCrossReplicaRevocation is armed AND a
+// local issuer actually revoked the token, it ALSO publishes a
+// cluster.KindTokenRevoked Event so every armed replica adds the token to its
+// own in-process deny-set (best-effort, fail-open). The publish lives HERE, not
+// in the unexported revokeAcrossIssuers, so the bus subscriber's adopt path
+// (applyTokenRevocation → s.revokeAcrossIssuers) NEVER re-publishes — no
+// broadcast loop. No-op publish when unarmed or no bus is wired.
 func (s *Server) RevokeAcrossIssuers(ctx context.Context, token string) (revoked, failed []string) {
-	return s.revokeAcrossIssuers(ctx, token)
+	revoked, failed = s.revokeAcrossIssuers(ctx, token)
+	// Only propagate a revocation a local issuer actually owned — broadcasting a
+	// token no issuer here recognised would just churn peers for nothing.
+	if len(revoked) > 0 {
+		s.publishTokenRevocation(ctx, token, jwtExpUnsafe(token))
+	}
+	return revoked, failed
 }
 
 // AuditPartialRevokeFailure emits an audit event when some — but

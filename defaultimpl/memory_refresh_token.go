@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"sync"
+	"time"
 )
 
 // refreshTokenBytes is the size in bytes of generated refresh tokens
@@ -28,17 +29,44 @@ const refreshTokenBytes = 32
 // memory persists until DeleteFamily is called (or the entire store
 // is dropped).
 type MemoryRefreshTokenStore struct {
+	// MaxRotationsPerWindow + RotationWindow configure the OPTIONAL
+	// per-family rotation-VELOCITY cap (oauth.RefreshTokenRotationLimiter).
+	// Both must be positive for RecordRotation to ever report
+	// windowExceeded — a non-positive cap or window leaves the limiter
+	// inert (count is still returned, but the window is never "exceeded"),
+	// so a store constructed without WithRefreshRotationLimit is
+	// byte-identical to a build without the feature. Set them BEFORE the
+	// store sees traffic (e.g. immediately after NewMemoryRefreshTokenStore);
+	// they're exported to match MemoryAccountLockout's field-config style.
+	MaxRotationsPerWindow int
+	RotationWindow        time.Duration
+
 	mu       sync.Mutex
 	entries  map[string]*oauth.RefreshToken
 	families map[string]string // token → familyID, KEPT after Consume for reuse detection
+	// rotations is the per-family sliding-window rotation counter backing
+	// RecordRotation. Pruned lazily on access (entries whose window start
+	// is older than RotationWindow reset to a fresh count) so it can't grow
+	// unbounded without a sweeper goroutine — the MemoryAccountLockout
+	// discipline.
+	rotations map[string]*rotationWindow
+}
+
+// rotationWindow is one family's fixed-window rotation counter:
+// `count` rotations since `windowStart`. A rotation arriving after
+// windowStart+RotationWindow rolls the window over to a fresh count of 1.
+type rotationWindow struct {
+	count       int
+	windowStart time.Time
 }
 
 // NewMemoryRefreshTokenStore returns a ready-to-use store with no TTL
 // of its own — TTLs are stamped per-oauth.RefreshToken at Issue time.
 func NewMemoryRefreshTokenStore() *MemoryRefreshTokenStore {
 	return &MemoryRefreshTokenStore{
-		entries:  make(map[string]*oauth.RefreshToken),
-		families: make(map[string]string),
+		entries:   make(map[string]*oauth.RefreshToken),
+		families:  make(map[string]string),
+		rotations: make(map[string]*rotationWindow),
 	}
 }
 
@@ -131,7 +159,52 @@ func (m *MemoryRefreshTokenStore) DeleteFamily(_ context.Context, familyID strin
 			delete(m.families, tok)
 		}
 	}
+	// Drop the velocity counter — a revoked family can never rotate again,
+	// so its window state is dead weight (and keeping it would let a
+	// brand-new family that happened to reuse the (random) id inherit a
+	// stale count).
+	delete(m.rotations, familyID)
 	return n, nil
+}
+
+// RecordRotation implements [oauth.RefreshTokenRotationLimiter]: it bumps
+// familyID's fixed-window rotation counter and reports the post-increment
+// count + whether the configured per-window cap was exceeded. Mirrors the
+// MemoryAccountLockout sliding-window RMW: a rotation arriving after the
+// window elapsed rolls over to a fresh count of 1.
+//
+// windowExceeded is only ever true when BOTH MaxRotationsPerWindow and
+// RotationWindow are positive (the limiter is configured) AND the count
+// crossed the cap. An empty familyID is a no-op (0, false, nil) — a
+// family-untracked store can't velocity-limit. This impl never returns a
+// non-nil error (in-memory), so the handler's fail-open path is only
+// exercised by stores with real I/O.
+func (m *MemoryRefreshTokenStore) RecordRotation(_ context.Context, familyID string) (int, bool, error) {
+	if familyID == "" {
+		return 0, false, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	w, ok := m.rotations[familyID]
+	if !ok {
+		w = &rotationWindow{}
+		m.rotations[familyID] = w
+	}
+	// Roll the fixed window over when it has elapsed. A non-positive
+	// RotationWindow disables roll-over (the window never elapses), which
+	// only matters when the limiter is unconfigured — and an unconfigured
+	// limiter never reports windowExceeded anyway.
+	if !w.windowStart.IsZero() && m.RotationWindow > 0 && now.Sub(w.windowStart) >= m.RotationWindow {
+		w.count = 0
+		w.windowStart = time.Time{}
+	}
+	w.count++
+	if w.windowStart.IsZero() {
+		w.windowStart = now
+	}
+	exceeded := m.MaxRotationsPerWindow > 0 && m.RotationWindow > 0 && w.count > m.MaxRotationsPerWindow
+	return w.count, exceeded, nil
 }
 
 // Inspect returns the token's payload without consuming it. Required
@@ -264,9 +337,10 @@ func GenerateRefreshToken() (string, error) {
 
 // Compile-time interface checks.
 var (
-	_ oauth.RefreshTokenStore         = (*MemoryRefreshTokenStore)(nil)
-	_ oauth.RefreshTokenInspector     = (*MemoryRefreshTokenStore)(nil)
-	_ oauth.RefreshTokenSubjectIndex  = (*MemoryRefreshTokenStore)(nil)
-	_ oauth.RefreshTokenFamilyTracker = (*MemoryRefreshTokenStore)(nil)
-	_ oauth.RefreshTokenClientPurger  = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenStore           = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenInspector       = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenSubjectIndex    = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenFamilyTracker   = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenClientPurger    = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenRotationLimiter = (*MemoryRefreshTokenStore)(nil)
 )

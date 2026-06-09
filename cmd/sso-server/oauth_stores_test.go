@@ -13,7 +13,7 @@ import (
 func TestBuildApp_AllOAuthStoresEnabled_BuildsCleanly(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.OAuth.AuthCode = config.OAuthStoreConfig{Enabled: true, TTL: 10 * time.Minute}
-	cfg.OAuth.RefreshToken = config.OAuthStoreConfig{Enabled: true, TTL: 30 * 24 * time.Hour}
+	cfg.OAuth.RefreshToken = config.OAuthRefreshTokenConfig{OAuthStoreConfig: config.OAuthStoreConfig{Enabled: true, TTL: 30 * 24 * time.Hour}}
 	cfg.OAuth.DeviceCode = config.OAuthDeviceCodeConfig{
 		Enabled:             true,
 		TTL:                 10 * time.Minute,

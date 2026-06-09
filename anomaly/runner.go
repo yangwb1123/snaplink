@@ -186,6 +186,11 @@ type Runner struct {
 	started   atomicBool
 	closed    atomicBool
 
+	// inspectTimeout bounds each per-event detector sweep — a detector
+	// querying a slow backend shouldn't pile up. Default 5s; tune via
+	// WithInspectTimeout.
+	inspectTimeout time.Duration
+
 	// Metrics + logger left as fields for testability; cmd wires
 	// real values, tests inject stubs.
 	metrics *metricsCallbacks
@@ -238,6 +243,18 @@ func WithWorkers(n int) Option {
 	}
 }
 
+// WithInspectTimeout bounds the per-event detector sweep. Default 5s
+// (generous for a SQLite read). A non-positive value is ignored, so
+// the SDK default stands. Tighten for fleets with strict latency SLAs
+// on their detector backends, loosen for slow stores.
+func WithInspectTimeout(d time.Duration) Option {
+	return func(r *Runner) {
+		if d > 0 {
+			r.inspectTimeout = d
+		}
+	}
+}
+
 // WithDropPolicy overrides drop-newest with block. Use with
 // care — block backpressures into the login Dispatch call.
 func WithDropPolicy(p DropPolicy) Option {
@@ -259,21 +276,26 @@ func WithLogger(l spi.Logger) Option {
 	}
 }
 
-// WithMetricsCallbacks wires the three anomaly metric
-// emitters. cmd builds these from its *metrics.Metrics; tests
-// inject inline closures to assert metric activity without
-// dragging the prometheus dep into the SPI layer. Any callback
-// may be nil — only set ones fire.
+// WithMetricsCallbacks wires the anomaly metric emitters. cmd builds
+// these from its *metrics.Metrics; tests inject inline closures to
+// assert metric activity without dragging the prometheus dep into the
+// SPI layer. Any callback may be nil — only set ones fire.
+//
+// dispatched fires once per event actually offered to the queue (the
+// offered-load denominator) — pair it with dropped to derive a drop
+// RATE (drops / offered) rather than only an absolute drop count.
 func WithMetricsCallbacks(
 	detected func(anomalyType, severity string),
 	dropped func(reason string),
 	inspectError func(detector string),
+	dispatched func(),
 ) Option {
 	return func(r *Runner) {
 		r.metrics = &metricsCallbacks{
 			detected:     detected,
 			dropped:      dropped,
 			inspectError: inspectError,
+			dispatched:   dispatched,
 		}
 	}
 }
@@ -288,12 +310,13 @@ func NewRunner(detectors []Detector, sink Sink, opts ...Option) *Runner {
 		return nil
 	}
 	r := &Runner{
-		detectors:  detectors,
-		sink:       sink,
-		queueSize:  1024,
-		workers:    4,
-		dropPolicy: DropNewest,
-		logger:     spi.NopLogger{},
+		detectors:      detectors,
+		sink:           sink,
+		queueSize:      1024,
+		workers:        4,
+		inspectTimeout: 5 * time.Second,
+		dropPolicy:     DropNewest,
+		logger:         spi.NopLogger{},
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -341,6 +364,11 @@ func (r *Runner) Dispatch(ctx context.Context, event *LoginEvent) {
 	if r == nil || r.closed.load() || event == nil {
 		return
 	}
+	// Count every event actually offered to the queue (the offered-load
+	// denominator) BEFORE the drop decision — drops are a subset, so
+	// dropped/dispatched is the drop rate. Nil/closed no-ops above are
+	// excluded (they never reached the dispatcher).
+	r.recordDispatched()
 	switch r.dropPolicy {
 	case DropBlock:
 		select {
@@ -391,9 +419,9 @@ func (r *Runner) work() {
 // one broken detector shouldn't blind the others.
 func (r *Runner) inspect(event *LoginEvent) {
 	// Bounded per-detector context — detectors querying a slow
-	// backend shouldn't pile up. 5s is generous for a SQLite read;
-	// operator can tighten via per-detector wrapper if needed.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// backend shouldn't pile up. Default 5s (generous for a SQLite
+	// read); tune via WithInspectTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), r.inspectTimeout)
 	defer cancel()
 	for _, d := range r.detectors {
 		anomalies, err := d.Inspect(ctx, event)
@@ -423,6 +451,12 @@ type metricsCallbacks struct {
 	dropped      func(reason string)
 	detected     func(anomalyType, severity string)
 	inspectError func(detector string)
+}
+
+func (r *Runner) recordDispatched() {
+	if r.metrics != nil && r.metrics.dispatched != nil {
+		r.metrics.dispatched()
+	}
 }
 
 func (r *Runner) recordDrop(reason string) {

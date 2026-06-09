@@ -156,7 +156,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		}
 		body, err := s.jarFetcher.Fetch(ctx.Request().Context(), req.RequestURI)
 		if err != nil {
-			s.logger.Error("jar fetch failed", "error", err, "client", req.ClientID, "uri", req.RequestURI)
+			s.logErrorCtx(ctx, "jar fetch failed", "error", err, "client", req.ClientID, "uri", req.RequestURI)
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
 			return
 		}
@@ -541,7 +541,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		RequestedClaims: oauth.CloneRawJSON(req.Claims),
 	})
 	if err != nil {
-		s.logger.Error("authentication failed", "provider", req.Provider, "error", err)
+		s.logErrorCtx(ctx, "authentication failed", "provider", req.Provider, "error", err)
 		// Failure attribution to per-account lockout BEFORE the
 		// generic login_failure audit so the auditor records the
 		// lockout state alongside the failure.
@@ -587,7 +587,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		})
 		switch {
 		case riskErr != nil:
-			s.logger.Error("risk scorer failed", "error", riskErr, "user", result.UserID, "client", req.ClientID)
+			s.logErrorCtx(ctx, "risk scorer failed", "error", riskErr, "user", result.UserID, "client", req.ClientID)
 		case assessment == nil:
 			// Defensive: a scorer that returns (nil, nil) is misbehaving.
 			s.logger.Error("risk scorer returned nil assessment", "user", result.UserID, "client", req.ClientID)
@@ -1519,7 +1519,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ConfirmationX5TS256:  mtlsX5T,
 		}, scopes)
 		if err != nil {
-			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
+			s.logErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 			return
 		}
@@ -1589,11 +1589,11 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				if tracker, ok := s.refreshTokenStore.(oauth.RefreshTokenFamilyTracker); ok {
 					n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
 					if derr != nil {
-						s.logger.Error("family revocation on reuse failed",
+						s.logErrorCtx(ctx, "family revocation on reuse failed",
 							"error", derr, "family", info.FamilyID)
 					} else {
 						killed = n
-						s.logger.Error("refresh token reuse detected — family revoked",
+						s.logErrorCtx(ctx, "refresh token reuse detected — family revoked",
 							"family", info.FamilyID, "killed", killed,
 							"client", client.ID)
 					}
@@ -1621,6 +1621,54 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				return
 			}
 			grantScopes = requested
+		}
+		// Per-family rotation-VELOCITY cap (OPTIONAL hardening, opt-in via a
+		// store implementing oauth.RefreshTokenRotationLimiter). Runs AFTER
+		// the single-use Consume above (so it counts a genuine rotation) and
+		// BEFORE any token is minted. An attacker who steals a refresh token
+		// and rotates once — while the victim keeps rotating the original
+		// chain — drives the family's rotation rate above any single client's
+		// cadence; this turns that into a kill signal even though no leaf was
+		// ever double-presented (which is all the reuse tracker can see).
+		//
+		// On windowExceeded the family is compromised: kill it via the SAME
+		// DeleteFamily path family-reuse uses, then reject with the SAME
+		// invalid_grant wire shape (no distinct code, no Retry-After, no
+		// rate/velocity/family hint — the detail lives only in the audit
+		// event + metric). FAIL-OPEN on a limiter store error: log + proceed
+		// (the cap is a defense layer, not a correctness gate — the opposite
+		// of the family-reuse fail-closed above). info.FamilyID == "" (family
+		// tracking opted out) makes RecordRotation a no-op.
+		if limiter, ok := s.refreshTokenStore.(oauth.RefreshTokenRotationLimiter); ok && info.FamilyID != "" {
+			count, exceeded, lerr := limiter.RecordRotation(ctx.Request().Context(), info.FamilyID)
+			if lerr != nil {
+				// Availability class (§2): a store error must not block a
+				// legitimate refresh, and must NOT kill the family.
+				s.logErrorCtx(ctx, "refresh rotation velocity check failed — proceeding (fail-open)",
+					"error", lerr, "family", info.FamilyID, "client", client.ID)
+			} else if exceeded {
+				killed := 0
+				if tracker, ok := s.refreshTokenStore.(oauth.RefreshTokenFamilyTracker); ok {
+					n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
+					if derr != nil {
+						s.logErrorCtx(ctx, "family revocation on rotation-velocity breach failed",
+							"error", derr, "family", info.FamilyID)
+					} else {
+						killed = n
+						s.logErrorCtx(ctx, "refresh rotation velocity exceeded — family revoked",
+							"family", info.FamilyID, "count", count, "killed", killed,
+							"client", client.ID)
+					}
+				}
+				if s.metrics != nil {
+					s.metrics.RefreshRotationVelocityExceededTotal.Inc()
+				}
+				s.recordRefreshRotationVelocity(ctx, client.ID, info.FamilyID, count, killed)
+				// Same wire shape as a reuse / bad refresh — oracle-leak
+				// collapse (§2).
+				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+				return
+			}
 		}
 		strategy, ti, err := s.issuerForClient(client)
 		if err != nil {
@@ -1650,7 +1698,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ConfirmationX5TS256: mtlsX5T,
 		}, grantScopes)
 		if err != nil {
-			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
+			s.logErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 			return
 		}
@@ -1663,7 +1711,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
 			info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
 		if err != nil {
-			s.logger.Error("refresh token rotation failed", "error", err)
+			s.logErrorCtx(ctx, "refresh token rotation failed", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 			return
 		}
@@ -1721,7 +1769,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			ConfirmationX5TS256: mtlsX5T,
 		}, grantCCScopes)
 		if err != nil {
-			s.logger.Error("token issuance failed", "strategy", strategy, "error", err)
+			s.logErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 			return
 		}
@@ -1792,7 +1840,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 			ctx.JSON(http.StatusUnauthorized, errorBody(ErrUseDPoPNonce))
 			return
 		}
-		s.logger.Error("dpop bearer verification failed", "error", err, "subject", claims.Subject)
+		s.logErrorCtx(ctx, "dpop bearer verification failed", "error", err, "subject", claims.Subject)
 		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
@@ -1802,7 +1850,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// client cert MUST have the matching thumbprint. Same wire-
 	// shape collapse to invalid_token.
 	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
-		s.logger.Error("mtls bearer verification failed", "error", err, "subject", claims.Subject)
+		s.logErrorCtx(ctx, "mtls bearer verification failed", "error", err, "subject", claims.Subject)
 		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return

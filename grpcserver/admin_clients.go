@@ -40,16 +40,29 @@ type ClientAdminService struct {
 	// Wire it to (*sso.Server).InvalidateDiscoveryCache so a client edit
 	// converges across replicas immediately. nil = no-op.
 	onDiscoveryChange func()
+	// onClientChange is invoked with the affected client ID after a
+	// per-client mutation (Create/Update/Delete/RotateSecret). Wire it to
+	// (*sso.Server).InvalidateClientCache so the opt-in per-login client
+	// cache evicts that client locally AND across replicas (bus). nil =
+	// no-op. Mirrors the PermissionAdminService callback-field pattern (no
+	// *sso.Server injection into grpcserver).
+	onClientChange func(clientID string)
 }
 
 // NewClientAdminService builds the service. onDiscoveryChange may be nil
 // (e.g. when no discovery cache / bus is wired); pass
 // (*sso.Server).InvalidateDiscoveryCache to propagate client edits.
-func NewClientAdminService(store sso.ClientStore, recorder *audit.Recorder, onDiscoveryChange func()) *ClientAdminService {
+// onClientChange may be nil (no per-login client cache wired); pass
+// (*sso.Server).InvalidateClientCache to evict the affected client on
+// every mutation.
+func NewClientAdminService(store sso.ClientStore, recorder *audit.Recorder, onDiscoveryChange func(), onClientChange func(clientID string)) *ClientAdminService {
 	if onDiscoveryChange == nil {
 		onDiscoveryChange = func() {}
 	}
-	return &ClientAdminService{store: store, recorder: recorder, onDiscoveryChange: onDiscoveryChange}
+	if onClientChange == nil {
+		onClientChange = func(string) {}
+	}
+	return &ClientAdminService{store: store, recorder: recorder, onDiscoveryChange: onDiscoveryChange, onClientChange: onClientChange}
 }
 
 func (s *ClientAdminService) List(ctx context.Context, _ *adminv1.ListClientsRequest) (*adminv1.ListClientsResponse, error) {
@@ -103,6 +116,7 @@ func (s *ClientAdminService) Create(ctx context.Context, in *adminv1.CreateClien
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientCreated, c.ID)
 	s.onDiscoveryChange()
+	s.onClientChange(c.ID)
 	return &adminv1.CreateClientResponse{Client: clientToProto(c, false)}, nil
 }
 
@@ -141,6 +155,7 @@ func (s *ClientAdminService) Update(ctx context.Context, in *adminv1.UpdateClien
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientUpdated, c.ID)
 	s.onDiscoveryChange()
+	s.onClientChange(c.ID)
 	return &adminv1.UpdateClientResponse{Client: clientToProto(c, false)}, nil
 }
 
@@ -156,6 +171,7 @@ func (s *ClientAdminService) Delete(ctx context.Context, in *adminv1.DeleteClien
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientDeleted, in.Id)
 	s.onDiscoveryChange()
+	s.onClientChange(in.Id)
 	return &adminv1.DeleteClientResponse{}, nil
 }
 
@@ -174,6 +190,10 @@ func (s *ClientAdminService) RotateSecret(ctx context.Context, in *adminv1.Rotat
 		return nil, status.Errorf(codes.Internal, "rotate: %v", err)
 	}
 	recordAdmin(ctx, s.recorder, audit.EventAdminClientSecretRotated, in.Id)
+	// RotateSecret changes the cached Secret field; evict so the metadata
+	// cache doesn't serve the stale snapshot (ValidateSecret already
+	// bypasses the cache, so this is metadata hygiene, not correctness).
+	s.onClientChange(in.Id)
 	return &adminv1.RotateSecretResponse{Secret: secret}, nil
 }
 

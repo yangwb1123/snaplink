@@ -337,7 +337,7 @@ func TestResidency_ApplyInvalidationDropsCache(t *testing.T) {
 		t.Fatalf("seed calls = %d want 1", n)
 	}
 	// A peer published a residency change; the subscriber loop hands it here.
-	srv.applyInvalidation(cluster.Event{Kind: cluster.KindTenantResidency, Key: trTenantID})
+	srv.applyInvalidation(context.Background(), cluster.Event{Kind: cluster.KindTenantResidency, Key: trTenantID})
 	if err := srv.checkTenantResidency(context.Background(), trTenantID, "eu-west-1", false); err != nil {
 		t.Fatalf("post-apply check: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestResidency_ApplyInvalidationDropsCache(t *testing.T) {
 	// A DIFFERENT tenant's invalidation must NOT evict our entry — proves the
 	// per-key delete is not a wildcard clear (would otherwise silently break
 	// cross-replica convergence into a global cache flush).
-	srv.applyInvalidation(cluster.Event{Kind: cluster.KindTenantResidency, Key: "some-other-tenant"})
+	srv.applyInvalidation(context.Background(), cluster.Event{Kind: cluster.KindTenantResidency, Key: "some-other-tenant"})
 	if _, ok := srv.tenantResidencyCache.get(trTenantID); !ok {
 		t.Fatal("unrelated tenant invalidation evicted a different tenant's cache entry")
 	}

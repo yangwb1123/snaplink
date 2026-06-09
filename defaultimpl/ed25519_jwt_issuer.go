@@ -89,8 +89,13 @@ type Ed25519JWTIssuer struct {
 	// their TTL window after a rotation.
 	verifyKeys map[string]ed25519.PublicKey
 
+	// revoked is the in-process revocation deny-set, keyed by the FULL token
+	// and valued by the token's `exp` (unix seconds). It is consulted in
+	// Validate (presence ⇒ rejected) and added to in Revoke. Keying by exp
+	// lets Revoke lazily prune entries whose exp has already passed (Validate
+	// rejects those on expiry anyway), bounding the map — see revocation_set.go.
 	revokedMu sync.RWMutex
-	revoked   map[string]struct{}
+	revoked   map[string]int64
 
 	// keyMu guards the active signing key (signer/keyID/publicKey) and
 	// the verifyKeys map so RotateKey can swap them at runtime without
@@ -208,7 +213,7 @@ func NewEd25519JWTIssuer(opts ...Ed25519Option) *Ed25519JWTIssuer {
 	j := &Ed25519JWTIssuer{
 		issuer:   sso.DefaultIssuer,
 		tokenTTL: defaultTokenTTL,
-		revoked:  make(map[string]struct{}),
+		revoked:  make(map[string]int64),
 	}
 	for _, opt := range opts {
 		opt(j)
@@ -721,16 +726,23 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	return claims, nil
 }
 
-// Revoke adds the token to an in-memory deny list. Returns an error when the
-// token wasn't signed by this issuer, so that revokeAcrossIssuers correctly
-// attributes ownership.
+// Revoke adds the token to an in-memory, exp-bounded deny list. Returns an
+// error when the token wasn't signed by this issuer, so that
+// revokeAcrossIssuers correctly attributes ownership.
+//
+// The entry is keyed by the token's `exp` (read back from the Validate call
+// above, which already decoded the payload), so markRevoked can lazily prune
+// entries whose exp has passed — Validate rejects an expired token on its own,
+// making a past-exp deny-set entry redundant. NEVER prunes a still-valid entry
+// (prune-not-early, see revocation_set.go).
 func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
-	if _, err := j.Validate(ctx, token); err != nil {
+	claims, err := j.Validate(ctx, token)
+	if err != nil {
 		return err
 	}
 	j.revokedMu.Lock()
 	defer j.revokedMu.Unlock()
-	j.revoked[token] = struct{}{}
+	markRevoked(j.revoked, token, claims.ExpiresAt.Unix())
 	return nil
 }
 

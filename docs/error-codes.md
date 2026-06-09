@@ -179,6 +179,13 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 |---------------------|------|-----------------------------------------------------------------------------------------|
 | `client_not_found`  | 404  | Direct client lookup (admin RPC, DCR management) returned `ErrNoSuchClient`            |
 
+### Dynamic Client Registration (`/register`, `/register/{client_id}`)
+
+| Code                          | HTTP | Emitted when                                                                            | Client should                                 |
+|-------------------------------|------|-----------------------------------------------------------------------------------------|-----------------------------------------------|
+| `invalid_client_metadata`     | 400  | RFC 7591 §2 — `POST /register` (or a `PUT /register/{client_id}` update) submitted client metadata that failed validation | Fix the offending metadata field, retry       |
+| `registration_not_configured` | 501  | `POST /register` or `GET`/`PUT`/`DELETE /register/{client_id}` hit but no `WithDynamicClientRegistration` wired | Operator enables dynamic client registration  |
+
 ---
 
 ## Tokens (`/userinfo`, `/permissions/me`, `/roles/me`, `/menus/me`)
@@ -309,6 +316,61 @@ compact JWS, `application/entity-statement+jwt`), not JSON.
 
 A signing failure AFTER the subordinate is matched returns `internal_error`
 (500, see Server / configuration).
+
+---
+
+## SCIM 2.0 (`/api/v1/scim/v2/*`, RFC 7644 §3.12 `scimType`)
+
+The SCIM 2.0 provisioning surface (RFC 7643 schema / RFC 7644 protocol)
+mounted under `/api/v1/scim/v2`. `/Users` always mounts; `/Groups` mounts
+only when `scim.groups.enabled` (it requires a `permissions.Provider`).
+
+**Wire shape note:** SCIM errors are a SEPARATE taxonomy from the OAuth
+`error` catalog above. The body is the RFC 7644 §3.12 error envelope served
+as `application/scim+json`:
+
+```json
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+  "status": "409",
+  "scimType": "uniqueness",
+  "detail": "userName already exists"
+}
+```
+
+`status` is the HTTP status repeated as a STRING. `scimType` is the
+machine-readable refinement code (RFC 7644 §3.12, Table 9) — connectors
+branch on `scimType` (and `status`), NEVER on the human-readable `detail`.
+`scimType` is present only on the 4xx cases below; it is OMITTED on
+404/405/500. The codes the handler actually emits:
+
+| `scimType`      | HTTP | Emitted when                                                                                  |
+|-----------------|------|-----------------------------------------------------------------------------------------------|
+| `invalidValue`  | 400  | A required value is missing or malformed — e.g. `userName` (User) / `displayName` (Group) absent, a non-integer/negative `startIndex`/`count`, an empty PATCH `Operations` array, or a typed PATCH value that doesn't match its attribute |
+| `invalidSyntax` | 400  | The request body is not valid SCIM JSON (create/replace) or not a valid SCIM PATCH body       |
+| `uniqueness`    | 409  | A uniqueness constraint was violated — the resulting `userName` already belongs to another user, or a server-minted id already exists |
+| `mutability`    | 400  | A read-only attribute was altered — a PUT/PATCH body carrying an `id` different from the resource's own id (`id` is server-assigned, read-only) |
+| `invalidPath`   | 400  | A PATCH `path` is unparseable or names an attribute this surface doesn't support (a value filter, a schema-URN-qualified path, or an unsupported `name.<sub>`) |
+| `noTarget`      | 400  | A PATCH `remove` op specified no `path` (there is no addressable attribute to act on)          |
+| `invalidFilter` | 400  | A `?filter=` expression (list/search) is unparseable or uses an unsupported construct          |
+
+Statuses WITHOUT a `scimType` (RFC 7644 Table 9 defines no refinement
+code for them):
+
+| HTTP | Emitted when                                                                                  |
+|------|-----------------------------------------------------------------------------------------------|
+| 404  | Unknown resource id (GET/PUT/PATCH/DELETE on a missing User/Group), an unknown nested path, or any SCIM path that matches no route |
+| 405  | A method not allowed on a known collection/resource route                                      |
+| 500  | An unexpected backing-store error (the `detail` carries the store message — the surface is admin-only, so no oracle risk) |
+
+**Admin auth (401/403) does NOT use the SCIM envelope.** The whole surface
+is gated by the AdminMiddleware, which fronts the SCIM handler: a missing /
+invalid bearer is a **401** and an insufficient scope (`admin:read` on GET,
+`admin:write` on POST/PUT/PATCH/DELETE) is a **403**, both carrying the
+OAuth-style `{"error": ...}` body (`missing_token` / `invalid_token` /
+`forbidden`, see Auth / OAuth above) plus a `WWW-Authenticate: Bearer
+realm="admin"` challenge — the request never reaches the SCIM handler, so it
+never gets a `scim+json` body.
 
 ---
 

@@ -754,6 +754,14 @@ type KeyRotationConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	Interval    time.Duration `yaml:"interval"`     // e.g. 2160h (90d)
 	GracePeriod time.Duration `yaml:"grace_period"` // e.g. 168h (7d)
+	// CoordinatedCutover arms WithCoordinatedKeyRotation: on rotation the
+	// node broadcasts the demoted+new kids + a now+GracePeriod retire
+	// deadline over the invalidation bus so every replica defers the
+	// demoted kid's retirement to the SAME instant (no rolling-deploy
+	// "unknown kid" 401). Requires cluster.bus; fail-safe (only ever
+	// WIDENS the verify window). Off = today's independent per-replica
+	// retire timers.
+	CoordinatedCutover bool `yaml:"coordinated_cutover"`
 }
 
 // ClusterConfig wires cross-replica coordination via cluster.Bus. The
@@ -765,6 +773,16 @@ type KeyRotationConfig struct {
 // fail-open by design, so it is deliberately NOT a readiness dependency.
 type ClusterConfig struct {
 	Bus ClusterBusConfig `yaml:"bus"`
+
+	// CrossReplicaRevocation arms WithCrossReplicaRevocation: a
+	// /token/revoke (or id_token_hint revoke on /end_session) that hit a
+	// local issuer broadcasts the revoked access token + its exp over the
+	// invalidation bus so every replica adds it to its own deny-set,
+	// closing the window where a token revoked on replica A keeps
+	// validating on replica B until its own exp. Additive + oracle-safe +
+	// fail-open; REQUIRES a wired bus (inert without one). Default false =
+	// local-only revocation (byte-identical to before).
+	CrossReplicaRevocation bool `yaml:"cross_replica_revocation"`
 }
 
 // ClusterBusConfig selects and configures the invalidation bus backend.
@@ -876,9 +894,10 @@ type BruteForceShadowDetectorConfig struct {
 }
 
 type AnomalyRunnerConfig struct {
-	QueueSize  int    `yaml:"queue_size"`  // 0 → SDK default 1024
-	Workers    int    `yaml:"workers"`     // 0 → SDK default 4
-	DropPolicy string `yaml:"drop_policy"` // drop_newest | block; default drop_newest
+	QueueSize      int           `yaml:"queue_size"`      // 0 → SDK default 1024
+	Workers        int           `yaml:"workers"`         // 0 → SDK default 4
+	DropPolicy     string        `yaml:"drop_policy"`     // drop_newest | block; default drop_newest
+	InspectTimeout time.Duration `yaml:"inspect_timeout"` // 0 → SDK default 5s; per-event detector sweep deadline
 }
 
 type AnomalyRetentionConfig struct {
@@ -1257,8 +1276,29 @@ type WebAuthnBackendSQLiteConfig struct {
 // mixed (e.g. SQLite identity + memory OAuth state for low-traffic
 // CLI deployments) by setting backends separately.
 type IdentityConfig struct {
-	Backend string               `yaml:"backend"` // memory | sqlite
-	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
+	Backend     string                    `yaml:"backend"` // memory | sqlite
+	SQLite      IdentitySQLiteConfig      `yaml:"sqlite"`
+	ClientCache IdentityClientCacheConfig `yaml:"client_cache"`
+}
+
+// IdentityClientCacheConfig opts into a per-login TTL cache over the wired
+// ClientStore (sso.WithClientStoreCache). Every interactive login, /token
+// grant, and tenant-bound request reads client metadata via
+// ClientStore.Get; at high QPS against a SQLite/Redis backend that is a
+// measurable per-request round-trip. When Enabled, successful Gets of
+// existing clients are cached for TTL (default sso.DefaultClientStoreCacheTTL
+// when unset/zero).
+//
+// SECURITY-PRESERVING (§2): credential verification (ValidateSecret) ALWAYS
+// bypasses the cache, misses are never cached, and admin/DCR mutations evict
+// the affected entry (local + cross-replica bus). The accepted tradeoff is
+// the same as tenant.suspension_check.cache_ttl: a client deactivated, or
+// whose metadata changed, mid-window keeps being served the prior value for
+// at most TTL unless an admin/DCR mutation evicts it sooner. Disabled (the
+// default) ⇒ no wrapper, byte-identical to a non-caching build.
+type IdentityClientCacheConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	TTL     time.Duration `yaml:"ttl"`
 }
 
 type IdentitySQLiteConfig struct {
@@ -1341,15 +1381,15 @@ type OAuthConfig struct {
 	// memory-only (no SQLite backend yet). Each individually-enabled
 	// store inherits this choice unless the store's own Backend
 	// override is set.
-	Backend      string                `yaml:"backend"`
-	SQLite       OAuthSQLiteConfig     `yaml:"sqlite"`
-	AuthCode     OAuthStoreConfig      `yaml:"auth_code"`
-	RefreshToken OAuthStoreConfig      `yaml:"refresh_token"`
-	DeviceCode   OAuthDeviceCodeConfig `yaml:"device_code"`
-	PAR          OAuthStoreConfig      `yaml:"par"`
-	JAR          OAuthJARConfig        `yaml:"jar"`
-	JARM         OAuthJARMConfig       `yaml:"jarm"`
-	Compliance   OAuthComplianceConfig `yaml:"compliance"`
+	Backend      string                  `yaml:"backend"`
+	SQLite       OAuthSQLiteConfig       `yaml:"sqlite"`
+	AuthCode     OAuthStoreConfig        `yaml:"auth_code"`
+	RefreshToken OAuthRefreshTokenConfig `yaml:"refresh_token"`
+	DeviceCode   OAuthDeviceCodeConfig   `yaml:"device_code"`
+	PAR          OAuthStoreConfig        `yaml:"par"`
+	JAR          OAuthJARConfig          `yaml:"jar"`
+	JARM         OAuthJARMConfig         `yaml:"jarm"`
+	Compliance   OAuthComplianceConfig   `yaml:"compliance"`
 }
 
 // OAuthJARMConfig opts into JARM (JWT Secured Authorization Response
@@ -1409,6 +1449,21 @@ type OAuthStoreConfig struct {
 	TTL     time.Duration `yaml:"ttl"`
 }
 
+// OAuthRefreshTokenConfig extends the shared store shape with the OPTIONAL
+// per-family rotation-VELOCITY cap (oauth.RefreshTokenRotationLimiter, BCP
+// §4.13/§4.14 hardening). Both MaxRotationsPerWindow and RotationWindow must
+// be positive for the cap to arm; either zero leaves it OFF (byte-identical
+// to before), so an over-cap family is fail-OPEN. When armed, a family that
+// rotates more than MaxRotationsPerWindow times within RotationWindow is
+// killed (DeleteFamily) and the rotation rejected with the same invalid_grant
+// wire shape as reuse detection (oracle-safe), emitting
+// refresh_rotation_velocity_exceeded + sso_refresh_rotation_velocity_exceeded_total.
+type OAuthRefreshTokenConfig struct {
+	OAuthStoreConfig      `yaml:",inline"`
+	MaxRotationsPerWindow int           `yaml:"max_rotations_per_window"`
+	RotationWindow        time.Duration `yaml:"rotation_window"`
+}
+
 // OAuthDeviceCodeConfig adds device-code-specific tunables on top of
 // the shared TTL: poll_interval (minimum allowed poll cadence, slower
 // devices get back slow_down) and verification_base_url (what the
@@ -1430,6 +1485,17 @@ type OAuthDeviceCodeConfig struct {
 // drop counters and queue depth land on the same registry.
 type MetricsConfig struct {
 	Enabled bool `yaml:"enabled"`
+
+	// TenantLabelAllowlist opts into the per-tenant login + token-issue
+	// metrics (sso_login_attempts_by_tenant_total +
+	// sso_tokens_issued_by_tenant_total), wired to
+	// sso.WithTenantMetricsAllowlist. CARDINALITY-GATED (§5): only the
+	// tenant ids listed here get their own label value; every other tenant
+	// folds into a single tenant="other" bucket, capping cardinality at
+	// len(list)+1. Empty (the default) leaves these metrics OFF entirely —
+	// never registered, never emitted. Requires Enabled (no registry
+	// otherwise). NEVER label by raw user id or unbounded client_id.
+	TenantLabelAllowlist []string `yaml:"tenant_label_allowlist"`
 }
 
 // SecurityConfig groups operator-facing security tunables that hook

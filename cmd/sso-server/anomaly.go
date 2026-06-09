@@ -94,11 +94,15 @@ func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics
 	if cfg.Runner.DropPolicy != "" {
 		opts = append(opts, anomaly.WithDropPolicy(anomaly.DropPolicy(cfg.Runner.DropPolicy)))
 	}
+	if cfg.Runner.InspectTimeout > 0 {
+		opts = append(opts, anomaly.WithInspectTimeout(cfg.Runner.InspectTimeout))
+	}
 	if m != nil {
 		opts = append(opts, anomaly.WithMetricsCallbacks(
 			func(t, sev string) { m.AnomaliesDetectedTotal.WithLabelValues(t, sev).Inc() },
 			func(reason string) { m.AnomalyDispatchDropsTotal.WithLabelValues(reason).Inc() },
 			func(detector string) { m.AnomalyInspectErrorsTotal.WithLabelValues(detector).Inc() },
+			func() { m.AnomalyDispatchedTotal.Inc() },
 		))
 	}
 	rt.runner = anomaly.NewRunner(built, sink, opts...)
