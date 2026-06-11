@@ -1,7 +1,8 @@
 # ROADMAP
 
-> 基于 2026-05-25 复扫对 `github.com/snaplink/sso` 的全局扫描，从资深
-> 架构师 / PM 视角列出下一阶段投入产出比最高的 5 个扩展方向。
+> **当前生效：v5.0（2026-06-11）。** 基于对 `github.com/snaplink/sso`
+> 的多轮全局复扫，从资深架构师 / PM 视角列出下一阶段投入产出比最高的
+> 5 个扩展方向。v4.0 及更早为 superseded 历史，保留备查。
 >
 > 每项包含 **Why now**（这件事为什么比别的事更值得做）、**Scope**
 > （拆到可独立 PR 的颗粒度）、**Edge cases / 当前实现具体短板**、
@@ -12,7 +13,381 @@
 
 ---
 
-## v4.0（2026-06-02）—— 全局复扫：交付物收口后的下一阶段【取代 v3.1，以下为 superseded 历史】
+## v5.0（2026-06-11）—— 后端协议面收口后的下一阶段【取代 v4.0，以下为 superseded 历史】
+
+> 2026-06-11 对全代码库的一次多智能体并行复扫：六路视角（协议 / 规模
+> 性能 / 多副本集群一致性 / 安全威胁模型 / 企业产品 / 研发体验与质量
+> 基建）各自独立成结论，再对**每一条**候选缺口做对抗式 grep 核验
+> （默认"它大概率已实现"，逐项读码证伪）。37 项候选全部通过核验为
+> **真缺口或部分缺口，0 项被驳回为"已实现"**——说明本仓库的协议/安全
+> 后端面确已极完整，剩余高价值工作**不再是更多协议 feature，而是把已建
+> 好的能力包装成可售产品、补齐企业化与一致性、并通过采购侧的合规/质量
+> 门禁**。仍沿用 Why now / Scope / Edge cases / Sequencing 体例。
+
+### 自 v4.0 以来已落地（grep / 代码核验，v4.0 五方向几近收口）
+
+v4.0 列为"仍空白/部分"的项，本轮在代码与 AGENTS.md 中确认**已交付**：
+
+- **方向① 签名密钥治理**：`kms/{awskms,gcpkms,azurekeyvault,pkcs11}` +
+  `defaultimpl/vaulttransit` 五个具体外部签名 peer；same-kid 多副本
+  **deadline 协调翻转**（`WithCoordinatedKeyRotation` /
+  `cluster.KindSigningKeyRotation`，fail-safe 只 widen verify 窗）；聚合
+  可观测（`sso_signing_key_adoption_errors_total`、adoption-loop 纳入
+  `/readyz`）。
+- **方向③ SAML 2.0**：`saml/` 子模块全 SP+IdP、SSO+SLO（XSW/证书 pin/
+  ACS 白名单/SSRF 门齐全）。
+- **方向④ CAEP / RISC**：`caep/` 双向（transmitter + `/ssf/receive`
+  receiver）。
+- **方向⑤ Redis 后端**：`redis/` 子模块覆盖全 ephemeral 热路径
+  （session/refresh+family/authcode/par/jti/ratelimit/device/mfa/ciba）。
+- **集群视角 C① 网格身份数据面**：HTTP+gRPC `ext_authz`（`mesh_authz.go`
+  + `extauthz/`）、SPIFFE JWT-SVID token-exchange、去中心化 authz
+  policy-bundle 导出，全部落地。
+- **C② 控制面韧性（部分）**：跨副本 access-token 撤销广播
+  （`WithCrossReplicaRevocation`）、可选 JTI fail-closed
+  （`WithJTIReplayFailClosed`）、client-store TTL 缓存 + bus 失效、per-tenant
+  有界指标、body-limit 安全默认、CIBA ping recover+超时、anomaly per-detector
+  超时、refresh 家族轮换速率限制。
+
+**v4.0 唯一整体未动的方向 = ②（Admin Console + 终端自助门户，仍零前端）**
+——本轮把它扩成 v5.0 方向①，并补上一个本轮才 grep 实证的硬缺口：**consent
+记录存储根本不存在**（不止是"没 UI"）。
+
+### 本轮 37 项 → 五方向归类
+
+协议/正确性 7、产品 8、集群一致性 6、安全 8、性能 4、研发质量 4。下文五
+方向按"如果只能挑一件先做"的优先级排序；每条缺口锚定具体 `file:line`，
+均经对抗核验。
+
+---
+
+**① 终端体验产品层：Hosted Login + Consent 存储 + 终端自助 + Admin Console**
+—— *P0 产品旗舰。把已建好的后端能力"包装出来卖"；"auth 库 → identity
+平台"的临门一脚。v4.0 方向②的延续 + consent 硬缺口。*
+
+- **Why now**：`/auth/login` 是**纯 JSON 契约**——返回 token JSON、error
+  JSON 或 `{error:mfa_required,...}` JSON（`handler.go:98-303`）；SDK 唯一
+  吐出的 HTML 全是机器自提交管道（`oidc/form_post.go:55`、`oidc/jarm.go:156`、
+  FCL iframe `server_extensions.go:1740`），**无任何托管登录页 / consent 屏 /
+  MFA 挑战页 / 改密页 / 品牌化**。源码自己承认：`handlers.go:2318` "the RP
+  is responsible for the interactive flow"，discovery 只敢声明
+  `prompt_values_supported=["none"]`。**每个集成方都得自建、自保、自本地化
+  一套登录/MFA/consent 前端**（还得自己把 PKCE、step-up replay、错误处理做
+  对）——这是对 Auth0/Okta/Keycloak/Cognito 的最大单点差距，常在采购首屏被
+  直接筛掉。
+- **Scope**：
+  - (a) **Consent 记录存储（本轮新实证的硬缺口，先做）**：`prompt` 被解析
+    但**只有 `prompt=none` 被消费**（`oidc/prompt.go:50` 仅 `PromptHasNone`），
+    `ErrConsentRequired` 是**声明即死代码**（`core/consts.go:383`，零调用），
+    全树**无 `ConsentStore`/grant 记录/per-user-per-client 授权持久化**
+    （grep 0 命中）；scope 仅按 `Client.AllowedScopes` 授予
+    （`oauth/scope.go:80`），用户从未被询问、从未被记录同意。补一个 hexagonal
+    `ConsentStore` SPI（memory+sqlite）+ "honor `prompt=consent`/新 scope
+    重提示" + "已授权应用"枚举/撤销——GDPR 合法性依据所必需。
+  - (b) **Hosted Login SPA**（`web/login/`，可选托管模式）：登录/MFA/consent/
+    改密/账户选择页，吃租户 `Branding`（`tenant/tenant.go:73` 已存但从未被
+    任何渲染器消费）做品牌化；以 form-post→`/auth/login` JSON 桥接，零协议
+    改动。
+  - (c) **终端自助门户**（`/me` 入口）：`SessionManager.ListByUser`
+    （`core/spi.go:121`）现仅接 admin RPC（`grpcserver/admin_tokens.go:58`，
+    `admin:read` 门），无"看我的会话 / 登出此设备 / 全端登出 / 我的授权应用 /
+    Passkey·TOTP 自助启用与解绑 / 改密重置"。（注：粗粒度"全端登出"已存在
+    = `POST /token/revoke-all`，凭自身 bearer，但需 `RefreshTokenSubjectIndex`
+    扩展。）
+  - (d) **Admin Console SPA**（`web/admin/`，dogfood `client_id=
+    sso-admin-console`）：全管理面今天**仅 gRPC + REST gateway**
+    （`grpcserver/admin_*.go`，无 `go:embed`/FileServer/`web/` 目录），
+    help-desk / IT-admin 人设无法用 grpcurl 运维。首批 panel 按 demo 价值：
+    Dashboard / Sessions（一键吊销）/ Audit（facet 过滤+导出）/ Clients /
+    Users-Roles / Compliance（GDPR 按钮 + hash-chain verify）。
+- **Edge cases**：前端 auth 用短时 JWT + refresh（非长效 admin token）；
+  secret 永不回显（仅显"已轮换"）；多租户权限隔离
+  （`admin:read.tenant.{tid}` vs `.global`，wildcard matcher 可表达，需把
+  tenant context 注入权限检查）；consent 记录的撤销需联动 §④ CAEP 向 RP
+  广播；自助门户必须强制"用户只能操作自己的数据"（现有 session/user RPC 全
+  是 admin 门，需新建 per-user 授权门）。
+- **Sequencing**：(a) consent 存储是纯后端、可独立先交付（L）；(b)(d)
+  前端并行（XL，零后端起步，吃现成 REST gateway）；(c) 自助门户复用 (a) 的
+  ConsentStore + 现有 session API（L）。
+- **价值·工作量**：value **high** · effort **XL**（其中 (a) consent 存储
+  L、是合规刚需且纯后端，建议**最先做**）。
+
+---
+
+**② B2B 企业化：per-org 上游 IdP 连接 + Home-Realm Discovery + 迁移导入 + 用量计量**
+—— *P0/P1 产品。让"为 B2B SaaS 而建"的 tenant 模型真正能卖给企业。*
+
+- **Why now**：`Tenant`（`tenant/tenant.go:28`）只带 id/slug/status/residency
+  字段，**没有任何到本租户上游 IdP（SAML/OIDC connection）的绑定**；上游联邦
+  仅以**全局、按 `?provider=` 选择**的形态存在（`authenticators/
+  oidc_federation.go`、`sso.go:43` 单一扁平 `map[string]Authenticator`）。于是
+  B2B SaaS 的定义级能力——"Acme 员工走 Acme 的 Okta、BigCo 走 BigCo 的 ADFS，
+  按邮箱域自动路由"——**无一等模型**（`tenant/tenant.go:68` 的 Domain 是
+  hostname→tenant 多域托管，非 email-domain 路由）。这是 Auth0 Organizations /
+  WorkOS / Keycloak realms 的核心卖点，缺它则 tenant 模型空有骨架。
+- **Scope**：
+  - (a) **企业连接（Enterprise Connections）**：`Tenant` 增 `Connections`
+    （每条 = 上游 SAML/OIDC 配置）；运行期按 tenant 实例化对应 authenticator
+    （复用现成 `oidc_federation` + `saml/` SP）。
+  - (b) **Home-Realm Discovery 路由**：email-domain → connection 解析器
+    （登录前置），把"用户在哪个 org"映射到"走哪个上游"。
+  - (c) **迁移/导入工具**：今天 `UserProvider` 仅单条 `CreateOrUpdate`
+    （`core/spi.go:24`），`core.User` **无密码 hash 字段**
+    （`core/types.go:18`），唯一内置 verifier 是 bcrypt-only 且按用户 YAML
+    逐条种入（`cmd/.../main.go:4380`）——**无批量导入、无"首登懒迁移"
+    （旧 hash 校验通过后透明 re-hash）、无 hash 兼容矩阵**。补 Auth0/Okta/
+    Keycloak 导出的 bulk import CLI + 多格式 verifier + lazy-migration shim。
+    这是企业"不强制全员改密就能迁过来"的第一问。
+  - (d) **per-tenant 用量计量/报表**：`tenant.go:3,12` 自述为"billing
+    relationship"，却**无计量/配额/MAU/活跃 client 报表**（grep
+    `quota|metering|seats|mau` 0 命中）；`audit.Query` 连 tenant 字段都没有
+    （`audit/query.go:14`），facet 显式排除 per-user（`audit/facets.go`）。补
+    一个 per-tenant 用量聚合 + 报表/导出 API（计费、套餐限额、给客户看自己
+    用量所必需）。
+- **Edge cases**：connection 的证书/密钥轮换；HRD 对未知域的兜底
+  （回退到默认 connection 或拒绝）；导入的 hash 格式枚举需 fail-loud 拒未知
+  格式（现 bcrypt verifier 已这么做）；计量的基数控制（沿用 §5 有界标签 +
+  "other" 桶）。
+- **Sequencing**：(a)(b) 一个 epic（connection 模型 + HRD，L）；(c) 独立可
+  并行（L）；(d) 独立（L，依赖 audit 增 tenant 维度）。
+- **价值·工作量**：value **high**（(a)(b)）/ **medium**（(c)(d)）·
+  effort 各 **L**。
+
+---
+
+**③ OIDC 一致性与 Token 正确性收口：通过认证套件与 FAPI 采购**
+—— *P1。多为 S/M 颗粒、单点高 ROI；企业/FAPI 采购会跑 conformance 套件
+逐项验，"声明了却不兑现"是采购陷阱。*
+
+- **Why now**：协议面虽全，仍有一组**会被认证套件直接标红、或在 FAPI/金融
+  级部署集成时才爆**的正确性缺口；多数极小、却是硬互通阻断。
+- **Scope（按 ROI 排）**：
+  - (a) **id_token 缺 `at_hash`**（S，conformance 阻断）：三个 issuer 的
+    id_token payload 均无 `at_hash`，`oidc.IDTokenRequest` 连 access token
+    入参都没有（`oidc/types.go:14`、`defaultimpl/ed25519_jwt_issuer.go:510`）。
+    OIDC Core §3.1.3.6 在"同响应返回 access_token"时**要求** `at_hash`；严格
+    RP（认证套件常开）会拒登。补 `sha256` leftmost-128 即可。
+  - (b) **`ssoclient/remote` 验签器硬编码 EdDSA-only**（M，与 FAPI 故事自相
+    矛盾）：`ssoclient/remote/auth.go:98` 对非 EdDSA 直接 `unsupported alg`，
+    JWKS 缓存只能解析 OKP（`jwks.go:22`）。但 server 全支持 es256/rs256/ps256
+    （`config.go:728` 称 es256 为"the common FAPI choice"），AWS/Azure KMS
+    更**不支持 Ed25519**。选了 FAPI 的 ES256 或任何 KMS peer 的买家，会在集成
+    时发现官方 remote client 无法验签。直接复用已在树的
+    `security.VerifyCompactJWS`（多 alg）即可。
+  - (c) **`auth_time` 在 code 流盖的是兑换时刻而非认证时刻**（M，OIDC Core §2
+    偏离）：`oauth.AuthCode` 不存 AuthTime/ACR/AMR（`oauth/auth_code.go:25`），
+    `/token` 兑换时用 `time.Now()` 盖 `auth_time`（`handler.go:1513,1558`）。
+    RP 据 `auth_time` 做 `max_age`/step-up 会被误导。给 AuthCode 增字段携带真实
+    登录时刻。
+  - (d) **`acr_values`/`max_age`/`prompt=login` 解析但不强制 + `AchievedACR`
+    字段不存在**（L）：交互式 `/auth/login` 只消费 `prompt=none`；`acr_values`
+    转发给 authenticator 却从不强制（`handler.go:539`），签发的 token `acr`
+    恒空；`core/types.go:650` 注释承诺的 `AuthResult.AchievedACR` **根本不存在**
+    （grep 仅注释）。补 AchievedACR 字段 + 交互流 max_age/essential-acr 强制。
+  - (e) **AMR 被压成单一 provider id**（S，RFC 8176）：所有签发点硬编码
+    `AMR:[]string{provider}`（`handler.go:832,910,1514,1559`…），从不读
+    `result.AuthMethods`（grep 0 命中）；做过 MFA 的 step-up 仍发
+    `amr=["password"]`，下游 step-up/风控失真。MFA/直登路径上 `result`
+    在作用域内，线进去即可（auth_code/refresh 路径需 AuthCode 增字段）。
+  - (f) **`claims` 参数验形却不投影/不强制，discovery 硬编码
+    `claims_parameter_supported:true`**（M，采购陷阱）：`RequestedClaims` 被
+    线进 `AuthRequest`（`handler.go:541`）后**无任何消费者**；essential-acr
+    step-up 请求被静默忽略。要么兑现（投影 requested/essential claims），要么
+    别声明 true。
+  - (g) **refresh 并发双提交无 grace 窗 → 击杀整个 family**（M）：rotation
+    严格单用（memory delete / sqlite `DELETE…RETURNING` / redis `GETDEL`），
+    多标签 SPA、移动端冷启竞态、丢响应后重试**与盗用重放无法区分**，benign
+    双提交直接 `DeleteFamily` 触发登出风暴。补有界 reuse-grace（N 秒内对前一
+    叶 token 返回同一已铸后继），不削弱 BCP §4.13。
+- **Edge cases**：at_hash 的 hash 须随 id_token 签名 alg 选（ES256/RS256/
+  EdDSA→SHA-256）；grace 窗须与"真正过窗重放"区分；AchievedACR 须 fail-safe
+  默认空。
+- **价值·工作量**：value **high**（整组 conformance+FAPI 阻断）· effort 单点
+  **S–M**，整方向 **M**。**(a)(b)(e) 三个 S 项建议立刻做**。
+
+---
+
+**④ 多副本数据面韧性：消除静默的集群正确性与回滚黑洞**
+—— *P1 运维/安全。这些缺口**静默失败且 `/readyz` 仍绿**——正是 SRE 在分区/
+回滚演练里才发现的那类；多处的自愈范式已在树内存在（聚合 loop），不对称读作
+疏漏。*
+
+- **Why now**：本轮集群视角抓到一组"看着健康、实则对控制面失聪 / 令牌作废
+  复活 / 回滚踩雷"的硬缺口，多数 fail-silent。
+- **Scope**：
+  - (a) **失效总线 etcd watch 死亡后不自愈**（M）：`StartInvalidationBus`
+    （`server_extensions.go:2222`）裸 `for evt := range events`，channel 关闭即
+    永久退出；etcd `Subscribe` 首次 `resp.Err()`（compaction/leader 变更/抖动）
+    即返回且**从不重订阅**（`cluster/etcd/etcd.go:129`）；**无 `/readyz` 检查**
+    （对比聚合 loop 有 `signing-key-aggregation`）。一次 etcd 抖动后该副本永久
+    停止 honor 租户暂停、client 失效、协调轮换、**跨副本撤销**——而最严重的
+    `KindTokenRevoked` **无 TTL 兜底**（其余缓存类有 TTL 收敛）。照搬聚合
+    loop 的"degraded+审计+backoff+重订阅+re-seed+readiness"即可。
+  - (b) **`signingkeys/etcd` KeepAlive 死亡静默作废自身公钥**（M，最隐蔽）：
+    `Publish` 起 KeepAlive 后交给 `drainKeepAlive` = `for range ch {}`
+    （`signingkeys/etcd/etcd.go:157,334`）；lease 过期（分区超 TTL/leader churn）
+    后 channel 关闭，**无人重新 grant 或重发布**（`PublishSigningKeys` 仅启动
+    与轮换时调）。该副本仍在用自己的 kid **签发**，但其公钥已从 etcd 删除 →
+    对端 drop 其 verify key → **该副本签的 token 在全集群被拒**，且 `/readyz`
+    全绿、无审计无指标。补 publish 侧 lease 健康监控 + 重 grant/重发布 +
+    readiness。
+  - (c) **跨副本撤销 deny-set 仅进程内、不持久、不重放**（L）：三个 issuer 的
+    `revoked` map 仅内存（`defaultimpl/revocation_set.go`），无 sqlite/redis
+    peer（不同于 session/refresh/jti 都有）；bus 仅向**当前在线**订阅者尽力
+    扇出、无重放（`cluster/etcd/etcd.go:10` "never replays Events published
+    before it joined"）；重启后 map 空、无 re-seed。**滚动重启/扩容期，被撤销
+    但未过期的无状态 access token 在任一副本复活**——正是盗用 token 最值钱、
+    pod 在轮换的窗口。补持久 deny-set peer + 启动 re-seed。
+  - (d) **无 schema 版本护栏，回滚的旧二进制会对更新 schema 服务**（S，原语
+    已存却没接）：`migrate.Run` forward-only；`migrate.CurrentVersion`
+    （`migrate/migrate.go:265`，注释自述"a readiness gate that refuses to
+    serve when the binary expects a newer schema"）**零非测试调用方**。canary
+    回滚（最常见 DR 动作）今天静默对 forward-migrated DB 运行。各 backend 暴露
+    其 slice 最大版本，cmd 比较 DB CurrentVersion > 最大 → boot error / readyz
+    fail。
+  - (e) **bootstrap fencing-token 是空壳 + 文档事实错误**（M）：
+    `bootstrap/lock/lock.go:17` 文档承诺 `FencedTracker` 防 GC 停顿超租约的
+    脑裂，但**该类型不存在**（grep 仅两处文档注释），`MarkApplied` 无 token
+    入参、token 只被 log 从不比较；且 `etcd.go:12` 声称 LeaseID "monotonic"
+    **事实错误**（etcd LeaseID 高位是 member id、按重启重播种，非单调）。要么
+    实现带 token 的 `MarkApplied`，**要么（更诚实/更省）删掉 FencedTracker/
+    单调 LeaseID 文档、改记 heartbeat-cancel + 幂等模型为实际保证**。
+  - (f) **SQLite `ClientStore` 静默丢弃安全承重字段**（M）：sqlite clients
+    schema 仅 10 列，`core.Client` 的 **JWKS（private_key_jwt/JAR 验签公钥）、
+    AllowedResources（RFC 8707 受众域）、AllowedRequestURIs（JAR-fetch SSRF
+    白名单）、RegistrationAccessToken（RFC 7592）、JWE alg/enc、Federation、
+    PostLogoutRedirectURIs** 在持久化时被丢，重启后归零
+    （`defaultimpl/sqlite/clients.go:23-35` vs `core/types.go:62-284`）。
+    这是**操作者看不见的安全降级**。按 `migrate/` 范式追加列 + JSON blob 的
+    v2 迁移。
+- **Edge cases**：(a)(b) 的 readiness 要区分"干净 ctx 取消（正常停机）"与
+  "watch/lease 死亡（degrade）"；(c) 的 re-seed 须 exp-bounded 不无限增长；
+  (d) 须容忍 additive 迁移（仅在非 additive 时硬拒）。
+- **价值·工作量**：value **high**（(a)(b)(c) 静默且安全相关）· effort
+  **S–M**。**(d) schema 护栏是 S 且原语已在树，最先做。**
+
+---
+
+**⑤ 安全姿态与供应链 / 质量门禁：通过 SOC2 / Pentest 问卷**
+—— *P1 安全/质量。SSO 是组织内最高价值靶标；多项是 CI 一行、信号极高；最
+危险的第三方代码（SAML XML/DSig、KMS）今天无任何自动门。*
+
+- **Why now**：AGENTS.md 反复以 FIPS/PCI/SOC2/FAPI 定位，但采购安全问卷直接
+  问的几样（at-rest hash、SAST/SCA、审计完整性、供应链）恰恰缺位；且多是极
+  低成本高信号补丁。
+- **Scope**：
+  - (a) **client secret 明文存储 + 非常量时间比较**（M）：`core.Client.Secret`
+    /`RegistrationAccessToken` 逐字持久（`defaultimpl/sqlite/clients.go:26`），
+    `ValidateSecret` 用裸 `!=`（`memory_clients.go:51`）——而同仓 RFC 7592
+    token 已用 `security.ConstantTimeStringEq`（`oauth/handle_register.go:399`），
+    原语在树却没用于机密客户端。DB/备份泄露即全量客户端冒充。补 hash-at-rest
+    （bcrypt/argon2）+ 常量时间比较。
+  - (b) **自助 DCR（RFC 7591/7592）创建/改/删零审计**（S）：`RegisterDeps`
+    无 Recorder，`HandleRegister`/Put/Delete 成功**不发审计事件**
+    （`oauth/handle_register.go`，oauth 包从不引用 Recorder）——而 admin 改
+    client **有**审计（`grpcserver/admin_clients.go:117`）。铸/改/删可请求
+    token 的凭据却无防篡改链记录。补 `EventClientRegistered/Updated/Deleted`。
+  - (c) **无内建 trusted-proxy / 转发跳设施**（M）：XFF/X-Auth 消费者
+    （`requestBaseURL`、ratelimit IP key、header-mTLS、region Header、mesh
+    ext_authz）全**无条件信第一跳**，无 CIDR 信任集/跳数概念；AGENTS.md §2
+    "edge MUST strip" 重复 6 次的负担全压给操作者；两处 `[TrustedProxies]`
+    文档链接指向**从未实现**的伴生中间件（`ratelimit/middleware.go:64`、
+    `security/header_client_cert_extractor.go:41`）。补
+    `WithTrustedProxies(CIDRs, hops)`，各 extractor 统一消费。
+  - (d) **CI 从不构建/竞态测试 10 个子模块**（S，最危代码无门）：`make ci`
+    含 `ci-modules`，但 `.github/workflows/ci.yml` 只对**根模块**跑
+    `go build/test ./...`（无 go.work → 不下探子模块）。`saml/`（crewjam XML/
+    DSig，经典 XXE/XSW 面）、四个 `kms/*`、`redis/`、`ldap/`、`kerberos/`、
+    `radius/`、`extauthz/`（共 ~58 测试文件）**从不被 CI 编译或测**，回归绿色
+    合并。CI 显式进入每个子模块即可。
+  - (e) **CI 无 SCA/SAST/镜像扫描**（S）：无 `govulncheck`（对 go.sum 的官方
+    CVE 扫描）、无 CodeQL/gosec、无 `.golangci.yml`、docker job 无 Trivy/Grype。
+    `govulncheck` 是一行 CI、信号最高。
+  - (f) **Dependabot 仅覆盖根模块**（S）：`.github/dependabot.yml` 单条
+    `directory:"/"`，gomod 不下探嵌套——10 个**承载最重最活跃 CVE 面**的子
+    模块（aws/azure/gcp SDK、crewjam/saml、go-redis、gokrb5）零自动补丁。每个
+    嵌套目录加一条即可。
+  - (g) **JWT/JWS/aud 解析面零 fuzz**（M）：全树 `func Fuzz` 0；而最承重的
+    解析（`security/jwks_verify.go` 手搓 dot-scan+base64、`audClaim` 两份独立
+    string-or-array 反序列化、`oauth/bind.go`、federation trust-chain JWT
+    走链）全是攻击者可控字节。凭据校验服务里"畸形 JWT panic = 远程 DoS、解析
+    分歧 = 鉴权绕过"。补 `testing.F` 目标 + 语料。
+  - (h) **无 benchmark/profiling/load-test 基建**（M）：全树 `func Benchmark`
+    0、无 pprof 接线、无 k6/vegeta、无 `make bench`。卖 ">1k QPS / hot-path"
+    却**无任何可跑的数**，也无回归护栏防未来分配/锁竞争退化。补 bench + pprof
+    + 一个 load-test 脚本。
+  - (i) **无导出的 `ssotest` 消费者测试夹具**（M）：真实链路夹具
+    （real issuer + JWKS + token mint）困在 test-only `package ssotest`
+    （`test/e2e_test.go:80` 不可被下游 import）；`ssoclient/dev` stub 又**恰好
+    跳过签名/JWKS**。导出 `ssotest.NewServer(t, opts...)` 大幅降低集成成本。
+- **价值·工作量**：value **high**（(a)(d)(e) 合规硬问 + 最危代码无门）·
+  effort 多为 **S**。**(b)(d)(e)(f) 四个 S 项是本方向最高 ROI，建议立刻清。**
+
+---
+
+### 边界情况 & 性能优化（持续清单，sprint-filler）
+
+> 颗粒度不足独立方向；每条锚定具体代码位置。本轮新发现。
+
+**性能 / 热路径**
+
+- **`MemoryLimiter` 每请求全 map O(N) prune + 单全局锁**（高，S）：
+  `ratelimit/ratelimit.go:87` `Allow` 持单 `sync.Mutex` 后无条件
+  `pruneLocked` 全 map 扫（`:129`）；默认限流器、位于中间件链最前对**每个
+  请求**跑，而 N（活跃 key）正是其防御的撞库攻击所放大的——攻击期合法登录被
+  串行化在 O(N) 扫后，**自成 DoS 放大器**。sqlite 兄弟已 `%64` 采样
+  （`sqlite_limiter.go:204`），照搬 + 分片锁即可。
+- **SQLite 无连接池调优 + 文档的 `busy_timeout` 是 driver no-op**（高，M）：
+  全树无 `SetMaxOpenConns` 等；cmd 对同一 WAL 文件开 ~18 个独立 `*sql.DB`
+  池（各默认无上限），WAL 仅一个 writer → `SQLITE_BUSY` 抖动。且
+  `modernc.org/sqlite` **不认 `_busy_timeout` DSN 参**（只认
+  `_pragma=busy_timeout(N)`，migrate.go:141 自己知道），而 config.yaml 全用
+  失效写法。写池设 1 / 经现成 `WithDB` 共享一个调优过的池 + 真正用 `_pragma`。
+- **`ClientStore`/`UserProvider`/permissions 无 Redis/cluster peer**（中，L）：
+  Redis 只覆盖 ephemeral 单用 store；每次 `/auth/login`+`/token` 的
+  `clientStore.Get`（`handler.go:148,253,318,1322`）与登录的 user
+  **upsert 写**（`handler.go:638` `CreateOrUpdate`）在规模层仍落 SQLite 单
+  writer/内存——选 Redis 逃离嵌入 store 的买家会意外。补 Redis `ClientStore`/
+  `UserProvider` peer，或返指针的 copy-on-write 缓存避免每命中深拷。
+- **JWKS 无服务端 body 缓存（仅 single-flight）**（低，S）：
+  `ComputeJWKSDocument` 仅合并并发、每次串行 poll 重走 issuer + 重 marshal +
+  重 sha256（`accessors.go:226`）；与 discovery 的 body+ETag 缓存不对称
+  （federation 还缓存了同样的 issuer-JWKS 走查）。补 1-5s 有界 body 缓存。
+- **审计无批量写路径**（低，M）：`Sink` 仅单条 `Record`；async worker 逐条
+  drain，sqlite 每事件一条 INSERT（`audit/sqlite/sink.go:171`），hash-chain
+  同步串行。一次登录发多事件，高 QPS 下单 writer SQLite 封顶审计吞吐，队列满
+  则 drop-newest（合规风险）。补 `RecordBatch` group-commit。
+
+**安全 / 正确性边界**
+
+- **Federation/JAR SSRF 不在 connect 时复核解析 IP**（中，M，partial）：
+  `validateFederationURL` 仅拒**字面** private/loopback IP，域名 DNS 解析到
+  169.254.169.254/RFC1918 可过（`federation/fetcher.go:173`）；federation
+  目标受攻击者影响（恶意 leaf 自报 authority_hints）且无白名单。补
+  `net.Dialer.Control` 钩子对**解析后 IP** 复核 `isInternalIP`，闭合 DNS-
+  rebind 窗（JAR 侧已有 `AllowedRequestURIs` 强缓解）。
+- **无 per-subject 限流 / 横向撞库同步刹车**（中，M，partial）：限流 key 只
+  client_id/IP，无 KeyBySubject；`BruteForceShadow` 只观测不决策。垂直分布式
+  （多 IP 单账号）已被 per-account lockout 挡住；未覆盖的是**横向 spray**
+  （每用户一次、铺开千用户）。`RiskScorer` seam 本可同步 Deny/RequireMFA，但
+  内置 `RuleBasedRiskScorer` 不读 `IPFailureCounter`。补 KeyBySubject 或把
+  IP-failure 计数接入软节流/强制 MFA。
+
+### 一句话优先级
+
+**①(consent 存储先行 + Console/门户进企业采购清单) 与 ②(B2B 连接+HRD，
+让 tenant 模型真能卖) 并行驱动收入面 → ③ 一组 S/M conformance 单点
+（at_hash·remote 多 alg·AMR 立刻做）通过 FAPI/认证采购 → ④ 多副本静默黑洞
+（schema 护栏 S 最先，signingkeys lease 死亡与撤销复活次之）→ ⑤ 采购安全
+问卷（DCR 审计·ci-modules·govulncheck·dependabot 四个 S 项立刻清）。**
+性能清单中 **MemoryLimiter O(N) prune** 与 **SQLite busy_timeout no-op** 两项
+是高优先 sprint-filler。**横切诚实说明**：①②是刻意的 SDK-vs-产品边界选择
+（非 bug），但对"可直接运行的企业级 IdP"定位是真实的买家可见差距；③④⑤多为
+小颗粒高 ROI、且多处修复范式已在树内存在。
+
+---
+
+## v4.0（2026-06-02）—— 全局复扫：交付物收口后的下一阶段【已被 v5.0 取代；取代 v3.1，以下为 superseded 历史】
 
 > 2026-06-02 对全代码库的一次多维全局复扫（协议 / 安全密钥治理 / 规模性能 /
 > 产品竞争 / 边界与技术债，五路并行 + 逐项 grep 核验）。**v3.1 及以下结论已
