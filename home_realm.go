@@ -21,7 +21,27 @@ const (
 	keyHRType         = "type"
 	keyHRTenantID     = "tenant_id"
 	keyHRDisplayName  = "display_name"
+	// keyHRConnectionRequired marks an /auth/login provider-discovery response
+	// that resolved to an enterprise connection: the client MUST authenticate
+	// via the named connection's upstream IdP rather than the provider list.
+	keyHRConnectionRequired = "connection_required"
 )
+
+// resolveHomeRealm does B2B home-realm discovery for the interactive login
+// flow: it maps a login hint (email) to the enterprise connection serving its
+// domain. Returns false when no store is wired, the hint is empty, or no
+// connection matches — the caller then offers the normal provider list, so a
+// build without WithConnectionStore is byte-identical.
+func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connections.Connection, bool) {
+	if s.connectionStore == nil || strings.TrimSpace(loginHint) == "" {
+		return nil, false
+	}
+	conn, err := connections.Resolve(ctx.Request().Context(), s.connectionStore, loginHint)
+	if err != nil {
+		return nil, false
+	}
+	return conn, true
+}
 
 // WithConnectionStore wires per-organization enterprise connections (B2B) and
 // mounts the home-realm-discovery endpoint (PathHomeRealm). Nil/unset = the

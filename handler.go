@@ -300,6 +300,22 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	}
 
 	if req.Provider == "" {
+		// Home-realm discovery (B2B, opt-in): if the login hint's email domain
+		// maps to an enterprise connection, tell the client to authenticate via
+		// that org's upstream IdP instead of offering the generic provider list.
+		// No store / no hint / no match falls through to the normal list, so a
+		// build without WithConnectionStore is byte-identical.
+		if conn, ok := s.resolveHomeRealm(ctx, req.LoginHint); ok {
+			ctx.JSON(http.StatusOK, map[string]any{
+				keyHRConnectionRequired: true,
+				keyHRConnectionID:       conn.ID,
+				keyHRType:               string(conn.Type),
+				keyHRTenantID:           conn.TenantID,
+				keyHRDisplayName:        conn.DisplayName,
+				KeyIss:                  s.resolveIssuer(ctx),
+			})
+			return
+		}
 		ctx.JSON(http.StatusOK, map[string]any{
 			KeyProviders: s.providersForClient(ctx, req.ClientID),
 			KeyIss:       s.resolveIssuer(ctx),
