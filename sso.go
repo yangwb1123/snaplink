@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/connections"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/federation"
@@ -110,6 +111,11 @@ type Server struct {
 	// wrongful revocation). Nil ⇒ the route is NOT mounted — byte-identical
 	// to a build without it.
 	caepReceiver *caep.Receiver
+
+	// connectionStore holds per-organization enterprise connections for B2B
+	// home-realm discovery (connections.Store). Nil ⇒ the /auth/home-realm
+	// route is NOT mounted — byte-identical to a build without it.
+	connectionStore connections.Store
 
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
@@ -1921,6 +1927,15 @@ func (s *Server) Mount() {
 		if s.federationEntity.HasSubordinates() {
 			s.router.GET(PathFederationFetch, s.handleFederationFetch)
 		}
+	}
+
+	// Home-realm discovery (opt-in B2B). Given a login identifier (email) it
+	// returns the enterprise connection serving that domain so the login UI
+	// routes the user to the right upstream IdP. Not mounted unless
+	// WithConnectionStore is wired — byte-identical to a build without it.
+	if s.connectionStore != nil {
+		s.router.GET(PathHomeRealm, s.handleHomeRealm)
+		s.router.POST(PathHomeRealm, s.handleHomeRealm)
 	}
 
 	api := s.router.Group(PathAPIPrefix)
