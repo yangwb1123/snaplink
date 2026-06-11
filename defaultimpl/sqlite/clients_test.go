@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/defaultimpl/sqlite"
 )
 
@@ -48,6 +49,139 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 	}
 	if !out.RequirePKCE || !out.Active {
 		t.Errorf("bool round-trip failed: %+v", out)
+	}
+}
+
+// TestSQLiteClients_SecurityFieldsSurviveRestart proves the v2 migration's
+// security-load-bearing columns round-trip through a fresh store over the
+// SAME DSN — the exact scenario (process restart on identity.backend=sqlite)
+// where these fields previously reverted to zero, silently downgrading
+// private_key_jwt/JAR verification, the RFC 7592 management credential, and
+// the RFC 8707/9101 SSRF allowlists.
+func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
+	dsn := freshSharedDSN(t)
+	st, err := sqlite.NewClientStore(dsn)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	in := &sso.Client{
+		ID:                      "secure",
+		Secret:                  "shh",
+		Name:                    "Secure App",
+		Active:                  true,
+		RegistrationAccessToken: "rat-secret-7592",
+		JWKS: []core.JWK{{
+			Kty: "OKP", Use: "sig", Alg: "EdDSA", Kid: "k1",
+			Crv: "Ed25519", X: "abc123",
+		}},
+		AllowedResources:             []string{"https://api.one", "https://api.two"},
+		AllowedRequestURIs:           []string{"https://rp/req1", "https://rp/req2"},
+		PostLogoutRedirectURIs:       []string{"https://rp/logged-out"},
+		IDTokenEncryptedResponseAlg:  "RSA-OAEP-256",
+		IDTokenEncryptedResponseEnc:  "A256GCM",
+		UserinfoEncryptedResponseAlg: "ECDH-ES",
+		UserinfoEncryptedResponseEnc: "A128GCM",
+		Federation:                   true,
+	}
+	if err := st.Add(context.Background(), in); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Re-open over the same DSN: a NEW store with its own connection pool,
+	// mirroring a server restart. The cache=shared in-memory DB persists for
+	// the test's lifetime as long as one connection stays open, so keep the
+	// original store alive until the assertions run.
+	st2, err := sqlite.NewClientStore(dsn)
+	if err != nil {
+		t.Fatalf("re-open New: %v", err)
+	}
+	t.Cleanup(func() { _ = st2.Close(); _ = st.Close() })
+
+	out, err := st2.Get(context.Background(), "secure")
+	if err != nil {
+		t.Fatalf("Get after restart: %v", err)
+	}
+	if out.RegistrationAccessToken != "rat-secret-7592" {
+		t.Errorf("RegistrationAccessToken = %q want rat-secret-7592", out.RegistrationAccessToken)
+	}
+	if len(out.JWKS) != 1 || out.JWKS[0].Kid != "k1" || out.JWKS[0].Kty != "OKP" ||
+		out.JWKS[0].Crv != "Ed25519" || out.JWKS[0].X != "abc123" {
+		t.Errorf("JWKS round-trip failed: %+v", out.JWKS)
+	}
+	if len(out.AllowedResources) != 2 || out.AllowedResources[0] != "https://api.one" {
+		t.Errorf("AllowedResources round-trip failed: %+v", out.AllowedResources)
+	}
+	if len(out.AllowedRequestURIs) != 2 || out.AllowedRequestURIs[1] != "https://rp/req2" {
+		t.Errorf("AllowedRequestURIs round-trip failed: %+v", out.AllowedRequestURIs)
+	}
+	if len(out.PostLogoutRedirectURIs) != 1 || out.PostLogoutRedirectURIs[0] != "https://rp/logged-out" {
+		t.Errorf("PostLogoutRedirectURIs round-trip failed: %+v", out.PostLogoutRedirectURIs)
+	}
+	if out.IDTokenEncryptedResponseAlg != "RSA-OAEP-256" || out.IDTokenEncryptedResponseEnc != "A256GCM" ||
+		out.UserinfoEncryptedResponseAlg != "ECDH-ES" || out.UserinfoEncryptedResponseEnc != "A128GCM" {
+		t.Errorf("JWE alg/enc round-trip failed: %+v", out)
+	}
+	if !out.Federation {
+		t.Errorf("Federation round-trip failed: got false want true")
+	}
+}
+
+// TestSQLiteClients_SecurityFieldsUpdateRoundTrip proves the Update path
+// (not just Add) persists the v2 columns — Update has its own SET list that
+// must stay in lockstep with INSERT and scan.
+func TestSQLiteClients_SecurityFieldsUpdateRoundTrip(t *testing.T) {
+	st := newClientStore(t)
+	if err := st.Add(context.Background(), &sso.Client{ID: "u2", Secret: "s", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	updated := &sso.Client{
+		ID: "u2", Secret: "s", Active: true,
+		RegistrationAccessToken:     "updated-rat",
+		JWKS:                        []core.JWK{{Kty: "EC", Crv: "P-256", Kid: "ec1", X: "xx", Y: "yy"}},
+		AllowedResources:            []string{"https://api.updated"},
+		AllowedRequestURIs:          []string{"https://rp/updated"},
+		PostLogoutRedirectURIs:      []string{"https://rp/out"},
+		IDTokenEncryptedResponseAlg: "RSA-OAEP-256",
+		Federation:                  true,
+	}
+	if err := st.Update(context.Background(), updated); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	out, err := st.Get(context.Background(), "u2")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if out.RegistrationAccessToken != "updated-rat" || !out.Federation ||
+		out.IDTokenEncryptedResponseAlg != "RSA-OAEP-256" {
+		t.Errorf("Update scalar v2 fields not applied: %+v", out)
+	}
+	if len(out.JWKS) != 1 || out.JWKS[0].Kid != "ec1" ||
+		len(out.AllowedResources) != 1 || len(out.AllowedRequestURIs) != 1 ||
+		len(out.PostLogoutRedirectURIs) != 1 {
+		t.Errorf("Update slice/JWKS v2 fields not applied: %+v", out)
+	}
+}
+
+// TestSQLiteClients_EmptySecurityFieldsRoundTripCleanly locks the backward-
+// compatibility invariant: a client with none of the v2 fields set comes
+// back with the same zero values (nil slices, empty strings, false), so the
+// new columns are byte-identical to the v1 schema for legacy/minimal clients.
+func TestSQLiteClients_EmptySecurityFieldsRoundTripCleanly(t *testing.T) {
+	st := newClientStore(t)
+	if err := st.Add(context.Background(), &sso.Client{ID: "min", Secret: "s", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	out, err := st.Get(context.Background(), "min")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if out.RegistrationAccessToken != "" || out.Federation ||
+		out.IDTokenEncryptedResponseAlg != "" || out.UserinfoEncryptedResponseEnc != "" {
+		t.Errorf("empty scalar v2 fields not zero: %+v", out)
+	}
+	if out.JWKS != nil || out.AllowedResources != nil ||
+		out.AllowedRequestURIs != nil || out.PostLogoutRedirectURIs != nil {
+		t.Errorf("empty slice v2 fields not nil: %+v", out)
 	}
 }
 

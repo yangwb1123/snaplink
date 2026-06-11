@@ -197,6 +197,27 @@ type Metrics struct {
 	// rotation isn't armed (WithCoordinatedKeyRotation + a bus).
 	SigningKeyCutoverTotal *prometheus.CounterVec // labels: outcome
 
+	// InvalidationBusUp is 1 while this replica's cross-replica invalidation-bus
+	// subscription is healthy, 0 while it is degraded (the bus Subscribe channel
+	// closed while the run context was still live and the loop is between
+	// resubscribe attempts). A degraded subscription means the replica STOPS
+	// applying cross-replica invalidations — a just-suspended tenant, edited
+	// client, or revoked token keeps being honored locally until its own TTL/exp
+	// — while /readyz would otherwise stay green. This gauge (plus the matching
+	// readiness check) is the direct alert. No labels — bus health is a single
+	// per-replica condition. Never set when no invalidation bus is wired.
+	InvalidationBusUp prometheus.Gauge
+
+	// InvalidationBusReconnectsTotal counts cross-replica invalidation-bus
+	// subscription transitions, by reason ∈ {degraded, reconnected} (bounded).
+	// degraded = the Subscribe channel closed under a live context and the loop
+	// flipped degraded; reconnected = a degraded loop resubscribed and resumed.
+	// A rising degraded series (especially without matching reconnected ticks)
+	// means the bus backend is flapping or down and this replica is missing
+	// cross-replica invalidations. No per-event/per-kind label (§5 bounded
+	// cardinality). Zero traffic when no invalidation bus is wired.
+	InvalidationBusReconnectsTotal *prometheus.CounterVec // labels: reason
+
 	// CAEPSetsTotal counts OpenID Shared Signals (CAEP/RISC) Security
 	// Event Token push attempts from the detached transmitter goroutine, by
 	// outcome ∈ {success, failed, dropped} (bounded). A failed/dropped SET
@@ -496,6 +517,21 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 				Help: "Deadline-coordinated signing-key rotation cutovers this replica enacted on a received cross-replica rotation Event, by outcome (deferred/extended/adopted_only/noop). The feature defers a demoted kid's retirement to a cluster-coordinated deadline so a rolling deploy can't strand a token under an early-retired kid (unknown-kid 401). A rising noop series means peers send garbage/superseded Events (fail-safe absorbs them). Zero when coordinated rotation isn't armed.",
 			},
 			[]string{LabelOutcome},
+		),
+
+		InvalidationBusUp: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: NameInvalidationBusUp,
+				Help: "Cross-replica invalidation-bus subscription health: 1 while this replica is subscribed and applying invalidations, 0 while degraded (bus Subscribe channel closed under a live context, loop retrying). Degraded means the replica stops applying cross-replica invalidations (tenant suspension, client-cache, coordinated key rotation, token revocation) until it resubscribes — alert on 0. Never set when no invalidation bus is wired.",
+			},
+		),
+
+		InvalidationBusReconnectsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameInvalidationBusReconnectsTotal,
+				Help: "Cross-replica invalidation-bus subscription transitions, by reason (degraded/reconnected). degraded = the Subscribe channel closed under a live context and the loop flipped degraded (missing invalidations); reconnected = a degraded loop resubscribed and resumed. Alert on a rising degraded series without matching reconnected ticks (bus backend flapping/down). Zero traffic when no invalidation bus is wired.",
+			},
+			[]string{LabelReason},
 		),
 
 		CAEPSetsTotal: factory.NewCounterVec(

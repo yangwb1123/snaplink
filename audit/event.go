@@ -107,6 +107,22 @@ const (
 	// error — the specifics live here.
 	EventWebAuthnAttestationDenied EventType = "webauthn_attestation_denied"
 
+	// Self-service Dynamic Client Registration lifecycle (RFC 7591 create +
+	// RFC 7592 update/delete on /register). The unauthenticated-by-operator
+	// sibling of the EventAdminClient* mutations: a confidential client can
+	// be minted with a fresh secret + registration_access_token, mutated, or
+	// deleted via the bearer the /register response itself issued — so these
+	// land in the tamper-evident audit chain for credential-lifecycle
+	// forensics. ClientID carries the affected client; Created additionally
+	// records the registration method ("initial_access_token" | "open") via
+	// Metadata. Emitted ONLY on an authorized, successful store write —
+	// NEVER on a failed-bearer attempt (auditing the rejection would leak
+	// client existence, an oracle the §2 anti-enumeration 401 is hardened
+	// against). Outcome=success.
+	EventClientRegistered EventType = "client_registered"
+	EventClientUpdated    EventType = "client_updated"
+	EventClientDeleted    EventType = "client_deleted"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason

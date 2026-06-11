@@ -208,13 +208,14 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 			d.SrvLogger().Error("silent renewal id_token issuer resolution failed; omitting id_token", "error", resErr, "client", client.ID)
 		} else if emit {
 			idTok, idErr := idIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
-				Subject:  claims.Subject,
-				Audience: client.ID,
-				Nonce:    req.Nonce,
-				AuthTime: claims.AuthTime,
-				ACR:      claims.ACR,
-				AMR:      append([]string(nil), claims.AMR...),
-				SID:      claims.SID,
+				Subject:     claims.Subject,
+				Audience:    client.ID,
+				Nonce:       req.Nonce,
+				AuthTime:    claims.AuthTime,
+				ACR:         claims.ACR,
+				AMR:         append([]string(nil), claims.AMR...),
+				SID:         claims.SID,
+				AccessToken: token.AccessToken,
 			})
 			if idErr != nil {
 				d.SrvLogger().Error("silent renewal id_token issuance failed", "error", idErr)

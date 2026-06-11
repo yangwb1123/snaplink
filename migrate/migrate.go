@@ -173,6 +173,21 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 		return fmt.Errorf("migrate(%s): read current version: %w", namespace, err)
 	}
 
+	// Upper-bound (rolled-back-binary) guard. Forward-only application
+	// silently SKIPS every migration when the DB is already AHEAD of this
+	// binary's max-known version — so an older binary booting against a
+	// FORWARD-migrated database would commit and serve with a schema it
+	// doesn't understand (a canary-rollback foot-gun, the commonest DR
+	// action). validate() proves the slice is strictly increasing, so the
+	// last element carries the highest version. Refuse to serve instead.
+	// This runs even when nothing was pending: current==maxKnown is the
+	// up-to-date case (no error), current>maxKnown is the rollback case
+	// (the loop below applies nothing, so the guard is the only catch).
+	maxKnown := migrations[len(migrations)-1].Version
+	if current > maxKnown {
+		return fmt.Errorf("migrate: database schema for %q is at v%d but this binary only knows up to v%d (rolled-back/too-old binary?)", namespace, current, maxKnown)
+	}
+
 	for _, m := range migrations {
 		if m.Version <= current {
 			continue

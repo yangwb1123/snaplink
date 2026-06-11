@@ -742,6 +742,19 @@ type SigningConfig struct {
 	// with an external signer (the key's lifecycle is managed in the
 	// KMS/HSM, not by this process).
 	External string `yaml:"external"`
+
+	// RevocationBackend opts the access-token revocation deny-set into a
+	// DURABLE store so a revoked-but-unexpired token stays revoked across a
+	// process restart / rolling deploy (without it the in-process deny-set is
+	// empty on boot and the token RESURRECTS). "" (default) = in-process only;
+	// "memory" = the in-process MemoryRevocationStore (exercises the seam, no
+	// restart survival); "sqlite" = a durable peer at RevocationDSN. On a
+	// SHARED sqlite/redis backend this is multi-replica durable. Validate still
+	// hits only the fast in-process map; the store persists + re-seeds at boot.
+	RevocationBackend string `yaml:"revocation_backend"`
+	// RevocationDSN is the SQLite DSN for RevocationBackend "sqlite"
+	// (e.g. "file:/var/lib/sso/revocations.db?_journal=WAL").
+	RevocationDSN string `yaml:"revocation_dsn"`
 }
 
 // KeyRotationConfig drives the automatic signing-key rotation loop.

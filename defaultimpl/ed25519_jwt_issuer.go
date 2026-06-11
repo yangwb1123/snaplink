@@ -96,6 +96,10 @@ type Ed25519JWTIssuer struct {
 	// rejects those on expiry anyway), bounding the map — see revocation_set.go.
 	revokedMu sync.RWMutex
 	revoked   map[string]int64
+	// revocationStore is the OPTIONAL durable backing for `revoked` (nil =
+	// in-process only). Revoke persists to it; SeedRevocations re-seeds
+	// `revoked` from it at boot so a revocation survives a restart.
+	revocationStore RevocationStore
 
 	// keyMu guards the active signing key (signer/keyID/publicKey) and
 	// the verifyKeys map so RotateKey can swap them at runtime without
@@ -514,6 +518,7 @@ type ed25519IDPayload struct {
 	Exp      int64             `json:"exp,omitempty"`
 	Iat      int64             `json:"iat,omitempty"`
 	Nonce    string            `json:"nonce,omitempty"`
+	AtHash   string            `json:"at_hash,omitempty"`
 	AuthTime int64             `json:"auth_time,omitempty"`
 	AMR      []string          `json:"amr,omitempty"`
 	ACR      string            `json:"acr,omitempty"`
@@ -740,10 +745,41 @@ func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
+	exp := claims.ExpiresAt.Unix()
+	j.revokedMu.Lock()
+	markRevoked(j.revoked, token, exp)
+	store := j.revocationStore
+	j.revokedMu.Unlock()
+	// Persist for restart-survival, best-effort: the in-process revoke above
+	// already took effect on this replica, so a store outage must NOT fail the
+	// admin's revoke (a failed persist only loses durability across a restart,
+	// not the live revocation). The caller's audit records the revoke itself.
+	if store != nil {
+		_ = store.Revoke(ctx, token, exp)
+	}
+	return nil
+}
+
+// SeedRevocations re-seeds the in-process revocation deny-set from the wired
+// RevocationStore (if any). Call it once at boot AFTER construction so a
+// revocation issued before a restart is honored again. nil store = no-op,
+// idempotent, safe alongside Validate (takes the write lock); already-expired
+// entries are skipped (prune-not-early).
+func (j *Ed25519JWTIssuer) SeedRevocations(ctx context.Context) error {
+	if j.revocationStore == nil {
+		return nil
+	}
 	j.revokedMu.Lock()
 	defer j.revokedMu.Unlock()
-	markRevoked(j.revoked, token, claims.ExpiresAt.Unix())
-	return nil
+	return seedRevokedFromStore(ctx, j.revoked, j.revocationStore)
+}
+
+// WithEd25519RevocationStore wires a durable RevocationStore so access-token
+// revocations survive a process restart (see RevocationStore). Call
+// SeedRevocations after construction to re-seed the in-process deny-set.
+// nil = in-process only (byte-identical to the historical behavior).
+func WithEd25519RevocationStore(store RevocationStore) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) { j.revocationStore = store }
 }
 
 // IssueIDToken signs an OIDC ID Token using the same Ed25519 key as the
@@ -783,6 +819,8 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	if !req.AuthTime.IsZero() {
 		payload.AuthTime = req.AuthTime.Unix()
 	}
+	// OIDC Core §3.1.3.6: bind the id_token to its companion access_token.
+	payload.AtHash = accessTokenHash(jwtAlgEdDSA, req.AccessToken)
 	signingInput, err := idTokenSigningInput(header, payload)
 	if err != nil {
 		return "", err

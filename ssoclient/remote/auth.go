@@ -1,16 +1,17 @@
 // Package remote implements ssoclient.{Auth,Authz,Audit}Client by calling
 // the SSO server over the network — gRPC for hot paths (authz, audit) and
-// HTTP for token validation (JWKS fetch + local Ed25519 verify).
+// HTTP for token validation (JWKS fetch + local signature verify).
 //
 // The remote AuthClient does NOT call /userinfo to validate tokens — it
 // verifies signatures locally with cached JWKS, so the SSO server isn't on
-// the per-request path.
+// the per-request path. It accepts the full asymmetric alg set the server can
+// emit (EdDSA / ES256-512 / RS256-512 / PS256-512) via the shared,
+// alg-confusion-safe security.VerifyCompactJWS primitive.
 package remote
 
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/ssoclient"
 )
 
@@ -87,6 +90,12 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*ssoclien
 		return nil, errors.New("ssoclient/remote: malformed token")
 	}
 
+	// Parse only the header `kid` to select the cached JWK — the alg gate,
+	// signature verification, and kty/crv↔alg consistency are all delegated to
+	// security.VerifyCompactJWS below (which rejects alg=none and every
+	// symmetric HS* alg before any signature work, so an attacker cannot
+	// downgrade an asymmetric token to "unsigned" nor force the RS/HS
+	// public-key-as-HMAC confusion).
 	hdrRaw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("ssoclient/remote: header decode: %w", err)
@@ -95,28 +104,20 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*ssoclien
 	if err := json.Unmarshal(hdrRaw, &h); err != nil {
 		return nil, fmt.Errorf("ssoclient/remote: header parse: %w", err)
 	}
-	if h.Alg != "EdDSA" {
-		return nil, fmt.Errorf("ssoclient/remote: unsupported alg %q", h.Alg)
-	}
 
-	pub, err := c.jwks.Get(ctx, h.Kid)
+	jwk, err := c.jwks.getJWK(ctx, h.Kid)
 	if err != nil {
 		return nil, err
 	}
 
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	// Verify against ONLY the kid-selected key (a single-element bundle), so a
+	// token cannot be validated against a different published key than its
+	// header names.
+	pldRaw, err := security.VerifyCompactJWS(token, []core.JWK{jwk}, security.AsymmetricJWSAlgs())
 	if err != nil {
-		return nil, fmt.Errorf("ssoclient/remote: signature decode: %w", err)
-	}
-	signingInput := parts[0] + "." + parts[1]
-	if !ed25519.Verify(pub, []byte(signingInput), sig) {
-		return nil, errors.New("ssoclient/remote: signature invalid")
+		return nil, fmt.Errorf("ssoclient/remote: %w", err)
 	}
 
-	pldRaw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("ssoclient/remote: payload decode: %w", err)
-	}
 	var p jwtPayload
 	if err := json.Unmarshal(pldRaw, &p); err != nil {
 		return nil, fmt.Errorf("ssoclient/remote: payload parse: %w", err)

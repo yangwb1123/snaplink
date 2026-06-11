@@ -292,12 +292,13 @@ func (h *negotiateHandler) issueTokens(ctx context.Context, client *sso.Client, 
 		}
 		if emit {
 			idToken, err := idIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
-				Subject:  userID,
-				Audience: client.ID,
-				AuthTime: authTime,
-				AMR:      []string{"krb5"},
-				SID:      sessionID,
-				Claims:   attrs,
+				Subject:     userID,
+				Audience:    client.ID,
+				AuthTime:    authTime,
+				AMR:         []string{"krb5"},
+				SID:         sessionID,
+				Claims:      attrs,
+				AccessToken: token.AccessToken,
 			})
 			if err != nil {
 				return nil, err

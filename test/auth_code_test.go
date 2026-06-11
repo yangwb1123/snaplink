@@ -3,11 +3,13 @@ package ssotest
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/oauth"
 )
 
 const (
@@ -154,6 +157,126 @@ func TestAuthCode_FullRoundTrip(t *testing.T) {
 	if len(events) != 1 {
 		t.Errorf("token_issued events = %d, want 1", len(events))
 	}
+}
+
+// TestAuthCode_AuthTimeReplayedFromIssue proves the authorization_code
+// exchange stamps auth_time from when the code was ISSUED (the real
+// /auth/login moment captured on the AuthCode), not the later exchange
+// moment — OIDC Core §2. A code carrying a fixed past auth_time yields a
+// token reporting exactly that instant, so an RP's max_age / freshness
+// check sees the true authentication time.
+func TestAuthCode_AuthTimeReplayedFromIssue(t *testing.T) {
+	srv, store, _ := newCodeFlowServer(t)
+	authedAt := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	const code = "code-with-past-authtime"
+	if err := store.Issue(context.Background(), code, &oauth.AuthCode{
+		UserID:      codeUser,
+		ClientID:    codeClient,
+		RedirectURI: codeRedirectURI,
+		Scopes:      []string{"openid"},
+		Provider:    "password",
+		AuthTime:    authedAt,
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed auth code: %v", err)
+	}
+
+	status, body := exchangeCode(t, srv, code, codeRedirectURI, codeClient, codeSecret)
+	if status != http.StatusOK {
+		t.Fatalf("exchange status = %d body=%v", status, body)
+	}
+	access, _ := body["access_token"].(string)
+	if access == "" {
+		t.Fatalf("no access_token in %v", body)
+	}
+	if got := jwtAuthTimeClaim(t, access); got != authedAt.Unix() {
+		t.Errorf("access token auth_time = %d, want the issue-time %d (NOT the exchange-time ~%d)",
+			got, authedAt.Unix(), time.Now().Unix())
+	}
+}
+
+// jwtAuthTimeClaim decodes a compact JWT's payload and returns its
+// auth_time claim (0 if absent).
+func jwtAuthTimeClaim(t *testing.T, jwt string) int64 {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		t.Fatalf("malformed JWT: %d segments", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode JWT payload: %v", err)
+	}
+	var claims struct {
+		AuthTime int64 `json:"auth_time"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatalf("unmarshal claims: %v", err)
+	}
+	return claims.AuthTime
+}
+
+// TestAuthCode_AMRAndACRReplayedFromIssue: the authorization_code exchange
+// replays the amr (RFC 8176 method tags) + acr captured on the AuthCode at
+// issue — instead of collapsing amr to the provider id and dropping acr —
+// so the code flow's authentication-strength signals match the direct-login
+// flow's.
+func TestAuthCode_AMRAndACRReplayedFromIssue(t *testing.T) {
+	srv, store, _ := newCodeFlowServer(t)
+	const code = "code-with-amr-acr"
+	if err := store.Issue(context.Background(), code, &oauth.AuthCode{
+		UserID:      codeUser,
+		ClientID:    codeClient,
+		RedirectURI: codeRedirectURI,
+		Scopes:      []string{"openid"},
+		Provider:    "password",
+		AuthMethods: []string{"pwd", "otp", "mfa"},
+		ACR:         "urn:acr:high",
+		ExpiresAt:   time.Now().Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed auth code: %v", err)
+	}
+	status, body := exchangeCode(t, srv, code, codeRedirectURI, codeClient, codeSecret)
+	if status != http.StatusOK {
+		t.Fatalf("exchange status = %d body=%v", status, body)
+	}
+	claims := jwtAllClaims(t, body["access_token"].(string))
+	amr := jwtStringSlice(claims["amr"])
+	if len(amr) != 3 || amr[0] != "pwd" || amr[1] != "otp" || amr[2] != "mfa" {
+		t.Errorf("amr = %v, want [pwd otp mfa] (not collapsed to provider)", claims["amr"])
+	}
+	if acr, _ := claims["acr"].(string); acr != "urn:acr:high" {
+		t.Errorf("acr = %v, want urn:acr:high", claims["acr"])
+	}
+}
+
+func jwtAllClaims(t *testing.T, jwt string) map[string]any {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		t.Fatalf("malformed JWT: %d segments", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode JWT payload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal claims: %v", err)
+	}
+	return m
+}
+
+func jwtStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, len(arr))
+	for i, e := range arr {
+		out[i], _ = e.(string)
+	}
+	return out
 }
 
 func TestAuthCode_SingleUseEnforced(t *testing.T) {

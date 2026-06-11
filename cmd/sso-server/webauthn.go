@@ -824,10 +824,11 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		// continues to the refresh-token block below regardless.
 		if emit {
 			idToken, err := idIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
-				Subject:  userID,
-				Audience: client.ID,
-				AuthTime: authTime,
-				AMR:      []string{"webauthn"},
+				Subject:     userID,
+				Audience:    client.ID,
+				AuthTime:    authTime,
+				AMR:         []string{"webauthn"},
+				AccessToken: token.AccessToken,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, err)

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/security"
@@ -21,12 +22,13 @@ type RegisterDeps interface {
 	SetBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDesc string)
 	RequireClientStore() error
 
-	// InvalidateClientCache evicts a client from the opt-in per-login
-	// ClientStore cache (local + cross-replica bus). *sso.Server satisfies
-	// it; it is a no-op when no cache is wired. Called after every DCR
-	// mutation (register / update / delete) so a metadata edit takes effect
-	// on the next Get rather than after the cache TTL.
-	InvalidateClientCache(clientID string)
+	// Auditor returns the audit Recorder so the self-service DCR
+	// create/update/delete paths can record a credential-lifecycle event
+	// (EventClientRegistered/Updated/Deleted) — the forensic counterpart to
+	// the admin path's EventAdminClient* records. *sso.Server satisfies it;
+	// the returned Recorder may be nil and Record is nil-safe, so callers
+	// invoke it unconditionally.
+	Auditor() *audit.Recorder
 }
 
 // DCRRequest mirrors the RFC 7591 §2 client metadata subset this
@@ -229,10 +231,16 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-	// Newly-registered ID was never a cached HIT (misses aren't cached), but
-	// evict defensively + publish so peers converge — guards a register
-	// immediately after a delete within the same TTL window.
-	d.InvalidateClientCache(client.ID)
+	// Forensic trail for the credential-lifecycle: a confidential client was
+	// just minted (fresh secret + registration_access_token) on the public
+	// /register path. Recorded ONLY now that the store write succeeded; the
+	// registration method tells operators whether an initial-access-token or
+	// open registration produced it.
+	method := dcrMethodInitialAccessToken
+	if policy.AllowOpenRegistration {
+		method = dcrMethodOpen
+	}
+	recordDCRLifecycle(d, ctx, audit.EventClientRegistered, client.ID, method)
 
 	now := time.Now().Unix()
 	resp := DCRResponse{
@@ -330,9 +338,11 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-	// Evict the now-stale cached snapshot (local + bus) so the next Get sees
-	// the new metadata immediately, not after the cache TTL.
-	d.InvalidateClientCache(updated.ID)
+	// Recorded only AFTER an authorized bearer + successful write —
+	// authorizeRegistrationMgmt already short-circuited every failed-bearer /
+	// unknown-client path with an identical 401 (no event), so this never
+	// fires on a rejection (anti-enumeration, §2).
+	recordDCRLifecycle(d, ctx, audit.EventClientUpdated, updated.ID, "")
 	ctx.JSON(http.StatusOK, projectClientToDCRResponse(updated, ctx))
 }
 
@@ -351,9 +361,10 @@ func HandleRegistrationDelete(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-	// Evict the cached snapshot (local + bus) so the deleted client reverts
-	// to the inner store's not-found behavior on the next Get immediately.
-	d.InvalidateClientCache(client.ID)
+	// As with the update path: authorizeRegistrationMgmt gates this, so the
+	// event records an authorized self-service deletion only — never a
+	// failed-bearer probe (anti-enumeration, §2).
+	recordDCRLifecycle(d, ctx, audit.EventClientDeleted, client.ID, "")
 	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
 }
 
@@ -402,6 +413,30 @@ func authorizeRegistrationMgmt(d RegisterDeps, ctx core.HandlerContext) (*core.C
 		return nil, false
 	}
 	return client, true
+}
+
+// recordDCRLifecycle writes one self-service DCR lifecycle audit event
+// (EventClientRegistered/Updated/Deleted) AFTER a successful store write.
+// The base event is built via audit.EventFromRequest so it inherits the
+// same RequestID / trace / ActorIP / UserAgent + tenant/geo/region
+// enrichment as every other HTTP-path event; clientID identifies the
+// affected client; method (create-only) records the registration method via
+// SetMeta — NEVER a direct e.Metadata assignment, which would clobber the
+// enrichment (§2). Auditor() may be nil and Recorder.Record is nil-safe, so
+// this is unconditional and a no-op when no recorder is wired. It is reached
+// ONLY on the authorized success path; the failed-bearer / unknown-client
+// 401s short-circuit earlier and emit nothing (anti-enumeration, §2).
+func recordDCRLifecycle(d RegisterDeps, ctx core.HandlerContext, t audit.EventType, clientID, method string) {
+	rec := d.Auditor()
+	if rec == nil {
+		return
+	}
+	e := audit.EventFromRequest(ctx)
+	e.Type = t
+	e.Outcome = audit.OutcomeSuccess
+	e.ClientID = clientID
+	audit.SetMeta(e, metaKeyDCRMethod, method) // SetMeta skips an empty method
+	rec.Record(ctx.Request().Context(), e)
 }
 
 // projectClientToDCRResponse builds an RFC 7591-shaped response from

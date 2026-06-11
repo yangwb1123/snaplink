@@ -829,7 +829,8 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		Resources:            append([]string(nil), req.Resource...),
 		ClientID:             client.ID,
 		AuthTime:             time.Now(),
-		AMR:                  []string{result.Provider},
+		AMR:                  amrForResult(result),
+		ACR:                  result.AchievedACR,
 		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
 		TTL:                  client.AccessTokenTTL,
@@ -903,13 +904,15 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", result.UserID)
 		} else if emit {
 			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:  issuedSub,
-				Audience: client.ID,
-				Nonce:    req.Nonce,
-				AuthTime: time.Now(),
-				AMR:      []string{result.Provider},
-				Claims:   result.Attributes,
-				SID:      session.ID,
+				Subject:     issuedSub,
+				Audience:    client.ID,
+				Nonce:       req.Nonce,
+				AuthTime:    time.Now(),
+				AMR:         amrForResult(result),
+				ACR:         result.AchievedACR,
+				Claims:      result.Attributes,
+				SID:         session.ID,
+				AccessToken: token.AccessToken,
 			})
 			if err != nil {
 				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -965,6 +968,9 @@ func (s *Server) issueAuthCode(
 		Scopes:               append([]string(nil), req.Scope...),
 		Nonce:                req.Nonce,
 		Provider:             result.Provider,
+		AuthTime:             time.Now(),
+		AuthMethods:          result.AuthMethods,
+		ACR:                  result.AchievedACR,
 		Attributes:           result.Attributes,
 		CodeChallenge:        req.CodeChallenge,
 		CodeChallengeMethod:  req.CodeChallengeMethod,
@@ -1506,12 +1512,22 @@ func (s *Server) handleToken(ctx HandlerContext) {
 			resources = req.Resource
 		}
 		issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
+		// auth_time reflects the real /auth/login moment captured on the
+		// AuthCode, not this redemption, so an RP's max_age / freshness
+		// check isn't fooled by a delayed code exchange (OIDC Core §2). A
+		// zero value (older code, or a store that doesn't persist it) falls
+		// back to now.
+		authTime := info.AuthTime
+		if authTime.IsZero() {
+			authTime = time.Now()
+		}
 		token, err := ti.Issue(ctx.Request().Context(), &Subject{
 			ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
 			Resources:            resources,
 			ClientID:             client.ID,
-			AuthTime:             time.Now(),
-			AMR:                  []string{info.Provider},
+			AuthTime:             authTime,
+			AMR:                  amrOrProvider(info.AuthMethods, info.Provider),
+			ACR:                  info.ACR,
 			AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
 			SID:                  info.SID,
 			TTL:                  client.AccessTokenTTL,
@@ -1552,12 +1568,14 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", info.UserID)
 			} else if emit {
 				idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-					Subject:  issuedSub,
-					Audience: client.ID,
-					Nonce:    info.Nonce,
-					AuthTime: time.Now(),
-					AMR:      []string{info.Provider},
-					Claims:   info.Attributes,
+					Subject:     issuedSub,
+					Audience:    client.ID,
+					Nonce:       info.Nonce,
+					AuthTime:    authTime,
+					AMR:         amrOrProvider(info.AuthMethods, info.Provider),
+					ACR:         info.ACR,
+					Claims:      info.Attributes,
+					AccessToken: token.AccessToken,
 				})
 				if err != nil {
 					s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
@@ -1579,6 +1597,17 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		}
 		info, err := s.refreshTokenStore.Consume(ctx.Request().Context(), req.RefreshToken)
 		if err != nil {
+			// Refresh double-submit grace: if THIS token was rotated within the
+			// grace window, replay the SAME successor it already produced —
+			// idempotent, so a legitimate concurrent double-submit doesn't trip
+			// the family-reuse kill below (a logout storm). A genuine post-window
+			// replay finds no entry and falls through (BCP §4.13 unweakened).
+			if s.refreshGrace != nil {
+				if cached, ok := s.refreshGrace.lookup(req.RefreshToken, time.Now()); ok {
+					ctx.JSON(http.StatusOK, cached)
+					return
+				}
+			}
 			// OAuth Security BCP §4.13: a previously-consumed token
 			// presented again is a reuse signal. Kill the whole family
 			// (every sibling and descendant) before returning the wire
@@ -1718,14 +1747,21 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
 		s.recordRefreshTokenIssued(ctx, client.ID, info.UserID, true)
 		s.recordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
-		ctx.JSON(http.StatusOK, map[string]any{
+		resp := map[string]any{
 			KeyAccessToken:   token.AccessToken,
 			KeyTokenType:     token.TokenType,
 			KeyRefreshToken:  newRefresh,
 			KeyExpiresIn:     token.ExpiresIn,
 			KeyScope:         token.Scope,
 			KeyTokenStrategy: strategy,
-		})
+		}
+		// Refresh double-submit grace: cache this successor keyed by the
+		// just-consumed token so a benign concurrent re-presentation of the
+		// SAME token replays it instead of tripping family-reuse (refresh_grace.go).
+		if s.refreshGrace != nil {
+			s.refreshGrace.remember(req.RefreshToken, resp, time.Now())
+		}
+		ctx.JSON(http.StatusOK, resp)
 	case GrantDeviceCode:
 		s.handleDeviceTokenGrant(ctx, client, req.DeviceCode)
 	case GrantCIBA:

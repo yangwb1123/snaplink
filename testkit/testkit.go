@@ -1,0 +1,237 @@
+// Package testkit spins up a real, in-process SSO server for downstream
+// integration tests — the importable counterpart to the SDK's internal e2e
+// harness (which is trapped in a _test.go file and so can't be imported).
+//
+// A resource-server / RP test can mint a REAL token (via Login, or directly
+// through the exposed Issuer) and validate it over the live JWKS endpoint —
+// exercising the exact signature + JWKS round-trip that the ssoclient/dev
+// bypass stubs deliberately skip (and that, per the EdDSA-only-client history,
+// is where misconfiguration bites). Defaults wire one client + one user with a
+// password authenticator; Options add more.
+//
+// Typical use:
+//
+//	h := testkit.NewServer()
+//	defer h.Close()
+//	res, _ := h.Login(ctx, testkit.DefaultUsername, testkit.DefaultPassword, "openid")
+//	// validate res.AccessToken in your resource server using
+//	// ssoclient/remote against h.JWKSURL().
+package testkit
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"time"
+
+	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/authenticators"
+	"github.com/snaplink/sso/defaultimpl"
+)
+
+// Defaults seeded when no Option overrides them.
+const (
+	DefaultIssuer       = "testkit-sso"
+	DefaultClientID     = "testkit-client"
+	DefaultClientSecret = "testkit-secret"
+	DefaultUsername     = "testkit-user"
+	DefaultPassword     = "testkit-pass"
+)
+
+// Harness is a running in-process SSO server. Call Close when done.
+type Harness struct {
+	// URL is the base URL of the running HTTP server.
+	URL string
+	// Issuer is the Ed25519 signing issuer — mint or validate tokens directly
+	// without going through the HTTP flow when a test needs to.
+	Issuer *defaultimpl.Ed25519JWTIssuer
+
+	clientID     string
+	clientSecret string
+	server       *httptest.Server
+}
+
+type config struct {
+	issuerName      string
+	clientID        string
+	clientSecret    string
+	scopes          []string
+	users           map[string]string // username -> password
+	usersAreDefault bool
+}
+
+// Option customizes NewServer.
+type Option func(*config)
+
+// WithIssuerName overrides the issuer/`iss` value (default DefaultIssuer).
+func WithIssuerName(name string) Option {
+	return func(c *config) { c.issuerName = name }
+}
+
+// WithClient overrides the seeded confidential client and its allowed scopes
+// (default DefaultClientID/DefaultClientSecret, scope "openid").
+func WithClient(id, secret string, scopes ...string) Option {
+	return func(c *config) {
+		c.clientID, c.clientSecret = id, secret
+		if len(scopes) > 0 {
+			c.scopes = append([]string(nil), scopes...)
+		}
+	}
+}
+
+// WithUser adds a login user (username/password). Called multiple times to
+// seed several. The default user is dropped once any WithUser is supplied.
+func WithUser(username, password string) Option {
+	return func(c *config) {
+		if c.usersAreDefault {
+			c.users = map[string]string{}
+			c.usersAreDefault = false
+		}
+		c.users[username] = password
+	}
+}
+
+// usersAreDefault is tracked on config so the first WithUser replaces the seed
+// default rather than adding to it.
+func (c *config) markDefaults() { c.usersAreDefault = true }
+
+// NewServer builds and starts the harness. It never fails for well-formed
+// options, so it returns just *Harness for ergonomic test setup.
+func NewServer(opts ...Option) *Harness {
+	cfg := config{
+		issuerName:   DefaultIssuer,
+		clientID:     DefaultClientID,
+		clientSecret: DefaultClientSecret,
+		scopes:       []string{"openid"},
+		users:        map[string]string{DefaultUsername: DefaultPassword},
+	}
+	cfg.markDefaults()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	issuer := defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519Issuer(cfg.issuerName),
+		defaultimpl.WithEd25519TokenTTL(5*time.Minute),
+	)
+
+	users := defaultimpl.NewMemoryUserProvider()
+	for u := range cfg.users {
+		_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: u})
+	}
+
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID:                    cfg.clientID,
+		Secret:                cfg.clientSecret,
+		AllowedScopes:         cfg.scopes,
+		AllowedAuthenticators: []string{authenticators.MethodPassword},
+		TokenStrategy:         "jwt",
+		Active:                true,
+	})
+
+	// Snapshot the credentials so the closure validates by value, not by a
+	// later-mutated map.
+	creds := make(map[string]string, len(cfg.users))
+	for u, p := range cfg.users {
+		creds[u] = p
+	}
+	pw := authenticators.NewPasswordAuthenticator(
+		authenticators.PasswordVerifierFunc(func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if want, ok := creds[u]; ok && p != "" && want == p {
+				return &sso.AuthResult{UserID: u}, nil
+			}
+			return nil, errors.New("testkit: bad credentials")
+		}),
+	)
+
+	srv := sso.NewServer(
+		sso.WithIssuer(cfg.issuerName),
+		sso.WithUserProvider(users),
+		sso.WithClientStore(clients),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithIDTokenIssuer(issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+	)
+
+	ts := httptest.NewServer(srv.Handler())
+	return &Harness{
+		URL:          ts.URL,
+		Issuer:       issuer,
+		clientID:     cfg.clientID,
+		clientSecret: cfg.clientSecret,
+		server:       ts,
+	}
+}
+
+// Close shuts down the HTTP server. Idempotent.
+func (h *Harness) Close() {
+	if h != nil && h.server != nil {
+		h.server.Close()
+		h.server = nil
+	}
+}
+
+// JWKSURL is the JWKS endpoint a downstream resource server points its
+// ssoclient/remote JWKS cache at.
+func (h *Harness) JWKSURL() string { return h.URL + "/.well-known/jwks.json" }
+
+// DiscoveryURL is the OIDC discovery document endpoint.
+func (h *Harness) DiscoveryURL() string {
+	return h.URL + "/.well-known/openid-configuration"
+}
+
+// LoginResult holds the tokens returned by a successful Login.
+type LoginResult struct {
+	AccessToken string `json:"access_token"`
+	IDToken     string `json:"id_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in"`
+	Scope       string `json:"scope"`
+}
+
+// Login drives POST /auth/login with the password authenticator and returns
+// the minted tokens. scopes defaults to ["openid"] when omitted.
+func (h *Harness) Login(ctx context.Context, username, password string, scopes ...string) (*LoginResult, error) {
+	if len(scopes) == 0 {
+		scopes = []string{"openid"}
+	}
+	reqBody, err := json.Marshal(map[string]any{
+		"provider":   authenticators.MethodPassword,
+		"client_id":  h.clientID,
+		"credential": map[string]string{"username": username, "password": password},
+		"scope":      scopes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.URL+"/auth/login", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("testkit: login failed: %d %s", resp.StatusCode, raw)
+	}
+	var out LoginResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("testkit: decode login response: %w", err)
+	}
+	if out.AccessToken == "" {
+		return nil, fmt.Errorf("testkit: login returned no access_token: %s", raw)
+	}
+	return &out, nil
+}

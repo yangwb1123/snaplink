@@ -2781,6 +2781,11 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 		logger.Info("signing key: external signer", "name", name, "kid", kid)
 	}
 
+	revStore, err := buildRevocationStore(sc)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
 	switch alg := strings.ToLower(strings.TrimSpace(sc.Alg)); alg {
 	case "", "eddsa", "ed25519":
 		opts := []defaultimpl.Ed25519Option{
@@ -2795,7 +2800,14 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 			}
 			opts = append(opts, defaultimpl.WithEd25519ExternalSigner(sgn, pub, extKID))
 		}
-		return defaultimpl.NewEd25519JWTIssuer(opts...), "EdDSA", extSigner, nil
+		if revStore != nil {
+			opts = append(opts, defaultimpl.WithEd25519RevocationStore(revStore))
+		}
+		iss := defaultimpl.NewEd25519JWTIssuer(opts...)
+		if serr := seedRevocations(iss, revStore); serr != nil {
+			return nil, "", nil, serr
+		}
+		return iss, "EdDSA", extSigner, nil
 	case "es256", "ecdsa":
 		opts := []defaultimpl.ECDSAOption{
 			defaultimpl.WithECDSAIssuer(srv.Issuer),
@@ -2809,7 +2821,14 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 			}
 			opts = append(opts, defaultimpl.WithECDSAExternalSigner(sgn, pub, extKID))
 		}
-		return defaultimpl.NewECDSAJWTIssuer(opts...), "ES256", extSigner, nil
+		if revStore != nil {
+			opts = append(opts, defaultimpl.WithECDSARevocationStore(revStore))
+		}
+		iss := defaultimpl.NewECDSAJWTIssuer(opts...)
+		if serr := seedRevocations(iss, revStore); serr != nil {
+			return nil, "", nil, serr
+		}
+		return iss, "ES256", extSigner, nil
 	case "rs256", "ps256", "rsa":
 		signingAlg := "RS256"
 		if alg == "ps256" {
@@ -2828,10 +2847,54 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 			}
 			opts = append(opts, defaultimpl.WithRSAExternalSigner(sgn, pub, extKID))
 		}
-		return defaultimpl.NewRSAJWTIssuer(opts...), signingAlg, extSigner, nil
+		if revStore != nil {
+			opts = append(opts, defaultimpl.WithRSARevocationStore(revStore))
+		}
+		iss := defaultimpl.NewRSAJWTIssuer(opts...)
+		if serr := seedRevocations(iss, revStore); serr != nil {
+			return nil, "", nil, serr
+		}
+		return iss, signingAlg, extSigner, nil
 	default:
 		return nil, "", nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
 	}
+}
+
+// buildRevocationStore constructs the optional durable RevocationStore from
+// keys.signing.revocation_backend so access-token revocations survive a
+// restart (defaultimpl.RevocationStore). "" = nil (in-process only). The
+// sqlite store's *sql.DB lives for the process lifetime like the signing
+// issuer it backs (no /readyz ping wired yet — a follow-on).
+func buildRevocationStore(sc config.SigningConfig) (defaultimpl.RevocationStore, error) {
+	switch strings.ToLower(strings.TrimSpace(sc.RevocationBackend)) {
+	case "":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryRevocationStore(), nil
+	case "sqlite":
+		dsn := strings.TrimSpace(sc.RevocationDSN)
+		if dsn == "" {
+			return nil, fmt.Errorf("keys.signing.revocation_backend sqlite requires keys.signing.revocation_dsn")
+		}
+		st, err := sqlitestores.NewRevocationStore(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("keys.signing.revocation: %w", err)
+		}
+		return st, nil
+	default:
+		return nil, fmt.Errorf("keys.signing.revocation_backend %q unsupported (supported: memory, sqlite)", sc.RevocationBackend)
+	}
+}
+
+// seedRevocations re-seeds the issuer's in-process deny-set from the durable
+// store at boot so a pre-restart revocation is honored again. nil store = no-op.
+func seedRevocations(iss interface {
+	SeedRevocations(context.Context) error
+}, store defaultimpl.RevocationStore) error {
+	if store == nil {
+		return nil
+	}
+	return iss.SeedRevocations(context.Background())
 }
 
 func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
@@ -3769,10 +3832,25 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("signing key registry: %w", err)
 	}
-	// srv is forward-declared so the signing-key-aggregation readiness check
-	// (registered as an Option below) can close over it: the check runs at
-	// /readyz probe time, long after srv = sso.NewServer(opts...) assigns it.
+	// srv is forward-declared so the signing-key-aggregation + invalidation-bus
+	// readiness checks (registered as Options below) can close over it: each
+	// runs at /readyz probe time, long after srv = sso.NewServer(opts...)
+	// assigns it.
 	var srv *sso.Server
+	if invalidationBus != nil {
+		// Trip /readyz when the invalidation-bus subscriber goes degraded (its
+		// bus stream closed under a live context and it's resubscribing) — the
+		// replica is no longer applying cross-replica invalidations (tenant
+		// suspension, client cache, coordinated key rotation, token revocation),
+		// so it would silently honor stale state until its own TTL/exp.
+		// Registered ONLY when a bus is wired; nil bus ⇒ the loop never runs,
+		// the flag stays false, no check registered.
+		opts = append(opts,
+			sso.WithReadyCheck("invalidation-bus", func(context.Context) error {
+				return srv.InvalidationBusReady()
+			}),
+		)
+	}
 	if signingKeyRegistry != nil {
 		replicaID := strings.TrimSpace(cfg.Keys.SigningKeyRegistry.ReplicaID)
 		if replicaID == "" {

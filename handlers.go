@@ -882,6 +882,12 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 	// exactly as it does on the direct path.
 	state.Result.CredentialHealth = state.CredentialHealth
 
+	// The second factor verified: fold it into the result's amr so the
+	// resumed mint carries the real multi-factor signal (RFC 8176, e.g.
+	// ["pwd","otp","mfa"]) rather than only the first-factor method
+	// captured before the step-up.
+	state.Result.AuthMethods = withMFAMethod(state.Result.AuthMethods, req.Method)
+
 	if s.clientStore == nil {
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
 		return
@@ -1276,12 +1282,13 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
 		} else if emit {
 			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:  issuedSub,
-				Audience: client.ID,
-				Nonce:    dc.Nonce,
-				AuthTime: time.Now(),
-				AMR:      []string{dc.Provider},
-				Claims:   dc.Attributes,
+				Subject:     issuedSub,
+				Audience:    client.ID,
+				Nonce:       dc.Nonce,
+				AuthTime:    time.Now(),
+				AMR:         []string{dc.Provider},
+				Claims:      dc.Attributes,
+				AccessToken: token.AccessToken,
 			})
 			if err != nil {
 				s.logger.Error("id token issue failed", "error", err)
@@ -1405,11 +1412,12 @@ func (s *Server) handleCIBATokenGrant(ctx HandlerContext, client *Client, authRe
 			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
 		} else if emit {
 			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:  issuedSub,
-				Audience: client.ID,
-				Nonce:    r.Nonce,
-				AuthTime: now,
-				AMR:      []string{provider},
+				Subject:     issuedSub,
+				Audience:    client.ID,
+				Nonce:       r.Nonce,
+				AuthTime:    now,
+				AMR:         []string{provider},
+				AccessToken: token.AccessToken,
 			})
 			if err != nil {
 				s.logger.Error("id token issue failed", "error", err)

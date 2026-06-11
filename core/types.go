@@ -698,6 +698,15 @@ type AuthResult struct {
 	CountryCode         string   // ISO 3166-1 alpha-2, optional
 	RecommendedLanguage string   // BCP-47, optional
 
+	// AchievedACR is the Authentication Context Class Reference the
+	// authenticator actually satisfied (matching one of the requested
+	// AuthRequest.ACRValues, or its own determination). The AS surfaces it
+	// as the minted access + id token `acr` claim so an RP / resource
+	// server can verify authentication strength (OIDC Core §2, RFC 9470
+	// step-up). Empty = the authenticator reported no ACR → the claim is
+	// omitted (current default behavior, byte-identical).
+	AchievedACR string
+
 	// CredentialHealth carries a non-blocking login-time signal about
 	// the password's strength/breach status. It is deliberately a typed
 	// field rather than an Attributes entry: Attributes flows into the

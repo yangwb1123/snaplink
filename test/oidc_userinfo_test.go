@@ -268,17 +268,19 @@ func TestUserInfo_OIDC_AuthTimeAndAMRPassedThrough(t *testing.T) {
 	if authTime < now-5 || authTime > now+5 {
 		t.Errorf("auth_time = %v outside the expected window (now=%v)", authTime, now)
 	}
-	// amr from handleLogin = [provider]
+	// amr surfaces the authenticator's RFC 8176 AuthMethods (the password
+	// authenticator records "pwd"), not the OAuth provider id "password".
 	amr, ok := out["amr"].([]any)
 	if !ok {
 		t.Fatalf("amr missing or wrong type: %v", out["amr"])
 	}
-	if len(amr) != 1 || amr[0] != "password" {
-		t.Errorf("amr = %v want [password]", amr)
+	if len(amr) != 1 || amr[0] != "pwd" {
+		t.Errorf("amr = %v want [pwd]", amr)
 	}
-	// We don't stamp ACR yet → absent.
+	// acr is omitted because this authenticator reports no AchievedACR;
+	// the plumbing exists (see acr_test.go) but this result carries none.
 	if _, present := out["acr"]; present {
-		t.Errorf("acr should be omitted (no ACR plumbing today): %v", out["acr"])
+		t.Errorf("acr should be omitted when the authenticator sets no AchievedACR: %v", out["acr"])
 	}
 }
 

@@ -58,6 +58,17 @@ const (
 	ErrRegistrationDisabled  = "registration_not_configured"
 )
 
+// DCR audit-metadata keys + values for the EventClientRegistered lifecycle
+// event. metaKeyDCRMethod records HOW the registration was authorized so a
+// SIEM can separate operator-gated registrations from open ones; these are
+// internal audit signals, not wire values.
+const (
+	metaKeyDCRMethod = "registration_method"
+
+	dcrMethodInitialAccessToken = "initial_access_token"
+	dcrMethodOpen               = "open"
+)
+
 // GenerateClientID mints a base32 client identifier — short enough
 // for log lines but high-entropy enough for an unguessable
 // registration. 18 bytes / 144 bits beats a 128-bit floor while

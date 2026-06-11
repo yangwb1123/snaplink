@@ -1,6 +1,10 @@
 package defaultimpl
 
-import "time"
+import (
+	"context"
+	"sync"
+	"time"
+)
 
 // Exp-bounded in-process revocation deny-set helpers, shared by the three
 // JWT issuers (Ed25519 / ECDSA / RSA).
@@ -58,4 +62,88 @@ func pruneRevoked(m map[string]int64, nowUnix int64) {
 			delete(m, tok)
 		}
 	}
+}
+
+// RevocationStore is an OPTIONAL durable backing for the JWT issuers'
+// in-process revocation deny-set. Without one, a revoked-but-unexpired access
+// token RESURRECTS after a process restart / rolling deploy (the in-process
+// map starts empty) and on a late-joining replica — exactly when a stolen
+// token is most valuable. Wiring a store (memory for single-process; sqlite or
+// redis on a SHARED backend for multi-replica) makes a revocation survive a
+// restart: the issuer PERSISTS each Revoke and RE-SEEDS its in-process map from
+// the store at boot via SeedRevocations. Validate still consults ONLY the fast
+// in-process map — the store is never on the per-validation hot path. Live
+// cross-replica propagation is the separate cluster bus (WithCrossReplicaRevocation);
+// this closes the orthogonal restart/late-join durability gap.
+//
+// All exp values are unix SECONDS (the issuers' `exp` unit). Impls MUST be
+// safe for concurrent use.
+type RevocationStore interface {
+	// Revoke records token as revoked until expUnix. Idempotent.
+	Revoke(ctx context.Context, token string, expUnix int64) error
+	// Load returns every still-relevant revocation (token -> expUnix).
+	Load(ctx context.Context) (map[string]int64, error)
+	// Prune drops entries whose exp is strictly before nowUnix.
+	Prune(ctx context.Context, nowUnix int64) error
+}
+
+// MemoryRevocationStore is the in-process RevocationStore. It is "durable" only
+// for the life of the process — useful in tests + single-process deployments
+// that want the SeedRevocations seam exercised; restart-survival across a
+// multi-replica fleet needs a sqlite or redis store on a SHARED backend.
+type MemoryRevocationStore struct {
+	mu sync.Mutex
+	m  map[string]int64
+}
+
+// NewMemoryRevocationStore returns an empty in-process RevocationStore.
+func NewMemoryRevocationStore() *MemoryRevocationStore {
+	return &MemoryRevocationStore{m: make(map[string]int64)}
+}
+
+func (s *MemoryRevocationStore) Revoke(_ context.Context, token string, expUnix int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[token] = expUnix
+	pruneRevoked(s.m, time.Now().Unix())
+	return nil
+}
+
+func (s *MemoryRevocationStore) Load(_ context.Context) (map[string]int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pruneRevoked(s.m, time.Now().Unix())
+	out := make(map[string]int64, len(s.m))
+	for k, v := range s.m {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (s *MemoryRevocationStore) Prune(_ context.Context, nowUnix int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pruneRevoked(s.m, nowUnix)
+	return nil
+}
+
+// seedRevokedFromStore bulk-loads still-valid revocations from store into the
+// in-process map m (the caller MUST hold m's write lock). Already-expired
+// entries are skipped — the prune-not-early gate: only an entry whose exp is
+// still >= now must keep being honored. A nil store is a no-op.
+func seedRevokedFromStore(ctx context.Context, m map[string]int64, store RevocationStore) error {
+	if store == nil {
+		return nil
+	}
+	loaded, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	for tok, exp := range loaded {
+		if exp >= now {
+			m[tok] = exp
+		}
+	}
+	return nil
 }

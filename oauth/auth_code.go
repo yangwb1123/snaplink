@@ -23,16 +23,33 @@ import (
 // a code_verifier that derives to this challenge under the named method;
 // failure maps to invalid_grant per RFC 7636 §4.6.
 type AuthCode struct {
-	UserID              string
-	ClientID            string
-	RedirectURI         string
-	Scopes              []string
-	Nonce               string
-	Provider            string            // authentication method used at issue time
-	Attributes          map[string]string // forwarded into the token subject's Claims
-	CodeChallenge       string            // PKCE challenge captured at issue (empty = no PKCE)
-	CodeChallengeMethod string            // PKCE method: "S256" | "plain"
-	Resources           []string          // RFC 8707 resource indicators (target audiences)
+	UserID      string
+	ClientID    string
+	RedirectURI string
+	Scopes      []string
+	Nonce       string
+	Provider    string            // authentication method used at issue time
+	Attributes  map[string]string // forwarded into the token subject's Claims
+
+	// AuthTime is when the end user actually authenticated at /auth/login,
+	// captured when this code was issued. The token endpoint stamps it into
+	// the minted access + id token `auth_time` claim so a code redeemed
+	// seconds-to-minutes later still reports the true authentication moment
+	// (OIDC Core §2) rather than the exchange time. Zero = the store didn't
+	// persist it (or a pre-upgrade code) → the exchange falls back to now.
+	AuthTime            time.Time
+	CodeChallenge       string   // PKCE challenge captured at issue (empty = no PKCE)
+	CodeChallengeMethod string   // PKCE method: "S256" | "plain"
+	Resources           []string // RFC 8707 resource indicators (target audiences)
+
+	// AuthMethods (the RFC 8176 amr tags the authenticator recorded) and
+	// ACR (the satisfied AuthResult.AchievedACR) capture authentication
+	// strength at issue so the /token exchange replays them into the minted
+	// token's amr/acr — instead of collapsing amr to the provider id and
+	// dropping acr. Empty AuthMethods → the exchange falls back to the
+	// provider id; empty ACR → the acr claim is omitted.
+	AuthMethods []string
+	ACR         string
 
 	// AuthorizationDetails carries the RFC 9396 array of
 	// fine-grained authorization elements verbatim from the

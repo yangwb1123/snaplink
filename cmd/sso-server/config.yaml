@@ -936,6 +936,13 @@ keys:
   # the scheduled loop is skipped (manual RotateKey/RetireKey still work).
   signing:
     alg: eddsa             # eddsa | es256 | rs256 | ps256 (ps256 = FAPI-preferred)
+    # Durable access-token revocation deny-set so a revoked-but-unexpired token
+    # stays revoked across a restart / rolling deploy (else the in-process set is
+    # empty on boot and the token resurrects). "" (default) = in-process only;
+    # "memory" = in-process (exercises the seam, no restart survival); "sqlite"
+    # = durable at revocation_dsn (SHARED backend = multi-replica durable).
+    # revocation_backend: ""
+    # revocation_dsn: "file:/var/lib/sso/revocations.db?_journal=WAL"
   rotation:
     enabled: false
     interval: 2160h           # 90d

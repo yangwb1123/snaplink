@@ -9,6 +9,7 @@ import (
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/security"
 )
 
 // MemoryClientStore stores client applications in memory. Implements the full
@@ -48,7 +49,10 @@ func (m *MemoryClientStore) ValidateSecret(_ context.Context, clientID, clientSe
 	if !ok {
 		return sso.ErrNoSuchClient
 	}
-	if c.Secret != clientSecret {
+	// Constant-time compare (security.ConstantTimeStringEq returns 1 on equal)
+	// so secret_post client auth doesn't leak a byte-at-a-time timing oracle —
+	// matching the RFC 7592 registration-access-token check.
+	if security.ConstantTimeStringEq(c.Secret, clientSecret) != 1 {
 		return fmt.Errorf("invalid client secret")
 	}
 	if !c.Active {

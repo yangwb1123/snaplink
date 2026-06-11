@@ -90,6 +90,9 @@ type RSAJWTIssuer struct {
 	// unix seconds); see the Ed25519 issuer + revocation_set.go.
 	revokedMu sync.RWMutex
 	revoked   map[string]int64
+	// revocationStore is the OPTIONAL durable backing for `revoked` (nil =
+	// in-process only); Revoke persists, SeedRevocations re-seeds at boot.
+	revocationStore RevocationStore
 
 	// keyMu guards the active signing key + verifyKeys for runtime
 	// rotation, matching the other issuers' locking discipline.
@@ -563,10 +566,35 @@ func (j *RSAJWTIssuer) Revoke(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
+	exp := claims.ExpiresAt.Unix()
+	j.revokedMu.Lock()
+	markRevoked(j.revoked, token, exp)
+	store := j.revocationStore
+	j.revokedMu.Unlock()
+	// Best-effort durable persist (restart-survival); the in-process revoke
+	// already took effect, so a store outage must not fail the revoke.
+	if store != nil {
+		_ = store.Revoke(ctx, token, exp)
+	}
+	return nil
+}
+
+// SeedRevocations re-seeds the in-process deny-set from the wired
+// RevocationStore at boot so a pre-restart revocation is honored again.
+// nil store = no-op. See RevocationStore.
+func (j *RSAJWTIssuer) SeedRevocations(ctx context.Context) error {
+	if j.revocationStore == nil {
+		return nil
+	}
 	j.revokedMu.Lock()
 	defer j.revokedMu.Unlock()
-	markRevoked(j.revoked, token, claims.ExpiresAt.Unix())
-	return nil
+	return seedRevokedFromStore(ctx, j.revoked, j.revocationStore)
+}
+
+// WithRSARevocationStore wires a durable RevocationStore (restart-survival;
+// call SeedRevocations after construction). nil = in-process only.
+func WithRSARevocationStore(store RevocationStore) RSAOption {
+	return func(j *RSAJWTIssuer) { j.revocationStore = store }
 }
 
 // IssueIDToken signs an OIDC ID Token with the same RSA key.
@@ -597,6 +625,9 @@ func (j *RSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenReques
 	if !req.AuthTime.IsZero() {
 		payload.AuthTime = req.AuthTime.Unix()
 	}
+	// OIDC Core §3.1.3.6: bind the id_token to its companion access_token.
+	// j.alg is RS256 or PS256 — both hash with SHA-256.
+	payload.AtHash = accessTokenHash(j.alg, req.AccessToken)
 	signingInput, err := rsaIDSigningInput(header, payload)
 	if err != nil {
 		return "", err

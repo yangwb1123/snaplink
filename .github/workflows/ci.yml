@@ -1,7 +1,17 @@
 # Minimum-viable CI. Runs on every push to main and every PR.
 #
 # Jobs:
-#   * test    — gofmt, go vet, go build, go test -race -count=1
+#   * test    — gofmt, go vet, go build, go test -race -count=1 (ROOT module)
+#   * modules — build + race-test EACH nested go.mod (kms/*, redis, saml,
+#               ldap, kerberos, radius, extauthz). The root `go ... ./...`
+#               does NOT descend into them (deliberately no go.work), so
+#               without this matrix the riskiest third-party code (SAML
+#               XML/DSig, cloud KMS SDKs, gokrb5) would merge green
+#               uncompiled. Mirrors `make ci-modules`.
+#   * govulncheck — Go's official CVE scanner (golang.org/x/vuln) over the
+#               root + every nested module's go.sum. Informational
+#               (continue-on-error) so a freshly-published advisory can't
+#               wedge unrelated PRs, but it runs as a real, visible job.
 #   * proto   — buf lint (always) + buf breaking (PR only, vs base branch)
 #   * docker  — `docker build .` smoke (single-arch, no push) so a broken
 #               Dockerfile fails CI rather than being discovered when
@@ -63,6 +73,114 @@ jobs:
         # -count=1 disables the test cache so flaky tests can't masquerade
         # as passing.
         run: go test -race -count=1 ./...
+
+  modules:
+    # Build + race-test every NESTED module. The root `test` job's
+    # `go ... ./...` stops at the root module boundary (there is
+    # deliberately no go.work — a workspace would merge build lists and
+    # surface the vendored SDKs in the core's `go list -m all`), so each
+    # submodule has to be entered on its own. Mirrors `make ci-modules`.
+    # Matrix-per-module = parallel runs + a per-module red/green signal.
+    name: nested modules (build + race)
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing module shouldn't mask the others' results.
+      fail-fast: false
+      matrix:
+        module:
+          - kms/awskms
+          - kms/gcpkms
+          - kms/azurekeyvault
+          - kms/pkcs11
+          - redis
+          - saml
+          - ldap
+          - kerberos
+          - radius
+          - extauthz
+    steps:
+      - uses: actions/checkout@v4
+
+      # kms/pkcs11 binds the C library github.com/miekg/pkcs11 via cgo, so
+      # it needs CGO_ENABLED=1 + a C toolchain + libltdl headers even to
+      # build (gcc ships on ubuntu-latest; libltdl-dev does not). Install
+      # it only for that matrix entry. Every other module is pure-Go and
+      # builds with the default CGO_ENABLED.
+      - name: install pkcs11 C toolchain
+        if: matrix.module == 'kms/pkcs11'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libltdl-dev
+
+      - uses: actions/setup-go@v5
+        with:
+          # Each nested module pins its own toolchain; read it from the
+          # module's own go.mod so this stays correct if they ever diverge.
+          go-version-file: ${{ matrix.module }}/go.mod
+          # Cache is keyed on the module's go.sum so the heavy SDK modules
+          # (aws/gcp/azure) don't re-download every run.
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: go build + race test
+        # Matches `make ci-modules`. kms/pkcs11 needs CGO on; the rest are
+        # unaffected by exporting it (they have no C imports).
+        working-directory: ${{ matrix.module }}
+        env:
+          CGO_ENABLED: ${{ matrix.module == 'kms/pkcs11' && '1' || '' }}
+        run: |
+          go build ./...
+          go test -race -count=1 ./...
+
+  govulncheck:
+    # Go's official vulnerability scanner. Reads each module's go.sum and
+    # reports advisories whose vulnerable symbols the code actually reaches
+    # (call-graph aware, low false-positive). Run over the root AND every
+    # nested module so an advisory in a vendored SDK (saml/KMS/gokrb5) is
+    # surfaced too. Informational: continue-on-error keeps a newly-published
+    # advisory from blocking unrelated PRs, while still flagging it in the
+    # job log + the Checks tab. Promote to a hard gate once the noise floor
+    # is understood.
+    name: govulncheck (root + modules)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - "."
+          - kms/awskms
+          - kms/gcpkms
+          - kms/azurekeyvault
+          - kms/pkcs11
+          - redis
+          - saml
+          - ldap
+          - kerberos
+          - radius
+          - extauthz
+    steps:
+      - uses: actions/checkout@v4
+
+      # govulncheck analyzes (does not build C) but kms/pkcs11 imports a
+      # cgo package; give it the headers so the load doesn't choke.
+      - name: install pkcs11 C toolchain
+        if: matrix.module == 'kms/pkcs11'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libltdl-dev
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: govulncheck
+        # @latest tracks the scanner itself (the vuln DB is fetched live at
+        # run time regardless). Informational for now — see the job comment.
+        continue-on-error: true
+        working-directory: ${{ matrix.module }}
+        env:
+          CGO_ENABLED: ${{ matrix.module == 'kms/pkcs11' && '1' || '' }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   proto:
     name: buf lint + breaking

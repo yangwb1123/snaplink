@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -158,6 +159,83 @@ func TestRun_Validation(t *testing.T) {
 	if err := migrate.Run(ctx, db, "Bad-NS", base); err == nil {
 		t.Error("invalid namespace: expected error")
 	}
+}
+
+// TestRun_RejectsRolledBackBinary is the upper-bound guard: a DB
+// forward-migrated to v2 must REFUSE an older binary that only knows up to
+// v1 (the canary-rollback foot-gun) instead of silently skipping every
+// migration and serving on a schema it doesn't understand. The loop
+// applies nothing in this case, so the post-loop guard is the only catch.
+func TestRun_RejectsRolledBackBinary(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+
+	// Forward-migrate to v2 with a "newer binary".
+	v2 := append(append([]migrate.Migration{}, base...),
+		migrate.Migration{Version: 2, Name: "add_color", SQL: `ALTER TABLE widgets ADD COLUMN color TEXT`})
+	if err := migrate.Run(ctx, db, "demo", v2); err != nil {
+		t.Fatalf("forward to v2: %v", err)
+	}
+	if v := current(t, db, "demo"); v != 2 {
+		t.Fatalf("setup version = %d, want 2", v)
+	}
+
+	// Now an OLDER binary (knows only up to v1) boots against the v2 DB.
+	err := migrate.Run(ctx, db, "demo", base)
+	if err == nil {
+		t.Fatal("expected error: older binary must refuse a forward-migrated DB")
+	}
+	for _, want := range []string{`"demo"`, "v2", "v1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q (operator needs the version mismatch spelled out)", err, want)
+		}
+	}
+	// The guard rejects before COMMIT, so the recorded version is untouched.
+	if v := current(t, db, "demo"); v != 2 {
+		t.Errorf("version = %d, want 2 (guard must not mutate the DB)", v)
+	}
+}
+
+// TestRun_UpperBoundNormalCases proves the guard is inert for every
+// non-rollback case: fresh apply, same-version re-run, and a forward
+// upgrade all return nil (equal-or-lower DB version behaves as before).
+func TestRun_UpperBoundNormalCases(t *testing.T) {
+	ctx := context.Background()
+	v2 := append(append([]migrate.Migration{}, base...),
+		migrate.Migration{Version: 2, Name: "add_color", SQL: `ALTER TABLE widgets ADD COLUMN color TEXT`})
+
+	t.Run("fresh apply (DB v0 < maxKnown)", func(t *testing.T) {
+		db := openDB(t)
+		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
+			t.Fatalf("fresh apply: %v", err)
+		}
+		if v := current(t, db, "demo"); v != 2 {
+			t.Errorf("version = %d, want 2", v)
+		}
+	})
+
+	t.Run("same-version re-run (DB == maxKnown)", func(t *testing.T) {
+		db := openDB(t)
+		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
+			t.Fatalf("first run: %v", err)
+		}
+		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
+			t.Fatalf("same-version re-run must not error: %v", err)
+		}
+	})
+
+	t.Run("forward upgrade v1->v2", func(t *testing.T) {
+		db := openDB(t)
+		if err := migrate.Run(ctx, db, "demo", base); err != nil {
+			t.Fatalf("v1: %v", err)
+		}
+		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
+			t.Fatalf("v1->v2 upgrade must not error: %v", err)
+		}
+		if v := current(t, db, "demo"); v != 2 {
+			t.Errorf("version = %d, want 2", v)
+		}
+	})
 }
 
 func TestCurrentVersion_MissingTableIsZero(t *testing.T) {

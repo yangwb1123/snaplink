@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/snaplink/sso/core"
 )
 
 // DefaultJWKSRefreshInterval is how often the cache re-fetches by default.
@@ -18,28 +20,22 @@ import (
 // noisy reloads under load.
 const DefaultJWKSRefreshInterval = 60 * time.Second
 
-// jwk is the minimal JWK shape we need (Ed25519 only).
-type jwk struct {
-	Kty string `json:"kty"`
-	Crv string `json:"crv"`
-	Kid string `json:"kid"`
-	X   string `json:"x"`
-}
-
-type jwksDoc struct {
-	Keys []jwk `json:"keys"`
-}
-
 // JWKSCache fetches and caches an SSO server's JWKS document. Thread-safe.
 // Background refresh runs until Close is called or the supplied context is
 // canceled. First Get triggers a synchronous fetch so callers don't see a
 // transient empty key set on startup.
+//
+// The cache stores the raw asymmetric JWKs (OKP/EC/RSA) keyed by kid; the
+// per-kid TYPE (and thus the verification algorithm) is resolved at validate
+// time by security.VerifyCompactJWS, so a server that signs with ES256/RS256/
+// PS256 (the FAPI choice, or any AWS/Azure-KMS key that cannot be Ed25519) is
+// verified exactly like the EdDSA default.
 type JWKSCache struct {
 	url    string
 	client *http.Client
 
 	mu     sync.RWMutex
-	keys   map[string]ed25519.PublicKey
+	keys   map[string]core.JWK
 	loaded bool
 
 	refreshInterval time.Duration
@@ -70,7 +66,7 @@ func NewJWKSCache(url string, opts ...JWKSOption) *JWKSCache {
 	j := &JWKSCache{
 		url:             url,
 		client:          &http.Client{Timeout: 5 * time.Second},
-		keys:            make(map[string]ed25519.PublicKey),
+		keys:            make(map[string]core.JWK),
 		refreshInterval: DefaultJWKSRefreshInterval,
 		done:            make(chan struct{}),
 	}
@@ -81,9 +77,34 @@ func NewJWKSCache(url string, opts ...JWKSOption) *JWKSCache {
 	return j
 }
 
-// Get returns the key for kid. On first call (or cache miss), fetches the
-// JWKS synchronously so callers don't race the background refresher.
+// Get returns the Ed25519 public key for kid. It is retained for backward
+// compatibility with callers built before the cache went multi-algorithm; it
+// resolves ONLY OKP/Ed25519 keys and errors for EC/RSA kids. The in-package
+// ValidateToken path instead uses getJWK + security.VerifyCompactJWS, which
+// verifies the full asymmetric alg set the server can emit.
+//
+// On first call (or cache miss), fetches the JWKS synchronously so callers
+// don't race the background refresher.
 func (j *JWKSCache) Get(ctx context.Context, kid string) (ed25519.PublicKey, error) {
+	jwk, err := j.getJWK(ctx, kid)
+	if err != nil {
+		return nil, err
+	}
+	if jwk.Kty != "OKP" || jwk.Crv != "Ed25519" {
+		return nil, fmt.Errorf("ssoclient/remote: kid %q is not an Ed25519 key", kid)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(jwk.X)
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("ssoclient/remote: kid %q malformed Ed25519 key", kid)
+	}
+	return ed25519.PublicKey(raw), nil
+}
+
+// getJWK returns the raw JWK for kid, fetching on first call or cache miss
+// (the miss path also covers key rotation where the kid is new). The
+// single-flight + background-refresh behavior is identical for every key
+// type — only the post-fetch parsing differs.
+func (j *JWKSCache) getJWK(ctx context.Context, kid string) (core.JWK, error) {
 	j.mu.RLock()
 	loaded := j.loaded
 	if loaded {
@@ -94,16 +115,15 @@ func (j *JWKSCache) Get(ctx context.Context, kid string) (ed25519.PublicKey, err
 	}
 	j.mu.RUnlock()
 
-	// Miss or first call — fetch (also covers key rotation where kid is new).
 	if err := j.fetch(ctx); err != nil {
-		return nil, err
+		return core.JWK{}, err
 	}
 
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	k, ok := j.keys[kid]
 	if !ok {
-		return nil, fmt.Errorf("ssoclient/remote: kid %q not in JWKS", kid)
+		return core.JWK{}, fmt.Errorf("ssoclient/remote: kid %q not in JWKS", kid)
 	}
 	return k, nil
 }
@@ -143,26 +163,29 @@ func (j *JWKSCache) fetch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var doc jwksDoc
+	var doc struct {
+		Keys []core.JWK `json:"keys"`
+	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return fmt.Errorf("ssoclient/remote: jwks parse: %w", err)
 	}
-	keys := make(map[string]ed25519.PublicKey, len(doc.Keys))
+	keys := make(map[string]core.JWK, len(doc.Keys))
 	for _, k := range doc.Keys {
-		if k.Kty != "OKP" || k.Crv != "Ed25519" || k.X == "" || k.Kid == "" {
+		// Keep only asymmetric signing keys we can verify; the kty/crv↔alg
+		// consistency check itself lives in security.VerifyCompactJWS. Drop
+		// keys with no kid (the cache is kid-indexed) and the JWE encryption
+		// keys the server also publishes (use:enc — never used to verify a
+		// token signature).
+		if k.Kid == "" || k.Use == "enc" {
 			continue
 		}
-		raw, err := base64.RawURLEncoding.DecodeString(k.X)
-		if err != nil {
-			continue
+		switch k.Kty {
+		case "OKP", "EC", "RSA":
+			keys[k.Kid] = k
 		}
-		if len(raw) != ed25519.PublicKeySize {
-			continue
-		}
-		keys[k.Kid] = ed25519.PublicKey(raw)
 	}
 	if len(keys) == 0 {
-		return errors.New("ssoclient/remote: jwks contained no usable Ed25519 keys")
+		return errors.New("ssoclient/remote: jwks contained no usable asymmetric keys")
 	}
 	j.mu.Lock()
 	j.keys = keys

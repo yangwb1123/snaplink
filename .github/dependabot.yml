@@ -8,8 +8,29 @@ updates:
   # Go module updates. Grouped so a typical "google.golang.org/* +
   # buf.build/* + go.etcd.io/* minor bump" lands as ONE PR instead of
   # twelve.
+  #
+  # `directories` (plural) names EVERY go.mod in the repo. The gomod
+  # ecosystem does NOT recurse into nested go.mod files from a parent
+  # directory, so each nested module (kms/*, redis, saml, ldap, kerberos,
+  # radius, extauthz) MUST be listed explicitly — otherwise their heavy,
+  # CVE-active deps (crewjam/saml XML/DSig, the cloud KMS SDKs, gokrb5)
+  # get ZERO automated update coverage. Dependabot opens one PR per
+  # affected module per run; the grouping rules keep each module's bundle
+  # to a single PR. Keep this list in sync with `make ci-modules` + the
+  # ci.yml `modules` matrix.
   - package-ecosystem: gomod
-    directory: "/"
+    directories:
+      - "/"
+      - "/kms/awskms"
+      - "/kms/gcpkms"
+      - "/kms/azurekeyvault"
+      - "/kms/pkcs11"
+      - "/redis"
+      - "/saml"
+      - "/ldap"
+      - "/kerberos"
+      - "/radius"
+      - "/extauthz"
     schedule:
       interval: weekly
       day: monday

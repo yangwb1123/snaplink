@@ -160,7 +160,13 @@ redis/              Redis hot-path store peers (session/refresh/authcode/par/jti
   VELOCITY cap via `RefreshTokenRotationLimiter` (type-asserted on the store;
   over-cap → the same `DeleteFamily` + `invalid_grant` wire shape
   [oracle-leak], fail-OPEN on store error, audit
-  `refresh_rotation_velocity_exceeded`).
+  `refresh_rotation_velocity_exceeded`). Opt-in
+  `WithRefreshRotationGrace(window)` makes a BENIGN concurrent double-submit
+  idempotent: the rotated successor is cached per consumed token for `window`,
+  so a re-presentation of the SAME just-rotated token within it REPLAYS that
+  successor (200) instead of tripping the reuse kill — a genuine post-window
+  replay finds no entry and still kills the family, so §4.13 is unweakened
+  (nil/0 = strict single-use, byte-identical).
 - **Session Refresh refuses expired/revoked.** Memory + SQLite
   `SessionManager.Refresh` filter expired/revoked rows BEFORE extending.
   Assumes a FORWARD/MONOTONIC wall clock — a backward step (NTP step,
@@ -187,8 +193,18 @@ redis/              Redis hot-path store peers (session/refresh/authcode/par/jti
   signature verify, so alg-confusion (`alg=none`, wrong-key-shape) fails
   early. New signer → extend `supportedJWTAlgs` explicitly.
 - **RFC 9068 access-token claims.** Every Issue MUST set `Subject.ClientID`
-  (REQUIRED §2.2). Login/auth_code/device set `AuthTime`+`AMR` from the
-  live event; refresh propagates original `AMR` without resetting
+  (REQUIRED §2.2). Login sets `AuthTime`+`AMR` from the live event — `AMR`
+  via `amrForResult` = `AuthResult.AuthMethods` (the RFC 8176 tags
+  authenticators record: `pwd`/`otp`/`x509`/`fed`/…), falling back to the
+  provider id only when none were recorded; the MFA second leg folds the
+  verified factor + `mfa` in via `withMFAMethod` (`amr.go`). Login also stamps
+  `acr` from `AuthResult.AchievedACR` (the authenticator's satisfied ACR; empty
+  → claim omitted, the default). The auth_code
+  grant stamps `auth_time` from `AuthCode.AuthTime` captured at issue (OIDC
+  Core §2 — the real /auth/login moment, NOT the exchange time; sqlite v2
+  column, zero→falls back to now), but its `AMR` is still the stored provider
+  id (the grant record doesn't persist `AuthMethods` yet); device likewise.
+  Refresh propagates original `AMR` without resetting
   `AuthTime`; token-exchange propagates `AuthTime`+`ACR`+`AMR`+`SID` from
   the inbound subject_token (multi-hop `act` chain prepended,
   time-ordered); `client_credentials` sets `ClientID` only. `jti` always
@@ -231,16 +247,16 @@ One row per spec. **File** = current owner: Server-coupled glue lives in
 |---|---|---|---|
 | RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `oauth/auth_code.go` |
 | RFC 6749 §4.4 client_credentials | `/token` | always | `oauth/client_creds.go` |
-| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore` | `oauth/refresh_token.go` |
+| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; opt-in benign-double-submit grace `WithRefreshRotationGrace(window)` (`refresh_grace.go`) — caches the rotated successor per consumed token for `window` so a concurrent re-submit (multi-tab/retry) replays it idempotently instead of tripping family-reuse; nil/0 = strict single-use, post-window replay still kills the family | `oauth/refresh_token.go` |
 | RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `oauth/auth_code.go` |
 | RFC 7662 introspection | `/token/introspect` | always | `oauth/handle_introspect.go` |
-| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk via `RefreshTokenSubjectIndex`; access-token deny-set is exp-bounded (pruned at/after `exp`); opt-in cross-replica propagation `WithCrossReplicaRevocation` (broadcasts the revoked token+exp over `cluster.Bus` `KindTokenRevoked`, peers ADOPT local-only — additive, oracle-safe, fail-open, no re-broadcast; nil=local-only) | `oauth/handle_revoke.go` + `defaultimpl/revocation_set.go` |
+| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk via `RefreshTokenSubjectIndex`; access-token deny-set is exp-bounded (pruned at/after `exp`); opt-in cross-replica propagation `WithCrossReplicaRevocation` (broadcasts the revoked token+exp over `cluster.Bus` `KindTokenRevoked`, peers ADOPT local-only — additive, oracle-safe, fail-open, no re-broadcast; nil=local-only); opt-in DURABILITY across restart via `With{Algo}RevocationStore` (`defaultimpl.RevocationStore` memory+sqlite; issuer persists each Revoke + `SeedRevocations` re-seeds at boot; Validate stays on the fast in-process map; cmd `keys.signing.revocation_backend`) — orthogonal to the live bus, closes the restart/late-join resurrection gap | `oauth/handle_revoke.go` + `defaultimpl/revocation_set.go` + `defaultimpl/sqlite/revocations.go` |
 | RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `oauth/device_code.go` |
 | RFC 8693 token-exchange | `/token` | always; refresh via `WithRefreshTokenStore`; actor replay via `WithJTIReplayStore` | `handlers.go` + `oauth/token_exchange_helpers.go` |
 | RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | per-grant |
 | RFC 9126 PAR | `/par` | `WithPARStore` | `oauth/handle_par.go` |
 | RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `oauth/handle_register.go` |
-| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer` | `handler.go` + `oidc/userinfo_signing.go` |
+| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` (§3.1.3.6) stamped whenever an `access_token` rides the same response (`IDTokenRequest.AccessToken`), hash per the id_token signing alg (EdDSA→SHA-512, ES256/RS256/PS256→SHA-256), left-half base64url; empty→omitted (byte-identical) | `handler.go` + `oidc/userinfo_signing.go` + `defaultimpl/at_hash.go` |
 | OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `handlers.go` + `oidc/discovery_doc_cache.go` |
 | OIDC RP-Initiated Logout | `/end_session` | always | `oidc/handle_end_session.go` |
 | OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP via `WithSubjectClientIndex` | `server_extensions.go` |

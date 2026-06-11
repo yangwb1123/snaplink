@@ -22,6 +22,16 @@ type IDTokenRequest struct {
 	Claims   map[string]string // extra OIDC-defined claims (email, name, ...)
 	TTL      time.Duration     // 0 = let the issuer pick (typically same as access TTL)
 
+	// AccessToken, when non-empty, is the access_token value returned in
+	// the SAME response as this id_token. The issuer then stamps the OIDC
+	// Core §3.1.3.6 `at_hash` claim (base64url of the left-most half of
+	// the access_token's hash, the hash chosen by the id_token's signing
+	// alg). at_hash is REQUIRED whenever an access_token accompanies the
+	// id_token, so populate this on every such flow (authorization_code,
+	// login, device, CIBA, silent-renewal); leaving it empty omits the
+	// claim and is byte-identical to the pre-at_hash behavior.
+	AccessToken string
+
 	// SID is the OIDC Core §2 session identifier. When populated,
 	// the issued ID token carries a `sid` claim — RPs that store
 	// the session id on first login can match it to a later

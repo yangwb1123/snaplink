@@ -180,6 +180,21 @@ type Server struct {
 	// tests only (0 ⇒ the production const). Lets a test exercise the
 	// resubscribe loop without waiting real seconds. Never set in production.
 	signingKeyAggBackoffBase time.Duration
+
+	// invalidationBusDegraded is true while the cross-replica invalidation-bus
+	// subscriber is between resubscribe attempts (the bus's Subscribe channel
+	// closed while the run context was still live). True ⇒ this replica is no
+	// longer APPLYING cross-replica invalidations (tenant suspension, client
+	// cache, coordinated key rotation, token revocation), so InvalidationBusReady
+	// reports not-ready and sso_invalidation_bus_up reads 0. Mirrors
+	// signingKeyAggDegraded exactly: set/cleared only by the single subscriber
+	// goroutine; read by /readyz from another goroutine, so it must be atomic.
+	// Always false (and never read by a registered check) when no bus is wired.
+	invalidationBusDegraded atomic.Bool
+	// invalidationBusBackoffBase overrides the bus resubscribe backoff base for
+	// tests only (0 ⇒ the production const). Mirrors signingKeyAggBackoffBase.
+	// Never set in production.
+	invalidationBusBackoffBase time.Duration
 	// adoptedPeerKids tracks, per peer replicaID, the kids this replica has
 	// adopted from it, so a KeysRemoved (or a shrinking KeysUpserted) drops
 	// exactly the keys that replica owns. Guarded by adoptedPeerMu.
@@ -258,6 +273,7 @@ type Server struct {
 	authCodeTTL                    time.Duration
 	refreshTokenStore              oauth.RefreshTokenStore
 	refreshTokenTTL                time.Duration
+	refreshGrace                   *refreshGraceCache
 	idTokenIssuer                  oidc.IDTokenIssuer
 	deviceCodeStore                oauth.DeviceCodeStore
 	deviceCodeTTL                  time.Duration
@@ -1182,6 +1198,23 @@ func WithRefreshTokenStore(store oauth.RefreshTokenStore, ttl time.Duration) Opt
 		s.refreshTokenStore = store
 		if ttl > 0 {
 			s.refreshTokenTTL = ttl
+		}
+	}
+}
+
+// WithRefreshRotationGrace enables a benign-double-submit grace window on the
+// refresh-token rotation grant: when a token is rotated, its successor response
+// is cached for `window`, so a near-simultaneous re-presentation of the SAME
+// token (multi-tab SPA / mobile cold-start race / HTTP retry after a dropped
+// 200) replays that successor instead of tripping family-reuse detection and
+// killing the whole token family (a logout storm). Does NOT weaken BCP §4.13 —
+// a genuine post-window replay finds no cache entry and still kills the family
+// (refresh_grace.go). window <= 0 disables it (byte-identical to the historical
+// strict-single-use behavior).
+func WithRefreshRotationGrace(window time.Duration) Option {
+	return func(s *Server) {
+		if window > 0 {
+			s.refreshGrace = newRefreshGraceCache(window)
 		}
 	}
 }

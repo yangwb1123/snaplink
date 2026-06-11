@@ -12,6 +12,8 @@ import (
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/migrate"
+	"github.com/snaplink/sso/security"
 
 	_ "modernc.org/sqlite"
 )
@@ -39,6 +41,30 @@ CREATE INDEX IF NOT EXISTS idx_clients_tenant
     WHERE tenant_id <> '';
 `
 
+// clientMigrations is the schema history. v1 is the original ~10-column
+// baseline; v2 backfills the SECURITY-LOAD-BEARING fields that earlier
+// rounds-tripped only through the in-memory store (so a restart on
+// identity.backend=sqlite silently reverted them to zero). Each ADD COLUMN
+// carries a NOT NULL DEFAULT matching the field's zero value, so existing
+// rows migrate cleanly and an empty/zero client round-trips byte-identically
+// to the v1 schema. Forward-only, applied in one BEGIN IMMEDIATE txn by the
+// runner.
+var clientMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline", SQL: clientSchema},
+	{Version: 2, Name: "client_security_fields", SQL: `
+ALTER TABLE clients ADD COLUMN registration_access_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN jwks                       TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN allowed_resources         TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN allowed_request_uris      TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN post_logout_redirect_uris TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN id_token_enc_alg          TEXT NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN id_token_enc_enc          TEXT NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN userinfo_enc_alg          TEXT NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN userinfo_enc_enc          TEXT NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN federation                INTEGER NOT NULL DEFAULT 0;
+`},
+}
+
 // ClientStore is the SQLite-backed [sso.ClientStore], including the
 // optional [sso.TenantScopedClientStore] extension via the
 // idx_clients_tenant partial index.
@@ -55,7 +81,7 @@ func NewClientStore(dsn string) (*ClientStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if err := ensureSchema(db, "clients", clientSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "clients", clientMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate clients: %w", err)
 	}
@@ -63,6 +89,9 @@ func NewClientStore(dsn string) (*ClientStore, error) {
 }
 
 func NewClientStoreWithDB(db *sql.DB) *ClientStore {
+	// Best-effort on the shared-DB path (mirrors the historical contract —
+	// this constructor never returned an error).
+	_ = migrate.Run(context.Background(), db, "clients", clientMigrations)
 	return &ClientStore{db: db}
 }
 
@@ -103,7 +132,9 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
-	if c.Secret != clientSecret {
+	// Constant-time compare (returns 1 on equal) — no timing oracle on
+	// secret_post client auth, matching the RFC 7592 token check.
+	if security.ConstantTimeStringEq(c.Secret, clientSecret) != 1 {
 		return errors.New("invalid client secret")
 	}
 	return nil
@@ -197,13 +228,23 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	redirects, _ := json.Marshal(c.RedirectURIs)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
+	jwks, _ := json.Marshal(c.JWKS)
+	resources, _ := json.Marshal(c.AllowedResources)
+	requestURIs, _ := json.Marshal(c.AllowedRequestURIs)
+	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO clients (id, secret, name, redirect_uris, allowed_scopes,
-            allowed_authenticators, token_strategy, active, tenant_id, require_pkce)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            allowed_authenticators, token_strategy, active, tenant_id, require_pkce,
+            registration_access_token, jwks, allowed_resources, allowed_request_uris,
+            post_logout_redirect_uris, id_token_enc_alg, id_token_enc_enc,
+            userinfo_enc_alg, userinfo_enc_enc, federation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.Secret, c.Name,
 		string(redirects), string(scopes), string(auths),
 		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
+		c.RegistrationAccessToken, string(jwks), string(resources), string(requestURIs),
+		string(postLogout), c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
+		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc, boolToInt(c.Federation),
 	)
 	if err != nil {
 		// modernc.org/sqlite returns the constraint code in the error
@@ -223,14 +264,26 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 	redirects, _ := json.Marshal(c.RedirectURIs)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
+	jwks, _ := json.Marshal(c.JWKS)
+	resources, _ := json.Marshal(c.AllowedResources)
+	requestURIs, _ := json.Marshal(c.AllowedRequestURIs)
+	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
 	res, err := s.db.ExecContext(ctx, `
         UPDATE clients SET secret = ?, name = ?, redirect_uris = ?,
             allowed_scopes = ?, allowed_authenticators = ?,
-            token_strategy = ?, active = ?, tenant_id = ?, require_pkce = ?
+            token_strategy = ?, active = ?, tenant_id = ?, require_pkce = ?,
+            registration_access_token = ?, jwks = ?, allowed_resources = ?,
+            allowed_request_uris = ?, post_logout_redirect_uris = ?,
+            id_token_enc_alg = ?, id_token_enc_enc = ?, userinfo_enc_alg = ?,
+            userinfo_enc_enc = ?, federation = ?
         WHERE id = ?`,
 		c.Secret, c.Name,
 		string(redirects), string(scopes), string(auths),
 		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
+		c.RegistrationAccessToken, string(jwks), string(resources),
+		string(requestURIs), string(postLogout),
+		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
+		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc, boolToInt(c.Federation),
 		c.ID,
 	)
 	if err != nil {
@@ -272,7 +325,10 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 // scan can't drift.
 func clientSelectAll() string {
 	return `SELECT id, secret, name, redirect_uris, allowed_scopes,
-        allowed_authenticators, token_strategy, active, tenant_id, require_pkce
+        allowed_authenticators, token_strategy, active, tenant_id, require_pkce,
+        registration_access_token, jwks, allowed_resources, allowed_request_uris,
+        post_logout_redirect_uris, id_token_enc_alg, id_token_enc_enc,
+        userinfo_enc_alg, userinfo_enc_enc, federation
         FROM clients`
 }
 
@@ -286,11 +342,19 @@ func scanClient(s scanner) (*sso.Client, error) {
 		redirects, scopes, auths              string
 		activeInt, requirePKCEInt             int64
 		secret, name, tokenStrategy, tenantID string
+		jwks, resources, requestURIs          string
+		postLogout, regToken                  string
+		idTokenEncAlg, idTokenEncEnc          string
+		userinfoEncAlg, userinfoEncEnc        string
+		federationInt                         int64
 	)
 	if err := s.Scan(
 		&c.ID, &secret, &name,
 		&redirects, &scopes, &auths,
 		&tokenStrategy, &activeInt, &tenantID, &requirePKCEInt,
+		&regToken, &jwks, &resources, &requestURIs,
+		&postLogout, &idTokenEncAlg, &idTokenEncEnc,
+		&userinfoEncAlg, &userinfoEncEnc, &federationInt,
 	); err != nil {
 		return nil, err
 	}
@@ -300,6 +364,12 @@ func scanClient(s scanner) (*sso.Client, error) {
 	c.TenantID = tenantID
 	c.Active = activeInt != 0
 	c.RequirePKCE = requirePKCEInt != 0
+	c.RegistrationAccessToken = regToken
+	c.IDTokenEncryptedResponseAlg = idTokenEncAlg
+	c.IDTokenEncryptedResponseEnc = idTokenEncEnc
+	c.UserinfoEncryptedResponseAlg = userinfoEncAlg
+	c.UserinfoEncryptedResponseEnc = userinfoEncEnc
+	c.Federation = federationInt != 0
 	if redirects != "" && redirects != "[]" {
 		if err := json.Unmarshal([]byte(redirects), &c.RedirectURIs); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal redirect_uris: %w", err)
@@ -313,6 +383,26 @@ func scanClient(s scanner) (*sso.Client, error) {
 	if auths != "" && auths != "[]" {
 		if err := json.Unmarshal([]byte(auths), &c.AllowedAuthenticators); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal allowed_authenticators: %w", err)
+		}
+	}
+	if jwks != "" && jwks != "[]" {
+		if err := json.Unmarshal([]byte(jwks), &c.JWKS); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal jwks: %w", err)
+		}
+	}
+	if resources != "" && resources != "[]" {
+		if err := json.Unmarshal([]byte(resources), &c.AllowedResources); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal allowed_resources: %w", err)
+		}
+	}
+	if requestURIs != "" && requestURIs != "[]" {
+		if err := json.Unmarshal([]byte(requestURIs), &c.AllowedRequestURIs); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal allowed_request_uris: %w", err)
+		}
+	}
+	if postLogout != "" && postLogout != "[]" {
+		if err := json.Unmarshal([]byte(postLogout), &c.PostLogoutRedirectURIs); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal post_logout_redirect_uris: %w", err)
 		}
 	}
 	return &c, nil

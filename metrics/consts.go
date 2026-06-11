@@ -33,6 +33,9 @@ const (
 	NameSigningKeyAggregationUp       = "sso_signing_key_aggregation_up"
 	NameSigningKeyCutoverTotal        = "sso_signing_key_cutover_total"
 
+	NameInvalidationBusUp              = "sso_invalidation_bus_up"
+	NameInvalidationBusReconnectsTotal = "sso_invalidation_bus_reconnects_total"
+
 	NameCIBAPingTotal = "sso_ciba_ping_total"
 
 	NameCAEPSetsTotal = "sso_caep_sets_total"
@@ -115,6 +118,20 @@ const (
 	CutoverOutcomeExtended    = "extended"
 	CutoverOutcomeAdoptedOnly = "adopted_only"
 	CutoverOutcomeNoop        = "noop"
+)
+
+// Invalidation-bus reconnect outcomes (sso_invalidation_bus_reconnects_total),
+// bounded to the two transitions the self-healing subscriber loop can record on
+// the `reason` label (§5 bounded cardinality; no per-event/per-kind label):
+//   - degraded: the bus Subscribe channel closed while the run context was still
+//     live (watch death / leader change / network blip) and the loop flipped
+//     into the degraded state — this replica STOPPED applying cross-replica
+//     invalidations until it resubscribes.
+//   - reconnected: a degraded loop successfully resubscribed and resumed
+//     applying invalidations.
+const (
+	InvalidationBusReasonDegraded    = "degraded"
+	InvalidationBusReasonReconnected = "reconnected"
 )
 
 // Credential-health signal label values, bounded to two.

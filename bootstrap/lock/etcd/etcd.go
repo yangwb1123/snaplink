@@ -8,9 +8,12 @@
 //     revoked, network partition) surface as ErrLockLost.
 //   - Release deletes the key bound to the lease and revokes the lease,
 //     making the slot immediately available to peers.
-//   - FencingToken returns the etcd LeaseID — etcd assigns these
-//     monotonically per cluster, so a FencedTracker can reject stale
-//     writes from a holder whose lease was revoked.
+//   - FencingToken returns the etcd LeaseID — an opaque identifier for
+//     THIS lease. It is NOT monotonic across holders (a LeaseID encodes
+//     the member id in its high bits + a wall-clock-seeded counter that
+//     re-seeds on member restart), so it MUST NOT back a `<`-comparison
+//     fence. Split-brain safety here is the KeepAlive -> ErrLockLost
+//     cancellation + idempotent version-gated Steps, not a token fence.
 package etcd
 
 import (

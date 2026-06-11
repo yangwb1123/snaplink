@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -18,6 +18,9 @@ test: ## Run unit tests.
 
 race: ## Run tests with the race detector + no test cache.
 	$(GO) test -race -count=1 ./...
+
+bench: ## Run the hot-path benchmarks (token issue/validate, JWKS, param bind, rate limiter).
+	$(GO) test -run='^$$' -bench=. -benchmem ./defaultimpl/ ./oauth/ ./ratelimit/ ./security/
 
 vet: ## Static analysis (go vet).
 	$(GO) vet ./...
