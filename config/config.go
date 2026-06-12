@@ -61,6 +61,7 @@ type Config struct {
 	Mesh               MeshConfig               `yaml:"mesh"`
 	Federation         FederationConfig         `yaml:"federation"`
 	SAML               SAMLConfig               `yaml:"saml"`
+	HostedLogin        HostedLoginConfig        `yaml:"hosted_login"`
 }
 
 // SAMLConfig opts into a SAML 2.0 capability supplied by an operator's
@@ -124,6 +125,18 @@ type SAMLSPProviderConfig struct {
 	// bind the assertion to, so it is the weaker, more replay-prone mode;
 	// enable only for peers that require it.
 	AllowIDPInitiated bool `yaml:"allow_idp_initiated"`
+}
+
+// HostedLoginConfig opts into the built-in login UI served at /login/.
+// When Enabled is true the operator's cmd binary must also call
+// sso.WithHostedLoginFS (typically via go:embed of the web/login directory)
+// so the SPA assets are available. The SPA calls /auth/login over JSON —
+// zero protocol changes to the OAuth/OIDC surface.
+//
+// Disabled (the default) ⇒ /login/ is NOT mounted — byte-identical to a
+// build without the hosted UI.
+type HostedLoginConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // MeshConfig opts into the service-mesh data-plane integrations

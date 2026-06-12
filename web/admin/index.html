@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSO Admin Console</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  background: #0f1117;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+/* Login screen */
+#login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: #0f1117;
+}
+
+.login-card {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 12px;
+  padding: 40px;
+  width: 420px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.login-card h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #f0f4ff;
+}
+
+.login-card p {
+  color: #8892b0;
+  font-size: 13px;
+  margin-bottom: 28px;
+}
+
+.form-group {
+  margin-bottom: 18px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #a0aec0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.form-group input, .form-group select {
+  width: 100%;
+  padding: 10px 14px;
+  background: #0f1117;
+  border: 1px solid #2d3148;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 14px;
+  transition: border-color 0.15s;
+  outline: none;
+}
+
+.form-group input:focus, .form-group select:focus {
+  border-color: #4f6ef7;
+}
+
+.btn {
+  padding: 10px 18px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: #4f6ef7;
+  color: #fff;
+  width: 100%;
+}
+
+.btn-primary:hover:not(:disabled) { background: #3a5ce4; }
+
+.btn-danger {
+  background: #e53e3e;
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.btn-danger:hover:not(:disabled) { background: #c53030; }
+
+.btn-sm {
+  font-size: 12px;
+  padding: 4px 10px;
+  background: #2d3148;
+  color: #a0aec0;
+  border: 1px solid #3d4468;
+}
+
+.btn-sm:hover:not(:disabled) { background: #3d4468; color: #e2e8f0; }
+
+.error-msg {
+  background: #2d1515;
+  border: 1px solid #742a2a;
+  color: #fc8181;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-top: 14px;
+}
+
+/* App shell */
+#app {
+  display: none;
+  min-height: 100vh;
+}
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #12151f;
+  border-right: 1px solid #1e2235;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid #1e2235;
+}
+
+.sidebar-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f0f4ff;
+}
+
+.sidebar-header span {
+  font-size: 11px;
+  color: #4f6ef7;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 0;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  cursor: pointer;
+  color: #8892b0;
+  font-size: 13px;
+  font-weight: 500;
+  border-left: 3px solid transparent;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+
+.nav-item:hover { background: #1a1d2e; color: #e2e8f0; }
+
+.nav-item.active {
+  background: #1a1d2e;
+  color: #f0f4ff;
+  border-left-color: #4f6ef7;
+}
+
+.nav-icon { font-size: 15px; width: 18px; text-align: center; }
+
+.sidebar-footer {
+  padding: 14px 18px;
+  border-top: 1px solid #1e2235;
+}
+
+.sidebar-footer button {
+  background: none;
+  border: none;
+  color: #8892b0;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sidebar-footer button:hover { color: #fc8181; }
+
+/* Content */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 32px;
+  background: #0f1117;
+}
+
+.page { display: none; }
+.page.active { display: block; }
+
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #f0f4ff;
+  margin-bottom: 22px;
+}
+
+/* Cards */
+.card {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #8892b0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 14px;
+}
+
+/* Dashboard grid */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #8892b0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: #f0f4ff;
+}
+
+.stat-sub {
+  font-size: 12px;
+  color: #4a5568;
+  margin-top: 4px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.badge-green { background: #1a3a2a; color: #68d391; }
+.badge-red { background: #3a1a1a; color: #fc8181; }
+.badge-blue { background: #1a2a3a; color: #63b3ed; }
+.badge-gray { background: #2a2d3a; color: #a0aec0; }
+
+/* Tables */
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4a5568;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid #2d3148;
+}
+
+td {
+  padding: 12px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid #1e2235;
+  color: #c5cfe0;
+  vertical-align: middle;
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(79,110,247,0.04); }
+
+td code {
+  background: #0f1117;
+  border: 1px solid #2d3148;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  color: #a0c4ff;
+}
+
+/* Loading / empty */
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #4a5568;
+  font-size: 13px;
+}
+
+.empty {
+  text-align: center;
+  padding: 40px;
+  color: #4a5568;
+  font-size: 13px;
+}
+
+/* Key-value detail panel */
+.detail-panel {
+  display: none;
+  margin-top: 20px;
+}
+
+.detail-panel.open { display: block; }
+
+.detail-back {
+  background: none;
+  border: none;
+  color: #8892b0;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-back:hover { color: #e2e8f0; }
+
+.kv-table { width: 100%; border-collapse: collapse; }
+.kv-table td { padding: 8px 14px; border-bottom: 1px solid #1e2235; font-size: 13px; }
+.kv-table td:first-child { width: 180px; color: #8892b0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.kv-table tr:last-child td { border-bottom: none; }
+
+/* Audit log */
+.audit-filters {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.audit-filters input, .audit-filters select {
+  padding: 8px 12px;
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 13px;
+  outline: none;
+}
+
+.audit-filters input:focus, .audit-filters select:focus { border-color: #4f6ef7; }
+
+.audit-filters input { width: 220px; }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+.pagination button {
+  background: #2d3148;
+  border: 1px solid #3d4468;
+  color: #a0aec0;
+  border-radius: 5px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination button:not(:disabled):hover { background: #3d4468; }
+
+.pagination span { color: #4a5568; font-size: 13px; }
+
+/* Server info */
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.info-item { margin-bottom: 10px; }
+.info-key { font-size: 12px; color: #8892b0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+.info-val { font-size: 14px; color: #e2e8f0; word-break: break-all; }
+
+/* Health indicators */
+.health-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.health-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.health-dot.ok { background: #68d391; }
+.health-dot.fail { background: #fc8181; }
+.health-dot.unknown { background: #a0aec0; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0f1117; }
+::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login-screen">
+  <div class="login-card">
+    <h1>SSO Admin Console</h1>
+    <p>Enter your admin Bearer token to continue.</p>
+    <div class="form-group">
+      <label for="token-input">Bearer Token</label>
+      <input type="password" id="token-input" placeholder="Paste admin token here" autocomplete="off">
+    </div>
+    <button class="btn btn-primary" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div id="login-error" class="error-msg" style="display:none"></div>
+  </div>
+</div>
+
+<!-- App Shell -->
+<div id="app">
+  <div class="shell">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <span>Admin</span>
+        <h2>SSO Console</h2>
+      </div>
+      <div class="sidebar-nav">
+        <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')">
+          <span class="nav-icon">&#9632;</span> Dashboard
+        </div>
+        <div class="nav-item" data-page="clients" onclick="navigate('clients')">
+          <span class="nav-icon">&#9670;</span> Clients
+        </div>
+        <div class="nav-item" data-page="users" onclick="navigate('users')">
+          <span class="nav-icon">&#9651;</span> Users
+        </div>
+        <div class="nav-item" data-page="sessions" onclick="navigate('sessions')">
+          <span class="nav-icon">&#9675;</span> Sessions
+        </div>
+        <div class="nav-item" data-page="audit" onclick="navigate('audit')">
+          <span class="nav-icon">&#9737;</span> Audit Log
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <button onclick="doLogout()">Sign out</button>
+      </div>
+    </nav>
+
+    <!-- Content -->
+    <main class="content">
+
+      <!-- Dashboard -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-title">Dashboard</div>
+        <div id="health-status">
+          <div class="dashboard-grid" id="health-cards">
+            <div class="stat-card">
+              <div class="stat-label">Live</div>
+              <div class="stat-value" id="stat-live">...</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Ready</div>
+              <div class="stat-value" id="stat-ready">...</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Issuer</div>
+              <div class="stat-value" style="font-size:14px" id="stat-issuer">...</div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">OpenID Configuration</div>
+          <div id="oidc-info"><div class="loading">Loading...</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Supported Features</div>
+          <div id="oidc-features"><div class="loading">Loading...</div></div>
+        </div>
+      </div>
+
+      <!-- Clients -->
+      <div class="page" id="page-clients">
+        <div class="page-title">Clients</div>
+        <div id="clients-list">
+          <div class="card">
+            <div class="table-wrap">
+              <div id="clients-content"><div class="loading">Loading...</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="detail-panel" id="client-detail">
+          <button class="detail-back" onclick="closeDetail('client')">&#8592; Back to Clients</button>
+          <div class="card">
+            <div class="card-title">Client Detail</div>
+            <table class="kv-table" id="client-detail-table"></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Users -->
+      <div class="page" id="page-users">
+        <div class="page-title">Users</div>
+        <div id="users-list">
+          <div class="card">
+            <div class="table-wrap">
+              <div id="users-content"><div class="loading">Loading...</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="detail-panel" id="user-detail">
+          <button class="detail-back" onclick="closeDetail('user')">&#8592; Back to Users</button>
+          <div class="card">
+            <div class="card-title">User Detail</div>
+            <table class="kv-table" id="user-detail-table"></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sessions -->
+      <div class="page" id="page-sessions">
+        <div class="page-title">Active Sessions</div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div id="sessions-count" style="color:#8892b0;font-size:13px"></div>
+            <button class="btn btn-sm" onclick="loadSessions()">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <div id="sessions-content"><div class="loading">Loading...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audit Log -->
+      <div class="page" id="page-audit">
+        <div class="page-title">Audit Log</div>
+        <div class="audit-filters">
+          <input type="text" id="audit-search" placeholder="Filter by type or subject..." oninput="debouncedAuditLoad()">
+          <select id="audit-outcome" onchange="loadAudit(1)">
+            <option value="">All outcomes</option>
+            <option value="success">Success</option>
+            <option value="failure">Failure</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadAudit(1)">Search</button>
+        </div>
+        <div class="card">
+          <div class="table-wrap">
+            <div id="audit-content"><div class="loading">Loading...</div></div>
+          </div>
+          <div class="pagination">
+            <button id="audit-prev" onclick="auditPage(-1)" disabled>&#8592; Prev</button>
+            <span id="audit-page-info">Page 1</span>
+            <button id="audit-next" onclick="auditPage(1)">Next &#8594;</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+var token = '';
+var currentPage = 'dashboard';
+var auditCurrentPage = 1;
+var auditHasMore = false;
+var auditDebounceTimer = null;
+var auditPageSize = 50;
+
+// ---- Auth ----
+function doLogin() {
+  var t = document.getElementById('token-input').value.trim();
+  if (!t) {
+    showLoginError('Token is required.');
+    return;
+  }
+  // Store token in sessionStorage — scoped to the browser tab and cleared when the tab closes.
+  sessionStorage.setItem('sso_admin_token', t);
+  token = t;
+  hideLoginError();
+  showApp();
+}
+
+function doLogout() {
+  sessionStorage.removeItem('sso_admin_token');
+  token = '';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('token-input').value = '';
+}
+
+function showLoginError(msg) {
+  var el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideLoginError() {
+  document.getElementById('login-error').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  navigate('dashboard');
+}
+
+// ---- Navigation ----
+function navigate(page) {
+  document.querySelectorAll('.nav-item').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  document.querySelectorAll('.page').forEach(function(el) {
+    el.classList.toggle('active', el.id === 'page-' + page);
+  });
+  currentPage = page;
+
+  if (page === 'dashboard') loadDashboard();
+  else if (page === 'clients') loadClients();
+  else if (page === 'users') loadUsers();
+  else if (page === 'sessions') loadSessions();
+  else if (page === 'audit') loadAudit(1);
+}
+
+// ---- API helpers ----
+function apiFetch(path, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  opts.headers['Authorization'] = 'Bearer ' + token;
+  opts.headers['Accept'] = 'application/json';
+  return fetch(path, opts).then(function(resp) {
+    if (resp.status === 401 || resp.status === 403) {
+      doLogout();
+      throw new Error('Unauthorized — token may be expired or lack admin scope.');
+    }
+    return resp;
+  });
+}
+
+function setContent(id, html) {
+  document.getElementById(id).innerHTML = html;
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fmtTime(unix) {
+  if (!unix) return '—';
+  return new Date(unix * 1000).toLocaleString();
+}
+
+function badge(val, trueLabel, trueClass, falseLabel, falseClass) {
+  if (val) return '<span class="badge ' + trueClass + '">' + esc(trueLabel) + '</span>';
+  return '<span class="badge ' + falseClass + '">' + esc(falseLabel) + '</span>';
+}
+
+// ---- Dashboard ----
+function loadDashboard() {
+  // Liveness
+  fetch('/livez').then(function(r) {
+    document.getElementById('stat-live').textContent = r.ok ? 'Alive' : 'Down';
+    document.getElementById('stat-live').style.color = r.ok ? '#68d391' : '#fc8181';
+  }).catch(function() {
+    document.getElementById('stat-live').textContent = 'Error';
+    document.getElementById('stat-live').style.color = '#fc8181';
+  });
+
+  // Readiness
+  fetch('/readyz').then(function(r) {
+    document.getElementById('stat-ready').textContent = r.ok ? 'Ready' : 'Not Ready';
+    document.getElementById('stat-ready').style.color = r.ok ? '#68d391' : '#fc8181';
+    if (!r.ok) {
+      return r.json().then(function(data) {
+        renderReadyzDetail(data);
+      }).catch(function() {});
+    }
+  }).catch(function() {
+    document.getElementById('stat-ready').textContent = 'Error';
+    document.getElementById('stat-ready').style.color = '#fc8181';
+  });
+
+  // OIDC discovery
+  fetch('/.well-known/openid-configuration').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    renderOIDCInfo(d);
+  }).catch(function(e) {
+    setContent('oidc-info', '<div class="error-msg">' + esc(e.message) + '</div>');
+    setContent('oidc-features', '');
+  });
+}
+
+function renderReadyzDetail(data) {
+  // data is {check_name: "ok" | error_string}
+  var html = '';
+  if (data && typeof data === 'object') {
+    for (var k in data) {
+      var ok = data[k] === 'ok';
+      html += '<div class="health-row"><div class="health-dot ' + (ok ? 'ok' : 'fail') + '"></div>';
+      html += '<span style="color:' + (ok ? '#68d391' : '#fc8181') + '">' + esc(k) + ': ' + esc(data[k]) + '</span></div>';
+    }
+  }
+  if (html) {
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '20px';
+    card.innerHTML = '<div class="card-title">Readiness Checks</div>' + html;
+    document.getElementById('page-dashboard').insertBefore(card,
+      document.getElementById('page-dashboard').querySelector('.card'));
+  }
+}
+
+function renderOIDCInfo(d) {
+  document.getElementById('stat-issuer').textContent = d.issuer || '—';
+
+  var infoFields = [
+    ['Issuer', d.issuer],
+    ['Authorization Endpoint', d.authorization_endpoint],
+    ['Token Endpoint', d.token_endpoint],
+    ['UserInfo Endpoint', d.userinfo_endpoint],
+    ['JWKS URI', d.jwks_uri],
+    ['Registration Endpoint', d.registration_endpoint || '—'],
+    ['Pushed Auth Req Endpoint', d.pushed_authorization_request_endpoint || '—'],
+  ];
+
+  var html = '<div class="info-grid">';
+  infoFields.forEach(function(row) {
+    html += '<div class="info-item"><div class="info-key">' + esc(row[0]) + '</div>';
+    html += '<div class="info-val">' + esc(row[1] || '—') + '</div></div>';
+  });
+  html += '</div>';
+  setContent('oidc-info', html);
+
+  // Features
+  var features = [
+    ['PKCE (S256)', d.code_challenge_methods_supported && d.code_challenge_methods_supported.indexOf('S256') !== -1],
+    ['Pushed Auth Requests', !!d.pushed_authorization_request_endpoint],
+    ['Dynamic Client Reg', !!d.registration_endpoint],
+    ['Device Authorization', !!d.device_authorization_endpoint],
+    ['Backchannel Logout', d.backchannel_logout_supported],
+    ['Frontchannel Logout', d.frontchannel_logout_supported],
+    ['JARM', d.authorization_signing_alg_values_supported && d.authorization_signing_alg_values_supported.length > 0],
+    ['JAR', d.request_object_signing_alg_values_supported && d.request_object_signing_alg_values_supported.length > 0],
+    ['mTLS Token Binding', d.tls_client_certificate_bound_access_tokens],
+    ['DPoP', d.dpop_signing_alg_values_supported && d.dpop_signing_alg_values_supported.length > 0],
+  ];
+
+  var fhtml = '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+  features.forEach(function(f) {
+    fhtml += '<span class="badge ' + (f[1] ? 'badge-green' : 'badge-gray') + '">' + esc(f[0]) + '</span>';
+  });
+  fhtml += '</div>';
+
+  var algs = (d.id_token_signing_alg_values_supported || []).join(', ');
+  if (algs) {
+    fhtml += '<div style="margin-top:12px;font-size:12px;color:#8892b0;">Signing algs: ' + esc(algs) + '</div>';
+  }
+  setContent('oidc-features', fhtml);
+}
+
+// ---- Clients ----
+function loadClients() {
+  closeDetail('client');
+  setContent('clients-content', '<div class="loading">Loading...</div>');
+  apiFetch('/api/v1/admin/clients').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    var clients = d.clients || [];
+    if (!clients.length) {
+      setContent('clients-content', '<div class="empty">No clients found.</div>');
+      return;
+    }
+    var html = '<table><thead><tr>';
+    html += '<th>ID</th><th>Name</th><th>Status</th><th>Strategy</th><th>Scopes</th><th></th>';
+    html += '</tr></thead><tbody>';
+    clients.forEach(function(c) {
+      html += '<tr>';
+      html += '<td><code>' + esc(c.id) + '</code></td>';
+      html += '<td>' + esc(c.name) + '</td>';
+      html += '<td>' + badge(c.active, 'Active', 'badge-green', 'Inactive', 'badge-red') + '</td>';
+      html += '<td><span class="badge badge-blue">' + esc(c.token_strategy || 'jwt') + '</span></td>';
+      html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc((c.allowed_scopes || []).join(' ')) + '</td>';
+      html += '<td><button class="btn btn-sm" onclick="showClientDetail(' + JSON.stringify(JSON.stringify(c)) + ')">View</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    setContent('clients-content', html);
+  }).catch(function(e) {
+    setContent('clients-content', '<div class="error-msg">' + esc(e.message) + '</div>');
+  });
+}
+
+function showClientDetail(jsonStr) {
+  var c = JSON.parse(jsonStr);
+  document.getElementById('clients-list').style.display = 'none';
+  document.getElementById('client-detail').classList.add('open');
+
+  var rows = [
+    ['ID', '<code>' + esc(c.id) + '</code>'],
+    ['Name', esc(c.name)],
+    ['Active', badge(c.active, 'Active', 'badge-green', 'Inactive', 'badge-red')],
+    ['Token Strategy', '<span class="badge badge-blue">' + esc(c.token_strategy || 'jwt') + '</span>'],
+    ['Allowed Scopes', esc((c.allowed_scopes || []).join(', '))],
+    ['Redirect URIs', esc((c.redirect_uris || []).join('\n') || '—')],
+    ['Allowed Authenticators', esc((c.allowed_authenticators || []).join(', ') || '—')],
+    ['Require PKCE', badge(c.require_pkce, 'Yes', 'badge-green', 'No', 'badge-gray')],
+  ];
+  var html = rows.map(function(r) {
+    return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+  }).join('');
+  document.getElementById('client-detail-table').innerHTML = html;
+}
+
+function closeDetail(type) {
+  if (type === 'client') {
+    document.getElementById('clients-list').style.display = '';
+    document.getElementById('client-detail').classList.remove('open');
+  } else if (type === 'user') {
+    document.getElementById('users-list').style.display = '';
+    document.getElementById('user-detail').classList.remove('open');
+  }
+}
+
+// ---- Users ----
+function loadUsers() {
+  closeDetail('user');
+  setContent('users-content', '<div class="loading">Loading...</div>');
+  apiFetch('/api/v1/admin/users').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    var users = d.users || [];
+    if (!users.length) {
+      setContent('users-content', '<div class="empty">No users found.</div>');
+      return;
+    }
+    var html = '<table><thead><tr>';
+    html += '<th>ID</th><th>External ID</th><th>Provider</th><th></th>';
+    html += '</tr></thead><tbody>';
+    users.forEach(function(u) {
+      html += '<tr>';
+      html += '<td><code>' + esc(u.id) + '</code></td>';
+      html += '<td>' + esc(u.external_id || '—') + '</td>';
+      html += '<td><span class="badge badge-blue">' + esc(u.provider || '—') + '</span></td>';
+      html += '<td><button class="btn btn-sm" onclick="showUserDetail(' + JSON.stringify(JSON.stringify(u)) + ')">View</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    setContent('users-content', html);
+  }).catch(function(e) {
+    setContent('users-content', '<div class="error-msg">' + esc(e.message) + '</div>');
+  });
+}
+
+function showUserDetail(jsonStr) {
+  var u = JSON.parse(jsonStr);
+  document.getElementById('users-list').style.display = 'none';
+  document.getElementById('user-detail').classList.add('open');
+
+  var rows = [
+    ['ID', '<code>' + esc(u.id) + '</code>'],
+    ['External ID', esc(u.external_id || '—')],
+    ['Provider', '<span class="badge badge-blue">' + esc(u.provider || '—') + '</span>'],
+  ];
+
+  // Attributes
+  if (u.attributes && typeof u.attributes === 'object') {
+    for (var k in u.attributes) {
+      // Never render credential values — the seeded_password attribute
+      // in particular should not be displayed.
+      if (k === 'seeded_password') {
+        rows.push([esc(k), '<span style="color:#4a5568">[redacted]</span>']);
+      } else {
+        rows.push([esc(k), esc(u.attributes[k])]);
+      }
+    }
+  }
+
+  var html = rows.map(function(r) {
+    return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+  }).join('');
+  document.getElementById('user-detail-table').innerHTML = html;
+}
+
+// ---- Sessions ----
+function loadSessions() {
+  setContent('sessions-content', '<div class="loading">Loading...</div>');
+  document.getElementById('sessions-count').textContent = '';
+  apiFetch('/api/v1/admin/sessions').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    var sessions = d.sessions || [];
+    document.getElementById('sessions-count').textContent = sessions.length + ' session(s)';
+    if (!sessions.length) {
+      setContent('sessions-content', '<div class="empty">No active sessions.</div>');
+      return;
+    }
+    var html = '<table><thead><tr>';
+    html += '<th>Session ID</th><th>User ID</th><th>Created</th><th>Expires</th><th></th>';
+    html += '</tr></thead><tbody>';
+    sessions.forEach(function(s) {
+      html += '<tr>';
+      html += '<td><code>' + esc(s.id) + '</code></td>';
+      html += '<td>' + esc(s.user_id) + '</td>';
+      html += '<td>' + esc(fmtTime(s.created_at_unix)) + '</td>';
+      html += '<td>' + esc(fmtTime(s.expires_at_unix)) + '</td>';
+      html += '<td><button class="btn btn-danger" onclick="revokeSession(' + JSON.stringify(s.id) + ')">Revoke</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    setContent('sessions-content', html);
+  }).catch(function(e) {
+    setContent('sessions-content', '<div class="error-msg">' + esc(e.message) + '</div>');
+  });
+}
+
+function revokeSession(sessionId) {
+  if (!confirm('Revoke session ' + sessionId + '?')) return;
+  // The admin token revoke endpoint accepts session_id in the body.
+  apiFetch('/api/v1/admin/tokens/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId })
+  }).then(function(r) {
+    if (!r.ok) {
+      return r.json().then(function(d) {
+        throw new Error(d.message || 'HTTP ' + r.status);
+      }).catch(function() { throw new Error('HTTP ' + r.status); });
+    }
+    loadSessions();
+  }).catch(function(e) {
+    alert('Revoke failed: ' + e.message);
+  });
+}
+
+// ---- Audit Log ----
+function debouncedAuditLoad() {
+  clearTimeout(auditDebounceTimer);
+  auditDebounceTimer = setTimeout(function() { loadAudit(1); }, 350);
+}
+
+function loadAudit(page) {
+  auditCurrentPage = page || 1;
+  setContent('audit-content', '<div class="loading">Loading...</div>');
+
+  var params = new URLSearchParams();
+  params.set('limit', String(auditPageSize));
+  params.set('offset', String((auditCurrentPage - 1) * auditPageSize));
+
+  var search = document.getElementById('audit-search').value.trim();
+  var outcome = document.getElementById('audit-outcome').value;
+  if (search) params.set('q', search);
+  if (outcome) params.set('outcome', outcome);
+
+  apiFetch('/api/v1/audit/events?' + params.toString()).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    var events = d.events || [];
+    auditHasMore = events.length === auditPageSize;
+
+    document.getElementById('audit-prev').disabled = auditCurrentPage <= 1;
+    document.getElementById('audit-next').disabled = !auditHasMore;
+    document.getElementById('audit-page-info').textContent = 'Page ' + auditCurrentPage;
+
+    if (!events.length) {
+      setContent('audit-content', '<div class="empty">No events found.</div>');
+      return;
+    }
+    var html = '<table><thead><tr>';
+    html += '<th>Time</th><th>Type</th><th>Outcome</th><th>Subject</th><th>Client</th><th>Provider</th>';
+    html += '</tr></thead><tbody>';
+    events.forEach(function(e) {
+      var outcomeClass = e.outcome === 'success' ? 'badge-green' : (e.outcome === 'failure' ? 'badge-red' : 'badge-gray');
+      html += '<tr>';
+      html += '<td style="white-space:nowrap">' + esc(e.timestamp ? new Date(e.timestamp).toLocaleString() : fmtTime(e.timestamp_unix)) + '</td>';
+      html += '<td><code>' + esc(e.type || e.event_type) + '</code></td>';
+      html += '<td><span class="badge ' + outcomeClass + '">' + esc(e.outcome) + '</span></td>';
+      html += '<td>' + esc(e.subject_id || '—') + '</td>';
+      html += '<td>' + esc(e.client_id || '—') + '</td>';
+      html += '<td>' + esc(e.provider || '—') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    setContent('audit-content', html);
+  }).catch(function(e) {
+    setContent('audit-content', '<div class="error-msg">' + esc(e.message) + '</div>');
+    document.getElementById('audit-prev').disabled = true;
+    document.getElementById('audit-next').disabled = true;
+  });
+}
+
+function auditPage(dir) {
+  var next = auditCurrentPage + dir;
+  if (next < 1) return;
+  if (dir > 0 && !auditHasMore) return;
+  loadAudit(next);
+}
+
+// ---- Keyboard shortcut ----
+document.getElementById('token-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
+
+// ---- Boot ----
+(function() {
+  var saved = sessionStorage.getItem('sso_admin_token');
+  if (saved) {
+    token = saved;
+    showApp();
+  }
+})();
+</script>
+</body>
+</html>

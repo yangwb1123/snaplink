@@ -93,6 +93,7 @@ type loginRequest struct {
 	ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
 	UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
 	Claims               json.RawMessage   `json:"claims"`                // OIDC Core §5.5: requested claims JSON object
+	ConsentApproved      bool              `json:"consent_approved"`      // true = user explicitly approved the consent screen
 }
 
 func (s *Server) handleLogin(ctx HandlerContext) {
@@ -742,7 +743,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	// will actually appear in the issued token — the grant we check and
 	// record is authoritative for exactly those scopes.
 	if s.consentStore != nil {
-		if s.handleConsentGate(ctx, result.UserID, client.ID, req.Scope, req.Prompt) {
+		if s.handleConsentGate(ctx, result.UserID, client.ID, req.Scope, req.Prompt, req.ConsentApproved) {
 			return
 		}
 	}
@@ -2315,7 +2316,7 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 // On consent_required the response is HTTP 200 so the SPA can detect it
 // as a structured signal (not an error HTTP status) and surface a consent
 // screen. The iss field is always present per RFC 9207.
-func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, scopes []string, prompt string) (halted bool) {
+func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, scopes []string, prompt string, consentApproved bool) (halted bool) {
 	requestCtx := ctx.Request().Context()
 
 	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
@@ -2341,11 +2342,21 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 	}
 
 	if needsConsent {
-		ctx.JSON(http.StatusOK, map[string]any{
-			KeyError: ErrConsentRequired,
-			KeyIss:   s.resolveIssuer(ctx),
+		if !consentApproved {
+			ctx.JSON(http.StatusOK, map[string]any{
+				KeyError: ErrConsentRequired,
+				KeyIss:   s.resolveIssuer(ctx),
+			})
+			return true
+		}
+		// User approved via the consent screen: record the grant and continue.
+		_ = s.consentStore.RecordConsent(requestCtx, ConsentGrant{
+			UserID:    userID,
+			ClientID:  clientID,
+			Scopes:    scopes,
+			GrantedAt: time.Now(),
 		})
-		return true
+		return false
 	}
 
 	// Grant exists and is sufficient (or store outage fell through): persist

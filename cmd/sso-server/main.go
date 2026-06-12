@@ -3971,6 +3971,21 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		logger.Info("storage-health report enabled", "stores", len(storageHealthSources))
 	}
 
+	// Serve the hosted admin console SPA at /admin/. The filesystem is
+	// embedded in the binary at compile time via the go:embed directive in
+	// admin_assets.go; adminSubFS() strips the web/admin path prefix so
+	// index.html is at the root of the served filesystem.
+	opts = append(opts, sso.WithAdminConsoleFS(adminSubFS()))
+
+	// Serve the hosted-login SPA at /login/ when opted in via config. The SPA
+	// calls /auth/login over JSON — zero protocol changes. The filesystem is
+	// embedded via web.LoginFS in login_assets.go; loginSubFS() strips the
+	// web/login prefix so index.html is at the root of the served path.
+	if cfg.HostedLogin.Enabled {
+		opts = append(opts, sso.WithHostedLoginFS(loginSubFS()))
+		logger.Info("hosted login UI enabled", "path", "/login/")
+	}
+
 	srv = sso.NewServer(opts...)
 
 	// Background ctx + Close-at-shutdown mirrors the netpolicy Classifier:

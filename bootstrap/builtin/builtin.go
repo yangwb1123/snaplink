@@ -222,6 +222,37 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 			}
 			return err
 		}),
+
+		// Step v5: seed the admin-console browser client. This is a public
+		// PKCE client (no secret) used by the hosted admin console SPA at
+		// /admin/ — it exchanges user credentials for a short-lived access
+		// token that carries admin:read and admin:write so the SPA can call
+		// the /api/v1/admin/* endpoints. Redirect URIs are intentionally empty
+		// here; the operator configures them for their deployment's origin.
+		bootstrap.StepFunc("seed_admin_console_client", 5, func(ctx context.Context) error {
+			if seed.Clients == nil {
+				return nil
+			}
+			// Skip if the operator already declared this client via YAML.
+			if _, err := seed.Clients.Get(ctx, "sso-admin-console"); err == nil {
+				return nil
+			}
+			err := seed.Clients.Add(ctx, &sso.Client{
+				ID:                    "sso-admin-console",
+				Name:                  "SSO Admin Console",
+				AllowedAuthenticators: []string{"password"},
+				TokenStrategy:         sso.TokenStrategyJWT,
+				AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
+				RequirePKCE:           true,
+				Active:                true,
+				// No Secret — this is a public PKCE client. RedirectURIs left
+				// empty; the operator sets them for their deployment's /admin/ URL.
+			})
+			if errors.Is(err, sso.ErrClientExists) {
+				return nil
+			}
+			return err
+		}),
 	}
 	return steps
 }

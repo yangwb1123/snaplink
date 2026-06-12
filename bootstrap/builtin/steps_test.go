@@ -50,8 +50,8 @@ func (c *capturePrinter) Print(p string) { c.calls = append(c.calls, p) }
 func runAllSteps(t *testing.T, seed *builtin.AdminSeed) {
 	t.Helper()
 	steps := builtin.Steps(seed)
-	if len(steps) != 4 {
-		t.Fatalf("Steps returned %d, want 4 (role, user, netpolicy, client)", len(steps))
+	if len(steps) != 5 {
+		t.Fatalf("Steps returned %d, want 5 (role, user, netpolicy, client, console-client)", len(steps))
 	}
 	runner := bootstrap.NewRunner("sso-server", memory.New())
 	runner.Register(steps...)
@@ -293,6 +293,50 @@ func TestGeneratePassword_LengthAndAlphabet(t *testing.T) {
 	}
 	if len(decoded) != 24 {
 		t.Errorf("decoded len = %d, want 24 bytes", len(decoded))
+	}
+}
+
+func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
+	seed, _ := fullSeed(t)
+	runAllSteps(t, seed)
+
+	c, err := seed.Clients.Get(context.Background(), "sso-admin-console")
+	if err != nil {
+		t.Fatalf("Get(sso-admin-console): %v", err)
+	}
+	if c.TokenStrategy != sso.TokenStrategyJWT {
+		t.Errorf("TokenStrategy = %q", c.TokenStrategy)
+	}
+	if !c.Active {
+		t.Error("Active = false, want true")
+	}
+	// Public PKCE client — no secret.
+	if c.Secret != "" {
+		t.Errorf("Secret should be empty for a public PKCE client, got %q", c.Secret)
+	}
+	if !c.RequirePKCE {
+		t.Error("RequirePKCE = false, want true")
+	}
+	if !contains(c.AllowedScopes, sso.AdminScopeRead) {
+		t.Errorf("AllowedScopes = %v, missing %s", c.AllowedScopes, sso.AdminScopeRead)
+	}
+	if !contains(c.AllowedScopes, sso.AdminScopeWrite) {
+		t.Errorf("AllowedScopes = %v, missing %s", c.AllowedScopes, sso.AdminScopeWrite)
+	}
+}
+
+func TestSteps_AdminConsoleClientSkippedWhenOperatorPredeclared(t *testing.T) {
+	// Operator already wired an sso-admin-console client — Step 5 must not overwrite.
+	seed, _ := fullSeed(t)
+	original := &sso.Client{ID: "sso-admin-console", Name: "Operator Console"}
+	if err := seed.Clients.Add(context.Background(), original); err != nil {
+		t.Fatalf("Add original: %v", err)
+	}
+	runAllSteps(t, seed)
+
+	c, _ := seed.Clients.Get(context.Background(), "sso-admin-console")
+	if c.Name != "Operator Console" {
+		t.Errorf("seeder overwrote operator console client; got %+v", c)
 	}
 }
 

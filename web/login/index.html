@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign In</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f3f4f6;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #111827;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+  width: 100%;
+  max-width: 400px;
+  padding: 40px 36px 36px;
+}
+
+.logo {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.logo svg { width: 44px; height: 44px; display: inline-block; }
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.view { display: none; }
+.view.active { display: block; }
+
+label {
+  display: block;
+  font-size: .875rem;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: #374151;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: .9375rem;
+  color: #111827;
+  background: #fff;
+  transition: border-color .15s;
+  appearance: none;
+}
+input:focus, select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+}
+
+.field { margin-bottom: 16px; }
+
+.btn {
+  width: 100%;
+  padding: 11px;
+  border: none;
+  border-radius: 8px;
+  font-size: .9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.btn:active { transform: scale(.98); }
+.btn-primary { background: #6366f1; color: #fff; }
+.btn-primary:hover { background: #4f46e5; }
+.btn-secondary {
+  background: transparent;
+  color: #6366f1;
+  border: 1px solid #d1d5db;
+  margin-top: 8px;
+}
+.btn-secondary:hover { background: #f9fafb; }
+
+.btn-row { margin-top: 20px; }
+
+.error-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: .875rem;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  display: none;
+}
+.error-box.visible { display: block; }
+
+.success-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #166534;
+  font-size: .875rem;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  text-align: center;
+  display: none;
+}
+.success-box.visible { display: block; }
+
+.scope-list {
+  list-style: none;
+  margin: 12px 0 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.scope-list li {
+  padding: 10px 14px;
+  font-size: .9rem;
+  border-bottom: 1px solid #f3f4f6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scope-list li:last-child { border-bottom: none; }
+.scope-list li::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #6366f1;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.client-name {
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.mfa-methods { margin-bottom: 16px; }
+.mfa-method-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: .9375rem;
+  color: #111827;
+  margin-bottom: 8px;
+  transition: border-color .15s, background .15s;
+}
+.mfa-method-btn:hover { border-color: #6366f1; background: #f5f3ff; }
+.mfa-method-btn.selected { border-color: #6366f1; background: #eef2ff; }
+
+.back-link {
+  display: block;
+  text-align: center;
+  margin-top: 16px;
+  font-size: .875rem;
+  color: #6b7280;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.back-link:hover { color: #4f46e5; }
+
+.spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  margin: 0 auto;
+}
+.loading .spinner { display: inline-block; }
+.loading .btn-label { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="44" height="44" rx="10" fill="#6366f1"/>
+      <path d="M22 10C15.373 10 10 15.373 10 22s5.373 12 12 12 12-5.373 12-12S28.627 10 22 10zm0 5a4 4 0 110 8 4 4 0 010-8zm0 17c-3.315 0-6.26-1.517-8.2-3.9a9.96 9.96 0 0116.4 0C28.26 30.483 25.315 32 22 32z" fill="#fff"/>
+    </svg>
+  </div>
+
+  <!-- Login view -->
+  <div id="view-login" class="view active">
+    <h1>Sign in</h1>
+    <div id="login-error" class="error-box"></div>
+    <form id="login-form" autocomplete="on">
+      <div class="field" id="field-provider" style="display:none">
+        <label for="provider">Authentication method</label>
+        <select id="provider" name="provider">
+          <option value="password">Password</option>
+        </select>
+      </div>
+      <div class="field" id="field-username">
+        <label for="username">Username or email</label>
+        <input type="text" id="username" name="username" autocomplete="username" required placeholder="you@example.com">
+      </div>
+      <div class="field" id="field-password">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary" id="login-btn">
+          <span class="btn-label">Sign in</span>
+          <span class="spinner"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- MFA view -->
+  <div id="view-mfa" class="view">
+    <h1>Two-factor verification</h1>
+    <div id="mfa-error" class="error-box"></div>
+    <div id="mfa-methods" class="mfa-methods"></div>
+    <div id="mfa-totp-field" class="field" style="display:none">
+      <label for="mfa-code">Verification code</label>
+      <input type="text" id="mfa-code" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="8" placeholder="000000">
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn btn-primary" id="mfa-btn" style="display:none">
+        <span class="btn-label">Verify</span>
+        <span class="spinner"></span>
+      </button>
+    </div>
+    <a class="back-link" id="mfa-back">Back to sign in</a>
+  </div>
+
+  <!-- Consent view -->
+  <div id="view-consent" class="view">
+    <h1>Authorize access</h1>
+    <div id="consent-error" class="error-box"></div>
+    <p style="font-size:.9rem;color:#374151;margin-bottom:8px">
+      <span class="client-name" id="consent-client"></span> is requesting access to:
+    </p>
+    <ul class="scope-list" id="consent-scopes"></ul>
+    <div class="btn-row">
+      <button type="button" class="btn btn-primary" id="consent-allow-btn">
+        <span class="btn-label">Allow access</span>
+        <span class="spinner"></span>
+      </button>
+      <button type="button" class="btn btn-secondary" id="consent-deny-btn">Deny</button>
+    </div>
+  </div>
+
+  <!-- Success view -->
+  <div id="view-success" class="view">
+    <h1>Signed in</h1>
+    <div class="success-box visible">Authentication successful.</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // --- Parse OAuth params from the query string ---
+  var q = new URLSearchParams(location.search);
+  var oauthParams = {
+    client_id:             q.get("client_id")             || "",
+    scope:                 (q.get("scope") || "openid").split(" ").filter(Boolean),
+    state:                 q.get("state")                 || "",
+    response_type:         q.get("response_type")         || "",
+    redirect_uri:          q.get("redirect_uri")          || "",
+    nonce:                 q.get("nonce")                  || "",
+    code_challenge:        q.get("code_challenge")         || "",
+    code_challenge_method: q.get("code_challenge_method")  || "",
+    resource:              q.getAll("resource"),
+    provider:              q.get("provider")               || "password",
+  };
+
+  // --- DOM helpers ---
+  function $(id) { return document.getElementById(id); }
+
+  function showView(name) {
+    ["login","mfa","consent","success"].forEach(function(v) {
+      var el = $("view-" + v);
+      el.classList.toggle("active", v === name);
+    });
+  }
+
+  function setError(boxId, msg) {
+    var box = $(boxId);
+    if (msg) {
+      box.textContent = msg;
+      box.classList.add("visible");
+    } else {
+      box.textContent = "";
+      box.classList.remove("visible");
+    }
+  }
+
+  function setLoading(btn, loading) {
+    btn.disabled = loading;
+    btn.classList.toggle("loading", loading);
+  }
+
+  // --- Build relative /auth/login URL ---
+  // The SPA is at /login/ and the endpoint is at /auth/login.
+  // From the browser's perspective the relative URL "../auth/login" works
+  // regardless of any reverse-proxy prefix because both paths are served
+  // by the same origin.
+  var loginURL    = "../auth/login";
+  var mfaURL      = "../auth/mfa";
+
+  // --- State ---
+  var currentMFAChallengeID = "";
+  var currentMFAMethods     = [];
+  var selectedMFAMethod     = "";
+  var savedLoginPayload     = null; // for consent re-submit
+
+  // --- Populate provider selector if >1 option ---
+  var providerSel = $("provider");
+  // The SPA starts with only "password"; real provider list comes from a
+  // probe request. Only shown if the selector has >1 option after population.
+  (function initProvider() {
+    if (oauthParams.provider && oauthParams.provider !== "password") {
+      var opt = document.createElement("option");
+      opt.value = oauthParams.provider;
+      opt.textContent = oauthParams.provider.replace(/_/g," ");
+      providerSel.appendChild(opt);
+    }
+    providerSel.value = oauthParams.provider || "password";
+    if (providerSel.options.length > 1) {
+      $("field-provider").style.display = "";
+    }
+  })();
+
+  // --- Probe for available providers (async, best-effort) ---
+  (function probeProviders() {
+    if (!oauthParams.client_id) return;
+    fetch(loginURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({client_id: oauthParams.client_id})
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var providers = data.providers;
+      if (!Array.isArray(providers) || providers.length === 0) return;
+      // Rebuild the selector.
+      while (providerSel.options.length > 0) providerSel.remove(0);
+      providers.forEach(function(p) {
+        var opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p.charAt(0).toUpperCase() + p.slice(1).replace(/_/g," ");
+        providerSel.appendChild(opt);
+      });
+      providerSel.value = oauthParams.provider || providers[0];
+      if (providers.length > 1) {
+        $("field-provider").style.display = "";
+      }
+    })
+    .catch(function(){});
+  })();
+
+  // --- Build login payload ---
+  function buildPayload(extra) {
+    var provider = providerSel.value || "password";
+    var payload = {
+      provider:              provider,
+      client_id:             oauthParams.client_id,
+      scope:                 oauthParams.scope,
+      state:                 oauthParams.state,
+      response_type:         oauthParams.response_type,
+      redirect_uri:          oauthParams.redirect_uri,
+      nonce:                 oauthParams.nonce,
+      code_challenge:        oauthParams.code_challenge,
+      code_challenge_method: oauthParams.code_challenge_method,
+    };
+    if (oauthParams.resource && oauthParams.resource.length > 0) {
+      payload.resource = oauthParams.resource;
+    }
+    var username = $("username").value.trim();
+    var password = $("password").value;
+    payload.credential = { username: username, password: password };
+    return Object.assign(payload, extra || {});
+  }
+
+  // --- Handle a successful auth response ---
+  function handleSuccess(data) {
+    var redirectURI = oauthParams.redirect_uri;
+
+    if (data.code) {
+      if (redirectURI) {
+        var u = new URL(redirectURI);
+        u.searchParams.set("code", data.code);
+        if (data.state || oauthParams.state) {
+          u.searchParams.set("state", data.state || oauthParams.state);
+        }
+        if (data.iss) u.searchParams.set("iss", data.iss);
+        location.replace(u.toString());
+        return;
+      }
+    }
+
+    if (data.access_token) {
+      if (redirectURI) {
+        var u = new URL(redirectURI);
+        u.searchParams.set("access_token", data.access_token);
+        u.searchParams.set("token_type",   data.token_type || "Bearer");
+        if (data.expires_in) u.searchParams.set("expires_in", data.expires_in);
+        if (oauthParams.state) u.searchParams.set("state", oauthParams.state);
+        location.replace(u.toString());
+        return;
+      }
+    }
+
+    showView("success");
+  }
+
+  // --- Handle structured errors from /auth/login ---
+  function handleLoginError(data, errBoxId, btn) {
+    setLoading(btn, false);
+
+    var code = data.error;
+
+    if (code === "mfa_required") {
+      currentMFAChallengeID = data.mfa_challenge_id || "";
+      currentMFAMethods     = data.mfa_methods || [];
+      renderMFAView(currentMFAMethods);
+      showView("mfa");
+      setError("login-error", "");
+      return;
+    }
+
+    if (code === "consent_required") {
+      renderConsentView();
+      showView("consent");
+      setError("login-error", "");
+      return;
+    }
+
+    var msg = code || "Authentication failed. Please try again.";
+    setError(errBoxId, msg);
+  }
+
+  // --- Login form submit ---
+  $("login-form").addEventListener("submit", function(e) {
+    e.preventDefault();
+    var btn = $("login-btn");
+    setError("login-error", "");
+    setLoading(btn, true);
+
+    var payload = buildPayload();
+    savedLoginPayload = payload;
+
+    fetch(loginURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json().then(function(d){ return {status:r.status,data:d}; }); })
+    .then(function(res) {
+      setLoading(btn, false);
+      if (res.status === 200 && !res.data.error) {
+        handleSuccess(res.data);
+        return;
+      }
+      handleLoginError(res.data, "login-error", btn);
+    })
+    .catch(function(err) {
+      setLoading(btn, false);
+      setError("login-error", "Network error. Please check your connection.");
+    });
+  });
+
+  // --- MFA view ---
+  function renderMFAView(methods) {
+    var container = $("mfa-methods");
+    container.innerHTML = "";
+    methods.forEach(function(m) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "mfa-method-btn";
+      btn.textContent = methodLabel(m);
+      btn.dataset.method = m;
+      btn.addEventListener("click", function() {
+        document.querySelectorAll(".mfa-method-btn").forEach(function(b) {
+          b.classList.remove("selected");
+        });
+        btn.classList.add("selected");
+        selectedMFAMethod = m;
+        // Show TOTP code field only for TOTP-style methods.
+        var isTOTP = (m === "totp" || m === "otp");
+        $("mfa-totp-field").style.display = isTOTP ? "" : "none";
+        $("mfa-btn").style.display = "";
+      });
+      container.appendChild(btn);
+    });
+    // Auto-select if only one method.
+    if (methods.length === 1) {
+      container.firstChild.click();
+    }
+    $("mfa-totp-field").style.display = "none";
+    $("mfa-btn").style.display = methods.length === 1 ? "" : "none";
+  }
+
+  function methodLabel(m) {
+    var labels = {
+      totp:     "Authenticator app (TOTP)",
+      otp:      "One-time code",
+      webauthn: "Security key / passkey",
+      push:     "Push notification",
+      sms:      "SMS code",
+    };
+    return labels[m] || m.charAt(0).toUpperCase() + m.slice(1).replace(/_/g," ");
+  }
+
+  $("mfa-btn").addEventListener("click", function() {
+    var btn = $("mfa-btn");
+    setError("mfa-error", "");
+    if (!selectedMFAMethod) {
+      setError("mfa-error", "Select a verification method.");
+      return;
+    }
+    var code = $("mfa-code").value.trim();
+    if ((selectedMFAMethod === "totp" || selectedMFAMethod === "otp") && !code) {
+      setError("mfa-error", "Enter your verification code.");
+      return;
+    }
+    setLoading(btn, true);
+    var body = {
+      mfa_challenge_id: currentMFAChallengeID,
+      method:           selectedMFAMethod,
+      credential:       { code: code }
+    };
+    fetch(mfaURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    })
+    .then(function(r){ return r.json().then(function(d){ return {status:r.status,data:d}; }); })
+    .then(function(res) {
+      setLoading(btn, false);
+      if (res.status === 200 && !res.data.error) {
+        handleSuccess(res.data);
+        return;
+      }
+      setError("mfa-error", res.data.error || "Verification failed.");
+    })
+    .catch(function() {
+      setLoading(btn, false);
+      setError("mfa-error", "Network error. Please try again.");
+    });
+  });
+
+  $("mfa-back").addEventListener("click", function() {
+    setError("mfa-error", "");
+    $("mfa-code").value = "";
+    showView("login");
+  });
+
+  // --- Consent view ---
+  function renderConsentView() {
+    $("consent-client").textContent = oauthParams.client_id || "This application";
+    var list = $("consent-scopes");
+    list.innerHTML = "";
+    var scopes = oauthParams.scope.filter(function(s){ return s && s !== "openid"; });
+    if (scopes.length === 0) scopes = ["openid"];
+    scopes.forEach(function(s) {
+      var li = document.createElement("li");
+      li.textContent = scopeLabel(s);
+      list.appendChild(li);
+    });
+  }
+
+  function scopeLabel(s) {
+    var labels = {
+      openid:  "Verify your identity",
+      profile: "View your profile information",
+      email:   "View your email address",
+      offline_access: "Stay signed in (refresh token)",
+    };
+    return labels[s] || s;
+  }
+
+  $("consent-allow-btn").addEventListener("click", function() {
+    if (!savedLoginPayload) return;
+    var btn = $("consent-allow-btn");
+    setError("consent-error", "");
+    setLoading(btn, true);
+    var payload = Object.assign({}, savedLoginPayload, { consent_approved: true });
+    fetch(loginURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    })
+    .then(function(r){ return r.json().then(function(d){ return {status:r.status,data:d}; }); })
+    .then(function(res) {
+      setLoading(btn, false);
+      if (res.status === 200 && !res.data.error) {
+        handleSuccess(res.data);
+        return;
+      }
+      handleLoginError(res.data, "consent-error", btn);
+    })
+    .catch(function() {
+      setLoading(btn, false);
+      setError("consent-error", "Network error. Please try again.");
+    });
+  });
+
+  $("consent-deny-btn").addEventListener("click", function() {
+    if (oauthParams.redirect_uri) {
+      var u = new URL(oauthParams.redirect_uri);
+      u.searchParams.set("error", "access_denied");
+      if (oauthParams.state) u.searchParams.set("state", oauthParams.state);
+      location.replace(u.toString());
+    } else {
+      showView("login");
+    }
+  });
+})();
+</script>
+</body>
+</html>

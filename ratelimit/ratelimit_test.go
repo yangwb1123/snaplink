@@ -219,36 +219,37 @@ func TestKeyByClientIDOrIP_DoesNotConsumeBody(t *testing.T) {
 
 func TestMemoryLimiter_PrunesSampled(t *testing.T) {
 	// Verify that pruning is NOT called on every Allow — only once per
-	// 64 calls. Strategy: seed a bucket with an already-expired lastSeen
-	// by manipulating a fresh limiter with a very short stalePruneAfter,
-	// then confirm the expired entry is cleaned up within 64 subsequent
-	// Allow calls on a different key (so we don't refresh the expiry).
+	// 64 calls. Strategy: seed a bucket with an already-expired lastSeen,
+	// then confirm the expired entry is cleaned up once the prune fires
+	// on that same shard.
 	//
-	// We use the exported Buckets() counter as the observable: after the
-	// seed call the count is 1; after enough Allow calls on distinct keys
-	// the pruner must have fired at least once and removed the stale entry.
+	// pruneLocked only scans the shard of the key that triggered the
+	// sampled prune event, not all shards. The seed key ("stale-25") and
+	// the 64th probe key ("probe-62") both map to FNV-32a shard 12
+	// (numShards=16), so the first prune event guaranteed hits the stale
+	// entry's shard. The +1 seed offset means the global calls counter
+	// first hits a multiple of 64 at probe iteration 62.
 	lim := ratelimit.NewMemoryLimiterWithStalePrune(1e9, 1<<30, 1*time.Millisecond)
 
 	// Seed one bucket under a key we will never touch again.
-	lim.Allow("stale-key")
+	// "stale-25" hashes to shard 12 (same as "probe-62").
+	lim.Allow("stale-25")
 	if lim.Buckets() != 1 {
 		t.Fatal("expected 1 bucket after seed")
 	}
 
 	// Sleep past the stale horizon so the seeded bucket qualifies for pruning.
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
-	// Drive 64 Allow calls on rotating distinct keys. At least one of
-	// those 64 calls will trigger the global prune (calls counter mod 64
-	// == 0), which will delete the stale entry.
-	//
-	// We drive up to 128 calls (two full windows) so this is not
-	// sensitive to which call in the first window hits the counter boundary.
+	// Drive Allow calls on rotating probe keys. "probe-62" maps to shard 12
+	// and arrives when the global counter first hits 64 (seed=1, probe-0..62
+	// add 63 more → total=64). That prune event scans shard 12, removes
+	// the stale "stale-25" entry, and Buckets() drops below i+2.
 	pruned := false
 	for i := range 128 {
 		lim.Allow("probe-" + strconv.Itoa(i))
 		if lim.Buckets() < i+2 {
-			// The stale bucket was removed (total < seed + probes so far).
+			// Stale bucket removed: total < seed + probes so far.
 			pruned = true
 			break
 		}

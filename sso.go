@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"sort"
 	"strings"
@@ -406,6 +407,21 @@ type Server struct {
 	jwksBodyMu    sync.RWMutex
 	jwksBodyCache []byte
 	jwksBodyExp   time.Time
+
+	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
+	// an embedded or OS filesystem at /admin/. The console is a standalone
+	// single-page app — it communicates with the server only via the standard
+	// /api/v1/admin/* REST endpoints, which require a Bearer token with
+	// admin:read or admin:write scope. Nil (the default) leaves /admin/
+	// unmounted — byte-identical to a build without the console.
+	adminConsoleFS fs.FS
+
+	// hostedLoginFS, when non-nil, serves the hosted-login SPA from an
+	// embedded or OS filesystem at /login/. The SPA calls /auth/login over
+	// JSON — zero protocol changes to the OAuth/OIDC surface. Nil (the
+	// default) leaves /login/ unmounted — byte-identical to a build without
+	// it. Typically wired by the operator's cmd binary via go:embed.
+	hostedLoginFS fs.FS
 }
 
 // jwksSingleFlight collapses concurrent JWKS document computations into a
@@ -1862,6 +1878,33 @@ func WithTrustedProxies(cidrs []string, hops int) (Option, error) {
 	return func(s *Server) { s.trustedProxies = tp }, nil
 }
 
+// WithAdminConsoleFS serves the admin console SPA at /admin/ from the
+// provided filesystem. The SPA is a standalone browser client that
+// communicates with the server via the existing /api/v1/admin/* REST
+// endpoints using a Bearer token with admin:read or admin:write scope.
+//
+// Typically wired by embedding the web/admin directory with go:embed in
+// the operator's cmd binary and passing the sub-filesystem here. Index
+// file (index.html) is served for the /admin/ root; all sub-paths fall
+// through to the filesystem.
+//
+// Nil (the default) leaves /admin/ unmounted — byte-identical to a build
+// without the console.
+func WithAdminConsoleFS(adminFS fs.FS) Option {
+	return func(s *Server) { s.adminConsoleFS = adminFS }
+}
+
+// WithHostedLoginFS serves the hosted-login SPA at /login/ from the provided
+// filesystem. The SPA calls /auth/login over JSON — no protocol changes to
+// the OAuth/OIDC surface. Typically wired by embedding web/login with
+// go:embed in the operator's cmd binary.
+//
+// Nil (the default) leaves /login/ unmounted — byte-identical to a build
+// without the hosted login UI.
+func WithHostedLoginFS(loginFS fs.FS) Option {
+	return func(s *Server) { s.hostedLoginFS = loginFS }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -2116,6 +2159,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(PathReadyz, s.handleReadyz)
 	if s.metrics != nil {
 		mux.Handle("/metrics", promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
+	}
+	// Admin console SPA (opt-in). Served from /admin/ so the browser client
+	// has a stable origin to call back to /api/v1/admin/* from. The
+	// http.FileServerFS + StripPrefix pattern means /admin/index.html is
+	// reachable as /admin/ and the browser can navigate without path leakage
+	// into the SSO routing layer. Not wired by default — byte-identical to a
+	// build without the console when adminConsoleFS is nil.
+	if s.adminConsoleFS != nil {
+		mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServerFS(s.adminConsoleFS)))
+	}
+	// Hosted login SPA (opt-in). Served from /login/ so the browser can
+	// reach the SPA while the JSON /auth/login endpoint remains at its
+	// existing path (no overlap). Zero protocol changes — the SPA calls
+	// /auth/login over JSON like any other client. Not wired by default —
+	// byte-identical to a build without the UI when hostedLoginFS is nil.
+	if s.hostedLoginFS != nil {
+		mux.Handle("/login/", http.StripPrefix("/login/", http.FileServerFS(s.hostedLoginFS)))
 	}
 	mux.Handle("/", inner)
 	return mux
