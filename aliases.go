@@ -258,6 +258,7 @@ const KeyVersion = core.KeyVersion
 const PathAPIPrefix = core.PathAPIPrefix
 const PathAuthzPolicyBundle = core.PathAuthzPolicyBundle
 const PathStorageHealth = core.PathStorageHealth
+const PathTenantUsage = core.PathTenantUsage
 const PathSSFReceive = core.PathSSFReceive
 const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathFederationFetch = core.PathFederationFetch

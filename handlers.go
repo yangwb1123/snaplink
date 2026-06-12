@@ -18,6 +18,7 @@ import (
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/federation"
+	"github.com/snaplink/sso/metering"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
@@ -3058,3 +3059,48 @@ func (s *Server) handleAuditFacets(ctx HandlerContext)    { audit.HandleFacets(s
 
 // JWKS handler (delegator — body in oidc/handlers.go).
 func (s *Server) handleJWKS(ctx HandlerContext) { oidc.HandleJWKS(s, ctx) }
+
+// handleTenantUsage serves GET /api/v1/admin/tenants/:id/usage.
+// Admin-gated (admin:read) by the /api/v1/admin/ prefix.
+//
+// Query parameters:
+//
+//	period=day|month   (default: day)
+//	start=YYYY-MM-DD   (default: today UTC)
+func (s *Server) handleTenantUsage(ctx HandlerContext) {
+	tenantID := ctx.Param("id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+
+	period := metering.UsagePeriod(ctx.Request().URL.Query().Get("period"))
+	if period == "" {
+		period = metering.PeriodDay
+	}
+	if period != metering.PeriodDay && period != metering.PeriodMonth {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+
+	startStr := ctx.Request().URL.Query().Get("start")
+	var start time.Time
+	if startStr == "" {
+		start = time.Now().UTC()
+	} else {
+		var err error
+		start, err = time.ParseInLocation("2006-01-02", startStr, time.UTC)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+			return
+		}
+	}
+
+	u, err := s.usageAggregator.Usage(ctx.Request().Context(), tenantID, period, start)
+	if err != nil {
+		s.logger.Error("tenant usage aggregation failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, u)
+}

@@ -33,9 +33,10 @@ fmt: ## Check gofmt; fails if any file needs formatting.
 		exit 1; \
 	fi
 
-build: ## Compile cmd/sso-server to $(BIN_DIR)/sso-server.
+build: ## Compile cmd/sso-server and offline CLIs to $(BIN_DIR)/.
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -trimpath -o $(BIN_DIR)/sso-server ./cmd/sso-server
+	$(GO) build -trimpath -o $(BIN_DIR)/sso-server   ./cmd/sso-server
+	$(GO) build -trimpath -o $(BIN_DIR)/sso-import   ./cmd/sso-import
 
 docker: ## Build the sso-server container image.
 	docker build -t $(IMAGE):$(IMAGE_TAG) .

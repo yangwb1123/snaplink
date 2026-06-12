@@ -15,6 +15,7 @@ type Query struct {
 	Type      EventType
 	ActorID   string
 	ClientID  string
+	TenantID  string
 	Provider  string
 	Outcome   Outcome
 	RequestID string
@@ -36,6 +37,9 @@ func (q Query) Match(e *Event) bool {
 		return false
 	}
 	if q.ClientID != "" && e.ClientID != q.ClientID {
+		return false
+	}
+	if q.TenantID != "" && e.TenantID != q.TenantID {
 		return false
 	}
 	if q.Provider != "" && e.Provider != q.Provider {

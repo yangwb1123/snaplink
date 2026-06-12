@@ -53,16 +53,17 @@ func EventFromRequest(ctx core.HandlerContext) *Event {
 	return e
 }
 
-// EnrichTenant lifts tenant routing results onto Event.Metadata under
-// the tenant.* prefix. No-op when the tenant middleware didn't run
-// (no store wired, unknown host, suspended tenant). Tenant goes onto
-// every audit event so SIEM filters like "show me failed logins for
-// tenant X" become a single Metadata key check.
+// EnrichTenant lifts tenant routing results onto Event.TenantID (first-
+// class, indexed) and Event.Metadata under the tenant.* prefix. No-op
+// when the tenant middleware didn't run (no store wired, unknown host,
+// suspended tenant). TenantID is the efficient per-tenant query field;
+// the metadata keys carry the slug + domain for human-readable context.
 func EnrichTenant(ctx core.HandlerContext, e *Event) {
 	r, ok := tenant.FromHandlerContext(ctx)
 	if !ok || r.Tenant == nil {
 		return
 	}
+	e.TenantID = r.Tenant.ID
 	SetMeta(e, "tenant.id", r.Tenant.ID)
 	SetMeta(e, "tenant.slug", r.Tenant.Slug)
 	if r.Domain != nil {

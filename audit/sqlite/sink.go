@@ -45,7 +45,17 @@ import (
 // append v2, v3, ... here.
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_audit_events", SQL: schema},
+	{Version: 2, Name: "add_tenant_id", SQL: migrationV2},
 }
+
+// migrationV2 promotes tenant_id to a first-class indexed column so
+// per-tenant queries and metering aggregations avoid full-table JSON
+// scans. DEFAULT ” ensures existing rows get a consistent non-NULL
+// value after the ALTER TABLE.
+const migrationV2 = `
+ALTER TABLE audit_events ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_audit_events_tenant ON audit_events(tenant_id);
+`
 
 // schema mirrors audit.Event field-by-field for the queryable
 // columns; metadata + the hash-chain pair stay in a JSON blob so
@@ -92,7 +102,7 @@ type Sink struct {
 //
 // Typical production DSN:
 //
-//	file:/var/lib/sso/audit.db?_journal=WAL&_pragma=busy_timeout(5000)
+//	file:/var/lib/sso/audit.db?_journal=WAL&_busy_timeout=5000
 //
 // Tests / dev: `:memory:` for per-connection isolation;
 // `file::memory:?cache=shared` for a shared in-memory pool.
@@ -105,7 +115,6 @@ func New(dsn string) (*Sink, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: ping: %w", err)
 	}
-	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "audit", migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
@@ -174,14 +183,14 @@ func (s *Sink) Record(ctx context.Context, e *audit.Event) error {
             id, type, outcome, ts_unix_ns,
             request_id, trace_id, span_id, parent_span_id,
             actor_id, actor_ip, user_agent,
-            client_id, provider, token_strategy,
+            client_id, tenant_id, provider, token_strategy,
             session_id, token_id, reason,
             metadata_json, prev_hash, hash
-        ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?,  ?, ?, ?,  ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?)`,
 		e.ID, string(e.Type), string(e.Outcome), e.Timestamp.UnixNano(),
 		e.RequestID, e.TraceID, e.SpanID, e.ParentSpanID,
 		e.ActorID, e.ActorIP, e.UserAgent,
-		e.ClientID, e.Provider, e.TokenStrategy,
+		e.ClientID, e.TenantID, e.Provider, e.TokenStrategy,
 		e.SessionID, e.TokenID, e.Reason,
 		metaJSON, e.PrevHash, e.Hash,
 	)
@@ -228,6 +237,7 @@ func buildWhere(q audit.Query) (string, []any) {
 	addEq("outcome", string(q.Outcome))
 	addEq("actor_id", q.ActorID)
 	addEq("client_id", q.ClientID)
+	addEq("tenant_id", q.TenantID)
 	addEq("provider", q.Provider)
 	addEq("request_id", q.RequestID)
 	addEq("trace_id", q.TraceID)
@@ -368,7 +378,7 @@ const selectColumns = `SELECT
     id, type, outcome, ts_unix_ns,
     request_id, trace_id, span_id, parent_span_id,
     actor_id, actor_ip, user_agent,
-    client_id, provider, token_strategy,
+    client_id, tenant_id, provider, token_strategy,
     session_id, token_id, reason,
     metadata_json, prev_hash, hash`
 
@@ -380,22 +390,22 @@ type rowScanner interface {
 
 func scanEvent(r rowScanner) (*audit.Event, error) {
 	var (
-		typ, outcome           string
-		tsNS                   int64
-		metaJSON               sql.NullString
-		e                      = &audit.Event{}
-		reqID, traceID, spanID sql.NullString
-		parentSpanID           sql.NullString
-		actorID, actorIP, ua   sql.NullString
-		clientID, prov, strat  sql.NullString
-		sessID, tokID, reason  sql.NullString
-		prev, hash             sql.NullString
+		typ, outcome                    string
+		tsNS                            int64
+		metaJSON                        sql.NullString
+		e                               = &audit.Event{}
+		reqID, traceID, spanID          sql.NullString
+		parentSpanID                    sql.NullString
+		actorID, actorIP, ua            sql.NullString
+		clientID, tenantID, prov, strat sql.NullString
+		sessID, tokID, reason           sql.NullString
+		prev, hash                      sql.NullString
 	)
 	if err := r.Scan(
 		&e.ID, &typ, &outcome, &tsNS,
 		&reqID, &traceID, &spanID, &parentSpanID,
 		&actorID, &actorIP, &ua,
-		&clientID, &prov, &strat,
+		&clientID, &tenantID, &prov, &strat,
 		&sessID, &tokID, &reason,
 		&metaJSON, &prev, &hash,
 	); err != nil {
@@ -412,6 +422,7 @@ func scanEvent(r rowScanner) (*audit.Event, error) {
 	e.ActorIP = actorIP.String
 	e.UserAgent = ua.String
 	e.ClientID = clientID.String
+	e.TenantID = tenantID.String
 	e.Provider = prov.String
 	e.TokenStrategy = strat.String
 	e.SessionID = sessID.String

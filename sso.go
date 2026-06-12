@@ -28,6 +28,7 @@ import (
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/metering"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
@@ -389,6 +390,11 @@ type Server struct {
 	// When nil all consent checks are skipped — behavior is byte-identical
 	// to a build without the feature.
 	consentStore ConsentStore
+
+	// usageAggregator backs GET /api/v1/admin/tenants/:id/usage
+	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —
+	// byte-identical to a build without it.
+	usageAggregator metering.Aggregator
 }
 
 // jwksSingleFlight collapses concurrent JWKS document computations into a
@@ -1808,6 +1814,17 @@ func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
 }
 
+// WithTenantUsageAggregator wires the per-tenant metering Aggregator and
+// mounts GET /api/v1/admin/tenants/:id/usage (admin:read). The endpoint
+// returns aggregated login / token-issuance / active-user / MFA-challenge
+// counts for the requested tenant over a day or month window.
+//
+// Nil ⇒ the route is NOT mounted — behavior is byte-identical to a build
+// without it.
+func WithTenantUsageAggregator(a metering.Aggregator) Option {
+	return func(s *Server) { s.usageAggregator = a }
+}
+
 // WithTrustedProxies configures a trusted-proxy CIDR allowlist for
 // X-Forwarded-For validation. When set, all X-Forwarded-For consumers
 // (rate-limiter IP key via ratelimit.KeyByClientIP) use the validated real
@@ -2003,6 +2020,13 @@ func (s *Server) Mount() {
 		api.DELETE(PathNetPolicyByName, s.handleDeleteNetPolicy)
 		api.GET(PathNetPolicyClassify, s.handleClassifyNetPolicy)
 		api.GET(PathNetPolicyResolveMe, s.handleResolveMeNetPolicy)
+	}
+
+	// Per-tenant usage/metering endpoint (opt-in WithTenantUsageAggregator).
+	// Gated by AdminMiddleware (admin:read) via the /api/v1/admin/ prefix.
+	// Not mounted without the aggregator — byte-identical to a build without it.
+	if s.usageAggregator != nil {
+		api.GET(PathTenantUsage, s.handleTenantUsage)
 	}
 }
 

@@ -63,6 +63,13 @@ const (
 	// the /api/v1/admin/ prefix.
 	PathStorageHealth = "/api/v1/admin/storage-health"
 
+	// PathTenantUsage is the read-only admin per-tenant usage/metering
+	// endpoint (GET /api/v1/admin/tenants/:id/usage?period=day|month&start=...).
+	// Returns aggregated login / token-issuance / active-user / MFA counts
+	// for the tenant over the requested period. Gated by AdminMiddleware
+	// (admin:read). Only mounted when WithTenantUsageAggregator is wired.
+	PathTenantUsage = "/api/v1/admin/tenants/:id/usage"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

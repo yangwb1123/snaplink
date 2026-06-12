@@ -17,6 +17,13 @@ const (
 	EventClientAccess    EventType = "client_access"
 	EventPermissionQuery EventType = "permission_query"
 
+	// EventClientRegistered / EventClientUpdated / EventClientDeleted —
+	// DCR (RFC 7591/7592) lifecycle events. Outcome=success on the happy
+	// path; ClientID carries the registered client_id.
+	EventClientRegistered EventType = "client_registered"
+	EventClientUpdated    EventType = "client_updated"
+	EventClientDeleted    EventType = "client_deleted"
+
 	EventNetPolicyApply  EventType = "netpolicy_apply"
 	EventNetPolicyDelete EventType = "netpolicy_delete"
 
@@ -107,22 +114,6 @@ const (
 	// error — the specifics live here.
 	EventWebAuthnAttestationDenied EventType = "webauthn_attestation_denied"
 
-	// Self-service Dynamic Client Registration lifecycle (RFC 7591 create +
-	// RFC 7592 update/delete on /register). The unauthenticated-by-operator
-	// sibling of the EventAdminClient* mutations: a confidential client can
-	// be minted with a fresh secret + registration_access_token, mutated, or
-	// deleted via the bearer the /register response itself issued — so these
-	// land in the tamper-evident audit chain for credential-lifecycle
-	// forensics. ClientID carries the affected client; Created additionally
-	// records the registration method ("initial_access_token" | "open") via
-	// Metadata. Emitted ONLY on an authorized, successful store write —
-	// NEVER on a failed-bearer attempt (auditing the rejection would leak
-	// client existence, an oracle the §2 anti-enumeration 401 is hardened
-	// against). Outcome=success.
-	EventClientRegistered EventType = "client_registered"
-	EventClientUpdated    EventType = "client_updated"
-	EventClientDeleted    EventType = "client_deleted"
-
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason
@@ -202,18 +193,6 @@ const (
 	EventSigningKeyAggregationDegraded  EventType = "signing_key_aggregation_degraded"
 	EventSigningKeyAggregationRecovered EventType = "signing_key_aggregation_recovered"
 
-	// EventSigningKeyRotationCoordinated fires on a replica that RECEIVED a
-	// cross-replica KindSigningKeyRotation Event and acted on it: it deferred the
-	// demoted kid's retirement to the carried wall-clock deadline (only ever
-	// widening its verify window) and adopted the new kid verify-only. Metadata
-	// "outcome" records what it did — "deferred" (a retire timer was armed),
-	// "extended" (a later deadline replaced an earlier pending one),
-	// "adopted_only" (the old kid was already gone / never local, so only the
-	// new-kid adoption applied), or "noop" (a garbage/empty Event that changed
-	// nothing — the fail-safe path). It carries NO kid (cardinality/secrecy) and
-	// is an INTERNAL audit event, not a wire error code.
-	EventSigningKeyRotationCoordinated EventType = "signing_key_rotation_coordinated"
-
 	// OAuth/OIDC token lifecycle beyond the legacy EventTokenIssued.
 	// Refresh + ID Token + device-flow events let SIEMs build per-grant
 	// dashboards (how often is refresh rotating? are device flows being
@@ -276,20 +255,6 @@ const (
 	// signal, never a happy-path operation.
 	EventRefreshTokenReuse EventType = "refresh_token_reuse_detected"
 
-	// EventRefreshRotationVelocityExceeded fires when the rotation grant
-	// observes a refresh-token FAMILY rotating faster than the configured
-	// per-window cap (the store implements
-	// oauth.RefreshTokenRotationLimiter). Like a reuse, this kills the
-	// whole family — the velocity is the tell that an attacker and the
-	// victim are BOTH rotating the same family — but the WIRE response is
-	// the SAME invalid_grant a reuse / bad refresh returns (no distinct
-	// code, no Retry-After, no rate/velocity/family hint in the body): the
-	// detail lives ONLY here. Reason carries the family id; Metadata
-	// carries "count=<n>" (rotations seen in the window) and "killed=<n>"
-	// (active descendants invalidated). Outcome is OutcomeFailure — a
-	// velocity breach is always a security signal.
-	EventRefreshRotationVelocityExceeded EventType = "refresh_rotation_velocity_exceeded"
-
 	// EventPasswordWeak / EventPasswordCompromised — non-blocking
 	// login-time credential-health signals emitted AFTER a successful
 	// password verify (this server only sees plaintext at login, since
@@ -323,6 +288,19 @@ const (
 	// inspection mode the request still proceeds; the event is the
 	// operator's per-RP compliance-gap signal.
 	EventFAPIComplianceViolation EventType = "fapi_compliance_violation"
+
+	// EventRefreshRotationVelocityExceeded fires when the per-family
+	// rotation velocity cap is exceeded. Outcome=failure. ClientID + Reason
+	// carry the family id; Metadata carries "count" + "killed" (number of
+	// active family members invalidated). Wire effect: DeleteFamily →
+	// invalid_grant (oracle-safe, same shape as family reuse).
+	EventRefreshRotationVelocityExceeded EventType = "refresh_rotation_velocity_exceeded"
+
+	// EventSigningKeyRotationCoordinated fires when a coordinated key-rotation
+	// cutover message is published (broadcaster) or adopted (peer) over the
+	// cluster Bus. Outcome=success; Metadata carries "outcome" discriminating
+	// "deferred", "extended", "adopted_only", or "noop".
+	EventSigningKeyRotationCoordinated EventType = "signing_key_rotation_coordinated"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.
@@ -339,18 +317,24 @@ const (
 // Sensitive fields (raw token bodies, password material) MUST NOT be put on
 // an Event. Use TokenID for a hash/prefix that's safe to store.
 type Event struct {
-	ID            string            `json:"id"`
-	Type          EventType         `json:"type"`
-	Outcome       Outcome           `json:"outcome"`
-	Timestamp     time.Time         `json:"timestamp"`
-	RequestID     string            `json:"request_id,omitempty"`
-	TraceID       string            `json:"trace_id,omitempty"`
-	SpanID        string            `json:"span_id,omitempty"`
-	ParentSpanID  string            `json:"parent_span_id,omitempty"`
-	ActorID       string            `json:"actor_id,omitempty"`
-	ActorIP       string            `json:"actor_ip,omitempty"`
-	UserAgent     string            `json:"user_agent,omitempty"`
-	ClientID      string            `json:"client_id,omitempty"`
+	ID           string    `json:"id"`
+	Type         EventType `json:"type"`
+	Outcome      Outcome   `json:"outcome"`
+	Timestamp    time.Time `json:"timestamp"`
+	RequestID    string    `json:"request_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	SpanID       string    `json:"span_id,omitempty"`
+	ParentSpanID string    `json:"parent_span_id,omitempty"`
+	ActorID      string    `json:"actor_id,omitempty"`
+	ActorIP      string    `json:"actor_ip,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+	ClientID     string    `json:"client_id,omitempty"`
+	// TenantID is a first-class indexed field for per-tenant metering and
+	// querying. Populated by EnrichTenant when the tenant middleware ran;
+	// empty for requests outside a tenant context. Mirrors the "tenant.id"
+	// Metadata key but promotes it out of the JSON blob so the SQLite sink
+	// can index and aggregate efficiently without per-event JSON scanning.
+	TenantID      string            `json:"tenant_id,omitempty"`
 	Provider      string            `json:"provider,omitempty"`
 	TokenStrategy string            `json:"token_strategy,omitempty"`
 	SessionID     string            `json:"session_id,omitempty"`
