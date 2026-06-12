@@ -43,8 +43,9 @@ exact emission site.
 | `callback_failed`                     | 401  | OAuth provider rejected the exchange                               | Restart the auth flow                      |
 | `login_required`                      | 400  | `prompt=none` was requested but no live session can fulfill the silent renewal (missing/bad `id_token_hint`, session ended, or hint bound to a different client) | Fall back to the visible login flow        |
 | `interaction_required`                | 400  | (reserved) `prompt=none` set when the AS needs UI interaction to proceed                                            | Fall back to the visible login flow        |
-| `consent_required`                    | 400  | (reserved) `prompt=none` set when consent UI is required                                                            | Fall back to the visible consent step      |
+| `consent_required`                    | 200  | A `ConsentStore` is wired and the user has not yet granted the requested scopes (or `prompt=consent` forced re-consent). HTTP 200 so SPAs can distinguish it from a transport error. Always carries `iss`. The consent UI records the grant via `ConsentStore.RecordConsent`, then retries the login. | Show your consent dialog; retry after grant |
 | `account_selection_required`          | 400  | (reserved) `prompt=none` set when account-picker UI is required                                                     | Fall back to the visible chooser           |
+| `unmet_authentication_requirements`   | 400  | The RP supplied `acr_values` but the authenticator's `AchievedACR` is absent or not in that set (OIDC Core §3.1.2.6 / §5.5.1.1) | Route user through a stronger authentication method or re-prompt |
 
 ### Code delivery (`/auth/send-code`)
 

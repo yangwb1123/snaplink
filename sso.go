@@ -29,6 +29,7 @@ import (
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/metrics"
+	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/ratelimit"
@@ -267,6 +268,14 @@ type Server struct {
 	mfaChallengeTTL                time.Duration
 	anomalyRunner                  *anomaly.Runner
 	metrics                        *metrics.Metrics
+	// trustedProxies validates X-Forwarded-For chains when wired via
+	// WithTrustedProxies. When non-nil its Middleware is inserted outermost
+	// in Handler() (before rate limiting and every other middleware), so
+	// downstream KeyByClientIP calls see the validated IP via RealClientIP
+	// rather than the raw header. Nil = no XFF validation; every XFF
+	// consumer trusts the raw header unconditionally — safe only behind an
+	// edge that strips and re-adds XFF.
+	trustedProxies                 *middleware.TrustedProxies
 	tenantMetricsAllowlist         map[string]struct{} // nil/empty = per-tenant metrics off (§5)
 	rateLimitPolicy                *ratelimit.Policy
 	bodyLimit                      int64
@@ -375,6 +384,11 @@ type Server struct {
 	// resolves, so an ES256-labelled token only verifies against an
 	// ES256 key and an EdDSA-labelled token only against an EdDSA key.
 	supportedSigningAlgs []string
+
+	// consentStore persists end-user consent decisions (WithConsentStore).
+	// When nil all consent checks are skipped — behavior is byte-identical
+	// to a build without the feature.
+	consentStore ConsentStore
 }
 
 // jwksSingleFlight collapses concurrent JWKS document computations into a
@@ -1783,6 +1797,43 @@ func WithRateLimit(p ratelimit.Policy) Option {
 	return func(s *Server) { s.rateLimitPolicy = &p }
 }
 
+// WithConsentStore wires a persistent consent record store. When set,
+// /auth/login records the user's consent decision and enforces the
+// prompt=consent parameter (re-prompting even when a grant already exists).
+// When the requested scopes are not fully covered by an existing grant,
+// consent_required is returned (HTTP 200) so the SPA can surface a
+// consent screen. When nil (the default), all consent enforcement is skipped
+// — behavior is byte-identical to a build without this feature.
+func WithConsentStore(cs ConsentStore) Option {
+	return func(s *Server) { s.consentStore = cs }
+}
+
+// WithTrustedProxies configures a trusted-proxy CIDR allowlist for
+// X-Forwarded-For validation. When set, all X-Forwarded-For consumers
+// (rate-limiter IP key via ratelimit.KeyByClientIP) use the validated real
+// client IP derived by middleware.RealClientIP — which walks the XFF chain
+// from right to left and stops at the first hop that is NOT in a trusted
+// CIDR — rather than reading the raw header unconditionally.
+//
+// cidrs is a list of CIDR strings (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
+// identifying the IP ranges belonging to trusted proxy tiers. hops=0 means
+// "trust at most len(cidrs) proxy hops" — the safe default for most
+// deployments. Returns an error if any CIDR fails to parse so
+// misconfigured deployments fail loudly at startup.
+//
+// Without WithTrustedProxies, every XFF consumer trusts the raw header
+// unconditionally — safe only behind an edge that strips and re-adds XFF.
+// An internet-facing deployment without such an edge MUST use this option
+// to prevent an attacker from forging X-Forwarded-For: <trusted-IP> to
+// bypass IP-based rate limiting.
+func WithTrustedProxies(cidrs []string, hops int) (Option, error) {
+	tp, err := middleware.NewTrustedProxies(cidrs, hops)
+	if err != nil {
+		return nil, err
+	}
+	return func(s *Server) { s.trustedProxies = tp }, nil
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -1996,6 +2047,15 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.rateLimitPolicy != nil {
 		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
+	}
+	if s.trustedProxies != nil {
+		// TrustedProxies sits just outside the rate limiter so that
+		// KeyByClientIP — called inside the rate-limit middleware — sees
+		// the validated real client IP from the request context rather than
+		// the raw X-Forwarded-For header. It must wrap BEFORE rate limiting;
+		// placing it after would let the limiter bucket on an unvalidated
+		// (forgeable) IP value.
+		inner = s.trustedProxies.Middleware(inner)
 	}
 	if s.metrics != nil {
 		inner = metrics.Middleware(s.metrics)(inner)

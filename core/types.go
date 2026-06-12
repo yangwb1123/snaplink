@@ -699,12 +699,14 @@ type AuthResult struct {
 	RecommendedLanguage string   // BCP-47, optional
 
 	// AchievedACR is the Authentication Context Class Reference the
-	// authenticator actually satisfied (matching one of the requested
-	// AuthRequest.ACRValues, or its own determination). The AS surfaces it
-	// as the minted access + id token `acr` claim so an RP / resource
-	// server can verify authentication strength (OIDC Core §2, RFC 9470
-	// step-up). Empty = the authenticator reported no ACR → the claim is
-	// omitted (current default behavior, byte-identical).
+	// authenticator actually satisfied on this login (RFC 9068 §2.2 /
+	// OIDC Core §2).  Authenticators that can achieve different ACR
+	// levels (e.g. a multi-method provider that chose password vs MFA)
+	// populate this to tell the AS which level was reached; the AS
+	// stamps it as the id_token acr claim and checks it against the
+	// RP's acr_values request.  Empty = authenticator didn't report an
+	// ACR (no acr claim is emitted in the token; any acr_values check
+	// treats it as unmet).
 	AchievedACR string
 
 	// CredentialHealth carries a non-blocking login-time signal about

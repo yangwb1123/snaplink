@@ -1518,6 +1518,7 @@ type MetricsConfig struct {
 // overhead. See AGENTS.md §8d / §8f / §8g for the runtime behavior
 // of each.
 type SecurityConfig struct {
+	TrustedProxies TrustedProxiesConfig `yaml:"trusted_proxies"`
 	BodyLimit      BodyLimitConfig      `yaml:"body_limit"`
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
 	CORS           CORSConfig           `yaml:"cors"`
@@ -1525,6 +1526,26 @@ type SecurityConfig struct {
 	JTIReplay      JTIReplayConfig      `yaml:"jti_replay"`
 	AccountLockout AccountLockoutConfig `yaml:"account_lockout"`
 	MTLS           MTLSConfig           `yaml:"mtls"`
+}
+
+// TrustedProxiesConfig opts into X-Forwarded-For chain validation.
+//
+// When CIDRs is non-empty, the server installs middleware.TrustedProxies
+// (sso.WithTrustedProxies) that walks the XFF chain from right to left and
+// stops at the first hop that is NOT in one of the listed CIDRs. Downstream
+// consumers (ratelimit.KeyByClientIP) then see the validated real client IP
+// via middleware.RealClientIP instead of the raw header.
+//
+// Hops=0 means "trust at most len(CIDRs) proxy tiers." Increase it only
+// when a single CIDR covers multiple independent proxy tiers.
+//
+// Without this block (or with an empty CIDRs list), every XFF consumer
+// trusts the raw header unconditionally — safe only behind an edge that
+// strips and re-adds XFF. Internet-facing deployments without such an edge
+// MUST set CIDRs to prevent XFF forgery.
+type TrustedProxiesConfig struct {
+	CIDRs []string `yaml:"cidrs"`
+	Hops  int      `yaml:"hops"`
 }
 
 // MTLSConfig opts into RFC 8705 mTLS-bound access tokens.

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/snaplink/sso/security"
 )
 
 // registerForMgmt creates a new client and returns
@@ -143,8 +145,11 @@ func TestRegistrationMgmt_Put_UpdatesMetadata(t *testing.T) {
 	if len(stored.RedirectURIs) != 1 || stored.RedirectURIs[0] != "https://app.example/cb-new" {
 		t.Errorf("RedirectURIs = %v", stored.RedirectURIs)
 	}
-	if stored.RegistrationAccessToken != tok {
-		t.Errorf("RegistrationAccessToken changed: %q want %q", stored.RegistrationAccessToken, tok)
+	// The store holds a bcrypt hash of the original token, not the plaintext.
+	// Verify the hash still matches the token issued at registration time —
+	// a PUT must not replace or rotate the registration access token.
+	if !security.CompareClientSecret(stored.RegistrationAccessToken, tok) {
+		t.Errorf("RegistrationAccessToken no longer validates: stored=%q", stored.RegistrationAccessToken)
 	}
 }
 

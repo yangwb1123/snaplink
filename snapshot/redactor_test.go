@@ -2,6 +2,7 @@ package snapshot_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/snaplink/sso"
@@ -81,7 +82,8 @@ func TestExportWithRedactionZerosSecrets(t *testing.T) {
 
 // TestExportWithoutRedactionKeepsSecrets is the backward-compat gate:
 // default ExportOptions (no redactor, no Snapshotter default) returns a
-// snapshot whose clients still carry their secrets.
+// snapshot whose clients still carry their secrets.  Secrets are stored as
+// bcrypt hashes, so the snapshot carries the hash (not the plaintext).
 func TestExportWithoutRedactionKeepsSecrets(t *testing.T) {
 	ctx := context.Background()
 	sn := &snapshot.Snapshotter{Clients: redactSourceStore(t)}
@@ -91,8 +93,22 @@ func TestExportWithoutRedactionKeepsSecrets(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 	alpha := clientByID(snap.Resources.Clients, "alpha")
-	if alpha == nil || alpha.Secret != "alpha-secret" || alpha.RegistrationAccessToken != "alpha-regtok" {
-		t.Errorf("default export must preserve secrets, got %+v", alpha)
+	if alpha == nil {
+		t.Fatal("alpha missing from snapshot")
+	}
+	// The stored Secret is a bcrypt hash — a non-redacted export must include
+	// it (not empty it).  The hash starts with "$2".
+	if alpha.Secret == "" {
+		t.Error("default export zeroed alpha.Secret, want the stored bcrypt hash")
+	}
+	if !strings.HasPrefix(alpha.Secret, "$2") {
+		t.Errorf("expected bcrypt hash in exported Secret, got %q", alpha.Secret)
+	}
+	if alpha.RegistrationAccessToken == "" {
+		t.Error("default export zeroed alpha.RegistrationAccessToken, want the stored bcrypt hash")
+	}
+	if !strings.HasPrefix(alpha.RegistrationAccessToken, "$2") {
+		t.Errorf("expected bcrypt hash in exported RegistrationAccessToken, got %q", alpha.RegistrationAccessToken)
 	}
 }
 
@@ -114,11 +130,16 @@ func TestRedactedExportDoesNotMutateLiveStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get alpha: %v", err)
 	}
-	if live.Secret != "alpha-secret" {
-		t.Errorf("LIVE store mutated: alpha.Secret = %q, want %q", live.Secret, "alpha-secret")
+	// The live store holds a bcrypt hash of "alpha-secret" — it must not have
+	// been zeroed by the redacted export.
+	if live.Secret == "" {
+		t.Errorf("LIVE store mutated: alpha.Secret was zeroed")
 	}
-	if live.RegistrationAccessToken != "alpha-regtok" {
-		t.Errorf("LIVE store mutated: alpha.RegistrationAccessToken = %q", live.RegistrationAccessToken)
+	if !strings.HasPrefix(live.Secret, "$2") {
+		t.Errorf("LIVE store mutated: alpha.Secret is not a bcrypt hash: %q", live.Secret)
+	}
+	if live.RegistrationAccessToken == "" {
+		t.Errorf("LIVE store mutated: alpha.RegistrationAccessToken was zeroed")
 	}
 	// The credential grant must still validate after the redacted export.
 	if err := cs.ValidateSecret(ctx, "alpha", "alpha-secret"); err != nil {
@@ -182,8 +203,14 @@ func TestComposeChainsRedactors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export noop: %v", err)
 	}
-	if alpha := clientByID(snap.Resources.Clients, "alpha"); alpha == nil || alpha.Secret != "alpha-secret" {
-		t.Errorf("empty Compose must be a no-op, got %+v", alpha)
+	// Empty Compose is a no-op — the exported secret must be the stored bcrypt hash
+	// (not empty and not the plaintext).
+	alpha := clientByID(snap.Resources.Clients, "alpha")
+	if alpha == nil || alpha.Secret == "" {
+		t.Errorf("empty Compose must be a no-op (non-empty secret), got %+v", alpha)
+	}
+	if alpha != nil && !strings.HasPrefix(alpha.Secret, "$2") {
+		t.Errorf("empty Compose must be a no-op (bcrypt hash expected), got Secret=%q", alpha.Secret)
 	}
 }
 

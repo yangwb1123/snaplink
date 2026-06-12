@@ -1,6 +1,9 @@
 package core
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Authenticator defines how a user is authenticated.
 // Implement this interface to support any SSO provider (password, OIDC, SAML, LDAP, etc.).
@@ -168,4 +171,36 @@ type TokenMeta struct {
 	IssuedAt  int64    `json:"issued_at_unix,omitempty"`
 	ExpiresAt int64    `json:"expires_at_unix,omitempty"`
 	Strategy  string   `json:"strategy,omitempty"` // "jwt" | "session" | ...
+}
+
+// ConsentGrant records that a user granted a client permission to access
+// a set of scopes. The grant is per-(user, client) pair; each call to
+// RecordConsent REPLACES the prior grant for that pair.
+type ConsentGrant struct {
+	UserID    string
+	ClientID  string
+	Scopes    []string  // sorted, deduplicated
+	GrantedAt time.Time
+}
+
+// ConsentStore persists end-user consent decisions. Callers are the
+// /auth/login flow (record grant) and the self-service portal (list/revoke).
+// When nil (not wired), the Server skips all consent checks — behavior is
+// byte-identical to a pre-consent build.
+type ConsentStore interface {
+	// RecordConsent upserts a ConsentGrant for (userID, clientID).
+	// Scopes are the union of whatever the user approved.
+	RecordConsent(ctx context.Context, grant ConsentGrant) error
+
+	// GetConsent returns the current grant for (userID, clientID).
+	// Returns ErrNoConsentGrant if none exists.
+	GetConsent(ctx context.Context, userID, clientID string) (ConsentGrant, error)
+
+	// RevokeConsent removes the grant for (userID, clientID).
+	// No-op if none exists (idempotent).
+	RevokeConsent(ctx context.Context, userID, clientID string) error
+
+	// ListByUser returns all grants for userID, in descending GrantedAt order.
+	// Returns empty slice (not error) when none exist.
+	ListByUser(ctx context.Context, userID string) ([]ConsentGrant, error)
 }

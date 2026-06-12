@@ -3,6 +3,7 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/snaplink/sso"
@@ -41,8 +42,16 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if out.Secret != "shh" || out.Name != "Web App" || out.TenantID != "acme" {
+	// Secret is now stored as a bcrypt hash — verify via ValidateSecret, not
+	// direct string comparison.
+	if out.Name != "Web App" || out.TenantID != "acme" {
 		t.Errorf("scalar mismatch: %+v", out)
+	}
+	if !strings.HasPrefix(out.Secret, "$2") {
+		t.Errorf("Secret not hashed after Add: %q", out.Secret)
+	}
+	if err := st.ValidateSecret(context.Background(), "web", "shh"); err != nil {
+		t.Errorf("ValidateSecret with original plaintext: %v", err)
 	}
 	if len(out.RedirectURIs) != 2 || len(out.AllowedScopes) != 2 || len(out.AllowedAuthenticators) != 2 {
 		t.Errorf("slice round-trip failed: %+v", out)
@@ -101,8 +110,9 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after restart: %v", err)
 	}
-	if out.RegistrationAccessToken != "rat-secret-7592" {
-		t.Errorf("RegistrationAccessToken = %q want rat-secret-7592", out.RegistrationAccessToken)
+	// RegistrationAccessToken is stored as a bcrypt hash — verify via validation
+	if !strings.HasPrefix(out.RegistrationAccessToken, "$2") {
+		t.Errorf("RegistrationAccessToken not hashed after Add: %q", out.RegistrationAccessToken)
 	}
 	if len(out.JWKS) != 1 || out.JWKS[0].Kid != "k1" || out.JWKS[0].Kty != "OKP" ||
 		out.JWKS[0].Crv != "Ed25519" || out.JWKS[0].X != "abc123" {
@@ -151,7 +161,8 @@ func TestSQLiteClients_SecurityFieldsUpdateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if out.RegistrationAccessToken != "updated-rat" || !out.Federation ||
+	// RegistrationAccessToken is now stored as a bcrypt hash.
+	if !strings.HasPrefix(out.RegistrationAccessToken, "$2") || !out.Federation ||
 		out.IDTokenEncryptedResponseAlg != "RSA-OAEP-256" {
 		t.Errorf("Update scalar v2 fields not applied: %+v", out)
 	}
@@ -220,18 +231,30 @@ func TestSQLiteClients_ValidateSecret(t *testing.T) {
 }
 
 func TestSQLiteClients_UpdateChangesFields(t *testing.T) {
+	ctx := context.Background()
 	st := newClientStore(t)
-	_ = st.Add(context.Background(), &sso.Client{ID: "u", Secret: "s1", Active: true})
+	_ = st.Add(ctx, &sso.Client{ID: "u", Secret: "s1", Active: true})
 	updated := &sso.Client{
 		ID: "u", Secret: "s2", Name: "Updated",
 		RedirectURIs: []string{"https://new/cb"}, Active: false, RequirePKCE: true,
 	}
-	if err := st.Update(context.Background(), updated); err != nil {
+	if err := st.Update(ctx, updated); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	out, _ := st.Get(context.Background(), "u")
-	if out.Secret != "s2" || out.Name != "Updated" || out.Active {
+	out, _ := st.Get(ctx, "u")
+	// Secret is stored as a bcrypt hash — verify the new value via
+	// ValidateSecret rather than direct comparison.
+	if out.Name != "Updated" || out.Active {
 		t.Errorf("update not applied: %+v", out)
+	}
+	if !strings.HasPrefix(out.Secret, "$2") {
+		t.Errorf("Secret not hashed after Update: %q", out.Secret)
+	}
+	if err := st.ValidateSecret(ctx, "u", "s2"); err != nil {
+		t.Errorf("ValidateSecret with updated plaintext: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "u", "s1"); err == nil {
+		t.Error("old secret still accepted after Update")
 	}
 	if !out.RequirePKCE || out.RedirectURIs[0] != "https://new/cb" {
 		t.Errorf("update slices/bools not applied: %+v", out)
@@ -395,5 +418,89 @@ func TestSQLiteStats_AddDeleteRestoresHash(t *testing.T) {
 	c3, h3, _ := st.Stats(ctx)
 	if c3 != 1 || h3 != h1 {
 		t.Errorf("delete did not restore fingerprint: count=%d hash=%s want 1,%s", c3, h3, h1)
+	}
+}
+
+// TestSQLiteClients_SecretHashAtRest proves that Add stores a bcrypt hash,
+// not the plaintext, and that ValidateSecret accepts the original plaintext.
+func TestSQLiteClients_SecretHashAtRest(t *testing.T) {
+	ctx := context.Background()
+	st := newClientStore(t)
+	plaintext := "plaintext-secret"
+	if err := st.Add(ctx, &sso.Client{ID: "hash-test", Secret: plaintext, Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	out, err := st.Get(ctx, "hash-test")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// Stored value must be a bcrypt hash, not the plaintext.
+	if out.Secret == plaintext {
+		t.Error("Secret stored as plaintext — hash-at-rest not applied")
+	}
+	if !strings.HasPrefix(out.Secret, "$2") {
+		t.Errorf("stored value is not a bcrypt hash: %q", out.Secret)
+	}
+	// Correct plaintext must validate.
+	if err := st.ValidateSecret(ctx, "hash-test", plaintext); err != nil {
+		t.Errorf("ValidateSecret correct: %v", err)
+	}
+	// Wrong plaintext must fail.
+	if err := st.ValidateSecret(ctx, "hash-test", "wrong"); err == nil {
+		t.Error("wrong secret accepted")
+	}
+}
+
+// TestSQLiteClients_SecretPlaintextFallback proves the backward-compatibility
+// path: a client whose Secret was inserted directly as plaintext (pre-migration)
+// is still accepted by ValidateSecret without rehashing.
+func TestSQLiteClients_SecretPlaintextFallback(t *testing.T) {
+	ctx := context.Background()
+	st := newClientStore(t)
+	// Bypass the hashing by inserting the raw plaintext directly via SQL —
+	// the same situation an existing DB row is in before this feature was
+	// deployed.
+	_, err := st.DB().ExecContext(ctx, `INSERT INTO clients
+		(id, secret, name, redirect_uris, allowed_scopes, allowed_authenticators,
+		 token_strategy, active, tenant_id, require_pkce, registration_access_token,
+		 jwks, allowed_resources, allowed_request_uris, post_logout_redirect_uris,
+		 id_token_enc_alg, id_token_enc_enc, userinfo_enc_alg, userinfo_enc_enc, federation)
+		VALUES ('legacy', 'raw-plaintext', '', '[]', '[]', '[]', '', 1, '', 0, '',
+		 '[]', '[]', '[]', '[]', '', '', '', '', 0)`)
+	if err != nil {
+		t.Fatalf("direct insert: %v", err)
+	}
+	// ValidateSecret must accept the plaintext via the fallback path.
+	if err := st.ValidateSecret(ctx, "legacy", "raw-plaintext"); err != nil {
+		t.Errorf("plaintext fallback rejected: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "legacy", "wrong"); err == nil {
+		t.Error("wrong plaintext accepted on fallback path")
+	}
+}
+
+// TestSQLiteClients_RotateSecretHashAtRest proves that RotateSecret stores a
+// bcrypt hash and returns the plaintext to the caller.
+func TestSQLiteClients_RotateSecretHashAtRest(t *testing.T) {
+	ctx := context.Background()
+	st := newClientStore(t)
+	_ = st.Add(ctx, &sso.Client{ID: "rot", Secret: "initial", Active: true})
+	plaintext, err := st.RotateSecret(ctx, "rot")
+	if err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+	if plaintext == "" || strings.HasPrefix(plaintext, "$2") {
+		t.Errorf("RotateSecret returned hash instead of plaintext: %q", plaintext)
+	}
+	out, _ := st.Get(ctx, "rot")
+	if !strings.HasPrefix(out.Secret, "$2") {
+		t.Errorf("stored secret after rotate is not a bcrypt hash: %q", out.Secret)
+	}
+	if err := st.ValidateSecret(ctx, "rot", plaintext); err != nil {
+		t.Errorf("ValidateSecret(rotated plaintext): %v", err)
+	}
+	// The old plaintext must no longer work.
+	if err := st.ValidateSecret(ctx, "rot", "initial"); err == nil {
+		t.Error("old plaintext still accepted after rotate")
 	}
 }

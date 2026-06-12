@@ -38,8 +38,12 @@ const (
 // attacker who can forge the header can otherwise mint mTLS-bound
 // tokens for an arbitrary certificate without ever holding the
 // matching key. Same threat model as X-Forwarded-For — only honor
-// when received from a known proxy IP. The companion
-// [TrustedProxies] middleware enforces this at the network layer.
+// when received from a known proxy IP.
+//
+// For XFF-keyed consumers (rate limiter, region header), install
+// middleware.TrustedProxies (sso.WithTrustedProxies) to validate the
+// XFF chain. The cert header itself must be stripped at the network
+// edge (ingress rule / proxy config), not by Go middleware.
 //
 // Common deployments:
 //   - nginx (X-SSL-Client-Cert, $ssl_client_escaped_cert): URLPEM

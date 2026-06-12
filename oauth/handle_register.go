@@ -407,7 +407,10 @@ func authorizeRegistrationMgmt(d RegisterDeps, ctx core.HandlerContext) (*core.C
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
 		return nil, false
 	}
-	if security.ConstantTimeStringEq(bearer, client.RegistrationAccessToken) != 1 {
+	// The stored RegistrationAccessToken may be a bcrypt hash (written by
+	// the store's Add path).  CompareClientSecret handles both cases while
+	// keeping the same constant-time guarantee for the plaintext fallback.
+	if !security.CompareClientSecret(client.RegistrationAccessToken, bearer) {
 		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Registration access token missing or invalid")
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
 		return nil, false
@@ -445,9 +448,15 @@ func recordDCRLifecycle(d RegisterDeps, ctx core.HandlerContext, t audit.EventTy
 // reads; the original /register response is the only canonical
 // distribution point).
 func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResponse {
+	// c.Secret is a bcrypt hash after store.Add/RotateSecret — we MUST NOT
+	// return the hash as client_secret (it would leak the hash and mislead
+	// the client into presenting it as a credential).  RFC 7592 §2.1 says
+	// the server SHOULD include client_secret; we satisfy the intent at the
+	// only moment the plaintext is known (initial /register and RotateSecret
+	// responses).  Subsequent GET/PUT responses omit it, which RFC 7592 §2.1
+	// also permits ("SHOULD" is not "MUST").
 	return DCRResponse{
 		ClientID:               c.ID,
-		ClientSecret:           c.Secret, // RFC 7592 §2.1 SHOULD include
 		ClientSecretExpiresAt:  0,
 		RegistrationClientURI:  middleware.BaseURL(ctx.Request()) + PathRegister + "/" + c.ID,
 		RedirectURIs:           c.RedirectURIs,

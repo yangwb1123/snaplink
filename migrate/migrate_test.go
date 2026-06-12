@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -161,83 +162,6 @@ func TestRun_Validation(t *testing.T) {
 	}
 }
 
-// TestRun_RejectsRolledBackBinary is the upper-bound guard: a DB
-// forward-migrated to v2 must REFUSE an older binary that only knows up to
-// v1 (the canary-rollback foot-gun) instead of silently skipping every
-// migration and serving on a schema it doesn't understand. The loop
-// applies nothing in this case, so the post-loop guard is the only catch.
-func TestRun_RejectsRolledBackBinary(t *testing.T) {
-	db := openDB(t)
-	ctx := context.Background()
-
-	// Forward-migrate to v2 with a "newer binary".
-	v2 := append(append([]migrate.Migration{}, base...),
-		migrate.Migration{Version: 2, Name: "add_color", SQL: `ALTER TABLE widgets ADD COLUMN color TEXT`})
-	if err := migrate.Run(ctx, db, "demo", v2); err != nil {
-		t.Fatalf("forward to v2: %v", err)
-	}
-	if v := current(t, db, "demo"); v != 2 {
-		t.Fatalf("setup version = %d, want 2", v)
-	}
-
-	// Now an OLDER binary (knows only up to v1) boots against the v2 DB.
-	err := migrate.Run(ctx, db, "demo", base)
-	if err == nil {
-		t.Fatal("expected error: older binary must refuse a forward-migrated DB")
-	}
-	for _, want := range []string{`"demo"`, "v2", "v1"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q missing %q (operator needs the version mismatch spelled out)", err, want)
-		}
-	}
-	// The guard rejects before COMMIT, so the recorded version is untouched.
-	if v := current(t, db, "demo"); v != 2 {
-		t.Errorf("version = %d, want 2 (guard must not mutate the DB)", v)
-	}
-}
-
-// TestRun_UpperBoundNormalCases proves the guard is inert for every
-// non-rollback case: fresh apply, same-version re-run, and a forward
-// upgrade all return nil (equal-or-lower DB version behaves as before).
-func TestRun_UpperBoundNormalCases(t *testing.T) {
-	ctx := context.Background()
-	v2 := append(append([]migrate.Migration{}, base...),
-		migrate.Migration{Version: 2, Name: "add_color", SQL: `ALTER TABLE widgets ADD COLUMN color TEXT`})
-
-	t.Run("fresh apply (DB v0 < maxKnown)", func(t *testing.T) {
-		db := openDB(t)
-		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
-			t.Fatalf("fresh apply: %v", err)
-		}
-		if v := current(t, db, "demo"); v != 2 {
-			t.Errorf("version = %d, want 2", v)
-		}
-	})
-
-	t.Run("same-version re-run (DB == maxKnown)", func(t *testing.T) {
-		db := openDB(t)
-		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
-			t.Fatalf("first run: %v", err)
-		}
-		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
-			t.Fatalf("same-version re-run must not error: %v", err)
-		}
-	})
-
-	t.Run("forward upgrade v1->v2", func(t *testing.T) {
-		db := openDB(t)
-		if err := migrate.Run(ctx, db, "demo", base); err != nil {
-			t.Fatalf("v1: %v", err)
-		}
-		if err := migrate.Run(ctx, db, "demo", v2); err != nil {
-			t.Fatalf("v1->v2 upgrade must not error: %v", err)
-		}
-		if v := current(t, db, "demo"); v != 2 {
-			t.Errorf("version = %d, want 2", v)
-		}
-	})
-}
-
 func TestCurrentVersion_MissingTableIsZero(t *testing.T) {
 	db := openDB(t)
 	if v := current(t, db, "never_run"); v != 0 {
@@ -378,5 +302,93 @@ func TestRun_ConcurrentRunnersSerialize(t *testing.T) {
 	}
 	if n := rowCount(t, db, "schema_migrations_demo"); n != 1 {
 		t.Errorf("version recorded %d times, want exactly 1", n)
+	}
+}
+
+func TestMaxVersion_Empty(t *testing.T) {
+	if got := migrate.MaxVersion(nil); got != -1 {
+		t.Errorf("MaxVersion(nil) = %d, want -1", got)
+	}
+	if got := migrate.MaxVersion([]migrate.Migration{}); got != -1 {
+		t.Errorf("MaxVersion([]) = %d, want -1", got)
+	}
+}
+
+func TestMaxVersion_Single(t *testing.T) {
+	ms := []migrate.Migration{{Version: 5, Name: "only", SQL: "SELECT 1"}}
+	if got := migrate.MaxVersion(ms); got != 5 {
+		t.Errorf("MaxVersion = %d, want 5", got)
+	}
+}
+
+func TestMaxVersion_Multi(t *testing.T) {
+	ms := []migrate.Migration{
+		{Version: 1, Name: "a", SQL: "SELECT 1"},
+		{Version: 3, Name: "b", SQL: "SELECT 1"},
+		{Version: 7, Name: "c", SQL: "SELECT 1"},
+	}
+	if got := migrate.MaxVersion(ms); got != 7 {
+		t.Errorf("MaxVersion = %d, want 7 (highest)", got)
+	}
+}
+
+// TestCheckSchema_SafeCases proves nil is returned when the live DB version
+// is at or below the binary's declared max, or when the DB has no migrations
+// yet (fresh install).
+func TestCheckSchema_SafeCases(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("fresh DB (version 0) is safe", func(t *testing.T) {
+		db := openDB(t)
+		if err := migrate.CheckSchema(ctx, db, "demo", 1); err != nil {
+			t.Errorf("fresh DB: unexpected error: %v", err)
+		}
+	})
+
+	t.Run("db_version == binaryMax is safe", func(t *testing.T) {
+		db := openDB(t)
+		if err := migrate.Run(ctx, db, "demo", base); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := migrate.CheckSchema(ctx, db, "demo", 1); err != nil {
+			t.Errorf("equal versions: unexpected error: %v", err)
+		}
+	})
+
+	t.Run("db_version < binaryMax is safe", func(t *testing.T) {
+		db := openDB(t)
+		if err := migrate.Run(ctx, db, "demo", base); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := migrate.CheckSchema(ctx, db, "demo", 99); err != nil {
+			t.Errorf("db behind binary: unexpected error: %v", err)
+		}
+	})
+}
+
+// TestCheckSchema_SchemaTooNew proves ErrSchemaTooNew is returned when the
+// live DB version exceeds the binary's declared max — the canary-rollback
+// foot-gun this guard was designed to catch.
+func TestCheckSchema_SchemaTooNew(t *testing.T) {
+	ctx := context.Background()
+	db := openDB(t)
+	v2 := append(append([]migrate.Migration{}, base...),
+		migrate.Migration{Version: 2, Name: "add_col", SQL: `ALTER TABLE widgets ADD COLUMN color TEXT`})
+	if err := migrate.Run(ctx, db, "demo", v2); err != nil {
+		t.Fatalf("forward to v2: %v", err)
+	}
+
+	err := migrate.CheckSchema(ctx, db, "demo", 1)
+	if err == nil {
+		t.Fatal("expected ErrSchemaTooNew when db=v2, binary=v1")
+	}
+	if !errors.Is(err, migrate.ErrSchemaTooNew) {
+		t.Errorf("error is %v, want errors.Is(err, ErrSchemaTooNew) true", err)
+	}
+	// Error message must name both versions so operators can diagnose.
+	for _, want := range []string{"v2", "v1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
 	}
 }

@@ -35,10 +35,19 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
 )
+
+// ErrSchemaTooNew is returned by CheckSchema when the live database schema is
+// ahead of the binary's declared max version. This means an older binary is
+// running against a forward-migrated database — a canary rollback without a
+// matching schema downgrade (which doesn't exist; rollback is restore-from-
+// snapshot). The operator must restore from snapshot or deploy the newer
+// binary instead.
+var ErrSchemaTooNew = errors.New("migrate: database schema is ahead of binary (rollback needed first)")
 
 // busyTimeoutMS bounds how long a contended migration waits for the
 // write lock before giving up. Generous because it only applies at
@@ -173,21 +182,6 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 		return fmt.Errorf("migrate(%s): read current version: %w", namespace, err)
 	}
 
-	// Upper-bound (rolled-back-binary) guard. Forward-only application
-	// silently SKIPS every migration when the DB is already AHEAD of this
-	// binary's max-known version — so an older binary booting against a
-	// FORWARD-migrated database would commit and serve with a schema it
-	// doesn't understand (a canary-rollback foot-gun, the commonest DR
-	// action). validate() proves the slice is strictly increasing, so the
-	// last element carries the highest version. Refuse to serve instead.
-	// This runs even when nothing was pending: current==maxKnown is the
-	// up-to-date case (no error), current>maxKnown is the rollback case
-	// (the loop below applies nothing, so the guard is the only catch).
-	maxKnown := migrations[len(migrations)-1].Version
-	if current > maxKnown {
-		return fmt.Errorf("migrate: database schema for %q is at v%d but this binary only knows up to v%d (rolled-back/too-old binary?)", namespace, current, maxKnown)
-	}
-
 	for _, m := range migrations {
 		if m.Version <= current {
 			continue
@@ -270,6 +264,40 @@ func Status(ctx context.Context, db *sql.DB) ([]NamespaceStatus, error) {
 		out = append(out, st)
 	}
 	return out, nil
+}
+
+// MaxVersion returns the highest version number declared in the provided
+// migrations slice, or -1 when the slice is empty (no schema defined).
+// Backends call this to advertise the schema version their binary expects
+// so CheckSchema can refuse to serve when the live DB is ahead of it.
+func MaxVersion(migrations []Migration) int {
+	if len(migrations) == 0 {
+		return -1
+	}
+	// validate() proves the slice is strictly increasing, so the last
+	// element always carries the highest version. We do NOT call validate
+	// here because MaxVersion is a pure read on the slice — callers that
+	// need validation already route through Run.
+	return migrations[len(migrations)-1].Version
+}
+
+// CheckSchema returns ErrSchemaTooNew when the live DB schema for namespace
+// is AHEAD of binaryMax — meaning an older binary is running against a
+// forward-migrated database (canary rollback without a schema downgrade).
+// Returns nil when db_version <= binaryMax (safe to run) or when the DB
+// has no migrations yet (fresh install). The boot path treats a non-nil
+// error as fatal so the operator notices before the server ever starts
+// accepting traffic with a schema it does not understand.
+func CheckSchema(ctx context.Context, db *sql.DB, namespace string, binaryMax int) error {
+	live, err := CurrentVersion(ctx, db, namespace)
+	if err != nil {
+		return err
+	}
+	if live > binaryMax {
+		return fmt.Errorf("%w: namespace %q is at v%d but binary only knows up to v%d",
+			ErrSchemaTooNew, namespace, live, binaryMax)
+	}
+	return nil
 }
 
 // CurrentVersion returns the highest applied migration version for the

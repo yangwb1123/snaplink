@@ -583,6 +583,34 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		_ = s.accountLockout.RegisterSuccess(ctx.Request().Context(), lockKey)
 	}
 
+	// OIDC Core §3.1.2.6 / §5.5.1.1 acr_values enforcement.
+	// When the RP requests specific ACR values the AS MUST achieve
+	// one of them.  Check immediately after credential validation
+	// so the gate applies regardless of whether MFA or a risk
+	// decision follows.  Empty req.ACRValues = no constraint;
+	// a present list with no matching AchievedACR = fail.
+	if req.ACRValues != "" {
+		acrList := splitScope(req.ACRValues)
+		if len(acrList) > 0 {
+			achieved := result.AchievedACR
+			matched := false
+			for _, want := range acrList {
+				if want == achieved {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				// AchievedACR is empty or not in the requested set.
+				// Return the spec-mandated error; do NOT reveal which
+				// ACR was achieved (oracle-safe).
+				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrUnmetAuthReqs)
+				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnmetAuthReqs))
+				return
+			}
+		}
+	}
+
 	// Risk evaluation. Skipped entirely (zero overhead) when no scorer
 	// configured. Scorer errors fail OPEN by contract — failing closed
 	// on a misbehaving scorer locks every user out. Operators worried
@@ -708,6 +736,16 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		return
 	}
 	req.Scope = granted
+
+	// Consent gate (opt-in via WithConsentStore, nil = no-op).
+	// Runs AFTER scope authorization so req.Scope is the granted set that
+	// will actually appear in the issued token — the grant we check and
+	// record is authoritative for exactly those scopes.
+	if s.consentStore != nil {
+		if s.handleConsentGate(ctx, result.UserID, client.ID, req.Scope, req.Prompt) {
+			return
+		}
+	}
 
 	// OAuth 2.0 authorization_code branch: instead of minting a token
 	// here, persist a short-lived code bound to (user, client, redirect_uri)
@@ -2233,4 +2271,93 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 	}
 
 	ctx.JSON(http.StatusOK, client)
+}
+
+// handleConsentGate checks whether the user has consented to the requested
+// scopes for the given client. Returns true when the gate fired (caller
+// MUST return immediately) or false when the request may proceed.
+//
+// Gate logic:
+//  1. prompt=consent forces re-prompt even when a valid grant exists.
+//  2. No existing grant -> consent_required (first-time flow).
+//  3. Existing grant that doesn't cover all requested scopes -> consent_required.
+//  4. Otherwise -> record/refresh the grant (updates granted_at) and continue.
+//
+// On consent_required the response is HTTP 200 so the SPA can detect it
+// as a structured signal (not an error HTTP status) and surface a consent
+// screen. The iss field is always present per RFC 9207.
+func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, scopes []string, prompt string) (halted bool) {
+	requestCtx := ctx.Request().Context()
+
+	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
+
+	promptConsent := hasPromptValue(prompt, PromptConsent)
+	needsConsent := false
+
+	switch {
+	case errors.Is(err, ErrNoConsentGrant):
+		// First-time authorization — user has never granted for this client.
+		needsConsent = true
+	case err != nil:
+		// Store outage: fail-open to preserve availability (matches the
+		// audit / risk-scorer / geo fail-open contract). Log and continue.
+		s.logger.Error("consent store get failed; skipping gate", "user", userID, "client", clientID, "error", err)
+	case promptConsent:
+		// RP requested explicit re-consent (e.g. for UI branding or re-auth).
+		needsConsent = true
+	case !scopesSubsumed(grant.Scopes, scopes):
+		// Existing grant does not cover all the requested scopes — new scopes
+		// were added to the authorization request since the user last consented.
+		needsConsent = true
+	}
+
+	if needsConsent {
+		ctx.JSON(http.StatusOK, map[string]any{
+			KeyError: ErrConsentRequired,
+			KeyIss:   s.resolveIssuer(ctx),
+		})
+		return true
+	}
+
+	// Grant exists and is sufficient (or store outage fell through): persist
+	// an up-to-date record so the granted_at timestamp stays fresh and any
+	// newly-in-scope scopes are saved. Fail-open on write errors — the
+	// absence of a stored grant is not a correctness issue here since we
+	// already confirmed the existing grant is sufficient.
+	_ = s.consentStore.RecordConsent(requestCtx, ConsentGrant{
+		UserID:    userID,
+		ClientID:  clientID,
+		Scopes:    scopes,
+		GrantedAt: time.Now(),
+	})
+	return false
+}
+
+// hasPromptValue reports whether the space-separated OIDC prompt parameter
+// contains the named value (e.g. "consent"). Case-sensitive per spec.
+func hasPromptValue(prompt, val string) bool {
+	for _, p := range strings.Fields(prompt) {
+		if p == val {
+			return true
+		}
+	}
+	return false
+}
+
+// scopesSubsumed reports whether every scope in requested is present in
+// granted. An empty requested set is trivially subsumed (nothing to check).
+func scopesSubsumed(granted, requested []string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(granted))
+	for _, s := range granted {
+		set[s] = struct{}{}
+	}
+	for _, r := range requested {
+		if _, ok := set[r]; !ok {
+			return false
+		}
+	}
+	return true
 }

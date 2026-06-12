@@ -20,4 +20,10 @@ var (
 	// have no notion of "list active tokens" because tokens are stateless.
 	// Admin RPCs translate this to gRPC Unimplemented / HTTP 501.
 	ErrUnsupportedOperation = errors.New("sso: operation not supported by backend")
+
+	// ErrNoConsentGrant is returned by ConsentStore.GetConsent when no
+	// consent record exists for the requested (userID, clientID) pair.
+	// The consent gate in /auth/login treats this as "user has never
+	// consented" and returns consent_required.
+	ErrNoConsentGrant = errors.New("sso: no consent grant found")
 )

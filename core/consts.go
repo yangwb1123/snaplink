@@ -383,6 +383,13 @@ const (
 	ErrConsentRequired          = "consent_required"
 	ErrAccountSelectionRequired = "account_selection_required"
 
+	// ErrUnmetAuthReqs is returned on /auth/login when the RP
+	// supplied acr_values and the authenticator's AchievedACR is
+	// either absent or not in that set.  OIDC Core §3.1.2.6 /
+	// §5.5.1.1: the AS MUST return this code when it cannot
+	// satisfy the requested Authentication Context Class.
+	ErrUnmetAuthReqs = "unmet_authentication_requirements"
+
 	// RFC 9449 §5.2 — invalid_dpop_proof is returned when the
 	// `DPoP` header is present but fails verification (bad
 	// signature, mismatched htm / htu / iat, replayed jti).

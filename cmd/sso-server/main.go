@@ -40,6 +40,7 @@ import (
 	auditsqlite "github.com/snaplink/sso/audit/sqlite"
 	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/authenticators/webauthn"
+	webauthnsqlite "github.com/snaplink/sso/authenticators/webauthn/sqlite"
 	"github.com/snaplink/sso/bootstrap"
 	"github.com/snaplink/sso/bootstrap/builtin"
 	bootstrapfile "github.com/snaplink/sso/bootstrap/file"
@@ -1428,6 +1429,25 @@ func appendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
 		return opts
 	}
 	return append(opts, sso.WithReadyCheck(name, p.Ping))
+}
+
+// checkSQLiteSchema calls migrate.CheckSchema on the store's underlying
+// database when v exposes a DB() *sql.DB method (every SQLite store does).
+// Memory backends don't implement DB() so the check silently no-ops for
+// them — the same additive pattern as appendReadyCheck. Returns a fatal
+// error when the live schema is ahead of binaryMax; this is a BOOT GATE,
+// not a /readyz check, because a schema mismatch corrupts data before any
+// request is served.
+func checkSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax int) error {
+	d, ok := v.(interface{ DB() *sql.DB })
+	if !ok {
+		return nil
+	}
+	db := d.DB()
+	if db == nil {
+		return nil
+	}
+	return migrate.CheckSchema(ctx, db, namespace, binaryMax)
 }
 
 // appendStorageHealthSource collects v as a per-store entry for the
@@ -2965,6 +2985,21 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity session_manager: %w", err)
 	}
+	// Schema-version boot gate: refuse to start when any SQLite store's
+	// live schema is ahead of what this binary knows. A memory backend
+	// silently no-ops (no DB() method). This must run before traffic is
+	// accepted so an operator doing a canary rollback sees a clear error
+	// instead of silent data corruption.
+	schemaCtx := context.Background()
+	if err := checkSQLiteSchema(schemaCtx, clientStore, "clients", sqlitestores.ClientsMaxVersion()); err != nil {
+		return nil, fmt.Errorf("schema check clients: %w", err)
+	}
+	if err := checkSQLiteSchema(schemaCtx, userProvider, "users", sqlitestores.UsersMaxVersion()); err != nil {
+		return nil, fmt.Errorf("schema check users: %w", err)
+	}
+	if err := checkSQLiteSchema(schemaCtx, sessionMgr, "sessions", sqlitestores.SessionsMaxVersion()); err != nil {
+		return nil, fmt.Errorf("schema check sessions: %w", err)
+	}
 	// Signing issuer: EdDSA (default) / ES256 / RS256|PS256, optionally
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
@@ -3250,6 +3285,12 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: %w", err)
 	}
+	if err := checkSQLiteSchema(schemaCtx, webauthnUsers, "webauthn_users", webauthnsqlite.UsersMaxVersion()); err != nil {
+		return nil, fmt.Errorf("schema check webauthn_users: %w", err)
+	}
+	if err := checkSQLiteSchema(schemaCtx, webauthnSessions, "webauthn_sessions", webauthnsqlite.SessionsMaxVersion()); err != nil {
+		return nil, fmt.Errorf("schema check webauthn_sessions: %w", err)
+	}
 	opts = appendReadyCheck(opts, "sqlite-webauthn-users", webauthnUsers)
 	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
 	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-webauthn-users", webauthnUsers)
@@ -3266,6 +3307,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		return nil, fmt.Errorf("mfa: %w", err)
 	}
 	if mfaProvider != nil && mfaStore != nil {
+		if err := checkSQLiteSchema(schemaCtx, mfaStore, "mfa_challenges", sqlitestores.MFAChallengesMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check mfa_challenges: %w", err)
+		}
 		opts = append(opts, sso.WithMFAProvider(mfaProvider))
 		opts = append(opts, sso.WithMFAChallengeStore(mfaStore, mfaTTL))
 		opts = appendReadyCheck(opts, "sqlite-mfa-challenges", mfaStore)
@@ -3278,6 +3322,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	var pushPruneCancel context.CancelFunc
 	var pushPruneDone <-chan struct{}
 	if pushApprovalStore != nil {
+		if err := checkSQLiteSchema(schemaCtx, pushApprovalStore, "push_approvals", sqlitestores.PushApprovalsMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check push_approvals: %w", err)
+		}
 		opts = appendReadyCheck(opts, "sqlite-push-approvals", pushApprovalStore)
 		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-push-approvals", pushApprovalStore)
 		if pi := cfg.MFA.Provider.Push.PruneInterval; pi > 0 {
@@ -3300,10 +3347,16 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if anomalyRT != nil && anomalyRT.runner != nil {
 		opts = append(opts, sso.WithAnomalyRunner(anomalyRT.runner))
 		if anomalyRT.recentSQLite != nil {
+			if err := checkSQLiteSchema(schemaCtx, anomalyRT.recentSQLite, "recent_login", sqlitestores.RecentLoginMaxVersion()); err != nil {
+				return nil, fmt.Errorf("schema check recent_login: %w", err)
+			}
 			opts = appendReadyCheck(opts, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
 			storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
 		}
 		if anomalyRT.ipFailSQLite != nil {
+			if err := checkSQLiteSchema(schemaCtx, anomalyRT.ipFailSQLite, "ip_failure_counter", sqlitestores.IPFailureCounterMaxVersion()); err != nil {
+				return nil, fmt.Errorf("schema check ip_failure_counter: %w", err)
+			}
 			opts = appendReadyCheck(opts, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
 			storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
 		}
@@ -3375,6 +3428,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if err != nil {
 			return nil, fmt.Errorf("oauth.auth_code: %w", err)
 		}
+		if err := checkSQLiteSchema(schemaCtx, store, "auth_codes", sqlitestores.AuthCodesMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check auth_codes: %w", err)
+		}
 		opts = append(opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-auth-codes", store)
 		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-auth-codes", store)
@@ -3386,6 +3442,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if err != nil {
 			return nil, fmt.Errorf("oauth.refresh_token: %w", err)
 		}
+		if err := checkSQLiteSchema(schemaCtx, store, "refresh_tokens", sqlitestores.RefreshTokensMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check refresh_tokens: %w", err)
+		}
 		opts = append(opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-refresh-tokens", store)
 		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-refresh-tokens", store)
@@ -3396,6 +3455,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		store, err := buildDeviceCodeStore(cfg.OAuth)
 		if err != nil {
 			return nil, fmt.Errorf("oauth.device_code: %w", err)
+		}
+		if err := checkSQLiteSchema(schemaCtx, store, "device_codes", sqlitestores.DeviceCodesMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check device_codes: %w", err)
 		}
 		opts = append(opts, sso.WithDeviceCodeStore(
 			store,
@@ -3410,6 +3472,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		store, err := buildPARStore(cfg.OAuth)
 		if err != nil {
 			return nil, fmt.Errorf("par store: %w", err)
+		}
+		if err := checkSQLiteSchema(schemaCtx, store, "par", sqlitestores.PARMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check par: %w", err)
 		}
 		opts = append(opts, sso.WithPARStore(store, cfg.OAuth.PAR.TTL))
 		opts = appendReadyCheck(opts, "sqlite-oauth-par", store)
@@ -3436,6 +3501,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		opts = append(opts, sso.WithCIBA(store, transport, cfg.CIBA.RequestTTL, cfg.CIBA.Interval))
 		if sqliteStore != nil {
+			if err := checkSQLiteSchema(schemaCtx, sqliteStore, "ciba_requests", sqlitestores.CIBARequestsMaxVersion()); err != nil {
+				return nil, fmt.Errorf("schema check ciba_requests: %w", err)
+			}
 			opts = appendReadyCheck(opts, "sqlite-ciba", sqliteStore)
 			storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-ciba", sqliteStore)
 			if pi := cfg.CIBA.PruneInterval; pi > 0 {
@@ -3503,6 +3571,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		idx, mode, err := buildSubjectClientIndex(cfg.BackchannelLogout.Index)
 		if err != nil {
 			return nil, fmt.Errorf("subject_client_index: %w", err)
+		}
+		if err := checkSQLiteSchema(schemaCtx, idx, "subject_client_index", sqlitestores.SubjectClientIndexMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check subject_client_index: %w", err)
 		}
 		opts = append(opts,
 			sso.WithBackchannelLogout(jwtIssuer, sso.NewHTTPLogoutNotifier()),
@@ -3622,6 +3693,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if err != nil {
 			return nil, fmt.Errorf("pairwise_subjects store: %w", err)
 		}
+		if err := checkSQLiteSchema(schemaCtx, store, "pairwise", sqlitestores.PairwiseMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check pairwise: %w", err)
+		}
 		opts = append(opts,
 			sso.WithPairwiseSubjectStore(store),
 			sso.WithPairwiseSalt(salt),
@@ -3696,6 +3770,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if err != nil {
 			return nil, fmt.Errorf("jti replay store: %w", err)
 		}
+		if err := checkSQLiteSchema(schemaCtx, store, "jti_replay", sqlitestores.JTIReplayMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check jti_replay: %w", err)
+		}
 		opts = append(opts, sso.WithJTIReplayStore(store))
 		opts = appendReadyCheck(opts, "sqlite-jti-replay", store)
 		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-jti-replay", store)
@@ -3764,6 +3841,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if err != nil {
 			return nil, fmt.Errorf("account lockout: %w", err)
 		}
+		if err := checkSQLiteSchema(schemaCtx, lockout, "account_lockout", sqlitestores.AccountLockoutMaxVersion()); err != nil {
+			return nil, fmt.Errorf("schema check account_lockout: %w", err)
+		}
 		opts = append(opts, sso.WithAccountLockout(lockout))
 		opts = appendReadyCheck(opts, "sqlite-account-lockout", lockout)
 		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-account-lockout", lockout)
@@ -3772,6 +3852,16 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			"max_failures", al.MaxFailures,
 			"lockout_duration", al.LockoutDuration,
 			"failure_window", al.FailureWindow)
+	}
+	if tp := cfg.Security.TrustedProxies; len(tp.CIDRs) > 0 {
+		tpOpt, err := sso.WithTrustedProxies(tp.CIDRs, tp.Hops)
+		if err != nil {
+			return nil, fmt.Errorf("trusted proxies: %w", err)
+		}
+		opts = append(opts, tpOpt)
+		logger.Info("security: trusted proxies XFF validation enabled",
+			"cidrs", tp.CIDRs,
+			"hops", tp.Hops)
 	}
 	if c := cfg.Security.CORS; c.Enabled && len(c.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(cors.Policy{

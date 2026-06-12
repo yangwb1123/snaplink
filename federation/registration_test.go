@@ -152,8 +152,11 @@ func TestRegistration_PreRegisteredClientWins(t *testing.T) {
 	if client.Federation {
 		t.Error("pre-registered client must NOT be a federation client")
 	}
-	if client.Secret != "preexisting-secret" {
-		t.Errorf("got Client.Secret %q, want the pre-registered secret (store hit must win)", client.Secret)
+	// Secret is stored as a bcrypt hash — verify the pre-registered secret was
+	// returned (not the federation-derived empty secret) by validating the
+	// original plaintext via the inner store.
+	if err := inner.ValidateSecret(context.Background(), leaf.id, "preexisting-secret"); err != nil {
+		t.Errorf("pre-registered client secret not valid after store hit: %v (store hit must win)", err)
 	}
 	if failing.calls != 0 {
 		t.Errorf("federation fetcher was called %d times; a ClientStore HIT must short-circuit before any resolution", failing.calls)

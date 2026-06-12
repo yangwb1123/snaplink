@@ -3,6 +3,7 @@ package builtin_test
 import (
 	"context"
 	"encoding/base64"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +16,15 @@ import (
 	"github.com/snaplink/sso/netpolicy"
 	netmemory "github.com/snaplink/sso/netpolicy/memory"
 	"github.com/snaplink/sso/permissions"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func TestMain(m *testing.M) {
+	// Lower bcrypt cost so the multiple AddSeed/Add calls in this suite
+	// don't make every test take ~100ms per client.
+	defaultimpl.BcryptCost = bcrypt.MinCost
+	os.Exit(m.Run())
+}
 
 // fullSeed returns an AdminSeed wired with in-memory providers covering all
 // optional dependencies — Steps will register every one of its four built-in
@@ -181,8 +190,9 @@ func TestSteps_SeedsAdminClient(t *testing.T) {
 	if !c.Active {
 		t.Error("Active = false, want true")
 	}
-	if len(c.Secret) != 43 { // base64url of 32 bytes
-		t.Errorf("Secret length = %d, want 43", len(c.Secret))
+	// Secret is stored as a bcrypt hash after Add/RotateSecret.
+	if !strings.HasPrefix(c.Secret, "$2") {
+		t.Errorf("Secret is not a bcrypt hash: %q", c.Secret)
 	}
 	if !contains(c.AllowedScopes, sso.AdminScope) {
 		t.Errorf("AllowedScopes = %v, missing %s", c.AllowedScopes, sso.AdminScope)
@@ -200,8 +210,16 @@ func TestSteps_AdminClientSkippedWhenOperatorPredeclared(t *testing.T) {
 	runAllSteps(t, seed)
 
 	c, _ := seed.Clients.Get(context.Background(), "sso-admin")
-	if c.Secret != "operator-secret" || c.Name != "Hand Rolled" {
-		t.Errorf("seeder overwrote operator client; got %+v", c)
+	// The stored Secret is a bcrypt hash of the plaintext that was passed to
+	// Add.  Verify the seeder did not overwrite the operator's client by checking
+	// both the name (unchanged) and that the stored hash looks like a hash of
+	// "operator-secret" (starts with "$2" — the seeder's generated secret would
+	// be a different hash, NOT a hash of "operator-secret").
+	if c.Name != "Hand Rolled" {
+		t.Errorf("seeder overwrote operator client name; got %+v", c)
+	}
+	if !strings.HasPrefix(c.Secret, "$2") {
+		t.Errorf("expected bcrypt hash for operator secret; got %q", c.Secret)
 	}
 }
 

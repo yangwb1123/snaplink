@@ -13,7 +13,6 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/migrate"
-	"github.com/snaplink/sso/security"
 
 	_ "modernc.org/sqlite"
 )
@@ -132,9 +131,10 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
-	// Constant-time compare (returns 1 on equal) — no timing oracle on
-	// secret_post client auth, matching the RFC 7592 token check.
-	if security.ConstantTimeStringEq(c.Secret, clientSecret) != 1 {
+	// compareClientSecret uses bcrypt.CompareHashAndPassword when stored
+	// starts with "$2" (a bcrypt hash), falling back to constant-time string
+	// compare for plaintext secrets in pre-migration stores. See client_secret.go.
+	if !compareClientSecret(c.Secret, clientSecret) {
 		return errors.New("invalid client secret")
 	}
 	return nil
@@ -225,6 +225,22 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return errors.New("sqlite: client.ID required")
 	}
+	secret := c.Secret
+	if secret != "" && !isBcryptHash(secret) {
+		h, err := hashClientSecret(secret)
+		if err != nil {
+			return fmt.Errorf("sqlite: hash secret: %w", err)
+		}
+		secret = h
+	}
+	rat := c.RegistrationAccessToken
+	if rat != "" && !isBcryptHash(rat) {
+		h, err := hashClientSecret(rat)
+		if err != nil {
+			return fmt.Errorf("sqlite: hash registration token: %w", err)
+		}
+		rat = h
+	}
 	redirects, _ := json.Marshal(c.RedirectURIs)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
@@ -239,10 +255,10 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
             post_logout_redirect_uris, id_token_enc_alg, id_token_enc_enc,
             userinfo_enc_alg, userinfo_enc_enc, federation)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Secret, c.Name,
+		c.ID, secret, c.Name,
 		string(redirects), string(scopes), string(auths),
 		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
-		c.RegistrationAccessToken, string(jwks), string(resources), string(requestURIs),
+		rat, string(jwks), string(resources), string(requestURIs),
 		string(postLogout), c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
 		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc, boolToInt(c.Federation),
 	)
@@ -261,6 +277,22 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return errors.New("sqlite: client.ID required")
 	}
+	secret := c.Secret
+	if secret != "" && !isBcryptHash(secret) {
+		h, err := hashClientSecret(secret)
+		if err != nil {
+			return fmt.Errorf("sqlite: hash secret: %w", err)
+		}
+		secret = h
+	}
+	rat := c.RegistrationAccessToken
+	if rat != "" && !isBcryptHash(rat) {
+		h, err := hashClientSecret(rat)
+		if err != nil {
+			return fmt.Errorf("sqlite: hash registration token: %w", err)
+		}
+		rat = h
+	}
 	redirects, _ := json.Marshal(c.RedirectURIs)
 	scopes, _ := json.Marshal(c.AllowedScopes)
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
@@ -277,10 +309,10 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
             id_token_enc_alg = ?, id_token_enc_enc = ?, userinfo_enc_alg = ?,
             userinfo_enc_enc = ?, federation = ?
         WHERE id = ?`,
-		c.Secret, c.Name,
+		secret, c.Name,
 		string(redirects), string(scopes), string(auths),
 		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
-		c.RegistrationAccessToken, string(jwks), string(resources),
+		rat, string(jwks), string(resources),
 		string(requestURIs), string(postLogout),
 		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
 		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc, boolToInt(c.Federation),
@@ -306,19 +338,24 @@ func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 }
 
 func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
-	secret, err := generateClientSecret()
+	plaintext, err := generateClientSecret()
 	if err != nil {
 		return "", err
 	}
+	hashed, err := hashClientSecret(plaintext)
+	if err != nil {
+		return "", fmt.Errorf("sqlite: hash rotated secret: %w", err)
+	}
+	// Store the hash; return the plaintext (one-time reveal to the caller).
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE clients SET secret = ? WHERE id = ?`, secret, clientID)
+		`UPDATE clients SET secret = ? WHERE id = ?`, hashed, clientID)
 	if err != nil {
 		return "", fmt.Errorf("sqlite: rotate secret: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return "", sso.ErrNoSuchClient
 	}
-	return secret, nil
+	return plaintext, nil
 }
 
 // clientSelectAll keeps the column list in one place so Add / Update /

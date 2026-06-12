@@ -561,6 +561,25 @@ authenticators:
 # blocks omit the corresponding sso.WithX call so the middleware is
 # not wired — zero overhead.
 security:
+  # Trusted-proxy X-Forwarded-For chain validation. When cidrs is
+  # non-empty, the server validates the XFF chain right-to-left and
+  # stores the real client IP in the request context. Downstream
+  # consumers (rate-limiter IP key) use this validated IP instead of
+  # trusting the raw header, preventing XFF forgery by an attacker.
+  #
+  # cidrs: list of CIDR ranges belonging to trusted proxy tiers. Example
+  # (AWS + internal RFC-1918):
+  #   cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  # hops: max trusted proxy tiers to strip (0 = len(cidrs); safe default).
+  #
+  # Without this block (or an empty cidrs list), the server trusts the
+  # raw X-Forwarded-For header unconditionally — only safe behind an
+  # edge that strips and re-adds XFF. Internet-facing deployments MUST
+  # set cidrs.
+  trusted_proxies:
+    cidrs: []   # e.g. ["10.0.0.0/8", "172.16.0.0/12"]
+    hops: 0     # 0 = len(cidrs)
+
   body_limit:
     # Cap request body size. Generous for any auth-flow payload,
     # blocks gigabyte-class DoS. SECURE-BY-DEFAULT: omitting this (or 0)

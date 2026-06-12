@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/snaplink/sso/middleware"
 )
 
 // Policy maps an incoming request to the limiter that gates it. Prefix
@@ -58,25 +60,21 @@ func KeyByClientIDOrIP(r *http.Request) string {
 	return KeyByClientIP(r)
 }
 
-// KeyByClientIP keys the limiter per request source IP. Respects the
-// usual reverse-proxy headers (X-Forwarded-For first hop, X-Real-IP)
-// before falling back to RemoteAddr. Operators behind an untrusted
-// edge should layer a TrustedProxies check upstream — keying on a
-// forge-able header would let a malicious client trivially evade.
+// KeyByClientIP keys the limiter per validated client IP.
+//
+// When [middleware.TrustedProxies] middleware is present in the chain
+// (installed via [sso.WithTrustedProxies]), it has already derived the
+// validated real client IP by walking the X-Forwarded-For chain from
+// right to left and stopping at the first untrusted hop; [middleware.RealClientIP]
+// returns that validated value and the raw header is not re-read.
+//
+// Without TrustedProxies middleware, [middleware.RealClientIP] falls back
+// to r.RemoteAddr — the direct TCP peer — which is the safe behavior behind
+// a layer-4 load balancer that does NOT inject XFF. Operators who run
+// behind an L7 proxy that injects XFF MUST wire WithTrustedProxies so the
+// IP key is forge-resistant.
 func KeyByClientIP(r *http.Request) string {
-	if h := r.Header.Get(HeaderXForwardedFor); h != "" {
-		if i := strings.IndexByte(h, ','); i > 0 {
-			return strings.TrimSpace(h[:i])
-		}
-		return strings.TrimSpace(h)
-	}
-	if h := r.Header.Get(HeaderXRealIP); h != "" {
-		return h
-	}
-	if i := strings.LastIndexByte(r.RemoteAddr, ':'); i > 0 {
-		return r.RemoteAddr[:i]
-	}
-	return r.RemoteAddr
+	return middleware.RealClientIP(r)
 }
 
 // Middleware returns an http.Handler middleware that enforces p. Empty
