@@ -82,6 +82,7 @@ func NewSQLiteLimiter(dsn string, perSecond float64, burst int, bucketName strin
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "rate_limit", rateLimitMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate rate_limit_buckets: %w", err)

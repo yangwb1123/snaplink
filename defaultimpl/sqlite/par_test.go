@@ -14,7 +14,7 @@ import (
 func newPARStoreForTest(t *testing.T) *PARStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "par.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "par.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	store, err := NewPARStore(dsn)
 	if err != nil {
 		t.Fatalf("NewPARStore: %v", err)

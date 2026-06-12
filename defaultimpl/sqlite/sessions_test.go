@@ -18,7 +18,7 @@ func newSessionManagerForTest(t *testing.T) *SessionManager {
 func newSessionManagerForTestWithTTL(t *testing.T, ttl time.Duration) *SessionManager {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	mgr, err := NewSessionManager(dsn, ttl)
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)
@@ -249,7 +249,7 @@ func TestSessionManager_CrossInstanceSharing(t *testing.T) {
 	// minted on one process is visible to another against the same
 	// DB file — the multi-replica use case.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	mgrA, err := NewSessionManager(dsn, time.Hour)
 	if err != nil {

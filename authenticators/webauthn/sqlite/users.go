@@ -64,7 +64,7 @@ type UserStore struct {
 // NewUserStore opens dsn, migrates the schema, and returns the store.
 // The provider owns the *sql.DB — [UserStore.Close] releases it.
 // DSN cookbook mirrors defaultimpl/sqlite: production wants
-// `file:/var/lib/sso/webauthn.db?_journal=WAL&_busy_timeout=5000`.
+// `file:/var/lib/sso/webauthn.db?_journal=WAL&_pragma=busy_timeout(5000)`.
 func NewUserStore(dsn string) (*UserStore, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -74,6 +74,7 @@ func NewUserStore(dsn string) (*UserStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "webauthn_users", userMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate webauthn_users: %w", err)

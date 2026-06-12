@@ -47,6 +47,7 @@ func NewIPFailureCounter(dsn string) (*IPFailureCounter, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "ip_failure_counter", ipFailureCounterSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate ip_failures: %w", err)

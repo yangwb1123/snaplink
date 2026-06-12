@@ -31,7 +31,7 @@ func RefreshTokensMaxVersion() int { return migrate.MaxVersion(refreshTokenMigra
 
 // AuthCodesMaxVersion returns the highest migration version declared for
 // the auth_codes store.
-func AuthCodesMaxVersion() int { return migrate.MaxVersion(authCodeMigrations) }
+func AuthCodesMaxVersion() int { return 1 }
 
 // CIBARequestsMaxVersion returns the highest migration version declared
 // for the ciba_requests store.

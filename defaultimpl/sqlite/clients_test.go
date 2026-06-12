@@ -464,7 +464,8 @@ func TestSQLiteClients_SecretPlaintextFallback(t *testing.T) {
 		(id, secret, name, redirect_uris, allowed_scopes, allowed_authenticators,
 		 token_strategy, active, tenant_id, require_pkce, registration_access_token,
 		 jwks, allowed_resources, allowed_request_uris, post_logout_redirect_uris,
-		 id_token_enc_alg, id_token_enc_enc, userinfo_enc_alg, userinfo_enc_enc, federation)
+		 idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
+		 userinfo_encrypted_response_alg, userinfo_encrypted_response_enc, federation)
 		VALUES ('legacy', 'raw-plaintext', '', '[]', '[]', '[]', '', 1, '', 0, '',
 		 '[]', '[]', '[]', '[]', '', '', '', '', 0)`)
 	if err != nil {

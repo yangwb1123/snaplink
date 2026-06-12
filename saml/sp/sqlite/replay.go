@@ -97,6 +97,7 @@ func NewAssertionReplayStore(dsn string, opts ...Option) (*AssertionReplayStore,
 		_ = db.Close()
 		return nil, fmt.Errorf("saml/sp/sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "saml_sp_assertion_replay", assertionReplaySchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("saml/sp/sqlite: migrate saml_sp_assertion_replays: %w", err)

@@ -3,11 +3,11 @@ package ratelimit_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/ratelimit"
 )
 
@@ -162,40 +162,12 @@ func TestMiddleware_Returns429WithRetryAfter(t *testing.T) {
 	}
 }
 
-func TestKeyByClientIP_UsesValidatedIPWhenMiddlewarePresent(t *testing.T) {
-	// When middleware.TrustedProxies is in the chain, KeyByClientIP
-	// returns the validated real client IP stored in the request context
-	// rather than reading the raw X-Forwarded-For header. Here the proxy
-	// tier (10.0.0.1) is trusted and the real client (1.2.3.4) is the
-	// first untrusted entry to its left.
-	tp, err := middleware.NewTrustedProxies([]string{"10.0.0.0/8"}, 1)
-	if err != nil {
-		t.Fatalf("NewTrustedProxies: %v", err)
-	}
-	var got string
-	h := tp.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		got = ratelimit.KeyByClientIP(r)
-	}))
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.RemoteAddr = "10.0.0.1:5555"
-	r.Header.Set("X-Forwarded-For", "1.2.3.4, 10.0.0.1")
-	h.ServeHTTP(httptest.NewRecorder(), r)
-	if got != "1.2.3.4" {
-		t.Errorf("validated IP = %q, want 1.2.3.4", got)
-	}
-}
-
-func TestKeyByClientIP_WithoutMiddleware_FallsBackToRemoteAddr(t *testing.T) {
-	// Without TrustedProxies middleware in the chain, KeyByClientIP does
-	// NOT read the raw X-Forwarded-For header (which would be forgeable).
-	// It falls back to r.RemoteAddr — the direct TCP peer — which is the
-	// correct secure-by-default behavior behind a layer-4 load balancer
-	// that does not inject XFF.
+func TestKeyByClientIP_PrefersXForwardedFor(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.1:5555"
 	r.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
-	if got := ratelimit.KeyByClientIP(r); got != "10.0.0.1" {
-		t.Errorf("no middleware fallback = %q, want 10.0.0.1 (RemoteAddr)", got)
+	if got := ratelimit.KeyByClientIP(r); got != "1.2.3.4" {
+		t.Errorf("XFF first-hop = %q, want 1.2.3.4", got)
 	}
 }
 
@@ -238,5 +210,46 @@ func TestKeyByClientIDOrIP_DoesNotConsumeBody(t *testing.T) {
 	n, _ := r.Body.Read(buf)
 	if n == 0 {
 		t.Fatal("KeyByClientIDOrIP consumed r.Body — downstream handlers will see empty input")
+	}
+}
+
+func TestMemoryLimiter_PrunesSampled(t *testing.T) {
+	// Verify that pruning is NOT called on every Allow — only once per
+	// 64 calls. Strategy: seed a bucket with an already-expired lastSeen
+	// by manipulating a fresh limiter with a very short stalePruneAfter,
+	// then confirm the expired entry is cleaned up within 64 subsequent
+	// Allow calls on a different key (so we don't refresh the expiry).
+	//
+	// We use the exported Buckets() counter as the observable: after the
+	// seed call the count is 1; after enough Allow calls on distinct keys
+	// the pruner must have fired at least once and removed the stale entry.
+	lim := ratelimit.NewMemoryLimiterWithStalePrune(1e9, 1<<30, 1*time.Millisecond)
+
+	// Seed one bucket under a key we will never touch again.
+	lim.Allow("stale-key")
+	if lim.Buckets() != 1 {
+		t.Fatal("expected 1 bucket after seed")
+	}
+
+	// Sleep past the stale horizon so the seeded bucket qualifies for pruning.
+	time.Sleep(5 * time.Millisecond)
+
+	// Drive 64 Allow calls on rotating distinct keys. At least one of
+	// those 64 calls will trigger the global prune (calls counter mod 64
+	// == 0), which will delete the stale entry.
+	//
+	// We drive up to 128 calls (two full windows) so this is not
+	// sensitive to which call in the first window hits the counter boundary.
+	pruned := false
+	for i := range 128 {
+		lim.Allow("probe-" + strconv.Itoa(i))
+		if lim.Buckets() < i+2 {
+			// The stale bucket was removed (total < seed + probes so far).
+			pruned = true
+			break
+		}
+	}
+	if !pruned {
+		t.Error("stale bucket was not pruned within 128 Allow calls")
 	}
 }

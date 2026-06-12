@@ -15,7 +15,7 @@ import (
 func newSessionStoreForTest(t *testing.T) *SessionStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	store, err := NewSessionStore(dsn)
 	if err != nil {
 		t.Fatalf("NewSessionStore: %v", err)
@@ -110,7 +110,7 @@ func TestSessionStore_CrossInstanceSharing(t *testing.T) {
 	// Ceremony Begin* on replica A, Finish* on replica B — both
 	// store handles point at the same DB file.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	storeA, err := NewSessionStore(dsn)
 	if err != nil {

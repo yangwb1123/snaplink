@@ -13,7 +13,7 @@ import (
 func newMFAChallengeStoreForTest(t *testing.T) *MFAChallengeStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "mfa.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "mfa.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	store, err := NewMFAChallengeStore(dsn)
 	if err != nil {
 		t.Fatalf("NewMFAChallengeStore: %v", err)

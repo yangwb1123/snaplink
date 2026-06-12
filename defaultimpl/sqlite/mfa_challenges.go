@@ -55,6 +55,7 @@ func NewMFAChallengeStore(dsn string) (*MFAChallengeStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "mfa_challenges", mfaChallengesSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate mfa_challenges: %w", err)

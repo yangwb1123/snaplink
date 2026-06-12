@@ -4,19 +4,20 @@ package ratelimit
 // run on /token, /auth/login, and every other rate-limited endpoint in
 // front of the auth-heavy hot path.
 //
-// Two regimes are measured deliberately:
+// Three regimes are measured deliberately:
 //
-//   - SingleKey: the steady-state cost of one bucket (lock + one-entry
-//     prune + token-bucket reserve).
+//   - SingleKey: the steady-state cost of one bucket (shard lookup +
+//     token-bucket reserve).
 //
-//   - ManyKeys: the documented O(N) hot path. Every Allow takes the
-//     GLOBAL lock and calls pruneLocked, which iterates the ENTIRE
-//     bucket map. As the resident key set grows (e.g. per-client-IP
-//     keying under a wide client fleet or an IP-spray attack), the cost
-//     of each Allow grows with the number of live keys — under one
-//     mutex. The ManyKeys/N sub-benchmarks make that growth explicit:
-//     compare ns/op across N=100 / 1000 / 10000 to see the linear prune
-//     cost. This is the benchmark that matters for capacity planning.
+//   - ManyKeys: the sampled-prune hot path. With 1-in-64 sampling and
+//     16 shards, each prune scans ~N/16 entries instead of N. Compare
+//     ns/op across N=100/1000/10000 against the old O(N) baseline —
+//     growth should be ~flat between prune events rather than linear.
+//
+//   - Parallel: 16 goroutines hammering Allow concurrently from a small
+//     key pool. This is the contention regression test: with 16 shards
+//     the goroutines are mostly hitting distinct locks, so throughput
+//     should scale near-linearly rather than serialising on one mutex.
 //
 // New file, dep-free (std testing only). b.ReportAllocs() + package-level
 // sinks so the allow decision can't be elided.
@@ -53,12 +54,11 @@ func BenchmarkMemoryLimiterAllowSingleKey(b *testing.B) {
 	}
 }
 
-// BenchmarkMemoryLimiterAllowManyKeys exposes the O(N) full-map prune
-// under the global lock. The map is PRE-POPULATED with n live keys, then
-// the loop calls Allow with rotating keys drawn from that resident set —
-// so every Allow pays the full n-entry pruneLocked scan. Read the
-// per-N ns/op: it should climb roughly linearly with keyCount, which is
-// exactly the contention/scaling hazard the docs call out.
+// BenchmarkMemoryLimiterAllowManyKeys measures the sampled-prune hot
+// path under a large resident key set. The map is PRE-POPULATED with n
+// live keys; each Allow call is served from that set. With 1-in-64
+// sampling the per-call cost is mostly the shard lock + bucket reserve,
+// not a full map scan — compare ns/op against the old linear baseline.
 func BenchmarkMemoryLimiterAllowManyKeys(b *testing.B) {
 	for _, keyCount := range []int{100, 1000, 10000} {
 		b.Run(strconv.Itoa(keyCount), func(b *testing.B) {
@@ -70,7 +70,8 @@ func BenchmarkMemoryLimiterAllowManyKeys(b *testing.B) {
 					strconv.Itoa(i/256%256) + "." +
 					strconv.Itoa(i%256) + ":" + strconv.Itoa(i)
 				// Seed the bucket so it is resident (and recently seen,
-				// so pruneLocked keeps it — every Allow then scans all n).
+				// so pruneLocked keeps it — the prune cost grows with
+				// the per-shard slice, ~N/numShards, not N).
 				m.Allow(keys[i])
 			}
 			b.ReportAllocs()
@@ -81,4 +82,42 @@ func BenchmarkMemoryLimiterAllowManyKeys(b *testing.B) {
 			}
 		})
 	}
+}
+
+// BenchmarkMemoryLimiterAllowParallel measures contention under
+// concurrent goroutines drawing from a small shared key pool. With
+// sharded locks, goroutines on different keys run in parallel; only
+// goroutines that hash to the same shard contend.
+//
+// Goroutine-local result variables are used instead of the shared
+// package-level sinks to keep the benchmark race-free under -race.
+func BenchmarkMemoryLimiterAllowParallel(b *testing.B) {
+	m := benchLimiter()
+	// Small pool so keys collide across goroutines — stress the locks.
+	const poolSize = 32
+	keys := make([]string, poolSize)
+	for i := range poolSize {
+		keys[i] = "ip:10.0.0." + strconv.Itoa(i)
+		m.Allow(keys[i]) // warm
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		// Goroutine-local sinks prevent data races; the compiler cannot
+		// elide the Allow call because the results feed an escaping var.
+		var ok bool
+		var retry int64
+		i := 0
+		for pb.Next() {
+			ok, retry = func() (bool, int64) {
+				o, r := m.Allow(keys[i%poolSize])
+				return o, int64(r)
+			}()
+			i++
+		}
+		// Ensure ok/retry are not optimised away.
+		if !ok && retry < 0 {
+			panic("unreachable")
+		}
+	})
 }

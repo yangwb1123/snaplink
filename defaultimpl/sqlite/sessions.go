@@ -54,6 +54,7 @@ func NewSessionManager(dsn string, ttl time.Duration) (*SessionManager, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "sessions", sessionSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate sessions: %w", err)

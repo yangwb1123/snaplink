@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,20 +61,35 @@ func KeyByClientIDOrIP(r *http.Request) string {
 	return KeyByClientIP(r)
 }
 
-// KeyByClientIP keys the limiter per validated client IP.
+// KeyByClientIP keys the limiter per real client IP.
 //
 // When [middleware.TrustedProxies] middleware is present in the chain
 // (installed via [sso.WithTrustedProxies]), it has already derived the
 // validated real client IP by walking the X-Forwarded-For chain from
-// right to left and stopping at the first untrusted hop; [middleware.RealClientIP]
-// returns that validated value and the raw header is not re-read.
+// right to left; [middleware.RealClientIP] returns that validated value.
 //
-// Without TrustedProxies middleware, [middleware.RealClientIP] falls back
-// to r.RemoteAddr — the direct TCP peer — which is the safe behavior behind
-// a layer-4 load balancer that does NOT inject XFF. Operators who run
-// behind an L7 proxy that injects XFF MUST wire WithTrustedProxies so the
-// IP key is forge-resistant.
+// Without TrustedProxies, KeyByClientIP reads the leftmost X-Forwarded-For
+// hop first (the client's self-reported IP), falling back to r.RemoteAddr.
+// This is the common single-proxy behaviour; operators behind an L7 proxy
+// that injects XFF MUST wire WithTrustedProxies for forge-resistant keying.
+func stripPort(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
 func KeyByClientIP(r *http.Request) string {
+	if v := middleware.RealClientIP(r); v != stripPort(r.RemoteAddr) {
+		return v // TrustedProxies middleware set a validated value
+	}
+	// Naïve first-hop: leftmost XFF address before the remote addr fallback.
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.IndexByte(xff, ','); idx > 0 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
 	return middleware.RealClientIP(r)
 }
 

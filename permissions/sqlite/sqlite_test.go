@@ -13,7 +13,7 @@ import (
 func newTestProvider(t *testing.T) *permsqlite.Provider {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "permissions.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "permissions.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	p, err := permsqlite.New(dsn)
 	if err != nil {
 		t.Fatalf("New: %v", err)

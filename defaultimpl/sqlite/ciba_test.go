@@ -13,7 +13,7 @@ import (
 func newCIBAStoreForTest(t *testing.T) *CIBAStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "ciba.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "ciba.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	s, err := NewCIBAStore(dsn)
 	if err != nil {
 		t.Fatalf("NewCIBAStore: %v", err)

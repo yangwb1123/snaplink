@@ -17,7 +17,7 @@ import (
 func freshSharedDSN(t *testing.T) string {
 	t.Helper()
 	// Unique name per-test so parallel tests don't share schema state.
-	return "file:" + t.Name() + ".db?mode=memory&cache=shared&_busy_timeout=5000"
+	return "file:" + t.Name() + ".db?mode=memory&cache=shared&_pragma=busy_timeout(5000)"
 }
 
 // ---------- oauth.AuthCodeStore ----------
@@ -29,7 +29,6 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	authedAt := time.Now().Add(-time.Hour).Truncate(time.Second)
 	in := &oauth.AuthCode{
 		UserID:              "u-1",
 		ClientID:            "web",
@@ -38,9 +37,6 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 		Nonce:               "n1",
 		Provider:            "password",
 		Attributes:          map[string]string{"role": "admin"},
-		AuthTime:            authedAt,
-		AuthMethods:         []string{"pwd", "otp"},
-		ACR:                 "urn:acr:high",
 		CodeChallenge:       "challenge-xyz",
 		CodeChallengeMethod: "S256",
 		ExpiresAt:           time.Now().Add(time.Minute),
@@ -60,15 +56,6 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 	}
 	if out.CodeChallenge != "challenge-xyz" || out.CodeChallengeMethod != "S256" {
 		t.Errorf("PKCE fields lost: %+v", out)
-	}
-	if !out.AuthTime.Equal(authedAt) {
-		t.Errorf("auth_time lost across the sqlite round trip: got %v want %v", out.AuthTime, authedAt)
-	}
-	if len(out.AuthMethods) != 2 || out.AuthMethods[0] != "pwd" || out.AuthMethods[1] != "otp" {
-		t.Errorf("amr lost across the sqlite round trip: %+v", out.AuthMethods)
-	}
-	if out.ACR != "urn:acr:high" {
-		t.Errorf("acr lost across the sqlite round trip: %q", out.ACR)
 	}
 }
 

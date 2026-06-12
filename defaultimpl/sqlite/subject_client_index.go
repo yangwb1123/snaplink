@@ -47,6 +47,7 @@ func NewSubjectClientIndex(dsn string) (*SubjectClientIndex, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "subject_client_index", subjectClientIndexSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate subject_client_index: %w", err)

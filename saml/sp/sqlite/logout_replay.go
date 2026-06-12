@@ -49,6 +49,7 @@ func NewLogoutReplayStore(dsn string, opts ...Option) (*LogoutReplayStore, error
 		_ = db.Close()
 		return nil, fmt.Errorf("saml/sp/sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "saml_sp_logout_replay", spLogoutReplaySchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("saml/sp/sqlite: migrate saml_sp_logout_replays: %w", err)

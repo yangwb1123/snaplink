@@ -11,7 +11,7 @@ import (
 func newSubjectClientIndexForTest(t *testing.T) *SubjectClientIndex {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "sci.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "sci.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	idx, err := NewSubjectClientIndex(dsn)
 	if err != nil {
 		t.Fatalf("NewSubjectClientIndex: %v", err)
@@ -173,7 +173,7 @@ func TestSubjectClientIndex_CrossInstanceSharing(t *testing.T) {
 	// on replica A must show up in the ListClients result on replica B
 	// so its logout reaches every client.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	idxA, err := NewSubjectClientIndex(dsn)
 	if err != nil {

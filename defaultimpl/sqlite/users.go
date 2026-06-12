@@ -67,7 +67,7 @@ type UserProvider struct {
 //
 // dsn examples:
 //
-//	file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000   # production
+//	file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)   # production
 //	:memory:                                                    # tests (per-conn)
 //	file::memory:?cache=shared                                  # tests sharing one db
 func NewUserProvider(dsn string) (*UserProvider, error) {
@@ -79,6 +79,7 @@ func NewUserProvider(dsn string) (*UserProvider, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "users", userSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate: %w", err)

@@ -75,6 +75,7 @@ func NewCIBAStore(dsn string) (*CIBAStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "ciba_requests", cibaMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate ciba_requests: %w", err)

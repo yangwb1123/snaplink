@@ -66,6 +66,7 @@ func NewPARStore(dsn string) (*PARStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "par", parSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate par_requests: %w", err)

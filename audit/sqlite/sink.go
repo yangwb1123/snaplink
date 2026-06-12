@@ -92,7 +92,7 @@ type Sink struct {
 //
 // Typical production DSN:
 //
-//	file:/var/lib/sso/audit.db?_journal=WAL&_busy_timeout=5000
+//	file:/var/lib/sso/audit.db?_journal=WAL&_pragma=busy_timeout(5000)
 //
 // Tests / dev: `:memory:` for per-connection isolation;
 // `file::memory:?cache=shared` for a shared in-memory pool.
@@ -105,6 +105,7 @@ func New(dsn string) (*Sink, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "audit", migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)

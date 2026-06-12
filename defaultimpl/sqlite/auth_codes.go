@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/snaplink/sso/migrate"
 )
 
 // authCodeSchema covers the OAuth 2.0 authorization_code grant data
@@ -37,20 +35,6 @@ CREATE INDEX IF NOT EXISTS idx_auth_codes_expires_at
     ON auth_codes(expires_at);
 `
 
-// authCodeMigrations evolves the auth_codes schema. v1 is the original
-// baseline; v2 adds auth_time — the real /auth/login moment (Unix-ns, 0 =
-// unset) replayed into the minted token's auth_time claim at redemption
-// (OIDC Core §2) rather than the exchange time. v3/v4 add amr (JSON-encoded
-// RFC 8176 method tags) + acr (the satisfied ACR), likewise captured at
-// issue and replayed into the token's amr/acr instead of collapsing amr to
-// the provider id and dropping acr.
-var authCodeMigrations = []migrate.Migration{
-	{Version: 1, Name: "baseline", SQL: authCodeSchema},
-	{Version: 2, Name: "auth_code_auth_time", SQL: `ALTER TABLE auth_codes ADD COLUMN auth_time INTEGER NOT NULL DEFAULT 0`},
-	{Version: 3, Name: "auth_code_amr", SQL: `ALTER TABLE auth_codes ADD COLUMN amr TEXT NOT NULL DEFAULT '[]'`},
-	{Version: 4, Name: "auth_code_acr", SQL: `ALTER TABLE auth_codes ADD COLUMN acr TEXT NOT NULL DEFAULT ''`},
-}
-
 // oauth.AuthCodeStore is the SQLite-backed implementation of
 // [oauth.AuthCodeStore]. Suitable for multi-replica deployments since
 // every replica can issue + consume against the same database.
@@ -70,7 +54,8 @@ func NewAuthCodeStore(dsn string) (*AuthCodeStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
-	if err := migrate.Run(context.Background(), db, "auth_codes", authCodeMigrations); err != nil {
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
+	if err := ensureSchema(db, "auth_codes", authCodeSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate auth_codes: %w", err)
 	}
@@ -81,10 +66,6 @@ func NewAuthCodeStore(dsn string) (*AuthCodeStore, error) {
 // connection lifecycle (matches the UserProvider pattern for
 // shared-pool deployments).
 func NewAuthCodeStoreWithDB(db *sql.DB) *AuthCodeStore {
-	// Best-effort schema convergence on the shared-pool path (matches the
-	// refresh-token store); a migration error surfaces later as an Issue
-	// failure rather than here, since this constructor has no error return.
-	_ = migrate.Run(context.Background(), db, "auth_codes", authCodeMigrations)
 	return &AuthCodeStore{db: db}
 }
 
@@ -127,23 +108,15 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal attributes: %w", err)
 	}
-	var authTimeNs int64
-	if !info.AuthTime.IsZero() {
-		authTimeNs = info.AuthTime.UnixNano()
-	}
-	amr, err := json.Marshal(info.AuthMethods)
-	if err != nil {
-		return fmt.Errorf("sqlite: marshal amr: %w", err)
-	}
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO auth_codes (
             code, user_id, client_id, redirect_uri, scopes, nonce,
             provider, attributes, code_challenge, code_challenge_method,
-            auth_time, amr, acr, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, info.UserID, info.ClientID, info.RedirectURI,
 		string(scopes), info.Nonce, info.Provider, string(attrs),
-		info.CodeChallenge, info.CodeChallengeMethod, authTimeNs, string(amr), info.ACR, info.ExpiresAt.UnixNano(),
+		info.CodeChallenge, info.CodeChallengeMethod, info.ExpiresAt.UnixNano(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert auth_code: %w", err)
@@ -161,7 +134,7 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCo
         DELETE FROM auth_codes WHERE code = ?
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
                   provider, attributes, code_challenge, code_challenge_method,
-                  auth_time, amr, acr, expires_at`, code)
+                  expires_at`, code)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrAuthCodeNotFound
@@ -184,12 +157,10 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 		redirectURI, nonce, provider, codeChallenge, codeChallengeMethod, scopesJSON, attrsJSON string
 		expiresAtUnixNs                                                                         int64
 	)
-	var authTimeUnixNs int64
-	var amrJSON, acr string
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &redirectURI, &scopesJSON, &nonce,
 		&provider, &attrsJSON, &codeChallenge, &codeChallengeMethod,
-		&authTimeUnixNs, &amrJSON, &acr, &expiresAtUnixNs,
+		&expiresAtUnixNs,
 	); err != nil {
 		return nil, err
 	}
@@ -198,15 +169,6 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	out.Provider = provider
 	out.CodeChallenge = codeChallenge
 	out.CodeChallengeMethod = codeChallengeMethod
-	if authTimeUnixNs != 0 {
-		out.AuthTime = time.Unix(0, authTimeUnixNs).UTC()
-	}
-	out.ACR = acr
-	if amrJSON != "" && amrJSON != "[]" {
-		if err := json.Unmarshal([]byte(amrJSON), &out.AuthMethods); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal amr: %w", err)
-		}
-	}
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
 	if scopesJSON != "" && scopesJSON != "[]" {
 		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {

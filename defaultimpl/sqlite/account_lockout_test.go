@@ -10,7 +10,7 @@ import (
 func newAccountLockoutForTest(t *testing.T) *AccountLockout {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "lockout.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "lockout.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	lockout, err := NewAccountLockout(dsn)
 	if err != nil {
 		t.Fatalf("NewAccountLockout: %v", err)
@@ -202,7 +202,7 @@ func TestAccountLockout_CrossInstanceSharing(t *testing.T) {
 	// targets across replicas can't stay under each replica's local
 	// threshold because the counter is shared.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	lockoutA, err := NewAccountLockout(dsn)
 	if err != nil {

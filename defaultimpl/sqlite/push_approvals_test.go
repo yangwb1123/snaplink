@@ -13,7 +13,7 @@ import (
 func newPushApprovalStoreForTest(t *testing.T) *PushApprovalStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	s, err := NewPushApprovalStore(dsn)
 	if err != nil {
 		t.Fatalf("NewPushApprovalStore: %v", err)

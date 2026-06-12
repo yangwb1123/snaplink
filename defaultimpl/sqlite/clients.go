@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/core"
@@ -17,11 +18,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// clientSchema mirrors the in-memory shape — slices + maps are
-// JSON blobs since the SDK only ever reads whole rows, never WHERE
-// clauses over their internals. The tenant_id index is for
-// ListByTenant; otherwise lookups are by id only.
-const clientSchema = `
+// clientMigrations is the versioned schema history for the clients store.
+// v1: baseline schema (the original 10-column table).
+// v2: ADD COLUMN for security-load-bearing fields: JWKS, AllowedResources,
+//
+//	AllowedRequestURIs, RegistrationAccessToken, JWE alg/enc,
+//	Federation, PostLogoutRedirectURIs, FrontchannelLogoutURI,
+//	RequireSignedRequestObject, RequirePAR, AllowedAuthorizationDetailsTypes,
+//	BackchannelLogoutURI, SubjectType, SectorIdentifierURI, TTL overrides,
+//	Attributes, AllowedPKCEMethods, UserinfoSignedResponseAlg, CAEP attrs.
+//
+// All new columns default to empty/0 so existing rows are backward-compatible.
+var clientMigrations = []migrate.Migration{
+	{
+		Version: 1,
+		SQL: `
 CREATE TABLE IF NOT EXISTS clients (
     id                      TEXT    PRIMARY KEY,
     secret                  TEXT    NOT NULL,
@@ -34,34 +45,38 @@ CREATE TABLE IF NOT EXISTS clients (
     tenant_id               TEXT    NOT NULL DEFAULT '',
     require_pkce            INTEGER NOT NULL DEFAULT 0
 );
-
 CREATE INDEX IF NOT EXISTS idx_clients_tenant
     ON clients(tenant_id)
-    WHERE tenant_id <> '';
-`
-
-// clientMigrations is the schema history. v1 is the original ~10-column
-// baseline; v2 backfills the SECURITY-LOAD-BEARING fields that earlier
-// rounds-tripped only through the in-memory store (so a restart on
-// identity.backend=sqlite silently reverted them to zero). Each ADD COLUMN
-// carries a NOT NULL DEFAULT matching the field's zero value, so existing
-// rows migrate cleanly and an empty/zero client round-trips byte-identically
-// to the v1 schema. Forward-only, applied in one BEGIN IMMEDIATE txn by the
-// runner.
-var clientMigrations = []migrate.Migration{
-	{Version: 1, Name: "baseline", SQL: clientSchema},
-	{Version: 2, Name: "client_security_fields", SQL: `
-ALTER TABLE clients ADD COLUMN registration_access_token TEXT NOT NULL DEFAULT '';
-ALTER TABLE clients ADD COLUMN jwks                       TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE clients ADD COLUMN allowed_resources         TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE clients ADD COLUMN allowed_request_uris      TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE clients ADD COLUMN post_logout_redirect_uris TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE clients ADD COLUMN id_token_enc_alg          TEXT NOT NULL DEFAULT '';
-ALTER TABLE clients ADD COLUMN id_token_enc_enc          TEXT NOT NULL DEFAULT '';
-ALTER TABLE clients ADD COLUMN userinfo_enc_alg          TEXT NOT NULL DEFAULT '';
-ALTER TABLE clients ADD COLUMN userinfo_enc_enc          TEXT NOT NULL DEFAULT '';
-ALTER TABLE clients ADD COLUMN federation                INTEGER NOT NULL DEFAULT 0;
-`},
+    WHERE tenant_id <> '';`,
+	},
+	{
+		Version: 2,
+		SQL: `
+ALTER TABLE clients ADD COLUMN jwks                            TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN allowed_resources               TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN allowed_request_uris            TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN registration_access_token       TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN post_logout_redirect_uris       TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN allowed_authorization_details   TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN refresh_token_ttl               INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN access_token_ttl                INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN allowed_pkce_methods            TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE clients ADD COLUMN require_signed_request_object   INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN require_par                     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN device_code_ttl                 INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN device_code_poll_interval       INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN userinfo_signed_response_alg    TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN idtoken_encrypted_response_alg  TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN idtoken_encrypted_response_enc  TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_alg TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_enc TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN backchannel_logout_uri          TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN subject_type                    TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN sector_identifier_uri           TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN frontchannel_logout_uri         TEXT    NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN federation                      INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN attributes                      TEXT    NOT NULL DEFAULT '{}';`,
+	},
 }
 
 // ClientStore is the SQLite-backed [sso.ClientStore], including the
@@ -80,6 +95,7 @@ func NewClientStore(dsn string) (*ClientStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "clients", clientMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate clients: %w", err)
@@ -88,9 +104,6 @@ func NewClientStore(dsn string) (*ClientStore, error) {
 }
 
 func NewClientStoreWithDB(db *sql.DB) *ClientStore {
-	// Best-effort on the shared-DB path (mirrors the historical contract —
-	// this constructor never returned an error).
-	_ = migrate.Run(context.Background(), db, "clients", clientMigrations)
 	return &ClientStore{db: db}
 }
 
@@ -131,9 +144,6 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
-	// compareClientSecret uses bcrypt.CompareHashAndPassword when stored
-	// starts with "$2" (a bcrypt hash), falling back to constant-time string
-	// compare for plaintext secrets in pre-migration stores. See client_secret.go.
 	if !compareClientSecret(c.Secret, clientSecret) {
 		return errors.New("invalid client secret")
 	}
@@ -162,16 +172,6 @@ func (s *ClientStore) List(ctx context.Context) ([]*sso.Client, error) {
 // Stats satisfies [sso.ClientStoreStats]: a cheap, order-independent
 // fingerprint of the client set so the discovery-doc cache can skip its
 // full List() + re-projection when nothing discovery-relevant changed.
-//
-// Only id + allowed_scopes are projected — the other discovery-relevant
-// client fields (RequirePAR, RequireSignedRequestObject,
-// FrontchannelLogoutURI, AllowedAuthorizationDetailsTypes) have no
-// column in this backend's schema, so they round-trip as zero values
-// and contribute a constant to the digest. Decoding minimal clients
-// (no secret, no JSON blobs beyond scopes) keeps Stats strictly cheaper
-// than List, and feeding them through the shared
-// core.ClientSetFingerprint guarantees the same logical set yields the
-// same hash regardless of row order.
 func (s *ClientStore) Stats(ctx context.Context) (int, string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, allowed_scopes FROM clients`)
 	if err != nil {
@@ -226,7 +226,7 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 		return errors.New("sqlite: client.ID required")
 	}
 	secret := c.Secret
-	if secret != "" && !isBcryptHash(secret) {
+	if !isBcryptHash(secret) && secret != "" {
 		h, err := hashClientSecret(secret)
 		if err != nil {
 			return fmt.Errorf("sqlite: hash secret: %w", err)
@@ -234,10 +234,10 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 		secret = h
 	}
 	rat := c.RegistrationAccessToken
-	if rat != "" && !isBcryptHash(rat) {
+	if !isBcryptHash(rat) && rat != "" {
 		h, err := hashClientSecret(rat)
 		if err != nil {
-			return fmt.Errorf("sqlite: hash registration token: %w", err)
+			return fmt.Errorf("sqlite: hash rat: %w", err)
 		}
 		rat = h
 	}
@@ -246,29 +246,141 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
 	jwks, _ := json.Marshal(c.JWKS)
 	resources, _ := json.Marshal(c.AllowedResources)
-	requestURIs, _ := json.Marshal(c.AllowedRequestURIs)
+	reqURIs, _ := json.Marshal(c.AllowedRequestURIs)
 	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
+	authzDetails, _ := json.Marshal(c.AllowedAuthorizationDetailsTypes)
+	pkceM, _ := json.Marshal(c.AllowedPKCEMethods)
+	attrs, _ := json.Marshal(c.Attributes)
+
 	_, err := s.db.ExecContext(ctx, `
-        INSERT INTO clients (id, secret, name, redirect_uris, allowed_scopes,
+        INSERT INTO clients (
+            id, secret, name, redirect_uris, allowed_scopes,
             allowed_authenticators, token_strategy, active, tenant_id, require_pkce,
-            registration_access_token, jwks, allowed_resources, allowed_request_uris,
-            post_logout_redirect_uris, id_token_enc_alg, id_token_enc_enc,
-            userinfo_enc_alg, userinfo_enc_enc, federation)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            jwks, allowed_resources, allowed_request_uris, registration_access_token,
+            post_logout_redirect_uris, allowed_authorization_details,
+            refresh_token_ttl, access_token_ttl, allowed_pkce_methods,
+            require_signed_request_object, require_par,
+            device_code_ttl, device_code_poll_interval,
+            userinfo_signed_response_alg,
+            idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
+            userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
+            backchannel_logout_uri, subject_type, sector_identifier_uri,
+            frontchannel_logout_uri, federation, attributes
+        ) VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?,
+            ?, ?,
+            ?,
+            ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?, ?
+        )`,
 		c.ID, secret, c.Name,
 		string(redirects), string(scopes), string(auths),
 		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
-		rat, string(jwks), string(resources), string(requestURIs),
-		string(postLogout), c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
-		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc, boolToInt(c.Federation),
+		string(jwks), string(resources), string(reqURIs), rat,
+		string(postLogout), string(authzDetails),
+		int64(c.RefreshTokenTTL), int64(c.AccessTokenTTL), string(pkceM),
+		boolToInt(c.RequireSignedRequestObject), boolToInt(c.RequirePAR),
+		int64(c.DeviceCodeTTL), int64(c.DeviceCodePollInterval),
+		c.UserinfoSignedResponseAlg,
+		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
+		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
+		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
+		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
 	)
 	if err != nil {
-		// modernc.org/sqlite returns the constraint code in the error
-		// message; UNIQUE on PRIMARY KEY → ErrClientExists per contract.
 		if isUniqueViolation(err) {
 			return sso.ErrClientExists
 		}
 		return fmt.Errorf("sqlite: insert client: %w", err)
+	}
+	return nil
+}
+
+// Put is an upsert (INSERT OR REPLACE). Used by the admin gRPC service and
+// the bootstrap seeder when an exact-overwrite is needed.
+func (s *ClientStore) Put(ctx context.Context, c *sso.Client) error {
+	if c == nil || c.ID == "" {
+		return errors.New("sqlite: client.ID required")
+	}
+	// Re-hash only when the value isn't already a bcrypt hash.
+	secret := c.Secret
+	if !isBcryptHash(secret) && secret != "" {
+		h, err := hashClientSecret(secret)
+		if err != nil {
+			return fmt.Errorf("sqlite: hash secret: %w", err)
+		}
+		secret = h
+	}
+	rat := c.RegistrationAccessToken
+	if !isBcryptHash(rat) && rat != "" {
+		h, err := hashClientSecret(rat)
+		if err != nil {
+			return fmt.Errorf("sqlite: hash rat: %w", err)
+		}
+		rat = h
+	}
+	redirects, _ := json.Marshal(c.RedirectURIs)
+	scopes, _ := json.Marshal(c.AllowedScopes)
+	auths, _ := json.Marshal(c.AllowedAuthenticators)
+	jwks, _ := json.Marshal(c.JWKS)
+	resources, _ := json.Marshal(c.AllowedResources)
+	reqURIs, _ := json.Marshal(c.AllowedRequestURIs)
+	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
+	authzDetails, _ := json.Marshal(c.AllowedAuthorizationDetailsTypes)
+	pkceM, _ := json.Marshal(c.AllowedPKCEMethods)
+	attrs, _ := json.Marshal(c.Attributes)
+
+	_, err := s.db.ExecContext(ctx, `
+        INSERT OR REPLACE INTO clients (
+            id, secret, name, redirect_uris, allowed_scopes,
+            allowed_authenticators, token_strategy, active, tenant_id, require_pkce,
+            jwks, allowed_resources, allowed_request_uris, registration_access_token,
+            post_logout_redirect_uris, allowed_authorization_details,
+            refresh_token_ttl, access_token_ttl, allowed_pkce_methods,
+            require_signed_request_object, require_par,
+            device_code_ttl, device_code_poll_interval,
+            userinfo_signed_response_alg,
+            idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
+            userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
+            backchannel_logout_uri, subject_type, sector_identifier_uri,
+            frontchannel_logout_uri, federation, attributes
+        ) VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?,
+            ?, ?,
+            ?,
+            ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?, ?
+        )`,
+		c.ID, secret, c.Name,
+		string(redirects), string(scopes), string(auths),
+		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
+		string(jwks), string(resources), string(reqURIs), rat,
+		string(postLogout), string(authzDetails),
+		int64(c.RefreshTokenTTL), int64(c.AccessTokenTTL), string(pkceM),
+		boolToInt(c.RequireSignedRequestObject), boolToInt(c.RequirePAR),
+		int64(c.DeviceCodeTTL), int64(c.DeviceCodePollInterval),
+		c.UserinfoSignedResponseAlg,
+		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
+		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
+		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
+		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: put client: %w", err)
 	}
 	return nil
 }
@@ -278,7 +390,7 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 		return errors.New("sqlite: client.ID required")
 	}
 	secret := c.Secret
-	if secret != "" && !isBcryptHash(secret) {
+	if !isBcryptHash(secret) && secret != "" {
 		h, err := hashClientSecret(secret)
 		if err != nil {
 			return fmt.Errorf("sqlite: hash secret: %w", err)
@@ -286,10 +398,10 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 		secret = h
 	}
 	rat := c.RegistrationAccessToken
-	if rat != "" && !isBcryptHash(rat) {
+	if !isBcryptHash(rat) && rat != "" {
 		h, err := hashClientSecret(rat)
 		if err != nil {
-			return fmt.Errorf("sqlite: hash registration token: %w", err)
+			return fmt.Errorf("sqlite: hash rat: %w", err)
 		}
 		rat = h
 	}
@@ -298,24 +410,42 @@ func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
 	auths, _ := json.Marshal(c.AllowedAuthenticators)
 	jwks, _ := json.Marshal(c.JWKS)
 	resources, _ := json.Marshal(c.AllowedResources)
-	requestURIs, _ := json.Marshal(c.AllowedRequestURIs)
+	reqURIs, _ := json.Marshal(c.AllowedRequestURIs)
 	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
+	authzDetails, _ := json.Marshal(c.AllowedAuthorizationDetailsTypes)
+	pkceM, _ := json.Marshal(c.AllowedPKCEMethods)
+	attrs, _ := json.Marshal(c.Attributes)
+
 	res, err := s.db.ExecContext(ctx, `
-        UPDATE clients SET secret = ?, name = ?, redirect_uris = ?,
+        UPDATE clients SET
+            secret = ?, name = ?, redirect_uris = ?,
             allowed_scopes = ?, allowed_authenticators = ?,
             token_strategy = ?, active = ?, tenant_id = ?, require_pkce = ?,
-            registration_access_token = ?, jwks = ?, allowed_resources = ?,
-            allowed_request_uris = ?, post_logout_redirect_uris = ?,
-            id_token_enc_alg = ?, id_token_enc_enc = ?, userinfo_enc_alg = ?,
-            userinfo_enc_enc = ?, federation = ?
+            jwks = ?, allowed_resources = ?, allowed_request_uris = ?,
+            registration_access_token = ?,
+            post_logout_redirect_uris = ?, allowed_authorization_details = ?,
+            refresh_token_ttl = ?, access_token_ttl = ?, allowed_pkce_methods = ?,
+            require_signed_request_object = ?, require_par = ?,
+            device_code_ttl = ?, device_code_poll_interval = ?,
+            userinfo_signed_response_alg = ?,
+            idtoken_encrypted_response_alg = ?, idtoken_encrypted_response_enc = ?,
+            userinfo_encrypted_response_alg = ?, userinfo_encrypted_response_enc = ?,
+            backchannel_logout_uri = ?, subject_type = ?, sector_identifier_uri = ?,
+            frontchannel_logout_uri = ?, federation = ?, attributes = ?
         WHERE id = ?`,
 		secret, c.Name,
 		string(redirects), string(scopes), string(auths),
 		c.TokenStrategy, boolToInt(c.Active), c.TenantID, boolToInt(c.RequirePKCE),
-		rat, string(jwks), string(resources),
-		string(requestURIs), string(postLogout),
+		string(jwks), string(resources), string(reqURIs), rat,
+		string(postLogout), string(authzDetails),
+		int64(c.RefreshTokenTTL), int64(c.AccessTokenTTL), string(pkceM),
+		boolToInt(c.RequireSignedRequestObject), boolToInt(c.RequirePAR),
+		int64(c.DeviceCodeTTL), int64(c.DeviceCodePollInterval),
+		c.UserinfoSignedResponseAlg,
 		c.IDTokenEncryptedResponseAlg, c.IDTokenEncryptedResponseEnc,
-		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc, boolToInt(c.Federation),
+		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
+		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
+		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
 		c.ID,
 	)
 	if err != nil {
@@ -338,15 +468,14 @@ func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 }
 
 func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
-	plaintext, err := generateClientSecret()
+	plain, err := generateClientSecret()
 	if err != nil {
 		return "", err
 	}
-	hashed, err := hashClientSecret(plaintext)
+	hashed, err := hashClientSecret(plain)
 	if err != nil {
 		return "", fmt.Errorf("sqlite: hash rotated secret: %w", err)
 	}
-	// Store the hash; return the plaintext (one-time reveal to the caller).
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE clients SET secret = ? WHERE id = ?`, hashed, clientID)
 	if err != nil {
@@ -355,7 +484,7 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 	if n, _ := res.RowsAffected(); n == 0 {
 		return "", sso.ErrNoSuchClient
 	}
-	return plaintext, nil
+	return plain, nil
 }
 
 // clientSelectAll keeps the column list in one place so Add / Update /
@@ -363,9 +492,16 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 func clientSelectAll() string {
 	return `SELECT id, secret, name, redirect_uris, allowed_scopes,
         allowed_authenticators, token_strategy, active, tenant_id, require_pkce,
-        registration_access_token, jwks, allowed_resources, allowed_request_uris,
-        post_logout_redirect_uris, id_token_enc_alg, id_token_enc_enc,
-        userinfo_enc_alg, userinfo_enc_enc, federation
+        jwks, allowed_resources, allowed_request_uris, registration_access_token,
+        post_logout_redirect_uris, allowed_authorization_details,
+        refresh_token_ttl, access_token_ttl, allowed_pkce_methods,
+        require_signed_request_object, require_par,
+        device_code_ttl, device_code_poll_interval,
+        userinfo_signed_response_alg,
+        idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
+        userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
+        backchannel_logout_uri, subject_type, sector_identifier_uri,
+        frontchannel_logout_uri, federation, attributes
         FROM clients`
 }
 
@@ -375,72 +511,97 @@ func clientSelectByCol(col string) string {
 
 func scanClient(s scanner) (*sso.Client, error) {
 	var (
-		c                                     sso.Client
-		redirects, scopes, auths              string
-		activeInt, requirePKCEInt             int64
-		secret, name, tokenStrategy, tenantID string
-		jwks, resources, requestURIs          string
-		postLogout, regToken                  string
-		idTokenEncAlg, idTokenEncEnc          string
-		userinfoEncAlg, userinfoEncEnc        string
-		federationInt                         int64
+		c                                                      sso.Client
+		redirects, scopes, auths                               string
+		jwksBlob, resources, reqURIs, postLogout, authzDetails string
+		pkceM, attrsBlob                                       string
+		activeInt, requirePKCEInt                              int64
+		requireSROInt, requirePARInt, federationInt            int64
+		secret, name, tokenStrategy, tenantID                  string
+		rat                                                    string
+		refreshTTL, accessTTL, dcTTL, dcPoll                   int64
+		userinfoSigAlg                                         string
+		idtEncAlg, idtEncEnc, uiEncAlg, uiEncEnc               string
+		bclURI, subjectType, sectorURI, fclURI                 string
 	)
 	if err := s.Scan(
 		&c.ID, &secret, &name,
 		&redirects, &scopes, &auths,
 		&tokenStrategy, &activeInt, &tenantID, &requirePKCEInt,
-		&regToken, &jwks, &resources, &requestURIs,
-		&postLogout, &idTokenEncAlg, &idTokenEncEnc,
-		&userinfoEncAlg, &userinfoEncEnc, &federationInt,
+		&jwksBlob, &resources, &reqURIs, &rat,
+		&postLogout, &authzDetails,
+		&refreshTTL, &accessTTL, &pkceM,
+		&requireSROInt, &requirePARInt,
+		&dcTTL, &dcPoll,
+		&userinfoSigAlg,
+		&idtEncAlg, &idtEncEnc, &uiEncAlg, &uiEncEnc,
+		&bclURI, &subjectType, &sectorURI, &fclURI,
+		&federationInt, &attrsBlob,
 	); err != nil {
 		return nil, err
 	}
 	c.Secret = secret
+	c.RegistrationAccessToken = rat
 	c.Name = name
 	c.TokenStrategy = tokenStrategy
 	c.TenantID = tenantID
 	c.Active = activeInt != 0
 	c.RequirePKCE = requirePKCEInt != 0
-	c.RegistrationAccessToken = regToken
-	c.IDTokenEncryptedResponseAlg = idTokenEncAlg
-	c.IDTokenEncryptedResponseEnc = idTokenEncEnc
-	c.UserinfoEncryptedResponseAlg = userinfoEncAlg
-	c.UserinfoEncryptedResponseEnc = userinfoEncEnc
+	c.RequireSignedRequestObject = requireSROInt != 0
+	c.RequirePAR = requirePARInt != 0
 	c.Federation = federationInt != 0
-	if redirects != "" && redirects != "[]" {
-		if err := json.Unmarshal([]byte(redirects), &c.RedirectURIs); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal redirect_uris: %w", err)
+	c.RefreshTokenTTL = time.Duration(refreshTTL)
+	c.AccessTokenTTL = time.Duration(accessTTL)
+	c.DeviceCodeTTL = time.Duration(dcTTL)
+	c.DeviceCodePollInterval = time.Duration(dcPoll)
+	c.UserinfoSignedResponseAlg = userinfoSigAlg
+	c.IDTokenEncryptedResponseAlg = idtEncAlg
+	c.IDTokenEncryptedResponseEnc = idtEncEnc
+	c.UserinfoEncryptedResponseAlg = uiEncAlg
+	c.UserinfoEncryptedResponseEnc = uiEncEnc
+	c.BackchannelLogoutURI = bclURI
+	c.SubjectType = subjectType
+	c.SectorIdentifierURI = sectorURI
+	c.FrontchannelLogoutURI = fclURI
+
+	unmarshalJSON := func(blob string, dst any, field string) error {
+		if blob == "" || blob == "[]" || blob == "{}" || blob == "null" {
+			return nil
 		}
+		if err := json.Unmarshal([]byte(blob), dst); err != nil {
+			return fmt.Errorf("sqlite: unmarshal %s: %w", field, err)
+		}
+		return nil
 	}
-	if scopes != "" && scopes != "[]" {
-		if err := json.Unmarshal([]byte(scopes), &c.AllowedScopes); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal allowed_scopes: %w", err)
-		}
+	if err := unmarshalJSON(redirects, &c.RedirectURIs, "redirect_uris"); err != nil {
+		return nil, err
 	}
-	if auths != "" && auths != "[]" {
-		if err := json.Unmarshal([]byte(auths), &c.AllowedAuthenticators); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal allowed_authenticators: %w", err)
-		}
+	if err := unmarshalJSON(scopes, &c.AllowedScopes, "allowed_scopes"); err != nil {
+		return nil, err
 	}
-	if jwks != "" && jwks != "[]" {
-		if err := json.Unmarshal([]byte(jwks), &c.JWKS); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal jwks: %w", err)
-		}
+	if err := unmarshalJSON(auths, &c.AllowedAuthenticators, "allowed_authenticators"); err != nil {
+		return nil, err
 	}
-	if resources != "" && resources != "[]" {
-		if err := json.Unmarshal([]byte(resources), &c.AllowedResources); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal allowed_resources: %w", err)
-		}
+	if err := unmarshalJSON(jwksBlob, &c.JWKS, "jwks"); err != nil {
+		return nil, err
 	}
-	if requestURIs != "" && requestURIs != "[]" {
-		if err := json.Unmarshal([]byte(requestURIs), &c.AllowedRequestURIs); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal allowed_request_uris: %w", err)
-		}
+	if err := unmarshalJSON(resources, &c.AllowedResources, "allowed_resources"); err != nil {
+		return nil, err
 	}
-	if postLogout != "" && postLogout != "[]" {
-		if err := json.Unmarshal([]byte(postLogout), &c.PostLogoutRedirectURIs); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal post_logout_redirect_uris: %w", err)
-		}
+	if err := unmarshalJSON(reqURIs, &c.AllowedRequestURIs, "allowed_request_uris"); err != nil {
+		return nil, err
+	}
+	if err := unmarshalJSON(postLogout, &c.PostLogoutRedirectURIs, "post_logout_redirect_uris"); err != nil {
+		return nil, err
+	}
+	if err := unmarshalJSON(authzDetails, &c.AllowedAuthorizationDetailsTypes, "allowed_authorization_details"); err != nil {
+		return nil, err
+	}
+	if err := unmarshalJSON(pkceM, &c.AllowedPKCEMethods, "allowed_pkce_methods"); err != nil {
+		return nil, err
+	}
+	if err := unmarshalJSON(attrsBlob, &c.Attributes, "attributes"); err != nil {
+		return nil, err
 	}
 	return &c, nil
 }

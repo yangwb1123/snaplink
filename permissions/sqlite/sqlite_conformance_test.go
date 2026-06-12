@@ -19,7 +19,7 @@ func TestSQLiteProvider_Conformance(t *testing.T) {
 		Factory: func(t *testing.T) permissions.Provider {
 			t.Helper()
 			dir := t.TempDir()
-			dsn := "file:" + filepath.Join(dir, "p.db") + "?_journal=WAL&_busy_timeout=5000"
+			dsn := "file:" + filepath.Join(dir, "p.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 			p, err := permsqlite.New(dsn)
 			if err != nil {
 				t.Fatalf("permsqlite.New: %v", err)

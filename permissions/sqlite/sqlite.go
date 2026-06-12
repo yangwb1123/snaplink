@@ -85,6 +85,7 @@ func New(dsn string) (*Provider, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("permissions/sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := migrate.Run(context.Background(), db, "permissions", migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("permissions/sqlite: migrate: %w", err)

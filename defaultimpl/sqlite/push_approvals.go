@@ -54,6 +54,7 @@ func NewPushApprovalStore(dsn string) (*PushApprovalStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "push_approvals", pushApprovalsSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate push_approvals: %w", err)

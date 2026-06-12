@@ -52,6 +52,7 @@ func NewAccountLockout(dsn string) (*AccountLockout, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "account_lockout", accountLockoutSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate account_lockouts: %w", err)

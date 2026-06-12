@@ -15,7 +15,7 @@ import (
 func newUserStoreForTest(t *testing.T) *UserStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "users.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "users.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	store, err := NewUserStore(dsn)
 	if err != nil {
 		t.Fatalf("NewUserStore: %v", err)
@@ -157,7 +157,7 @@ func TestUserStore_CrossInstanceSharing(t *testing.T) {
 	// replica A is visible at login time on replica B against the
 	// same DB file. Mirror PairwiseSubjectStore_CrossInstanceSharing.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	storeA, err := NewUserStore(dsn)
 	if err != nil {

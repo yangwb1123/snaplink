@@ -9,7 +9,7 @@ import (
 func newSQLiteLimiterForTest(t *testing.T, perSec float64, burst int) *SQLiteLimiter {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "rl.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "rl.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	lim, err := NewSQLiteLimiter(dsn, perSec, burst, "")
 	if err != nil {
 		t.Fatalf("NewSQLiteLimiter: %v", err)
@@ -86,7 +86,7 @@ func TestSQLiteLimiter_BucketNamesIsolated(t *testing.T) {
 	// Two limiters sharing one DB but with distinct bucket_names
 	// must not pollute each other's keys.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	limA, err := NewSQLiteLimiter(dsn, 0, 1, "login")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestSQLiteLimiter_CrossInstanceSharing(t *testing.T) {
 	// "replica A" must be visible to "replica B" before B grants
 	// the next request.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	limA, err := NewSQLiteLimiter(dsn, 0, 1, "")
 	if err != nil {

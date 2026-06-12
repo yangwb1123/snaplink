@@ -12,7 +12,7 @@ import (
 func newPairwiseSubjectStoreForTest(t *testing.T) *PairwiseSubjectStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	store, err := NewPairwiseSubjectStore(dsn)
 	if err != nil {
 		t.Fatalf("NewPairwiseSubjectStore: %v", err)
@@ -110,7 +110,7 @@ func TestPairwiseSubjectStore_CrossInstanceSharing(t *testing.T) {
 	// replica A is resolvable at /userinfo on replica B against the
 	// same DB file.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	storeA, err := NewPairwiseSubjectStore(dsn)
 	if err != nil {

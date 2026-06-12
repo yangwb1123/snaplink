@@ -743,17 +743,16 @@ type SigningConfig struct {
 	// KMS/HSM, not by this process).
 	External string `yaml:"external"`
 
-	// RevocationBackend opts the access-token revocation deny-set into a
-	// DURABLE store so a revoked-but-unexpired token stays revoked across a
-	// process restart / rolling deploy (without it the in-process deny-set is
-	// empty on boot and the token RESURRECTS). "" (default) = in-process only;
-	// "memory" = the in-process MemoryRevocationStore (exercises the seam, no
-	// restart survival); "sqlite" = a durable peer at RevocationDSN. On a
-	// SHARED sqlite/redis backend this is multi-replica durable. Validate still
-	// hits only the fast in-process map; the store persists + re-seeds at boot.
+	// RevocationBackend selects the durable RevocationStore backend for
+	// access-token revocations that survive a process restart.
+	// "" (default) = in-process only; "memory" = durable MemoryRevocationStore
+	// (for testing / single-replica); "sqlite" = durable SQLite store (requires
+	// RevocationDSN). When set, the store is seeded at boot so a pre-restart
+	// revocation is honored again. Orthogonal to the live cross-replica bus
+	// (WithCrossReplicaRevocation). cmd knob: keys.signing.revocation_backend.
 	RevocationBackend string `yaml:"revocation_backend"`
-	// RevocationDSN is the SQLite DSN for RevocationBackend "sqlite"
-	// (e.g. "file:/var/lib/sso/revocations.db?_journal=WAL").
+	// RevocationDSN is the SQLite DSN for the durable revocation store.
+	// Required when RevocationBackend = "sqlite"; ignored otherwise.
 	RevocationDSN string `yaml:"revocation_dsn"`
 }
 
@@ -767,13 +766,11 @@ type KeyRotationConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	Interval    time.Duration `yaml:"interval"`     // e.g. 2160h (90d)
 	GracePeriod time.Duration `yaml:"grace_period"` // e.g. 168h (7d)
-	// CoordinatedCutover arms WithCoordinatedKeyRotation: on rotation the
-	// node broadcasts the demoted+new kids + a now+GracePeriod retire
-	// deadline over the invalidation bus so every replica defers the
-	// demoted kid's retirement to the SAME instant (no rolling-deploy
-	// "unknown kid" 401). Requires cluster.bus; fail-safe (only ever
-	// WIDENS the verify window). Off = today's independent per-replica
-	// retire timers.
+	// CoordinatedCutover arms WithCoordinatedKeyRotation so every replica
+	// retires the old signing kid at the same instant (broadcast via
+	// cluster.Bus KindSigningKeyRotation). Requires cluster.bus. Nil bus
+	// = log error + INERT (§2 fail-safe — always widens, never narrows
+	// the verify window). cmd knob: keys.rotation.coordinated_cutover.
 	CoordinatedCutover bool `yaml:"coordinated_cutover"`
 }
 
@@ -786,15 +783,9 @@ type KeyRotationConfig struct {
 // fail-open by design, so it is deliberately NOT a readiness dependency.
 type ClusterConfig struct {
 	Bus ClusterBusConfig `yaml:"bus"`
-
-	// CrossReplicaRevocation arms WithCrossReplicaRevocation: a
-	// /token/revoke (or id_token_hint revoke on /end_session) that hit a
-	// local issuer broadcasts the revoked access token + its exp over the
-	// invalidation bus so every replica adds it to its own deny-set,
-	// closing the window where a token revoked on replica A keeps
-	// validating on replica B until its own exp. Additive + oracle-safe +
-	// fail-open; REQUIRES a wired bus (inert without one). Default false =
-	// local-only revocation (byte-identical to before).
+	// CrossReplicaRevocation enables propagation of access-token revocations
+	// to peer replicas via cluster.Bus KindTokenRevoked. Requires cluster.bus.
+	// Nil bus = log error + INERT. cmd knob: cluster.cross_replica_revocation.
 	CrossReplicaRevocation bool `yaml:"cross_replica_revocation"`
 }
 
@@ -910,7 +901,7 @@ type AnomalyRunnerConfig struct {
 	QueueSize      int           `yaml:"queue_size"`      // 0 → SDK default 1024
 	Workers        int           `yaml:"workers"`         // 0 → SDK default 4
 	DropPolicy     string        `yaml:"drop_policy"`     // drop_newest | block; default drop_newest
-	InspectTimeout time.Duration `yaml:"inspect_timeout"` // 0 → SDK default 5s; per-event detector sweep deadline
+	InspectTimeout time.Duration `yaml:"inspect_timeout"` // 0 → SDK default 5s per detector
 }
 
 type AnomalyRetentionConfig struct {
@@ -1289,29 +1280,20 @@ type WebAuthnBackendSQLiteConfig struct {
 // mixed (e.g. SQLite identity + memory OAuth state for low-traffic
 // CLI deployments) by setting backends separately.
 type IdentityConfig struct {
-	Backend     string                    `yaml:"backend"` // memory | sqlite
-	SQLite      IdentitySQLiteConfig      `yaml:"sqlite"`
-	ClientCache IdentityClientCacheConfig `yaml:"client_cache"`
+	Backend     string               `yaml:"backend"` // memory | sqlite
+	SQLite      IdentitySQLiteConfig `yaml:"sqlite"`
+	ClientCache ClientCacheConfig    `yaml:"client_cache"`
 }
 
-// IdentityClientCacheConfig opts into a per-login TTL cache over the wired
-// ClientStore (sso.WithClientStoreCache). Every interactive login, /token
-// grant, and tenant-bound request reads client metadata via
-// ClientStore.Get; at high QPS against a SQLite/Redis backend that is a
-// measurable per-request round-trip. When Enabled, successful Gets of
-// existing clients are cached for TTL (default sso.DefaultClientStoreCacheTTL
-// when unset/zero).
-//
-// SECURITY-PRESERVING (§2): credential verification (ValidateSecret) ALWAYS
-// bypasses the cache, misses are never cached, and admin/DCR mutations evict
-// the affected entry (local + cross-replica bus). The accepted tradeoff is
-// the same as tenant.suspension_check.cache_ttl: a client deactivated, or
-// whose metadata changed, mid-window keeps being served the prior value for
-// at most TTL unless an admin/DCR mutation evicts it sooner. Disabled (the
-// default) ⇒ no wrapper, byte-identical to a non-caching build.
-type IdentityClientCacheConfig struct {
+// ClientCacheConfig opts into the per-login ClientStore metadata cache
+// (WithClientStoreCache). When Enabled, each ClientStore.Get on the
+// hot login path is cached for TTL and evicted on admin/DCR mutations
+// via the cluster.Bus KindClientChange event. ValidateSecret always
+// bypasses the cache (never caches credentials). TTL 0 = SDK default
+// (30s). cmd knob: identity.client_cache.{enabled,ttl}.
+type ClientCacheConfig struct {
 	Enabled bool          `yaml:"enabled"`
-	TTL     time.Duration `yaml:"ttl"`
+	TTL     time.Duration `yaml:"ttl"` // 0 → 30s SDK default
 }
 
 type IdentitySQLiteConfig struct {
@@ -1431,7 +1413,7 @@ type OAuthComplianceConfig struct {
 
 // OAuthSQLiteConfig groups the SQLite-only knobs. DSN follows
 // modernc.org/sqlite syntax — typical production form:
-// `file:/var/lib/sso/sso.db?_journal=WAL&_busy_timeout=5000`.
+// `file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)`.
 // Each store opens its own *sql.DB pool against the same file;
 // SQLite's OS-level file lock coordinates writes.
 type OAuthSQLiteConfig struct {
@@ -1456,23 +1438,20 @@ type OAuthJARConfig struct {
 	MaxBytes int64         `yaml:"max_bytes"`
 }
 
+// OAuthRefreshTokenConfig extends OAuthStoreConfig with the optional
+// per-family rotation velocity cap. All base fields are inherited via
+// embedding so existing YAML configs (enabled/ttl) continue to work.
+type OAuthRefreshTokenConfig struct {
+	OAuthStoreConfig `yaml:",inline"`
+}
+
 // OAuthStoreConfig is the shared shape for the simple TTL-only stores.
 type OAuthStoreConfig struct {
 	Enabled bool          `yaml:"enabled"`
 	TTL     time.Duration `yaml:"ttl"`
-}
-
-// OAuthRefreshTokenConfig extends the shared store shape with the OPTIONAL
-// per-family rotation-VELOCITY cap (oauth.RefreshTokenRotationLimiter, BCP
-// §4.13/§4.14 hardening). Both MaxRotationsPerWindow and RotationWindow must
-// be positive for the cap to arm; either zero leaves it OFF (byte-identical
-// to before), so an over-cap family is fail-OPEN. When armed, a family that
-// rotates more than MaxRotationsPerWindow times within RotationWindow is
-// killed (DeleteFamily) and the rotation rejected with the same invalid_grant
-// wire shape as reuse detection (oracle-safe), emitting
-// refresh_rotation_velocity_exceeded + sso_refresh_rotation_velocity_exceeded_total.
-type OAuthRefreshTokenConfig struct {
-	OAuthStoreConfig      `yaml:",inline"`
+	// MaxRotationsPerWindow and RotationWindow wire the opt-in per-family
+	// rotation velocity cap on the RefreshTokenStore (§2 oracle-safe).
+	// Only meaningful for the refresh_token store; ignored by other stores.
 	MaxRotationsPerWindow int           `yaml:"max_rotations_per_window"`
 	RotationWindow        time.Duration `yaml:"rotation_window"`
 }
@@ -1498,16 +1477,11 @@ type OAuthDeviceCodeConfig struct {
 // drop counters and queue depth land on the same registry.
 type MetricsConfig struct {
 	Enabled bool `yaml:"enabled"`
-
-	// TenantLabelAllowlist opts into the per-tenant login + token-issue
-	// metrics (sso_login_attempts_by_tenant_total +
-	// sso_tokens_issued_by_tenant_total), wired to
-	// sso.WithTenantMetricsAllowlist. CARDINALITY-GATED (§5): only the
-	// tenant ids listed here get their own label value; every other tenant
-	// folds into a single tenant="other" bucket, capping cardinality at
-	// len(list)+1. Empty (the default) leaves these metrics OFF entirely —
-	// never registered, never emitted. Requires Enabled (no registry
-	// otherwise). NEVER label by raw user id or unbounded client_id.
+	// TenantLabelAllowlist enables per-tenant login/token metrics for the
+	// listed tenant IDs. Tenants not in the list land in an "other" bucket.
+	// Empty (default) = per-tenant breakdown disabled. Keep this list
+	// small — cardinality grows with the slice length. cmd knob:
+	// metrics.tenant_label_allowlist. Requires WithTenantMetricsAllowlist.
 	TenantLabelAllowlist []string `yaml:"tenant_label_allowlist"`
 }
 
@@ -1518,7 +1492,6 @@ type MetricsConfig struct {
 // overhead. See AGENTS.md §8d / §8f / §8g for the runtime behavior
 // of each.
 type SecurityConfig struct {
-	TrustedProxies TrustedProxiesConfig `yaml:"trusted_proxies"`
 	BodyLimit      BodyLimitConfig      `yaml:"body_limit"`
 	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
 	CORS           CORSConfig           `yaml:"cors"`
@@ -1526,26 +1499,21 @@ type SecurityConfig struct {
 	JTIReplay      JTIReplayConfig      `yaml:"jti_replay"`
 	AccountLockout AccountLockoutConfig `yaml:"account_lockout"`
 	MTLS           MTLSConfig           `yaml:"mtls"`
+	TrustedProxies TrustedProxiesConfig `yaml:"trusted_proxies"`
 }
 
-// TrustedProxiesConfig opts into X-Forwarded-For chain validation.
-//
-// When CIDRs is non-empty, the server installs middleware.TrustedProxies
-// (sso.WithTrustedProxies) that walks the XFF chain from right to left and
-// stops at the first hop that is NOT in one of the listed CIDRs. Downstream
-// consumers (ratelimit.KeyByClientIP) then see the validated real client IP
-// via middleware.RealClientIP instead of the raw header.
-//
-// Hops=0 means "trust at most len(CIDRs) proxy tiers." Increase it only
-// when a single CIDR covers multiple independent proxy tiers.
-//
-// Without this block (or with an empty CIDRs list), every XFF consumer
-// trusts the raw header unconditionally — safe only behind an edge that
-// strips and re-adds XFF. Internet-facing deployments without such an edge
-// MUST set CIDRs to prevent XFF forgery.
+// TrustedProxiesConfig opts into XFF-aware real-IP extraction.
+// When CIDRs is non-empty, the middleware.TrustedProxies middleware is
+// installed: XFF is walked right-to-left, CIDRs up to Hops trusted
+// hops are skipped, and the first non-trusted address is the real client
+// IP used for rate-limiting and geo enrichment.
+// Hops 0 = walk the full XFF chain until a non-trusted address.
+// SECURITY: list ONLY the CIDRs of your actual load balancers / CDN
+// egress IPs; a spoofed X-Forwarded-For header injected BEFORE the
+// trusted proxy will be accepted as the real client IP if you over-trust.
 type TrustedProxiesConfig struct {
 	CIDRs []string `yaml:"cidrs"`
-	Hops  int      `yaml:"hops"`
+	Hops  int      `yaml:"hops"` // 0 = unlimited
 }
 
 // MTLSConfig opts into RFC 8705 mTLS-bound access tokens.
@@ -1668,22 +1636,10 @@ type DPoPNonceConfig struct {
 	TTL     time.Duration `yaml:"ttl"`
 }
 
-// DefaultBodyLimitBytes is the conservative global request-body cap applied
-// when body_limit.max_bytes is omitted (0). 1 MiB is generous for any
-// auth-flow payload (even a signed+encrypted JAR request object) while
-// blocking the gigabyte-class allocation a malicious /token `request` could
-// otherwise force before size validation. Secure-by-default: an operator who
-// omits the body_limit block is bounded, not unbounded; the explicit
-// unlimited escape hatch is max_bytes: -1 (e.g. when a trusted edge already
-// caps bodies), and per-prefix overrides relax it for legitimately-large
-// endpoints (PAR, WebAuthn attestation).
-const DefaultBodyLimitBytes int64 = 1 << 20
-
-// BodyLimitConfig caps request body size. MaxBytes=0 (or omitted) applies the
-// conservative [DefaultBodyLimitBytes] (1 MiB) default; MaxBytes<0 is the
-// explicit "unlimited" escape hatch (no global cap wired); MaxBytes>0 sets
-// that exact cap. applyDefaults normalizes these into the >0 / 0 that the two
-// wiring sites (ServerOptions + cmd) read. Typical production value: 1048576.
+// BodyLimitConfig caps request body size. MaxBytes=0 disables the
+// global limit (sso.WithBodyLimit is not wired). Typical production
+// value: 1048576 (1 MiB) — generous for any auth-flow payload,
+// blocks gigabyte-class DoS.
 //
 // Overrides applies a per-prefix override (longest-match wins). Use
 // a value of 0 in an override to mean "unlimited for this prefix"
@@ -2188,7 +2144,7 @@ type AuditRetentionConfig struct {
 }
 
 // AuditSqliteConfig is the SQLite backend's DSN. Production DSN
-// shape: file:/var/lib/sso/audit.db?_journal=WAL&_busy_timeout=5000
+// shape: file:/var/lib/sso/audit.db?_journal=WAL&_pragma=busy_timeout(5000)
 // (matches the other SQLite backends in the SDK).
 type AuditSqliteConfig struct {
 	DSN string `yaml:"dsn"`
@@ -2762,9 +2718,22 @@ func LoadFromSources(ctx context.Context, sources ...Source) (*Config, error) {
 // canonical URL via `server.issuer` for production deployments.
 const DefaultServerIssuer = "sso-server"
 
+// DefaultBodyLimitBytes is the conservative body-size cap applied when the
+// operator omits security.body_limit entirely. 64 KiB is generous for any
+// OAuth/OIDC flow (typical /token ≈ 1 KiB; a JAR with a large JWKS is the
+// ceiling). Set security.body_limit.max_bytes = -1 to explicitly opt into
+// unlimited.
+const DefaultBodyLimitBytes int64 = 64 * 1024
+
 func (c *Config) applyDefaults() {
 	if c.Server.Issuer == "" {
 		c.Server.Issuer = DefaultServerIssuer
+	}
+	// Body-limit default: absent (0) → secure default; negative → unlimited (0).
+	if c.Security.BodyLimit.MaxBytes == 0 {
+		c.Security.BodyLimit.MaxBytes = DefaultBodyLimitBytes
+	} else if c.Security.BodyLimit.MaxBytes < 0 {
+		c.Security.BodyLimit.MaxBytes = 0 // explicit unlimited escape hatch
 	}
 	if c.Server.SessionTTL == 0 {
 		c.Server.SessionTTL = sso.DefaultSessionDuration
@@ -2786,15 +2755,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Authenticators.KeyPair != nil && c.Authenticators.KeyPair.MaxClockSkew == 0 {
 		c.Authenticators.KeyPair.MaxClockSkew = authenticators.DefaultKeyPairClockSkew
-	}
-	// Body-limit secure-by-default (ROADMAP footgun fix): omitted (0) → the
-	// conservative [DefaultBodyLimitBytes] cap; negative → explicit unlimited
-	// (normalized to 0 so the >0 wiring gates skip). See [BodyLimitConfig].
-	switch {
-	case c.Security.BodyLimit.MaxBytes == 0:
-		c.Security.BodyLimit.MaxBytes = DefaultBodyLimitBytes
-	case c.Security.BodyLimit.MaxBytes < 0:
-		c.Security.BodyLimit.MaxBytes = 0
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 func newJTIReplayStoreForTest(t *testing.T) *JTIReplayStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "jti.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "jti.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	store, err := NewJTIReplayStore(dsn)
 	if err != nil {
 		t.Fatalf("NewJTIReplayStore: %v", err)
@@ -136,7 +136,7 @@ func TestJTIReplayStore_CrossInstanceSharing(t *testing.T) {
 	// rejected when re-submitted to a second process pointed at the
 	// same DB file.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	storeA, err := NewJTIReplayStore(dsn)
 	if err != nil {

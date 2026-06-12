@@ -58,6 +58,7 @@ func NewRecentLoginStore(dsn string) (*RecentLoginStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "recent_login", recentLoginSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate recent_logins: %w", err)

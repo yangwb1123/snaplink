@@ -170,7 +170,7 @@ func TestBuildApp_IdentitySQLiteEndToEnd(t *testing.T) {
 
 func TestBuildApp_SQLiteEndToEnd(t *testing.T) {
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "sso.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "sso.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	cfg := &config.Config{}
 	cfg.OAuth.Backend = "sqlite"

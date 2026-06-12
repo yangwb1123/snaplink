@@ -10,7 +10,7 @@ import (
 func newIPFailureCounterForTest(t *testing.T) *IPFailureCounter {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "ipf.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "ipf.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	c, err := NewIPFailureCounter(dsn)
 	if err != nil {
 		t.Fatalf("NewIPFailureCounter: %v", err)
@@ -82,7 +82,7 @@ func TestSQLiteIPFailureCounter_PruneOlder(t *testing.T) {
 
 func TestSQLiteIPFailureCounter_ClusterSharedSameDSN(t *testing.T) {
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	a, _ := NewIPFailureCounter(dsn)
 	defer a.Close()
 	b, _ := NewIPFailureCounter(dsn)

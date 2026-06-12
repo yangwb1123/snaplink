@@ -13,7 +13,7 @@ import (
 func newRecentLoginStoreForTest(t *testing.T) *RecentLoginStore {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "recent.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "recent.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	s, err := NewRecentLoginStore(dsn)
 	if err != nil {
 		t.Fatalf("NewRecentLoginStore: %v", err)
@@ -182,7 +182,7 @@ func TestSQLiteRecentLoginStore_ClusterSharedSameDSN(t *testing.T) {
 	// visible to store B (cluster-shared semantic). This is the
 	// difference from the memory peer.
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	a, err := NewRecentLoginStore(dsn)
 	if err != nil {
 		t.Fatalf("a: %v", err)

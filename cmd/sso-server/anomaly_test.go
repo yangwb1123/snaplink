@@ -61,7 +61,7 @@ func TestBuildAnomaly_HappyPathMemory(t *testing.T) {
 
 func TestBuildAnomaly_SQLiteBackendOpenedAndClosed(t *testing.T) {
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "anom.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "anom.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
 	rt, err := buildAnomaly(config.AnomalyConfig{
 		Enabled:     true,

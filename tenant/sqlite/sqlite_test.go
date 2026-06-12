@@ -13,7 +13,7 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "tenant.db") + "?_journal=WAL&_busy_timeout=5000"
+	dsn := "file:" + filepath.Join(dir, "tenant.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	s, err := New(dsn)
 	if err != nil {
 		t.Fatalf("New: %v", err)

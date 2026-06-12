@@ -105,6 +105,7 @@ func NewSessionIndex(dsn string, opts ...IndexOption) (*SessionIndex, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("saml/idp/sqlite: ping: %w", err)
 	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
 	if err := ensureSchema(db, "saml_session_index", sessionIndexSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("saml/idp/sqlite: migrate saml_session_index: %w", err)
