@@ -140,3 +140,32 @@ func noRedirectClient(base *http.Client) *http.Client {
 	}
 	return &c
 }
+
+// TestDialWithSSRFCheck_BlocksInternalIPs verifies that dialWithSSRFCheck rejects
+// dials to loopback and link-local addresses directly, without needing DNS. These
+// are the literal-IP paths that bypass DNS but should still be caught at dial time
+// (defense-in-depth over the validateFederationURL literal-IP check).
+func TestDialWithSSRFCheck_BlocksInternalIPs(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+	}{
+		{"loopback v4", "127.0.0.1:80"},
+		{"loopback v4 alt", "127.0.0.2:443"},
+		{"link-local IMDS", "169.254.169.254:80"},
+		{"RFC1918 /8", "10.0.0.1:80"},
+		{"RFC1918 /16", "172.16.0.1:80"},
+		{"RFC1918 /24", "192.168.1.1:80"},
+		{"loopback v6", "[::1]:80"},
+		{"unspecified v4", "0.0.0.0:80"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, err := federation.DialWithSSRFCheck(context.Background(), "tcp", tc.addr)
+			if err == nil {
+				conn.Close()
+				t.Fatalf("DialWithSSRFCheck(%q): expected SSRF error, got nil", tc.addr)
+			}
+		})
+	}
+}

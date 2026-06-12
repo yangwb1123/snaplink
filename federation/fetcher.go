@@ -28,14 +28,18 @@ import (
 //   - NO REDIRECTS: a 30x from an https host to an internal IP would defeat
 //     the scheme gate, so CheckRedirect returns an error (the response is
 //     never followed).
-//   - BEST-EFFORT internal-host block: a literal private / loopback /
-//     link-local IP host is rejected up front. This is a DEFENSE-IN-DEPTH
-//     heuristic, NOT a complete SSRF control — a hostname that DNS-resolves
-//     to an internal IP still passes (the resolution happens inside the
-//     transport). FULL SSRF containment REQUIRES the operator's egress
-//     network policy (a deny-by-default egress firewall / proxy), exactly as
-//     documented for the JAR fetcher. This gate raises the bar; it is not the
-//     wall.
+//   - INTERNAL-HOST BLOCK (two layers):
+//     1. validateFederationURL fast-rejects a URL whose host is a LITERAL
+//        private / loopback / link-local IP (e.g. https://10.0.0.1/...).
+//     2. dialWithSSRFCheck resolves the hostname at dial time and rejects if
+//        ANY resolved IP is internal. This closes the DNS-rebinding gap: a
+//        public-looking hostname (evil.example.com) that resolves to
+//        169.254.169.254 or another IMDS/internal address at the moment of
+//        the dial is blocked here, not at URL-parse time. Because the check
+//        and the connection happen in the same call there is no TOCTOU window.
+//        FULL SSRF containment STILL REQUIRES the operator's egress network
+//        policy (a deny-by-default egress firewall / proxy) as the final
+//        layer; these two in-process gates raise the bar substantially.
 //   - BOUNDED: a per-fetch timeout + a body-size cap (LimitReader) so a slow
 //     or gigantic federation document cannot hang or OOM the resolver.
 //
@@ -94,9 +98,63 @@ func newHTTPFetcher() *httpFetcher {
 				// federation well-known + fetch endpoints are exact URLs).
 				return errors.New("federation: redirect not followed")
 			},
+			// dialWithSSRFCheck on the transport's DialContext is the
+			// defense-in-depth layer against DNS rebinding: it resolves the
+			// hostname at dial time and rejects any IP that isInternalIP
+			// returns true for — including cases where a public-looking
+			// hostname resolves to 169.254.169.254 or another IMDS/internal
+			// address AFTER validateFederationURL's literal-IP check passes.
+			Transport: &http.Transport{
+				DialContext: dialWithSSRFCheck,
+			},
 		},
 		maxBytes: DefaultFederationFetchMaxBytes,
 	}
+}
+
+// dialWithSSRFCheck is a DialContext function that resolves the target hostname
+// before opening a TCP connection and rejects the dial if ANY resolved IP is
+// internal (loopback / link-local / private / unspecified). This closes the
+// DNS-rebinding gap in validateFederationURL: that function rejects literal
+// private-IP hosts but cannot block a public hostname whose DNS record points
+// to an internal address at the moment the dial happens.
+//
+// The check runs at dial time (not URL-parse time) so there is no TOCTOU
+// window: the IP we check is the same IP we connect to.
+func dialWithSSRFCheck(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("federation: invalid dial address %q: %w", addr, err)
+	}
+	// If addr is already a numeric IP (e.g. from a literal-IP URL that slipped
+	// through) check it directly and skip the DNS round-trip.
+	if ip := net.ParseIP(host); ip != nil {
+		if isInternalIP(ip) {
+			return nil, fmt.Errorf("federation: dial address %q is internal (SSRF guard)", host)
+		}
+		d := &net.Dialer{Timeout: DefaultFederationFetchTimeout}
+		return d.DialContext(ctx, network, addr)
+	}
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("federation: DNS resolution failed for %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("federation: DNS returned no addresses for %q", host)
+	}
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			// Resolver returned something unparseable; treat conservatively.
+			return nil, fmt.Errorf("federation: DNS returned unparseable address %q for host %q", a, host)
+		}
+		if isInternalIP(ip) {
+			return nil, fmt.Errorf("federation: resolved address %q for host %q is internal (SSRF guard)", a, host)
+		}
+	}
+	// Connect to the first resolved address. Every address was validated above.
+	d := &net.Dialer{Timeout: DefaultFederationFetchTimeout}
+	return d.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
 }
 
 // FetchEntityConfiguration implements EntityStatementFetcher.
@@ -166,10 +224,12 @@ func entityConfigurationURL(entityID string) string {
 	return trimmed + core.PathFederationEntityConfig
 }
 
-// validateFederationURL is the SSRF gate applied to EVERY fetched URL (an
-// entity ID or a federation_fetch_endpoint). It enforces https + a host, and
-// best-effort rejects a literal internal-IP host. See the file header for the
-// (deliberate) limits of the host check and the operator-egress requirement.
+// validateFederationURL is the first-pass SSRF gate applied to EVERY fetched
+// URL (entity ID or federation_fetch_endpoint). It enforces https + a non-empty
+// host, and fast-rejects a LITERAL internal-IP host. It does NOT block
+// hostnames that resolve to internal IPs at dial time — that is the job of
+// dialWithSSRFCheck (DNS-rebinding defense). See the file header for the full
+// two-layer model and the operator-egress requirement.
 func validateFederationURL(raw string) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -184,9 +244,8 @@ func validateFederationURL(raw string) error {
 	if host == "" {
 		return errors.New("federation: URL has no host")
 	}
-	// Best-effort literal-internal-IP block (defense in depth, NOT a complete
-	// control — a hostname resolving to an internal IP still passes; the
-	// operator's egress policy is the real boundary).
+	// Fast-reject a literal internal IP. A hostname that resolves to an internal
+	// IP at dial time is caught by dialWithSSRFCheck instead.
 	if ip := net.ParseIP(host); ip != nil && isInternalIP(ip) {
 		return fmt.Errorf("federation: URL host %q is an internal address", host)
 	}

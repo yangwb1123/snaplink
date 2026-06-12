@@ -421,6 +421,9 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 	if chain := actorChainToWire(subject.Actor); chain != nil {
 		payload.Act = chain
 	}
+	if len(subject.RequestedClaims) > 0 {
+		payload.RequestedClaims = append(json.RawMessage(nil), subject.RequestedClaims...)
+	}
 	if len(subject.Resources) > 0 {
 		payload.Aud = audClaim(append([]string(nil), subject.Resources...))
 	}
@@ -540,6 +543,9 @@ func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (*sso.TokenClai
 	}
 	if chain := wireChainToActor(p.Act); chain != nil {
 		claims.Actor = chain
+	}
+	if len(p.RequestedClaims) > 0 {
+		claims.RequestedClaims = append(json.RawMessage(nil), p.RequestedClaims...)
 	}
 	return claims, nil
 }

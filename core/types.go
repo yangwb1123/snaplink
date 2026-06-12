@@ -494,6 +494,12 @@ type TokenClaims struct {
 	// token represents direct subject access (no delegation in
 	// flight).
 	Actor *ActorClaim `json:"act,omitempty"`
+
+	// RequestedClaims is the OIDC Core §5.5 `claims` parameter carried
+	// in the access token so /userinfo can project the RP-requested
+	// claims. Preserved as raw JSON. Empty = no extra projection beyond
+	// scope-driven defaults (byte-identical behavior).
+	RequestedClaims json.RawMessage `json:"_claims_,omitempty"`
 }
 
 // Session represents an active user session.
@@ -606,6 +612,13 @@ type Subject struct {
 	// so reading outside-in walks the delegation in time-order
 	// (outermost = most recent).
 	Actor *ActorClaim
+
+	// RequestedClaims is the OIDC Core §5.5 `claims` parameter carried
+	// from /auth/login into the access token so /userinfo can project
+	// the RP-requested claims. Preserved as raw JSON (same representation
+	// as AuthRequest.RequestedClaims). Empty = no claim projection beyond
+	// scope-driven defaults (byte-identical to pre-§5.5 behavior).
+	RequestedClaims json.RawMessage
 }
 
 // ActorClaim is the RFC 8693 §4.1 `act` claim shape. Carries the

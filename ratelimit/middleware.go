@@ -68,10 +68,12 @@ func KeyByClientIDOrIP(r *http.Request) string {
 // validated real client IP by walking the X-Forwarded-For chain from
 // right to left; [middleware.RealClientIP] returns that validated value.
 //
-// Without TrustedProxies, KeyByClientIP reads the leftmost X-Forwarded-For
-// hop first (the client's self-reported IP), falling back to r.RemoteAddr.
-// This is the common single-proxy behaviour; operators behind an L7 proxy
-// that injects XFF MUST wire WithTrustedProxies for forge-resistant keying.
+// Without TrustedProxies, KeyByClientIP returns the TCP remote address
+// (r.RemoteAddr host). X-Forwarded-For is intentionally NOT read here —
+// a client can set any XFF value, so reading it without chain validation
+// would let an attacker forge their own key and bypass rate limiting.
+// Operators behind a trusted L7 proxy MUST wire WithTrustedProxies so the
+// edge-stripped, CIDR-validated IP is used instead.
 func stripPort(addr string) string {
 	if host, _, err := net.SplitHostPort(addr); err == nil {
 		return host
@@ -80,17 +82,24 @@ func stripPort(addr string) string {
 }
 
 func KeyByClientIP(r *http.Request) string {
-	if v := middleware.RealClientIP(r); v != stripPort(r.RemoteAddr) {
-		return v // TrustedProxies middleware set a validated value
-	}
-	// Naïve first-hop: leftmost XFF address before the remote addr fallback.
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.IndexByte(xff, ','); idx > 0 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
 	return middleware.RealClientIP(r)
+}
+
+// KeyBySubject keys the limiter per authenticated subject (user ID).
+// When the request carries a validated bearer token and the auth
+// middleware has stored the subject in the context via
+// [middleware.WithSubject], this function returns "sub:<subject>".
+// This makes the rate limit per-user rather than per-IP — useful on
+// /userinfo and other per-user resource endpoints where many users
+// can share a single NAT or corporate IP.
+//
+// Falls back to [KeyByClientIP] when no authenticated subject is
+// available (unauthenticated requests, or middleware ran before auth).
+func KeyBySubject(r *http.Request) string {
+	if sub := middleware.SubjectFromContext(r); sub != "" {
+		return "sub:" + sub
+	}
+	return KeyByClientIP(r)
 }
 
 // Middleware returns an http.Handler middleware that enforces p. Empty

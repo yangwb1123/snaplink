@@ -429,6 +429,10 @@ type ed25519Payload struct {
 	// by the token-exchange grant when an actor_token is
 	// presented; nil for direct (non-delegated) tokens.
 	Act *actClaim `json:"act,omitempty"`
+
+	// RequestedClaims carries the OIDC Core §5.5 `claims` parameter
+	// so /userinfo can project RP-requested claims from the token.
+	RequestedClaims json.RawMessage `json:"_claims_,omitempty"`
 }
 
 // confirmationClaim is RFC 7800 §3.1's `cnf` JSON object. RFC 9449
@@ -587,6 +591,9 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	if chain := actorChainToWire(subject.Actor); chain != nil {
 		payload.Act = chain
 	}
+	if len(subject.RequestedClaims) > 0 {
+		payload.RequestedClaims = append(json.RawMessage(nil), subject.RequestedClaims...)
+	}
 	// RFC 8707 resource indicators flow through Subject.Resources
 	// into the standard `aud` JWT claim. Resource servers verify
 	// their own URI is in the array before accepting the token.
@@ -727,6 +734,9 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	}
 	if chain := wireChainToActor(p.Act); chain != nil {
 		claims.Actor = chain
+	}
+	if len(p.RequestedClaims) > 0 {
+		claims.RequestedClaims = append(json.RawMessage(nil), p.RequestedClaims...)
 	}
 	return claims, nil
 }

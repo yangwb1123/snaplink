@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/ratelimit"
 )
 
@@ -162,12 +163,15 @@ func TestMiddleware_Returns429WithRetryAfter(t *testing.T) {
 	}
 }
 
-func TestKeyByClientIP_PrefersXForwardedFor(t *testing.T) {
+func TestKeyByClientIP_IgnoresXFFWithoutTrustedProxies(t *testing.T) {
+	// Without TrustedProxies middleware, XFF must NOT be trusted — a client
+	// can set any XFF value to forge their bucket key and bypass rate limiting.
+	// KeyByClientIP must key on RemoteAddr (the TCP peer) in this case.
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.1:5555"
 	r.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
-	if got := ratelimit.KeyByClientIP(r); got != "1.2.3.4" {
-		t.Errorf("XFF first-hop = %q, want 1.2.3.4", got)
+	if got := ratelimit.KeyByClientIP(r); got != "10.0.0.1" {
+		t.Errorf("no TrustedProxies → RemoteAddr = %q, want 10.0.0.1 (XFF must not be trusted)", got)
 	}
 }
 
@@ -251,5 +255,22 @@ func TestMemoryLimiter_PrunesSampled(t *testing.T) {
 	}
 	if !pruned {
 		t.Error("stale bucket was not pruned within 128 Allow calls")
+	}
+}
+
+func TestKeyBySubject_UsesAuthenticatedSubject(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/userinfo", nil)
+	r.RemoteAddr = "10.0.0.1:5555"
+	r = r.WithContext(middleware.WithSubject(r.Context(), "alice"))
+	if got := ratelimit.KeyBySubject(r); got != "sub:alice" {
+		t.Errorf("subject key = %q, want sub:alice", got)
+	}
+}
+
+func TestKeyBySubject_FallsBackToIPWhenNoSubject(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/userinfo", nil)
+	r.RemoteAddr = "192.0.2.7:8888"
+	if got := ratelimit.KeyBySubject(r); got != "192.0.2.7" {
+		t.Errorf("fallback = %q, want 192.0.2.7", got)
 	}
 }

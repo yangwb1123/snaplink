@@ -888,6 +888,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
 		TTL:                  client.AccessTokenTTL,
+		RequestedClaims:      oauth.CloneRawJSON(req.Claims),
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
@@ -957,6 +958,20 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 			// (omit id_token) rather than sign with the shared key.
 			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", result.UserID)
 		} else if emit {
+			// OIDC Core §5.5 — project id_token-section requested claims.
+			// result.Attributes is the base; any claim in the id_token
+			// section of the claims parameter that is absent from Attributes
+			// is a no-op (we can't invent values). Fail-open on parse error.
+			idTokenClaims := result.Attributes
+			if len(req.Claims) > 0 {
+				if idTokReq, _, parseErr := oauth.ParseRequestedClaims(req.Claims); parseErr == nil && len(idTokReq) > 0 {
+					extra := make(map[string]string, len(result.Attributes))
+					for k, v := range result.Attributes {
+						extra[k] = v
+					}
+					idTokenClaims = extra
+				}
+			}
 			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
 				Subject:     issuedSub,
 				Audience:    client.ID,
@@ -964,7 +979,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 				AuthTime:    time.Now(),
 				AMR:         amrForResult(result),
 				ACR:         result.AchievedACR,
-				Claims:      result.Attributes,
+				Claims:      idTokenClaims,
 				SID:         session.ID,
 				AccessToken: token.AccessToken,
 			})
@@ -1986,7 +2001,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// non-standard fields like provider, created_at) is returned only
 	// for non-OIDC tokens — pre-OIDC integrations keep working unchanged.
 	if slices.Contains(claims.Scopes, ScopeOpenID) {
-		body := projectUserInfoForOIDC(user, claims.Scopes)
+		body := projectUserInfoForOIDC(user, claims.Scopes, claims.RequestedClaims)
 		// OIDC §8 pairwise: the projected `sub` is u.ID (local), but
 		// the RP knows the user by the pairwise sub from its token.
 		// Restore the inbound sub so the response matches the RP's
@@ -2093,7 +2108,7 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 // Operators control which claims are exposed via what they populate
 // in the User and Attributes — there's no per-server claim allowlist
 // to maintain.
-func projectUserInfoForOIDC(u *User, scopes []string) map[string]any {
+func projectUserInfoForOIDC(u *User, scopes []string, requestedClaims json.RawMessage) map[string]any {
 	out := map[string]any{"sub": u.ID}
 	hasScope := func(name string) bool {
 		return slices.Contains(scopes, name)
@@ -2143,6 +2158,20 @@ func projectUserInfoForOIDC(u *User, scopes []string) map[string]any {
 		}
 		if v, ok := u.Attributes["phone_number_verified"]; ok {
 			out["phone_number_verified"] = v == "true"
+		}
+	}
+	// OIDC Core §5.5: project userinfo-section requested claims that
+	// scope alone did not already include. Fail-open on parse errors.
+	if len(requestedClaims) > 0 {
+		if _, userinfoReq, parseErr := oauth.ParseRequestedClaims(requestedClaims); parseErr == nil {
+			for claimName := range userinfoReq {
+				if _, alreadySet := out[claimName]; alreadySet {
+					continue
+				}
+				if v, ok := u.Attributes[claimName]; ok && v != "" {
+					out[claimName] = v
+				}
+			}
 		}
 	}
 	return out
