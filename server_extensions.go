@@ -2556,6 +2556,7 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		}
 	case cluster.KindDiscoveryReload:
 		s.invalidateDiscoveryCaches()
+		s.InvalidateJWKSBodyCache()
 	case cluster.KindAuthzPolicyChange:
 		// evt.Key is the clientID whose role definitions changed; drop this
 		// replica's cached bundle so the sidecar's next pull re-renders.
@@ -2566,6 +2567,7 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		// widening this replica's verify window — see coordinated_key_rotation.go).
 		// No-op unless WithCoordinatedKeyRotation armed this replica.
 		s.applyCoordinatedKeyRotation(ctx, evt)
+		s.InvalidateJWKSBodyCache()
 	case cluster.KindTokenRevoked:
 		// A peer revoked an access token: ADD it to this replica's per-issuer
 		// in-process deny-set via the LOCAL-only revoke path (which never

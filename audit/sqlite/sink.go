@@ -170,6 +170,17 @@ func (s *Sink) Record(ctx context.Context, e *audit.Event) error {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now()
 	}
+	return insertEvent(ctx, s.db, e)
+}
+
+// insertEvent executes the INSERT for a single event against any execer
+// (either a *sql.DB or a *sql.Tx). The caller is responsible for ID and
+// Timestamp defaulting before calling this.
+type execerContext interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertEvent(ctx context.Context, db execerContext, e *audit.Event) error {
 	metaJSON := ""
 	if len(e.Metadata) > 0 {
 		raw, err := json.Marshal(e.Metadata)
@@ -178,7 +189,7 @@ func (s *Sink) Record(ctx context.Context, e *audit.Event) error {
 		}
 		metaJSON = string(raw)
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
         INSERT INTO audit_events (
             id, type, outcome, ts_unix_ns,
             request_id, trace_id, span_id, parent_span_id,
@@ -198,6 +209,36 @@ func (s *Sink) Record(ctx context.Context, e *audit.Event) error {
 		return fmt.Errorf("audit/sqlite: insert: %w", err)
 	}
 	return nil
+}
+
+// RecordBatch persists all events in a single BEGIN IMMEDIATE transaction,
+// reducing per-event SQLite overhead by collapsing N INSERTs into one commit.
+// Any error aborts the whole batch — the caller must retry.
+func (s *Sink) RecordBatch(ctx context.Context, events []*audit.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, e := range events {
+		if e.ID == "" {
+			e.ID = newEventID()
+		}
+		if e.Timestamp.IsZero() {
+			e.Timestamp = time.Now()
+		}
+		if err = insertEvent(ctx, tx, e); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Get returns the event with the given id, or [audit.ErrEventNotFound].
@@ -499,4 +540,5 @@ func newEventID() string {
 var (
 	_ audit.Sink         = (*Sink)(nil)
 	_ audit.FacetQuerier = (*Sink)(nil)
+	_ audit.BatchSink    = (*Sink)(nil)
 )

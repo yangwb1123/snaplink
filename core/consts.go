@@ -31,6 +31,10 @@ const (
 	PathMyPermissions = "/permissions/me"
 	PathMyMenus       = "/menus/me"
 	PathMyRoles       = "/roles/me"
+	PathMySessions    = "/sessions/me"
+	PathMySessionByID = "/sessions/me/:id"
+	PathMyConsents    = "/consents/me"
+	PathMyConsentByID = "/consents/me/:client_id"
 
 	// PathMeshExtAuthz is the default mount point for the opt-in
 	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
@@ -408,6 +412,13 @@ const (
 	// response header; the client repeats the request with that
 	// nonce embedded in the proof JWT's `nonce` claim.
 	ErrUseDPoPNonce = "use_dpop_nonce"
+
+	// ErrNotFound is returned when a requested resource does not exist and
+	// revealing its existence would be safe (not oracle-leaking). Used by
+	// /sessions/me/:id and /consents/me/:client_id.
+	ErrNotFound = "not_found"
+	// ErrNotSupported is returned for features that are not implemented.
+	ErrNotSupported = "not_supported"
 )
 
 // OIDC Core §3.1.2.1 prompt values. Space-separated combinations are

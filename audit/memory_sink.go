@@ -135,6 +135,31 @@ func (m *MemorySink) Len() int {
 	return m.head
 }
 
+// RecordBatch implements [BatchSink] for the in-memory sink, recording all
+// events under a single write-lock acquisition for slightly lower overhead
+// than N individual Record calls in tests.
+func (m *MemorySink) RecordBatch(_ context.Context, events []*Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range events {
+		if e.ID == "" {
+			e.ID = newEventID()
+		}
+		if m.full {
+			if old := m.buf[m.head]; old != nil {
+				delete(m.byID, old.ID)
+			}
+		}
+		m.buf[m.head] = e
+		m.byID[e.ID] = e
+		m.head = (m.head + 1) % m.capacity
+		if !m.full && m.head == 0 {
+			m.full = true
+		}
+	}
+	return nil
+}
+
 func newEventID() string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])

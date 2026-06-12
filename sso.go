@@ -395,6 +395,17 @@ type Server struct {
 	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —
 	// byte-identical to a build without it.
 	usageAggregator metering.Aggregator
+
+	// jwksBodyCache holds the pre-marshaled JWKS document, valid for
+	// jwksCacheTTL. When jwksCacheTTL == 0 the cache is disabled and every
+	// serial poll runs the full issuer-walk + marshal (concurrent bursts still
+	// share one result via jwksFlight). Invalidated by InvalidateJWKSBodyCache
+	// when the key set changes (local rotation, peer adoption, client DCR).
+	// Thread-safe: reads hold jwksBodyMu RLock, writes hold it exclusively;
+	// zero-value jwksBodyExp ensures an uninitialized cache is always expired.
+	jwksBodyMu    sync.RWMutex
+	jwksBodyCache []byte
+	jwksBodyExp   time.Time
 }
 
 // jwksSingleFlight collapses concurrent JWKS document computations into a
@@ -1940,6 +1951,14 @@ func (s *Server) Mount() {
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)
 	s.router.GET(PathMyMenus, s.handleMyMenus)
 	s.router.GET(PathMyRoles, s.handleMyRoles)
+	if s.sessionMgr != nil {
+		s.router.GET(PathMySessions, s.handleMySessions)
+		s.router.DELETE(PathMySessionByID, s.handleDeleteMySession)
+	}
+	if s.consentStore != nil {
+		s.router.GET(PathMyConsents, s.handleMyConsents)
+		s.router.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
+	}
 
 	// Authorization policy bundle export (decentralized authz). Full
 	// path (not group-relative) registered directly on the router; its

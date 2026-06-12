@@ -2717,6 +2717,7 @@ func (s *Server) invalidateDiscoveryCaches() {
 // propagated (peers fall back to their TTL).
 func (s *Server) InvalidateDiscoveryCache() {
 	s.invalidateDiscoveryCaches()
+	s.InvalidateJWKSBodyCache()
 	if s.invalidationBus != nil {
 		evt := cluster.Event{Kind: cluster.KindDiscoveryReload}
 		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
@@ -3103,4 +3104,127 @@ func (s *Server) handleTenantUsage(ctx HandlerContext) {
 		return
 	}
 	ctx.JSON(http.StatusOK, u)
+}
+
+// meSubjectOrChallenge extracts the bearer subject for /sessions/me and
+// /consents/me. Unlike authenticatedSubject, it stamps the RFC 6750 §3
+// WWW-Authenticate challenge header BEFORE writing the 401 body, so these
+// credential-adjacent endpoints conform to the same challenge contract as
+// /userinfo. Returns (userID, true) on success; (_, false) when the 401 has
+// already been written.
+func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok bool) {
+	tokenString := bearerToken(ctx.Request())
+	if tokenString == "" {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return "", false
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
+	if err != nil {
+		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return "", false
+	}
+	return claims.Subject, true
+}
+
+// handleMySessions serves GET /sessions/me — lists the authenticated user's
+// own active sessions. Session data is credential-adjacent so we apply the
+// same cache-prevention headers as /token and /userinfo.
+func (s *Server) handleMySessions(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	sessions, err := s.sessionMgr.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("list sessions failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if sessions == nil {
+		sessions = []*core.Session{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+// handleDeleteMySession serves DELETE /sessions/me/:id — lets a user revoke
+// one of their own sessions. Sessions belonging to other users respond with
+// the same 404 as a missing session (oracle-safe: don't reveal that a
+// session exists but belongs to someone else).
+func (s *Server) handleDeleteMySession(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	sessionID := ctx.Param("id")
+	if sessionID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	sess, err := s.sessionMgr.Get(ctx.Request().Context(), sessionID)
+	if err != nil || sess.UserID != userID {
+		// Collapse not-found and wrong-user into one 404 (oracle-safe).
+		ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+		return
+	}
+	if err := s.sessionMgr.Destroy(ctx.Request().Context(), sessionID); err != nil {
+		s.logger.Error("destroy session failed", "session_id", sessionID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// handleMyConsents serves GET /consents/me — lists the authenticated user's
+// consent grants. Credential-adjacent; same cache headers as /userinfo.
+func (s *Server) handleMyConsents(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	grants, err := s.consentStore.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("list consents failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if grants == nil {
+		grants = []core.ConsentGrant{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"consents": grants})
+}
+
+// handleDeleteMyConsent serves DELETE /consents/me/:client_id — revokes the
+// authenticated user's consent grant for a given client. Idempotent per the
+// ConsentStore contract; a missing grant returns 404.
+func (s *Server) handleDeleteMyConsent(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	clientID := ctx.Param("client_id")
+	if clientID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if _, err := s.consentStore.GetConsent(ctx.Request().Context(), userID, clientID); err != nil {
+		if errors.Is(err, core.ErrNoConsentGrant) {
+			ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+			return
+		}
+		s.logger.Error("get consent failed", "user_id", userID, "client_id", clientID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if err := s.consentStore.RevokeConsent(ctx.Request().Context(), userID, clientID); err != nil {
+		s.logger.Error("revoke consent failed", "user_id", userID, "client_id", clientID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusNoContent, nil)
 }

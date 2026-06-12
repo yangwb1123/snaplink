@@ -392,6 +392,7 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 	switch evt.Type {
 	case signingkeys.EventKeysRemoved:
 		s.dropAllAdopted(replicaID)
+		s.InvalidateJWKSBodyCache()
 
 	case signingkeys.EventKeysUpserted:
 		s.ensureIssuerAlgs()
@@ -411,6 +412,7 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 			}
 		}
 		s.registerAdoptedKids(replicaID, adopted)
+		s.InvalidateJWKSBodyCache()
 
 	default:
 		// Unknown event type from a newer peer — ignore rather than error,

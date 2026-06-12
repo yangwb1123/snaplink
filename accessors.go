@@ -223,13 +223,52 @@ func (s *Server) JWKSCacheTTL() time.Duration { return s.jwksCacheTTL }
 // JWKSCacheMaxAge returns the JWKS cache max-age (alias for JWKSCacheTTL).
 func (s *Server) JWKSCacheMaxAge() time.Duration { return s.jwksCacheTTL }
 
-// ComputeJWKSDocument runs compute behind a process-local single-flight so
-// a burst of concurrent /jwks.json polls (the unknown-kid stampede that
-// follows a key rotation) collapses to one issuer-walk + marshal instead
-// of one per request. No TTL: the first poll after the in-flight compute
-// finishes recomputes, so a rotation shows up immediately.
+// ComputeJWKSDocument runs compute behind a TTL body cache + single-flight.
+// When jwksCacheTTL > 0: a fresh cached body is returned without compute.
+// When the cache is cold or expired, the single-flight collapses any
+// concurrent callers onto one issuer-walk + marshal, then refreshes the
+// cache for the next TTL window. When jwksCacheTTL == 0 the body cache is
+// disabled and behavior is byte-identical to the old single-flight-only
+// path: serial polls each recompute, concurrent polls share one result.
+//
+// InvalidateJWKSBodyCache busts the cache on key rotation so the very
+// next serial poll reflects the new key set without waiting for the TTL.
 func (s *Server) ComputeJWKSDocument(compute func() ([]byte, error)) ([]byte, error) {
-	return s.jwksFlight.Do(compute)
+	if s.jwksCacheTTL > 0 {
+		// Fast path: serve from cache while fresh.
+		s.jwksBodyMu.RLock()
+		if time.Now().Before(s.jwksBodyExp) && len(s.jwksBodyCache) > 0 {
+			body := s.jwksBodyCache
+			s.jwksBodyMu.RUnlock()
+			return body, nil
+		}
+		s.jwksBodyMu.RUnlock()
+	}
+	// Slow path: collapse concurrent recomputes via single-flight.
+	body, err := s.jwksFlight.Do(compute)
+	if err != nil {
+		return nil, err
+	}
+	// Populate the body cache so the next serial poll within the TTL
+	// window skips the issuer-walk entirely.
+	if s.jwksCacheTTL > 0 {
+		s.jwksBodyMu.Lock()
+		s.jwksBodyCache = body
+		s.jwksBodyExp = time.Now().Add(s.jwksCacheTTL)
+		s.jwksBodyMu.Unlock()
+	}
+	return body, nil
+}
+
+// InvalidateJWKSBodyCache drops the cached JWKS body so the next call to
+// ComputeJWKSDocument re-walks the issuer list. Call this whenever the
+// key set changes: on local key rotation (alongside InvalidateDiscoveryCache)
+// and on peer-key adoption (KindSigningKeyRotation bus event).
+// No-op when jwksCacheTTL == 0 (body cache disabled).
+func (s *Server) InvalidateJWKSBodyCache() {
+	s.jwksBodyMu.Lock()
+	s.jwksBodyExp = time.Time{}
+	s.jwksBodyMu.Unlock()
 }
 
 // DiscoveryCacheTTL returns the discovery snapshot cache TTL.
