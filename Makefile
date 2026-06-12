@@ -26,7 +26,7 @@ vet: ## Static analysis (go vet).
 	$(GO) vet ./...
 
 fmt: ## Check gofmt; fails if any file needs formatting.
-	@unformatted=$$(gofmt -l .); \
+	@unformatted=$$(gofmt -l . | grep -v '^\.claude/'); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Unformatted files:" >&2; \
 		echo "$$unformatted" >&2; \

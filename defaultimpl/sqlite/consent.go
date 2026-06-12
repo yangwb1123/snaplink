@@ -167,9 +167,9 @@ func (s *ConsentStore) ListByUser(ctx context.Context, userID string) ([]core.Co
 
 func scanConsentGrant(s scanner) (core.ConsentGrant, error) {
 	var (
-		g            core.ConsentGrant
-		scopesJSON   string
-		grantedAtNs  int64
+		g           core.ConsentGrant
+		scopesJSON  string
+		grantedAtNs int64
 	)
 	if err := s.Scan(&g.UserID, &g.ClientID, &scopesJSON, &grantedAtNs); err != nil {
 		return core.ConsentGrant{}, err

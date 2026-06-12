@@ -11,7 +11,6 @@ import (
 	"github.com/snaplink/sso/core"
 )
 
-
 // MemoryClientStore stores client applications in memory. Implements the full
 // sso.ClientStore including the admin extensions (List/Update/Delete/Rotate).
 type MemoryClientStore struct {

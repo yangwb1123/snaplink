@@ -179,7 +179,7 @@ type TokenMeta struct {
 type ConsentGrant struct {
 	UserID    string
 	ClientID  string
-	Scopes    []string  // sorted, deduplicated
+	Scopes    []string // sorted, deduplicated
 	GrantedAt time.Time
 }
 

@@ -262,12 +262,12 @@ type Server struct {
 	coordinatedRetireMinDeferralOverride time.Duration
 	coordinatedRetireMaxDeferralOverride time.Duration
 
-	riskScorer                     spi.RiskScorer
-	mfaProvider                    spi.MFAProvider
-	mfaChallengeStore              spi.MFAChallengeStore
-	mfaChallengeTTL                time.Duration
-	anomalyRunner                  *anomaly.Runner
-	metrics                        *metrics.Metrics
+	riskScorer        spi.RiskScorer
+	mfaProvider       spi.MFAProvider
+	mfaChallengeStore spi.MFAChallengeStore
+	mfaChallengeTTL   time.Duration
+	anomalyRunner     *anomaly.Runner
+	metrics           *metrics.Metrics
 	// trustedProxies validates X-Forwarded-For chains when wired via
 	// WithTrustedProxies. When non-nil its Middleware is inserted outermost
 	// in Handler() (before rate limiting and every other middleware), so

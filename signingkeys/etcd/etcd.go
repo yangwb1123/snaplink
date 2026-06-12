@@ -79,14 +79,14 @@ type Registry struct {
 	prefix     string
 	defaultTTL time.Duration
 
-	mu          sync.Mutex
-	lease       clientv3.LeaseID   // this replica's current announcement lease (0 = none)
-	cancel      context.CancelFunc // cancels the current supervised keepalive loop (nil = none)
-	bgCtx       context.Context    // background context for the supervised loop
-	lastAnn     signingkeys.Announcement
-	degraded    bool
-	degradedAt  time.Time
-	closed      bool
+	mu         sync.Mutex
+	lease      clientv3.LeaseID   // this replica's current announcement lease (0 = none)
+	cancel     context.CancelFunc // cancels the current supervised keepalive loop (nil = none)
+	bgCtx      context.Context    // background context for the supervised loop
+	lastAnn    signingkeys.Announcement
+	degraded   bool
+	degradedAt time.Time
+	closed     bool
 
 	closeOnce sync.Once
 }
