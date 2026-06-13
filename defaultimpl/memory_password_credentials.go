@@ -2,6 +2,8 @@ package defaultimpl
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 
 	"github.com/snaplink/sso"
@@ -41,6 +43,22 @@ func (m *MemoryPasswordCredentialStore) SetPassword(_ context.Context, userID, n
 	return nil
 }
 
+// SetPasswordHash seeds a pre-computed bcrypt hash for userID (satisfies
+// sso.PasswordHashImporter). Rejects a non-bcrypt value so a plaintext can
+// never be stored masquerading as a hash.
+func (m *MemoryPasswordCredentialStore) SetPasswordHash(_ context.Context, userID, bcryptHash string) error {
+	if userID == "" {
+		return core.ErrPasswordMismatch
+	}
+	if !strings.HasPrefix(bcryptHash, "$2") {
+		return errors.New("defaultimpl: SetPasswordHash requires a bcrypt hash")
+	}
+	m.mu.Lock()
+	m.hashes[userID] = bcryptHash
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *MemoryPasswordCredentialStore) VerifyPassword(_ context.Context, userID, plaintext string) error {
 	m.mu.RLock()
 	hash, ok := m.hashes[userID]
@@ -59,4 +77,7 @@ func (m *MemoryPasswordCredentialStore) VerifyPassword(_ context.Context, userID
 	return nil
 }
 
-var _ sso.PasswordCredentialStore = (*MemoryPasswordCredentialStore)(nil)
+var (
+	_ sso.PasswordCredentialStore = (*MemoryPasswordCredentialStore)(nil)
+	_ sso.PasswordHashImporter    = (*MemoryPasswordCredentialStore)(nil)
+)

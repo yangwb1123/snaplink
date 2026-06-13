@@ -1680,6 +1680,27 @@ func buildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, err
 	}
 }
 
+// buildPasswordCredentialStore selects the self-service password store backend.
+// Empty backend returns (nil, nil) — /me/password stays unmounted and the
+// password authenticator keeps its YAML-only verifier (byte-identical). When
+// set, the store is seeded from the YAML password users and login is served
+// from it, so a password changed via /me/password takes effect on next login.
+func buildPasswordCredentialStore(cfg config.SelfServiceStoreConfig) (sso.PasswordCredentialStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryPasswordCredentialStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("self_service.password.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewPasswordCredentialStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown self_service.password.backend %q", cfg.Backend)
+	}
+}
+
 func buildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
@@ -3269,12 +3290,25 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 	}
 
-	auths, tempStore, totpAuth, err := buildAuthenticators(cfg, logger)
+	// Self-service password store. When wired it seeds login from the YAML
+	// users and mounts /me/password; the SAME instance backs both the verifier
+	// (login) and the change endpoint so a changed password takes effect on the
+	// next login. Empty backend = nil = YAML-only verifier (byte-identical).
+	passwordStore, err := buildPasswordCredentialStore(cfg.SelfService.Password)
+	if err != nil {
+		return nil, fmt.Errorf("self_service password store: %w", err)
+	}
+
+	auths, tempStore, totpAuth, err := buildAuthenticators(cfg, logger, passwordStore)
 	if err != nil {
 		return nil, fmt.Errorf("authenticators: %w", err)
 	}
 	for _, ath := range auths {
 		opts = append(opts, sso.WithAuthenticator(ath))
+	}
+	if passwordStore != nil {
+		opts = append(opts, sso.WithPasswordCredentialStore(passwordStore))
+		logger.Info("self-service password change enabled", "backend", cfg.SelfService.Password.Backend)
 	}
 
 	geoProvider, err := buildGeoProvider(cfg, logger)
@@ -4624,6 +4658,53 @@ type passwordSeed struct {
 // sit in the same order of magnitude — without that, an attacker
 // could split "real cost-10 user" from "dummy cost-12 unknown user"
 // by latency.
+// buildStoredPasswordVerifier seeds the password store from the YAML users (by
+// bcrypt hash, via the PasswordHashImporter seam) and returns a verifier that
+// authenticates AGAINST the store — so a password later changed through
+// /me/password is the one login checks. Preserves the YAML verifier's contract:
+// AuthResult{UserID: subjectID, ExternalID: username}, anti-enumeration (a
+// cost-matched dummy compare on an unknown username, run by the store), and
+// skip+log of malformed seeds.
+func buildStoredPasswordVerifier(store sso.PasswordCredentialStore, users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int, error) {
+	importer, ok := store.(sso.PasswordHashImporter)
+	if !ok {
+		return nil, 0, errors.New("password store does not support hash import (cannot seed YAML users)")
+	}
+	subjectByUser := make(map[string]string, len(users))
+	seeded := 0
+	for _, u := range users {
+		if u.Username == "" || u.BcryptHashFile == "" || u.SubjectID == "" {
+			logger.Error("password seed skipped (missing field)", "username", u.Username, "subject_id", u.SubjectID)
+			continue
+		}
+		hash, err := loadBcryptHashFile(u.BcryptHashFile)
+		if err != nil {
+			logger.Error("password seed skipped (load hash)", "username", u.Username, "file", u.BcryptHashFile, "error", err)
+			continue
+		}
+		if err := importer.SetPasswordHash(context.Background(), u.SubjectID, string(hash)); err != nil {
+			logger.Error("password seed skipped (store import)", "username", u.Username, "error", err)
+			continue
+		}
+		subjectByUser[u.Username] = u.SubjectID
+		seeded++
+	}
+	verifier := authenticators.PasswordVerifierFunc(func(ctx context.Context, user, pass string) (*sso.AuthResult, error) {
+		subjectID, ok := subjectByUser[user]
+		if !ok {
+			// Unknown username: still spend a compare via the store so timing
+			// can't enumerate the seed list, then collapse to one error.
+			_ = store.VerifyPassword(ctx, "", pass)
+			return nil, errors.New("password: invalid credentials")
+		}
+		if err := store.VerifyPassword(ctx, subjectID, pass); err != nil {
+			return nil, errors.New("password: invalid credentials")
+		}
+		return &sso.AuthResult{UserID: subjectID, ExternalID: user}, nil
+	})
+	return verifier, seeded, nil
+}
+
 func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int) {
 	seeds := make(map[string]passwordSeed, len(users))
 	dummyCost := bcrypt.DefaultCost
@@ -4761,14 +4842,27 @@ func buildPasswordHealthChecker(h *config.PasswordHealthConfig, logger spi.Logge
 // Returns an error when an authenticator's config is invalid (e.g. a
 // missing weak-password extension file) — a misconfigured authenticator
 // should fail the boot loudly, not silently degrade.
-func buildAuthenticators(cfg *config.Config, logger spi.Logger) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, error) {
+func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
 	codeStore := authenticators.NewMemoryCodeStore()
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
-		verifier, seeded := buildBcryptPasswordVerifier(a.Users, logger)
+		var verifier authenticators.PasswordVerifier
+		var seeded int
+		if passwordStore != nil {
+			// Self-service password store wired: seed it from the YAML users
+			// (by bcrypt hash) and serve login FROM the store, so a password
+			// changed via /me/password takes effect on the next login.
+			v, n, err := buildStoredPasswordVerifier(passwordStore, a.Users, logger)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("password store seed: %w", err)
+			}
+			verifier, seeded = v, n
+		} else {
+			verifier, seeded = buildBcryptPasswordVerifier(a.Users, logger)
+		}
 		var pwOpts []authenticators.PasswordOption
 		if h := a.Health; h != nil && h.Enabled {
 			checker, err := buildPasswordHealthChecker(h, logger)

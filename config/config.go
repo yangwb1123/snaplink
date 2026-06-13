@@ -151,6 +151,11 @@ type SelfServiceConfig struct {
 	// Consent backs the consent gate + records (/consents/me, consent_required).
 	// Enabling it turns ON consent enforcement at /auth/login.
 	Consent SelfServiceStoreConfig `yaml:"consent"`
+	// Password backs self-service password change (/me/password). When enabled,
+	// the YAML-seeded password users are imported into the store (by bcrypt
+	// hash) and login is served from it, so a password changed via /me/password
+	// takes effect on the next login.
+	Password SelfServiceStoreConfig `yaml:"password"`
 }
 
 // SelfServiceStoreConfig selects a self-service store backend. Empty Backend =

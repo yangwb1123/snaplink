@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/snaplink/sso"
@@ -118,6 +119,29 @@ func (s *PasswordCredentialStore) SetPassword(ctx context.Context, userID, newPa
 	return nil
 }
 
+// SetPasswordHash seeds a PRE-COMPUTED bcrypt hash for userID (satisfies
+// sso.PasswordHashImporter) — used to import existing users (e.g. YAML seeds)
+// into the store without their plaintext. Rejects a non-bcrypt value so a
+// plaintext can never be stored masquerading as a hash. Same PRIMARY KEY
+// upsert as SetPassword.
+func (s *PasswordCredentialStore) SetPasswordHash(ctx context.Context, userID, bcryptHash string) error {
+	if userID == "" {
+		return core.ErrPasswordMismatch
+	}
+	if !strings.HasPrefix(bcryptHash, "$2") {
+		return errors.New("sqlite: SetPasswordHash requires a bcrypt hash")
+	}
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO password_credentials (user_id, hash, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at`,
+		userID, bcryptHash, time.Now().UnixNano())
+	if err != nil {
+		return fmt.Errorf("sqlite: upsert password_credential hash: %w", err)
+	}
+	return nil
+}
+
 // VerifyPassword returns nil when plaintext matches the stored hash for
 // userID, and core.ErrPasswordMismatch on mismatch OR unknown user. The
 // unknown path runs a cost-matched dummy compare so its timing is
@@ -142,4 +166,7 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	return nil
 }
 
-var _ sso.PasswordCredentialStore = (*PasswordCredentialStore)(nil)
+var (
+	_ sso.PasswordCredentialStore = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordHashImporter    = (*PasswordCredentialStore)(nil)
+)

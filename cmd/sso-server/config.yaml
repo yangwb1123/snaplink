@@ -114,6 +114,15 @@ self_service:
     backend: ""         # "" (disabled) | memory | sqlite
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/consent.db?_journal=WAL&_pragma=busy_timeout(5000)
+  # Self-service password change (/me/password). When enabled, the YAML
+  # password users (authenticators.password.users) are imported into this store
+  # by their bcrypt hash at boot and login is served FROM it, so a password
+  # changed via /me/password takes effect on the next login. Use sqlite so
+  # changed passwords survive restarts (memory loses them).
+  password:
+    backend: ""         # "" (disabled) | memory | sqlite
+    sqlite:
+      dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
 
 # First-boot init. The Runner applies pending Steps (seed admin role +
 # user + client + default netpolicy) idempotently — already-applied

@@ -105,6 +105,7 @@ type TokenLister = core.TokenLister
 type ConsentGrant = core.ConsentGrant
 type ConsentStore = core.ConsentStore
 type PasswordCredentialStore = core.PasswordCredentialStore
+type PasswordHashImporter = core.PasswordHashImporter
 type MFAEnrollmentStore = core.MFAEnrollmentStore
 type MFAEnrolledFactor = core.MFAEnrolledFactor
 type TokenMeta = core.TokenMeta

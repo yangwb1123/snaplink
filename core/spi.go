@@ -224,6 +224,16 @@ type PasswordCredentialStore interface {
 	VerifyPassword(ctx context.Context, userID, plaintext string) error
 }
 
+// PasswordHashImporter is an optional extension a PasswordCredentialStore MAY
+// satisfy to seed a PRE-COMPUTED bcrypt hash (no plaintext) — e.g. importing
+// existing users from a YAML seed, an Auth0/Keycloak export, or a prior store.
+// Callers type-assert. Implementations MUST reject a value that is not a bcrypt
+// hash (no "$2" prefix) so a misconfigured plaintext can never be stored as a
+// hash. memory + sqlite peers satisfy it.
+type PasswordHashImporter interface {
+	SetPasswordHash(ctx context.Context, userID, bcryptHash string) error
+}
+
 // MFAEnrolledFactor describes one registered second factor for the
 // self-service management view (GET/DELETE /me/mfa). It carries only
 // non-sensitive metadata — never the TOTP secret or WebAuthn private material.
