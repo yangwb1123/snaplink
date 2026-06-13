@@ -37,7 +37,7 @@ func TestOperatorMetadata_AdvertisedWhenSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if doc["op_policy_uri"] != "https://acme.example/oidc-policy" {
@@ -57,7 +57,7 @@ func TestOperatorMetadata_OmittedWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	for _, f := range []string{"op_policy_uri", "op_tos_uri", "service_documentation"} {
@@ -76,7 +76,7 @@ func TestOperatorMetadata_PartialFieldsAcceptedIndividually(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if doc["op_policy_uri"] != "https://acme.example/policy" {

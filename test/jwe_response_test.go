@@ -94,7 +94,7 @@ func jweLogin(t *testing.T, srv *httptest.Server) (idToken, accessToken string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -160,7 +160,7 @@ func jweDiscovery(t *testing.T, srv *httptest.Server) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	return doc
@@ -208,7 +208,7 @@ func TestJWEResponse_UserinfoEncrypted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "application/jwt" {
 		t.Fatalf("Content-Type = %q want application/jwt", ct)
 	}
@@ -238,7 +238,7 @@ func TestJWEResponse_UserinfoFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status = %d want 500", resp.StatusCode)
 	}

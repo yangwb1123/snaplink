@@ -80,7 +80,7 @@ func TestRequirePAR_RejectsDirectLoginForStrictClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, rb)
@@ -112,7 +112,7 @@ func TestRequirePAR_AcceptsPARPushForStrictClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
@@ -130,7 +130,7 @@ func TestRequirePAR_DirectLoginAllowedForLaxClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		rb, _ := io.ReadAll(resp.Body)
 		t.Fatalf("lax client direct login should succeed: status=%d body=%s", resp.StatusCode, rb)
@@ -143,7 +143,7 @@ func TestRequirePAR_DiscoveryFlagFlipsWhenAnyClientRequires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if v, _ := doc["require_pushed_authorization_requests"].(bool); !v {

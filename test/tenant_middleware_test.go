@@ -348,7 +348,7 @@ func TestAudit_TenantEnrichment_LoginCarriesTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, _ := sink.Query(context.Background(), audit.Query{Limit: 10})
 	var login *audit.Event
@@ -380,7 +380,7 @@ func TestAudit_TenantEnrichment_NilStoreOmitsKeys(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "acme.com"
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, _ := sink.Query(context.Background(), audit.Query{Limit: 10})
 	for _, e := range events {
@@ -400,7 +400,7 @@ func TestAudit_TenantEnrichment_UnknownHostOmitsKeys(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "ghost.example"
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, _ := sink.Query(context.Background(), audit.Query{Limit: 10})
 	for _, e := range events {
@@ -463,7 +463,7 @@ func TestLogin_TenantMatchSucceeds(t *testing.T) {
 	ts, _ := tenantClientFixture(t, store, client)
 
 	resp := loginWithHost(t, ts, "acme.com", "acme-portal")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Errorf("status=%d, want 200", resp.StatusCode)
 	}
@@ -488,7 +488,7 @@ func TestLogin_TenantMismatchRejected(t *testing.T) {
 	ts, sink := tenantClientFixture(t, store, client)
 
 	resp := loginWithHost(t, ts, "beta.io", "acme-portal")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 403 {
 		t.Errorf("status=%d, want 403", resp.StatusCode)
 	}
@@ -523,7 +523,7 @@ func TestLogin_EmptyClientTenantIDAllowsAnyHost(t *testing.T) {
 	ts, _ := tenantClientFixture(t, store, client)
 
 	resp := loginWithHost(t, ts, "acme.com", "platform")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Errorf("empty-TenantID client rejected from acme.com: status=%d", resp.StatusCode)
 	}
@@ -543,7 +543,7 @@ func TestLogin_NoTenantContextAllowsClientWithTenantID(t *testing.T) {
 	ts, _ := tenantClientFixture(t, store, client)
 
 	resp := loginWithHost(t, ts, "ghost.example", "acme-portal")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Errorf("no-resolved-tenant rejected: status=%d", resp.StatusCode)
 	}

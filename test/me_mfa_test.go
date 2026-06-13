@@ -59,7 +59,7 @@ func newMeMFAHarness(t *testing.T) (*httptest.Server, *defaultimpl.MemoryMFAEnro
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
@@ -82,7 +82,7 @@ func doMe(t *testing.T, method, url, token string) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

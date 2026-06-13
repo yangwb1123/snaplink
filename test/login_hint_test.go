@@ -96,7 +96,7 @@ func TestLoginHint_DirectLoginThreadsToAuthenticator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login status=%d body=%s", resp.StatusCode, raw)
@@ -128,7 +128,7 @@ func TestLoginHint_PARPushSurvivesIntoAuthenticator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login status=%d body=%s", resp.StatusCode, raw)
@@ -157,7 +157,7 @@ func TestLoginHint_PARPushBeatsLoginParam(t *testing.T) {
 		"login_hint":  "tampered@attacker.example",
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if got := auth.snapshot(); got != "pushed@example.com" {
 		t.Errorf("LoginHint=%q want %q (PAR push must win)", got, "pushed@example.com")
 	}
@@ -171,7 +171,7 @@ func TestLoginHint_AbsentByDefault(t *testing.T) {
 		"credential": map[string]string{"username": loginHintUserID, "password": loginHintPassword},
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if got := auth.snapshot(); got != "" {
 		t.Errorf("LoginHint=%q want empty (no hint supplied)", got)
 	}

@@ -20,8 +20,8 @@ func ecJWK(t *testing.T, pub *ecdsa.PublicKey, crv string) core.JWK {
 	byteLen := (pub.Curve.Params().BitSize + 7) / 8
 	xb := make([]byte, byteLen)
 	yb := make([]byte, byteLen)
-	pub.X.FillBytes(xb)
-	pub.Y.FillBytes(yb)
+	pub.X.FillBytes(xb) //nolint:staticcheck // raw EC coords required for JWK X/Y encoding
+	pub.Y.FillBytes(yb) //nolint:staticcheck // raw EC coords required for JWK X/Y encoding
 	return core.JWK{
 		Kty: "EC", Crv: crv, Use: "enc", Kid: "ec-1",
 		X: base64.RawURLEncoding.EncodeToString(xb),

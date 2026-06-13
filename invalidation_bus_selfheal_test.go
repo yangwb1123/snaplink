@@ -235,7 +235,7 @@ func primeAndExpectInvalidated(t *testing.T, srv *Server, bus cluster.Bus, tenan
 // degraded audit event + reconnect tick per transition (and one recovered).
 func TestInvalidationBus_SelfHealsOnChannelClose(t *testing.T) {
 	bus := newFlakyBus()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	srv, m, sink := newBusTestServer(t, bus)
 
@@ -329,7 +329,7 @@ func TestInvalidationBus_SelfHealsOnChannelClose(t *testing.T) {
 // TestSigningKeyAggregation_CleanCancelNotDegraded.
 func TestInvalidationBus_CleanCancelNotDegraded(t *testing.T) {
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	srv, _, sink := newBusTestServer(t, bus)
 

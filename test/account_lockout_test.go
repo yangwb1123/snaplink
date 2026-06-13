@@ -192,7 +192,7 @@ func (h *lockoutHarness) attempt(t *testing.T, username, password string) (int, 
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -332,9 +332,9 @@ func TestLockout_OffByDefault(t *testing.T) {
 		resp, _ := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(body))
 		if resp.StatusCode != http.StatusUnauthorized {
 			raw, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			t.Fatalf("attempt %d status=%d body=%s want 401 (lockout off)", i+1, resp.StatusCode, raw)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 }

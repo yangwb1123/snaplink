@@ -116,12 +116,12 @@ func TestSessionStore_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A: %v", err)
 	}
-	defer storeA.Close()
+	defer func() { _ = storeA.Close() }()
 	storeB, err := NewSessionStore(dsn)
 	if err != nil {
 		t.Fatalf("B: %v", err)
 	}
-	defer storeB.Close()
+	defer func() { _ = storeB.Close() }()
 
 	ctx := context.Background()
 	if err := storeA.Put(ctx, "cross-id", &gw.SessionData{Challenge: "xyz"}, time.Minute); err != nil {

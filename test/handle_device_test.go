@@ -61,7 +61,7 @@ func requestDeviceCode(t *testing.T, srv *httptest.Server) (string, string, map[
 	if err != nil {
 		t.Fatalf("POST /device/code: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d body=%s", resp.StatusCode, raw)
@@ -86,7 +86,7 @@ func userBearerToken(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	tok, _ := out["access_token"].(string)
@@ -108,7 +108,7 @@ func verifyUserCode(t *testing.T, srv *httptest.Server, bearer, userCode string,
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode
 }
 
@@ -125,7 +125,7 @@ func pollToken(t *testing.T, srv *httptest.Server, deviceCode string) (int, map[
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -159,7 +159,7 @@ func TestDevice_CodeEndpointRejectsMissingClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d want 400 missing_client_id", resp.StatusCode)
 	}
@@ -172,7 +172,7 @@ func TestDevice_CodeEndpointRejectsUnknownClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d want 401", resp.StatusCode)
 	}
@@ -242,8 +242,7 @@ func TestDevice_SlowDownOnRapidPolling(t *testing.T) {
 	srv := newDeviceServer(t, time.Minute, time.Hour)
 	dc, _, _ := requestDeviceCode(t, srv)
 
-	if _, _ = pollToken(t, srv, dc); true { // first poll updates LastPoll
-	}
+	pollToken(t, srv, dc) // first poll updates LastPoll
 	status, body := pollToken(t, srv, dc)
 	if status != http.StatusBadRequest {
 		t.Fatalf("status = %d", status)
@@ -281,7 +280,7 @@ func TestDevice_WrongClientCannotPoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Goes through requireDeps → invalid_client (different client doesn't
 	// exist), which proves the binding check runs before token issuance.
 	if resp.StatusCode == http.StatusOK {
@@ -309,7 +308,7 @@ func TestDevice_PollEndpointRequiresStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d want 501", resp.StatusCode)
 	}
@@ -328,7 +327,7 @@ func TestDevice_VerifyRequiresBearer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d want 401", resp.StatusCode)
 	}

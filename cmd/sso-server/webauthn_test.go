@@ -136,7 +136,7 @@ func TestWebAuthnHTTP_BeginRegistrationReturnsOptionsAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d want 200", resp.StatusCode)
 	}
@@ -162,7 +162,7 @@ func TestWebAuthnHTTP_BeginRequiresUsername(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d want 400", resp.StatusCode)
 	}
@@ -174,7 +174,7 @@ func TestWebAuthnHTTP_BeginRejectsEmptyBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d want 400", resp.StatusCode)
 	}
@@ -186,7 +186,7 @@ func TestWebAuthnHTTP_FinishRequiresSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d want 400", resp.StatusCode)
 	}
@@ -198,7 +198,7 @@ func TestWebAuthnHTTP_FinishUnknownSessionReturns404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status %d want 404 (oracle-leak resistance)", resp.StatusCode)
 	}
@@ -218,7 +218,7 @@ func TestWebAuthnHTTP_BeginLoginUnknownUserReturns404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status %d want 404", resp.StatusCode)
 	}
@@ -236,7 +236,7 @@ func TestWebAuthnHTTP_AllRoutesCacheControlNoStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control: got %q want no-store (credential endpoint)", got)
 	}
@@ -465,7 +465,7 @@ func TestWebAuthnHTTP_FinishLoginIssuesTokenWhenClientIDProvided(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown user with client_id: got %d want 404", resp.StatusCode)
 	}
@@ -489,7 +489,7 @@ func TestWebAuthnHTTP_FinishLoginWithoutClientIDStaysCredentialOnly(t *testing.T
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("bad session: got %d want 404", resp.StatusCode)
 	}

@@ -793,8 +793,12 @@ func (j *ECDSAJWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 func ecPublicJWK(kid string, pub *ecdsa.PublicKey) sso.JWK {
 	xb := make([]byte, p256CoordinateBytes)
 	yb := make([]byte, p256CoordinateBytes)
-	pub.X.FillBytes(xb)
-	pub.Y.FillBytes(yb)
+	// RFC 7518 §6.2 requires the affine coordinates split out as separate
+	// base64url members; only PublicKey.X/.Y expose them. We read (never
+	// mutate) the raw values, so the deprecation's invalid-key hazard does
+	// not apply.
+	pub.X.FillBytes(xb) //nolint:staticcheck // raw EC coords required for JWK X/Y encoding
+	pub.Y.FillBytes(yb) //nolint:staticcheck // raw EC coords required for JWK X/Y encoding
 	return sso.JWK{
 		Kty: jwkKtyEC,
 		Crv: jwkCrvP256,

@@ -26,7 +26,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("grpc dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// 2. JWKS cache fetches the SSO server's public keys, refreshed periodically.
 	jwks := remote.NewJWKSCache(*jwksURL)

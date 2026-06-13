@@ -202,7 +202,7 @@ func loginAs(t *testing.T, h *e2eHarness, username, password string) string {
 	if err != nil {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login(%s) = %d body=%s", username, resp.StatusCode, raw)
@@ -259,7 +259,7 @@ func TestE2E_LoginThenAuthorizeAcrossWire(t *testing.T) {
 	tok := loginAs(t, h, e2eAlice, e2eAlicePwd)
 
 	resp := getItems(t, app, tok)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /items = %d body=%s", resp.StatusCode, raw)
@@ -293,7 +293,7 @@ func TestE2E_DeniedWhenSubjectLacksPermission(t *testing.T) {
 	tok := loginAs(t, h, e2eBob, e2eBobPwd)
 
 	resp := getItems(t, app, tok)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("GET /items for bob = %d body=%s want 403", resp.StatusCode, raw)
@@ -311,7 +311,7 @@ func TestE2E_NoTokenIsUnauthorized(t *testing.T) {
 	app := appHandlerFor(t, h)
 
 	resp := getItems(t, app, "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("GET /items no-bearer = %d want 401", resp.StatusCode)
 	}
@@ -331,7 +331,7 @@ func TestE2E_BadCredentialsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("bad login = %d, want 401", resp.StatusCode)
 	}

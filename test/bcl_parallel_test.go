@@ -101,7 +101,7 @@ func newParallelBCLHarness(t *testing.T, numRPs int, notifier sso.LogoutNotifier
 			t.Fatalf("login %d: %v", i, err)
 		}
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
 		tok, _ := out["access_token"].(string)
@@ -129,7 +129,7 @@ func TestBCLFanOut_RunsInParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logout: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	elapsed := time.Since(start)
 
 	if elapsed > 600*time.Millisecond {
@@ -191,7 +191,7 @@ func TestBCLFanOut_BoundedConcurrency(t *testing.T) {
 		})
 		resp, _ := http.Post(httpSrv.URL+"/auth/login", "application/json", bytes.NewReader(body))
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
 		tok, _ := out["access_token"].(string)
@@ -206,7 +206,7 @@ func TestBCLFanOut_BoundedConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logout: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if got := len(notifier.calls); got != 12 {
 		t.Errorf("notified %d RPs, want 12", got)

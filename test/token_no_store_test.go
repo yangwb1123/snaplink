@@ -37,7 +37,7 @@ func TestTokenEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
@@ -53,7 +53,7 @@ func TestRevokeEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
@@ -66,7 +66,7 @@ func TestIntrospectEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
@@ -81,7 +81,7 @@ func TestLoginEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
@@ -98,7 +98,7 @@ func TestUserInfoEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
@@ -111,7 +111,7 @@ func TestRegisterEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}
@@ -126,7 +126,7 @@ func TestRegistrationGetEndpoint_NoStoreCacheHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
 	}

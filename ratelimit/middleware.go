@@ -2,7 +2,6 @@ package ratelimit
 
 import (
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -74,13 +73,6 @@ func KeyByClientIDOrIP(r *http.Request) string {
 // would let an attacker forge their own key and bypass rate limiting.
 // Operators behind a trusted L7 proxy MUST wire WithTrustedProxies so the
 // edge-stripped, CIDR-validated IP is used instead.
-func stripPort(addr string) string {
-	if host, _, err := net.SplitHostPort(addr); err == nil {
-		return host
-	}
-	return addr
-}
-
 func KeyByClientIP(r *http.Request) string {
 	return middleware.RealClientIP(r)
 }

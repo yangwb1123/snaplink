@@ -84,7 +84,7 @@ func promptLogin(t *testing.T, srv *httptest.Server, scope []string) map[string]
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	rb, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(rb, &out)
@@ -107,7 +107,7 @@ func postSilentRenewal(t *testing.T, srv *httptest.Server, prompt, idTokenHint s
 	if err != nil {
 		t.Fatalf("silent renewal: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -248,7 +248,7 @@ func TestPromptNone_LoginRequiredWhenHintClientDiffers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renewal: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -289,7 +289,7 @@ func TestPromptNone_MaxAgeRejectsStaleHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renewal: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -319,7 +319,7 @@ func TestPromptNone_MaxAgeAcceptsFreshHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renewal: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -337,7 +337,7 @@ func TestPromptNone_DiscoveryAdvertisesPromptValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)

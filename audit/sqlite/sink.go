@@ -316,7 +316,7 @@ func (s *Sink) Query(ctx context.Context, q audit.Query) ([]*audit.Event, error)
 	if err != nil {
 		return nil, fmt.Errorf("audit/sqlite: query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*audit.Event
 	for rows.Next() {
 		e, err := scanEvent(rows)
@@ -398,7 +398,7 @@ func (s *Sink) groupCount(ctx context.Context, col, where string, args []any, vi
 	if err != nil {
 		return fmt.Errorf("audit/sqlite: facets %s: %w", col, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var val sql.NullString
 		var n int

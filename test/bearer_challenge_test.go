@@ -34,7 +34,7 @@ func TestUserInfo_MissingTokenWWWAuthenticateChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -57,7 +57,7 @@ func TestRevokeAll_MissingTokenWWWAuthenticateChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Without a refresh-token subject index wired, revoke-all
 	// returns 501 BEFORE the bearer check — the harness here has
 	// no refresh store, so 501 is the expected pre-bearer status.
@@ -84,7 +84,7 @@ func TestUserInfo_InvalidTokenWWWAuthenticateChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}

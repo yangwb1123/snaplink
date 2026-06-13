@@ -119,7 +119,7 @@ func TestBuildNetworkStore_MemoryBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildNetworkStore: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	policies, _ := store.List(context.Background())
 	if len(policies) != 2 {
@@ -138,7 +138,7 @@ func TestBuildNetworkStore_DefaultBackendIsMemory(t *testing.T) {
 	if store == nil {
 		t.Fatal("default backend returned nil store")
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 }
 
 func TestBuildNetworkStore_UnknownBackend(t *testing.T) {

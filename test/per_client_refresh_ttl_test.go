@@ -81,7 +81,7 @@ func loginPCRT(t *testing.T, srv *httptest.Server, clientID string) string {
 	if err != nil {
 		t.Fatalf("login %s: %v", clientID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login %s status=%d body=%s", clientID, resp.StatusCode, raw)
@@ -135,7 +135,7 @@ func TestPerClientRefreshTTL_HonoredOnRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("rotate status=%d body=%s", resp.StatusCode, rb)

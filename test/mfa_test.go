@@ -151,7 +151,7 @@ func loginMFA(t *testing.T, srv *httptest.Server) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -173,7 +173,7 @@ func completeMFA(t *testing.T, srv *httptest.Server, challengeID, method, code s
 	if err != nil {
 		t.Fatalf("POST /auth/mfa: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -322,7 +322,7 @@ func TestMFA_NoProviderWired_FallsThroughToAllow(t *testing.T) {
 	srv, _ := buildRiskHarness(t, stub)
 
 	resp := loginRisk(t, srv)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (no-provider falls through to Allow)", resp.StatusCode)
 	}

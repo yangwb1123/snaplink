@@ -26,7 +26,7 @@ func recv(t *testing.T, ch <-chan cluster.Event) cluster.Event {
 
 func TestPublish_DeliversToSubscriber(t *testing.T) {
 	b := memory.New()
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	ch, err := b.Subscribe(context.Background())
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -42,7 +42,7 @@ func TestPublish_DeliversToSubscriber(t *testing.T) {
 
 func TestPublish_FansOutToAllSubscribers(t *testing.T) {
 	b := memory.New()
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	ch1, _ := b.Subscribe(context.Background())
 	ch2, _ := b.Subscribe(context.Background())
 	evt := cluster.Event{Kind: cluster.KindTenantSuspension, Key: "t"}
@@ -59,7 +59,7 @@ func TestPublish_FansOutToAllSubscribers(t *testing.T) {
 
 func TestSubscribe_ClosedOnContextCancel(t *testing.T) {
 	b := memory.New()
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	ch, _ := b.Subscribe(ctx)
 	cancel()
@@ -109,7 +109,7 @@ func TestClose_Idempotent(t *testing.T) {
 // dropped (best-effort contract) and Publish still returns promptly.
 func TestPublish_SlowConsumerDoesNotBlock(t *testing.T) {
 	b := memory.New()
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	if _, err := b.Subscribe(context.Background()); err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}

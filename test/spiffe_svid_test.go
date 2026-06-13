@@ -178,7 +178,7 @@ func exchangeSVID(t *testing.T, srv *httptest.Server, svid, resource string) (in
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out

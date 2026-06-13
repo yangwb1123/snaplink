@@ -25,7 +25,7 @@ func jwksServer(t *testing.T, pub ed25519.PublicKey) (string, *atomic.Int64, fun
 	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"keys":[{"kty":"OKP","crv":"Ed25519","kid":"test-kid","x":%q}]}`,
+		_, _ = fmt.Fprintf(w, `{"keys":[{"kty":"OKP","crv":"Ed25519","kid":"test-kid","x":%q}]}`,
 			base64.RawURLEncoding.EncodeToString(pub))
 	})
 	srv := httptest.NewServer(mux)
@@ -99,7 +99,7 @@ func TestJWKSCache_NoUsableKeysIsAnError(t *testing.T) {
 	// than silently cache an empty key map.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"keys":[{"kty":"RSA","kid":"r1","n":"x","e":"AQAB"}]}`)
+		_, _ = fmt.Fprint(w, `{"keys":[{"kty":"RSA","kid":"r1","n":"x","e":"AQAB"}]}`)
 	}))
 	defer srv.Close()
 

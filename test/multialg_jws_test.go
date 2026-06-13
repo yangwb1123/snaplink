@@ -81,8 +81,15 @@ func newSignerForAlg(t *testing.T, alg, kid string) *multiAlgSigner {
 		if err != nil {
 			t.Fatal(err)
 		}
-		x := b64(priv.PublicKey.X.FillBytes(make([]byte, coord)))
-		y := b64(priv.PublicKey.Y.FillBytes(make([]byte, coord)))
+		// Derive raw X/Y from the uncompressed point (0x04 || X || Y) rather
+		// than the deprecated big.Int coordinate fields (Go 1.26 SA1019).
+		ecdhPub, err := priv.PublicKey.ECDH()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := ecdhPub.Bytes() // 1 + 2*coord bytes
+		x := b64(raw[1 : 1+coord])
+		y := b64(raw[1+coord:])
 		return &multiAlgSigner{
 			alg:       alg,
 			publicJWK: sso.JWK{Kty: "EC", Crv: esCrv(alg), Kid: kid, Alg: alg, Use: "sig", X: x, Y: y},
@@ -104,8 +111,8 @@ func newSignerForAlg(t *testing.T, alg, kid string) *multiAlgSigner {
 		if err != nil {
 			t.Fatal(err)
 		}
-		n := b64(priv.PublicKey.N.Bytes())
-		e := b64(big.NewInt(int64(priv.PublicKey.E)).Bytes())
+		n := b64(priv.N.Bytes())
+		e := b64(big.NewInt(int64(priv.E)).Bytes())
 		jwk := sso.JWK{Kty: "RSA", Kid: kid, Alg: alg, Use: "sig", N: n, E: e}
 		signFn := func(in []byte) []byte {
 			digest := digestFor(crypto.SHA256, in)

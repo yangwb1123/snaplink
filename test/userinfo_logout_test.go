@@ -95,7 +95,7 @@ func loginViaHTTP(t *testing.T, h *authFlowHarness, user, pass string) string {
 	if err != nil {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
@@ -121,7 +121,7 @@ func TestUserInfo_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /userinfo: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d body=%s", resp.StatusCode, body)
@@ -147,7 +147,7 @@ func TestUserInfo_MissingBearer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /userinfo: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -166,7 +166,7 @@ func TestUserInfo_InvalidBearer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -184,7 +184,7 @@ func TestUserInfo_UserGoneAfterIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
@@ -204,7 +204,7 @@ func postLogout(t *testing.T, srv *httptest.Server, bearer string, body map[stri
 	if err != nil {
 		t.Fatalf("POST /logout: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out

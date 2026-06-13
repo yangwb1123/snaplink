@@ -42,7 +42,7 @@ func TestNew_WithLogger_WiresIntoRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer bs.Close()
+	defer func() { _ = bs.Close() }()
 
 	bs.Register(ssobootstrap.StepFunc("seed", 1, func(context.Context) error { return nil }))
 	if err := bs.Run(context.Background()); err != nil {
@@ -62,7 +62,7 @@ func TestNew_WithRecorder_EmitsAuditEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer bs.Close()
+	defer func() { _ = bs.Close() }()
 
 	bs.Register(ssobootstrap.StepFunc("done", 1, func(context.Context) error { return nil }))
 	if err := bs.Run(context.Background()); err != nil {
@@ -82,7 +82,7 @@ func TestNew_WithRecorder_AlsoEmitsFailureEvents(t *testing.T) {
 	rec := audit.New(sink)
 
 	bs, _ := ssobootstrap.New("test-app-3", statePath, ssobootstrap.WithRecorder(rec))
-	defer bs.Close()
+	defer func() { _ = bs.Close() }()
 
 	bs.Register(ssobootstrap.StepFunc("broken", 1, func(context.Context) error {
 		return errors.New("intentional")
@@ -111,7 +111,7 @@ func TestNew_BothOptions_Compose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer bs.Close()
+	defer func() { _ = bs.Close() }()
 	bs.Register(ssobootstrap.StepFunc("ok", 1, func(context.Context) error { return nil }))
 	_ = bs.Run(context.Background())
 

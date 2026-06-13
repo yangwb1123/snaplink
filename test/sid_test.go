@@ -73,7 +73,7 @@ func loginSID(t *testing.T, srv *httptest.Server, scope []string) map[string]any
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login status=%d body=%s", resp.StatusCode, body)
@@ -136,7 +136,7 @@ func TestSID_StableAcrossRefreshRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh status=%d body=%s", resp.StatusCode, rb)
@@ -156,7 +156,7 @@ func TestSID_DiscoveryFlagsFlipWhenSessionManagerWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	// BCL flag flips only when LogoutTokenIssuer + LogoutNotifier
@@ -180,7 +180,7 @@ func TestSID_ClientCredentialsTokenHasNoSID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cc: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("cc status=%d body=%s", resp.StatusCode, rb)

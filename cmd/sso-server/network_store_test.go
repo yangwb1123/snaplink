@@ -36,7 +36,7 @@ func TestBuildNetworkStore_MemoryAppliesSeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildNetworkStore: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	if kind != "memory" {
 		t.Errorf("kind = %q; want memory", kind)
 	}

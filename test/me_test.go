@@ -18,7 +18,7 @@ func getMe(t *testing.T, baseURL, token string) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("GET /me: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

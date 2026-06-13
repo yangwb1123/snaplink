@@ -121,7 +121,7 @@ func (h *jarHarness) loginJAR(t *testing.T, jwt string) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -188,7 +188,7 @@ func TestJAR_JWTRedirectURIOverridesOutside(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 (JWT redirect_uri legitimate); got %d: %s", resp.StatusCode, raw)
@@ -358,7 +358,7 @@ func TestJAR_ClientWithoutJWKSRejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s want 400", resp.StatusCode, raw)
@@ -371,7 +371,7 @@ func TestJAR_DiscoveryAdvertisesSupport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)
@@ -415,7 +415,7 @@ func TestJAR_NoRequestParam_LegacyBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s want 200 (legacy direct mint)", resp.StatusCode, raw)

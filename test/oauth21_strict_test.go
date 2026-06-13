@@ -90,7 +90,7 @@ func loginStrict(t *testing.T, srv *httptest.Server, overrides map[string]any) (
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	body2, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(body2, &out)
@@ -197,7 +197,7 @@ func TestOAuth21Strict_DiscoveryOmitsImplicitResponseType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(body, &doc)
@@ -226,7 +226,7 @@ func TestOAuth21Strict_DiscoveryAdvertisesImplicitWhenOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(body, &doc)

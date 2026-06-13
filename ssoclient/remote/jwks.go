@@ -155,7 +155,7 @@ func (j *JWKSCache) fetch(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ssoclient/remote: jwks fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ssoclient/remote: jwks status %d", resp.StatusCode)
 	}

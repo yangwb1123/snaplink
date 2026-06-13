@@ -3,7 +3,6 @@ package aesgcm_test
 import (
 	"bytes"
 	"crypto/rand"
-	"errors"
 	"strings"
 	"testing"
 
@@ -152,8 +151,8 @@ func TestSealer_PluggableInPipeline(t *testing.T) {
 	if err == nil {
 		t.Fatal("unsupported version Open should fail")
 	}
-	if !strings.Contains(err.Error(), "version") && !errors.Is(err, errors.New("")) {
-		// just confirm the error mentions version OR is non-nil; the
-		// exact wording can drift.
+	// The error should mention the version mismatch; exact wording can drift.
+	if !strings.Contains(err.Error(), "version") {
+		t.Fatalf("expected version error, got %v", err)
 	}
 }

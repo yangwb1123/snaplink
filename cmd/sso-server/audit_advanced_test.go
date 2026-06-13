@@ -20,7 +20,7 @@ func TestBuildApp_AuditHashChainStampsRecordedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.recorder == nil {
 		t.Fatal("recorder nil with audit enabled")
 	}
@@ -53,7 +53,7 @@ func TestBuildApp_AuditPIIRedactionAcceptsInlineSalt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.recorder == nil {
 		t.Fatal("recorder nil")
 	}
@@ -76,7 +76,7 @@ func TestBuildApp_AuditPIIRedactionAcceptsSaltFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.recorder == nil {
 		t.Fatal("recorder nil")
 	}

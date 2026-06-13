@@ -88,7 +88,7 @@ func TestServer_RegisterAuthenticator_AddsAfterConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var body map[string]any
 	_ = json.Unmarshal(raw, &body)
@@ -121,7 +121,7 @@ func TestGetClient_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d body=%s", resp.StatusCode, body)
@@ -149,7 +149,7 @@ func TestGetClient_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
@@ -164,7 +164,7 @@ func TestGetClient_NoClientStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", resp.StatusCode)
 	}
@@ -189,7 +189,7 @@ func TestLogin_ProvidersListing_NoClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	providers, _ := body["providers"].([]any)
@@ -227,7 +227,7 @@ func TestLogin_ProvidersListing_ScopedByClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	providers, _ := out["providers"].([]any)
@@ -258,7 +258,7 @@ func TestLogin_ProvidersListing_UnknownClientFallsBackToAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	providers, _ := out["providers"].([]any)

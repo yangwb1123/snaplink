@@ -165,7 +165,7 @@ func (c *AuthClient) Logout(ctx context.Context, req *ssoclient.LogoutRequest) e
 	if err != nil {
 		return fmt.Errorf("ssoclient/remote: logout: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("ssoclient/remote: logout status %d", resp.StatusCode)
 	}

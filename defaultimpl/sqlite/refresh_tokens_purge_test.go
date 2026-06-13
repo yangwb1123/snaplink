@@ -22,7 +22,7 @@ func TestRefreshTokenStore_DeleteAllForClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	s := sqlite.NewRefreshTokenStoreWithDB(db) // runs migration internally
 	ctx := context.Background()
 

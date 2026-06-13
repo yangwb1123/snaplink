@@ -44,7 +44,7 @@ func fedFetchJWKS(t *testing.T, base string) []core.JWK {
 	if err != nil {
 		t.Fatalf("get jwks: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("jwks status = %d", resp.StatusCode)
 	}
@@ -88,7 +88,7 @@ func TestFederation_FullServer_ServesVerifiableEntityConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get entity config: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -183,7 +183,7 @@ func TestFederation_DefaultOff_NotMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (federation route must not be mounted when unwired)", resp.StatusCode)
 	}
@@ -200,7 +200,7 @@ func fedFetchEntityConfigMeta(t *testing.T, base string) *federation.FederationE
 	if err != nil {
 		t.Fatalf("get entity config: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("entity config status = %d, want 200", resp.StatusCode)
 	}
@@ -274,7 +274,7 @@ func TestFederation_Superior_FetchEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get /fetch: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/fetch status = %d, want 200", resp.StatusCode)
 	}
@@ -316,7 +316,7 @@ func TestFederation_Superior_FetchEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get /fetch unknown: %v", err)
 	}
-	defer bad.Body.Close()
+	defer func() { _ = bad.Body.Close() }()
 	if bad.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown sub status = %d, want 404", bad.StatusCode)
 	}
@@ -360,7 +360,7 @@ func TestFederation_NoSubordinates_FetchNotMountedAndNotAdvertised(t *testing.T)
 	if err != nil {
 		t.Fatalf("get /fetch: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("/fetch status = %d, want 404 (route must not be mounted without subordinates)", resp.StatusCode)
 	}

@@ -103,7 +103,7 @@ func (h *credHealthHarness) login(t *testing.T, password string) map[string]any 
 	if err != nil {
 		t.Fatalf("login do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", resp.StatusCode, raw)
@@ -376,7 +376,7 @@ func loginMFAWeak(t *testing.T, srv *httptest.Server) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -398,7 +398,7 @@ func completeMFAWeak(t *testing.T, srv *httptest.Server, challengeID, method, co
 	if err != nil {
 		t.Fatalf("POST /auth/mfa: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {

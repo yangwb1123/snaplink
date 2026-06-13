@@ -71,7 +71,7 @@ func TestCallback_HappyPath_WithProviderQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d body=%s", resp.StatusCode, body)
@@ -102,7 +102,7 @@ func TestCallback_MissingCodeOrState_400(t *testing.T) {
 		}
 		var body map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("q=%q: status = %d, want 400", q, resp.StatusCode)
 		}
@@ -120,7 +120,7 @@ func TestCallback_UnknownProviderQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
@@ -142,7 +142,7 @@ func TestCallback_AuthenticatorReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
@@ -168,7 +168,7 @@ func TestCallback_AutoDiscoverProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("status = %d body=%s", resp.StatusCode, body)
@@ -184,7 +184,7 @@ func TestCallback_AutoDiscover_NoCandidateMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}

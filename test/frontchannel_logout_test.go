@@ -77,7 +77,7 @@ func fclLogin(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -96,7 +96,7 @@ func TestFCL_RendersIframeWhenClientOptsIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", resp.StatusCode)
 	}
@@ -125,7 +125,7 @@ func TestFCL_MetaRefreshWhenRedirectAllowlisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	s := string(body)
 	if !strings.Contains(s, `http-equiv="refresh"`) {
@@ -155,7 +155,7 @@ func TestFCL_NoRedirectWhenURIRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	s := string(body)
 	if strings.Contains(s, "attacker.example") {
@@ -177,7 +177,7 @@ func TestFCL_HeadersHardened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// XFO DENY blocks an attacker from embedding our /end_session
 	// response in their own iframe to clickjack a logout. Real RP
@@ -204,7 +204,7 @@ func TestFCL_FallsBackTo302WhenNotOptedIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status: got %d, want 302 (FCL must not engage when client unset)", resp.StatusCode)
 	}
@@ -218,7 +218,7 @@ func TestFCL_FallsBackTo204WhenNotOptedInAndNoRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status: got %d, want 204", resp.StatusCode)
 	}
@@ -230,7 +230,7 @@ func TestFCL_DiscoveryAdvertisesWhenAnyClientOptsIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if v, _ := doc["frontchannel_logout_supported"].(bool); !v {
@@ -252,7 +252,7 @@ func TestFCL_DiscoveryOmitsWhenNoClientOptsIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if _, present := doc["frontchannel_logout_supported"]; present {
@@ -328,7 +328,7 @@ func TestFCL_MultiRPFanOut(t *testing.T) {
 		if err != nil {
 			t.Fatalf("login %s: %v", cid, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
@@ -348,7 +348,7 @@ func TestFCL_MultiRPFanOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", resp.StatusCode)
 	}
@@ -387,7 +387,7 @@ func TestFCL_EscapesUntrustedRedirectComponents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	s := string(body)
 	if strings.Contains(s, "<script>alert(1)</script>") {

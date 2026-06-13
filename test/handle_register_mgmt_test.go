@@ -25,7 +25,7 @@ func registerForMgmt(t *testing.T, srvURL string) (string, string, string) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("register status=%d body=%s", resp.StatusCode, raw)
@@ -54,7 +54,7 @@ func TestRegistrationMgmt_Get_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -86,7 +86,7 @@ func TestRegistrationMgmt_Get_RejectsBadToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -103,7 +103,7 @@ func TestRegistrationMgmt_Get_UnknownClientLooksLikeBadToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", resp.StatusCode)
 	}
@@ -127,7 +127,7 @@ func TestRegistrationMgmt_Put_UpdatesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -166,7 +166,7 @@ func TestRegistrationMgmt_Put_RejectsBadToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -187,7 +187,7 @@ func TestRegistrationMgmt_Put_RejectsInvalidMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -204,7 +204,7 @@ func TestRegistrationMgmt_Delete_RemovesClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -225,7 +225,7 @@ func TestRegistrationMgmt_Delete_RejectsBadToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -244,7 +244,7 @@ func TestRegistrationMgmt_PreservesSecretAcrossUpdates(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	after, _ := store.Get(context.Background(), id)
 	if after.Secret != originalSecret.Secret {

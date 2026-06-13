@@ -248,7 +248,7 @@ func (s *frServer) loginForCode(t *testing.T) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -287,7 +287,7 @@ func (s *frServer) exchangeCode(t *testing.T, code string) (int, map[string]any)
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

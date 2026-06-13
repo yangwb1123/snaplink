@@ -230,7 +230,7 @@ func TestSessionManager_DefaultsToConfiguredTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)
 	}
-	defer mgr.Close()
+	defer func() { _ = mgr.Close() }()
 
 	if mgr.ttl != sso.DefaultSessionDuration {
 		t.Fatalf("ttl = %v, want sso.DefaultSessionDuration (%v)", mgr.ttl, sso.DefaultSessionDuration)
@@ -255,12 +255,12 @@ func TestSessionManager_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("instance A: %v", err)
 	}
-	defer mgrA.Close()
+	defer func() { _ = mgrA.Close() }()
 	mgrB, err := NewSessionManager(dsn, time.Hour)
 	if err != nil {
 		t.Fatalf("instance B: %v", err)
 	}
-	defer mgrB.Close()
+	defer func() { _ = mgrB.Close() }()
 
 	created, err := mgrA.Create(context.Background(), "alice")
 	if err != nil {

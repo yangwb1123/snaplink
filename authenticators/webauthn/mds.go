@@ -177,7 +177,7 @@ func loadMDSBlob(src MDSSource) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: fetch MDS blob from %q: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("webauthn: fetch MDS blob from %q: HTTP %d", url, resp.StatusCode)
 	}

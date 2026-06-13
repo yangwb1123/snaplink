@@ -83,7 +83,7 @@ func scrapeServerMetrics(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/metrics status = %d", resp.StatusCode)
 	}
@@ -99,7 +99,7 @@ func TestMetricsE2E_HealthRequestIncrementsHTTPCounter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /health: %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	scrape := scrapeServerMetrics(t, srv)
@@ -124,7 +124,7 @@ func TestMetricsE2E_LoginSuccessIncrementsAuthCounters(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	scrape := scrapeServerMetrics(t, srv)
 	if !strings.Contains(scrape, `sso_login_attempts_total{outcome="success",provider="password"} 1`) {
@@ -147,7 +147,7 @@ func TestMetricsE2E_LoginFailureIncrementsFailureCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
@@ -166,7 +166,7 @@ func TestMetricsE2E_MetricsEndpointNotInstrumented(t *testing.T) {
 
 	// Hit one normal endpoint, then scrape /metrics 5 times.
 	resp, _ := http.Get(srv.URL + "/health")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	for i := 0; i < 5; i++ {
 		scrapeServerMetrics(t, srv)
 	}

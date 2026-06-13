@@ -23,7 +23,7 @@ func TestWebhookSink_PostsJSON(t *testing.T) {
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		var e audit.Event
 		if err := json.Unmarshal(body, &e); err != nil {
 			t.Errorf("bad JSON: %v", err)
@@ -106,7 +106,7 @@ func TestWebhookSink_NetworkErrorPropagates(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 
 	s := audit.NewWebhookSink("http://"+addr,
 		audit.WithWebhookTimeout(500*time.Millisecond),

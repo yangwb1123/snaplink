@@ -93,7 +93,7 @@ func requestCode(t *testing.T, srv *httptest.Server, redirectURI string) string 
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
@@ -125,7 +125,7 @@ func exchangeCode(t *testing.T, srv *httptest.Server, code, redirectURI, clientI
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -311,7 +311,7 @@ func TestAuthCode_LoginRequiresRedirectURI(t *testing.T) {
 	if postErr != nil {
 		t.Fatalf("POST: %v", postErr)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -335,7 +335,7 @@ func TestAuthCode_LoginRejectsUnregisteredRedirectURI(t *testing.T) {
 	if postErr != nil {
 		t.Fatalf("POST: %v", postErr)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -354,7 +354,7 @@ func TestAuthCode_LoginUnsupportedResponseType(t *testing.T) {
 	if postErr != nil {
 		t.Fatalf("POST: %v", postErr)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -399,7 +399,7 @@ func TestAuthCode_LoginWithoutStore_NotImplemented(t *testing.T) {
 	if postErr != nil {
 		t.Fatalf("POST: %v", postErr)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d, want 501", resp.StatusCode)
 	}
@@ -483,7 +483,7 @@ func TestAuthCode_ExchangeWithoutStore_NotImplemented(t *testing.T) {
 	if postErr != nil {
 		t.Fatalf("POST: %v", postErr)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d, want 501", resp.StatusCode)
 	}

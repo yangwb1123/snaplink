@@ -20,7 +20,7 @@ func seedDB(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := migrate.Run(context.Background(), db, "audit",
 		[]migrate.Migration{{Version: 1, Name: "baseline", SQL: `CREATE TABLE IF NOT EXISTS x (a TEXT)`}}); err != nil {
 		t.Fatalf("seed: %v", err)

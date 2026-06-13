@@ -109,7 +109,7 @@ func callTokenWithAssertion(t *testing.T, srv *httptest.Server, assertion string
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -211,7 +211,7 @@ func TestJWTClientAssertion_RejectsUnknownAssertionType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 (unsupported assertion type)", resp.StatusCode)
 	}
@@ -241,7 +241,7 @@ func TestJWTClientAssertion_DiscoveryAdvertisesPrivateKeyJWT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	methods, _ := doc["token_endpoint_auth_methods_supported"].([]any)

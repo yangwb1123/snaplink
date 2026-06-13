@@ -74,7 +74,7 @@ func postLogin(t *testing.T, ts *httptest.Server, xff string) map[string]any {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -261,7 +261,7 @@ func TestAudit_GeoEnrichment_LoginFailureCarriesGeo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, _ := sink.Query(context.Background(), audit.Query{Limit: 10})
 	var failure *audit.Event
@@ -322,7 +322,7 @@ func TestAudit_GeoEnrichment_DoesNotClobberExistingMetadata(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-For", "10.5.6.7")
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, _ := sink.Query(context.Background(), audit.Query{Limit: 10})
 	var logout *audit.Event

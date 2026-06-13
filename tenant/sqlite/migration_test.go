@@ -20,7 +20,7 @@ func TestMigration_StampsHeadAndKeepsCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// A fresh DB applies the whole migration set; head is the last version.
 	head := migrations[len(migrations)-1].Version
@@ -88,7 +88,7 @@ func TestMigration_V2NoOpsOnV1PopulatedDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New (upgrade): %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	head := migrations[len(migrations)-1].Version
 	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != head {
@@ -160,7 +160,7 @@ func TestMigration_V3NoOpsOnV2PopulatedDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New (upgrade): %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != 3 {
 		t.Errorf("post-upgrade version = %d, want 3", v)
@@ -209,7 +209,7 @@ func TestMigration_RerunIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New 2 (rerun): %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	if v, _ := migrate.CurrentVersion(ctx, s2.db, "tenant"); v != head {
 		t.Errorf("rerun version = %d, want %d", v, head)
 	}

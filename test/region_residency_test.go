@@ -103,7 +103,7 @@ func doResidencyLogin(t *testing.T, ts *httptest.Server) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	if len(raw) > 0 {
@@ -263,7 +263,7 @@ func TestResidency_AuditCarriesServingRegionWithoutClobberingGeo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, err := sink.Query(context.Background(), audit.Query{Limit: 10})
 	if err != nil {
@@ -384,7 +384,7 @@ func residencyHomeLogin(t *testing.T, ts *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("home login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("home login status=%d body=%s", resp.StatusCode, rb)
@@ -418,7 +418,7 @@ func postRenewalFromRegion(t *testing.T, ts *httptest.Server, hint, servingRegio
 	if err != nil {
 		t.Fatalf("renewal: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	if len(rb) > 0 {

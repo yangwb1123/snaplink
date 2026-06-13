@@ -67,7 +67,7 @@ func txLogin(t *testing.T, srv *httptest.Server, scope []string) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -85,7 +85,7 @@ func postExchange(t *testing.T, srv *httptest.Server, form url.Values) (int, map
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -585,7 +585,7 @@ func TestTokenExchange_DiscoveryAdvertisesGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	grants, _ := out["grant_types_supported"].([]any)

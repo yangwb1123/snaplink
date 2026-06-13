@@ -46,7 +46,7 @@ func TestACRValuesSupported_AdvertisedInDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	raw, ok := doc["acr_values_supported"].([]any)
@@ -71,7 +71,7 @@ func TestACRValuesSupported_OmittedWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if _, present := doc["acr_values_supported"]; present {
@@ -87,7 +87,7 @@ func TestACRValuesSupported_DedupesAndDropsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	raw := doc["acr_values_supported"].([]any)

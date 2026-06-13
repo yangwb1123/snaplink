@@ -55,7 +55,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 
 	got, err := a.clientStore.Get(context.Background(), "wide-client")
 	if err != nil {

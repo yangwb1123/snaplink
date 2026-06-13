@@ -74,7 +74,7 @@ func newMeshExtAuthzServer(t *testing.T, opts ...sso.Option) (*httptest.Server, 
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var out map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		tok, _ := out["access_token"].(string)
@@ -107,7 +107,7 @@ func TestMeshExtAuthz_ValidBearer_AllowsWithIdentityHeaders(t *testing.T) {
 	bearer := login([]string{"openid", "profile"})
 
 	resp := callMeshExtAuthz(t, srv, bearer)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d want 200, body=%s", resp.StatusCode, body)
@@ -142,7 +142,7 @@ func TestMeshExtAuthz_MissingToken_DeniesWithBareChallenge(t *testing.T) {
 	srv, _ := newMeshExtAuthzServer(t, sso.WithMeshExtAuthz(""))
 
 	resp := callMeshExtAuthz(t, srv, "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d want 401", resp.StatusCode)
 	}
@@ -167,14 +167,14 @@ func TestMeshExtAuthz_InvalidToken_DeniesInvalidToken(t *testing.T) {
 	for _, tok := range []string{"garbage", "a.b.c", "not-a-jwt-at-all"} {
 		resp := callMeshExtAuthz(t, srv, tok)
 		if resp.StatusCode != http.StatusUnauthorized {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			t.Fatalf("token %q: status = %d want 401", tok, resp.StatusCode)
 		}
 		wa := resp.Header.Get("WWW-Authenticate")
 		if !strings.Contains(wa, `error="invalid_token"`) {
 			t.Errorf("token %q: WWW-Authenticate = %q want error=\"invalid_token\"", tok, wa)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 }
 
@@ -221,12 +221,12 @@ func TestMeshExtAuthz_ExpiredToken_DeniesInvalidToken(t *testing.T) {
 	}
 	var out map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&out)
-	lresp.Body.Close()
+	_ = lresp.Body.Close()
 	bearer, _ := out["access_token"].(string)
 	time.Sleep(5 * time.Millisecond)
 
 	resp := callMeshExtAuthz(t, httpSrv, bearer)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d want 401 (expired)", resp.StatusCode)
 	}
@@ -254,7 +254,7 @@ func TestMeshExtAuthz_DPoPBoundTokenAsPlainBearer_Denies(t *testing.T) {
 		t.Fatalf("token: %v", err)
 	}
 	tokRB, _ := io.ReadAll(tokResp.Body)
-	tokResp.Body.Close()
+	_ = tokResp.Body.Close()
 	var tokOut map[string]any
 	_ = json.Unmarshal(tokRB, &tokOut)
 	if tokOut["token_type"] != "DPoP" {
@@ -268,7 +268,7 @@ func TestMeshExtAuthz_DPoPBoundTokenAsPlainBearer_Denies(t *testing.T) {
 	// Present the bound token to ext_authz WITHOUT a DPoP proof → DENY.
 	// A stolen sender-constrained token must not pass as a plain bearer.
 	resp := callMeshExtAuthz(t, srv, access)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d want 401 (DPoP-bound token replayed as plain bearer) body=%s", resp.StatusCode, b)
@@ -287,7 +287,7 @@ func TestMeshExtAuthz_OptInOff_RouteNotMounted(t *testing.T) {
 
 	// Even a valid bearer must 404 — the route simply isn't registered.
 	resp := callMeshExtAuthz(t, srv, bearer)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d want 404 (route not mounted when opt-in off)", resp.StatusCode)
 	}

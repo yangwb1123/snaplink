@@ -125,7 +125,7 @@ func residencyAccessFixture(t *testing.T, wireRegion bool) (*httptest.Server, fu
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		rb, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("home login status=%d body=%s", resp.StatusCode, rb)
@@ -155,7 +155,7 @@ func getUserInfo(t *testing.T, ts *httptest.Server, bearer, servingRegion string
 		t.Fatalf("GET /userinfo: %v", err)
 	}
 	rb, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	out := map[string]any{}
 	if len(rb) > 0 {
 		_ = json.Unmarshal(rb, &out)
@@ -250,7 +250,7 @@ func TestResidencyAccess_Mesh_DisallowedRegion_Deny(t *testing.T) {
 	bearer := login(residencyConstrained)
 
 	resp := getMeshExtAuthz(t, ts, bearer, "us-east-1")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 401 DENY (body=%s)", resp.StatusCode, rb)
@@ -273,7 +273,7 @@ func TestResidencyAccess_Mesh_AllowedRegion_Allow(t *testing.T) {
 	bearer := login(residencyConstrained)
 
 	resp := getMeshExtAuthz(t, ts, bearer, "eu-west-1")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		rb, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200 ALLOW (body=%s)", resp.StatusCode, rb)
@@ -304,7 +304,7 @@ func TestResidencyAccess_NoRegionWired_ByteIdentical(t *testing.T) {
 
 	// mesh — ALLOW with identity headers.
 	mr := getMeshExtAuthz(t, ts, bearer, "us-east-1")
-	defer mr.Body.Close()
+	defer func() { _ = mr.Body.Close() }()
 	if mr.StatusCode != http.StatusOK {
 		t.Fatalf("mesh status = %d, want 200 ALLOW (inert residency)", mr.StatusCode)
 	}

@@ -71,7 +71,7 @@ func TestBuildApp_BodyLimitWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -84,7 +84,7 @@ func TestBuildApp_BodyLimitWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d want 413", resp.StatusCode)
 	}
@@ -101,7 +101,7 @@ func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.server == nil {
 		t.Fatal("server nil")
 	}
@@ -217,7 +217,7 @@ func TestBuildApp_AccountLockoutWiredWithOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.server == nil {
 		t.Fatal("server nil")
 	}
@@ -234,7 +234,7 @@ func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.server == nil {
 		t.Fatal("server nil")
 	}
@@ -302,7 +302,7 @@ func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -310,7 +310,7 @@ func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body := make([]byte, 8192)
 	n, _ := resp.Body.Read(body)
 	if !bytes.Contains(body[:n], []byte("mtls_endpoint_aliases")) {
@@ -414,7 +414,7 @@ func TestBuildApp_MTLSHeaderBackendWires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -422,7 +422,7 @@ func TestBuildApp_MTLSHeaderBackendWires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body := make([]byte, 8192)
 	n, _ := resp.Body.Read(body)
 	if !bytes.Contains(body[:n], []byte("mtls_endpoint_aliases")) {
@@ -439,7 +439,7 @@ func TestBuildApp_CORSWiredWhenOriginsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -450,7 +450,7 @@ func TestBuildApp_CORSWiredWhenOriginsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OPTIONS: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://example.com" {
 		t.Errorf("Allow-Origin = %q want %q", got, "https://example.com")
 	}

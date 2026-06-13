@@ -68,7 +68,7 @@ func loginAndCaptureTokens(t *testing.T, srv *httptest.Server) (string, string) 
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -90,7 +90,7 @@ func postRevokeAll(t *testing.T, srv *httptest.Server, bearer string) (int, map[
 	if err != nil {
 		t.Fatalf("revoke-all: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -144,7 +144,7 @@ func TestRevokeAll_PresentedAccessTokenAlsoRevoked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("/userinfo: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("/userinfo status = %d, want 401 after revoke-all", resp.StatusCode)
 	}
@@ -208,7 +208,7 @@ func TestRevokeAll_WithoutSubjectIndexReturns501(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer lresp.Body.Close()
+	defer func() { _ = lresp.Body.Close() }()
 	var lOut map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&lOut)
 	access, _ := lOut["access_token"].(string)
@@ -219,7 +219,7 @@ func TestRevokeAll_WithoutSubjectIndexReturns501(t *testing.T) {
 	if err != nil {
 		t.Fatalf("revoke-all: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d want 501", resp.StatusCode)
 	}

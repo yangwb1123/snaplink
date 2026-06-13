@@ -28,7 +28,7 @@ func TestJWKS_CacheControlHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -44,7 +44,7 @@ func TestJWKS_ETagPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	etag := resp.Header.Get("ETag")
 	if etag == "" {
 		t.Fatal("ETag missing")
@@ -57,9 +57,9 @@ func TestJWKS_ETagPresent(t *testing.T) {
 func TestJWKS_ETagStableAcrossRequests(t *testing.T) {
 	srv := newJWKSServer(t)
 	resp1, _ := http.Get(srv.URL + "/.well-known/jwks.json")
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 	resp2, _ := http.Get(srv.URL + "/.well-known/jwks.json")
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	if resp1.Header.Get("ETag") != resp2.Header.Get("ETag") {
 		t.Errorf("ETag drifted between identical requests: %q vs %q",
 			resp1.Header.Get("ETag"), resp2.Header.Get("ETag"))
@@ -70,7 +70,7 @@ func TestJWKS_IfNoneMatchReturns304(t *testing.T) {
 	srv := newJWKSServer(t)
 	// First request: capture ETag.
 	resp1, _ := http.Get(srv.URL + "/.well-known/jwks.json")
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 	etag := resp1.Header.Get("ETag")
 	if etag == "" {
 		t.Fatal("no ETag from first request")
@@ -82,7 +82,7 @@ func TestJWKS_IfNoneMatchReturns304(t *testing.T) {
 	if err != nil {
 		t.Fatalf("conditional GET: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusNotModified {
 		t.Errorf("status = %d want 304", resp2.StatusCode)
 	}
@@ -96,7 +96,7 @@ func TestJWKS_IfNoneMatchMismatchReturns200(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d want 200 (stale ETag should fall through)", resp.StatusCode)
 	}
@@ -116,7 +116,7 @@ func TestJWKS_CacheTTLOverrideHonored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	cc := resp.Header.Get("Cache-Control")
 	if !strings.Contains(cc, "max-age=30") {
 		t.Errorf("Cache-Control = %q want max-age=30", cc)
@@ -129,7 +129,7 @@ func TestJWKS_DefaultTTLAppliesWithoutOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	cc := resp.Header.Get("Cache-Control")
 	if !strings.Contains(cc, "max-age=300") {
 		t.Errorf("Cache-Control = %q want default max-age=300", cc)
@@ -142,9 +142,9 @@ func TestJWKS_DifferentIssuerProducesDifferentETag(t *testing.T) {
 	srv1 := newJWKSServer(t)
 	srv2 := newJWKSServer(t)
 	resp1, _ := http.Get(srv1.URL + "/.well-known/jwks.json")
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 	resp2, _ := http.Get(srv2.URL + "/.well-known/jwks.json")
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	if resp1.Header.Get("ETag") == resp2.Header.Get("ETag") {
 		t.Error("ETags match across different issuers — ETag computation is broken")
 	}

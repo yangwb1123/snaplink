@@ -337,12 +337,12 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if err != nil {
 		return err
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.netStore != nil {
-		defer a.netStore.Close()
+		defer func() { _ = a.netStore.Close() }()
 	}
 	if a.tenantStore != nil {
-		defer a.tenantStore.Close()
+		defer func() { _ = a.tenantStore.Close() }()
 	}
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
@@ -863,7 +863,7 @@ func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {
 	if err != nil {
 		return fmt.Errorf("tracker: %w", err)
 	}
-	defer tracker.Close()
+	defer func() { _ = tracker.Close() }()
 
 	seed := &builtin.AdminSeed{
 		Permissions:    a.provider,
@@ -3121,7 +3121,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			logger.Info("audit: retention scheduler enabled",
 				"max_age", rc.MaxAge, "interval", interval)
 		}
-		var sink audit.Sink = primary
+		sink := primary
 		// Webhook fan-out wraps the primary sink so in-process /audit
 		// query reads still see every event. Wrapped in RetryingSink
 		// so transient collector failures don't drop events; combined

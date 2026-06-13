@@ -21,7 +21,7 @@ func TestMigration_StampsBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if _, err := permsqlite.NewWithDB(db); err != nil {
 		t.Fatalf("NewWithDB: %v", err)

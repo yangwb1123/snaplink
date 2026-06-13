@@ -45,9 +45,9 @@ func startReleaseGRPC(t *testing.T) *releaseFixture {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	})
 	return &releaseFixture{store: store, sink: sink, conn: conn}
 }

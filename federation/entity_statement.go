@@ -596,33 +596,6 @@ func (c *Config) maxClockSkew() time.Duration {
 	return c.MaxClockSkew
 }
 
-// resolutionNegativeCacheTTL returns the configured failed-resolution cache TTL
-// or the default.
-func (c *Config) resolutionNegativeCacheTTL() time.Duration {
-	if c == nil || c.ResolutionNegativeCacheTTL <= 0 {
-		return DefaultResolutionNegativeCacheTTL
-	}
-	return c.ResolutionNegativeCacheTTL
-}
-
-// maxConcurrentResolutions returns the configured distinct-id concurrency bound
-// or the default.
-func (c *Config) maxConcurrentResolutions() int {
-	if c == nil || c.MaxConcurrentResolutions <= 0 {
-		return DefaultMaxConcurrentResolutions
-	}
-	return c.MaxConcurrentResolutions
-}
-
-// resolutionNegativeCacheMaxSize returns the configured negative-cache entry cap
-// or the default.
-func (c *Config) resolutionNegativeCacheMaxSize() int {
-	if c == nil || c.ResolutionNegativeCacheMaxSize <= 0 {
-		return DefaultResolutionNegativeCacheMaxSize
-	}
-	return c.ResolutionNegativeCacheMaxSize
-}
-
 // maxResolvedIssuersPerRequest returns the configured per-call distinct-issuer
 // resolution budget or the default.
 func (c *Config) maxResolvedIssuersPerRequest() int {

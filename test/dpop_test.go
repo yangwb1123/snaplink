@@ -115,7 +115,7 @@ func loginForDPoP(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if out["access_token"] == nil {
@@ -138,7 +138,7 @@ func callTokenWithDPoP(t *testing.T, srv *httptest.Server, proof string) (int, m
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -256,7 +256,7 @@ func TestDPoPResource_UserInfoRequiresMatchingProof(t *testing.T) {
 		t.Fatalf("token: %v", err)
 	}
 	tokRB, _ := io.ReadAll(tokResp.Body)
-	tokResp.Body.Close()
+	_ = tokResp.Body.Close()
 	var tokOut map[string]any
 	_ = json.Unmarshal(tokRB, &tokOut)
 	access, _ := tokOut["access_token"].(string)
@@ -277,7 +277,7 @@ func TestDPoPResource_UserInfoRequiresMatchingProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer infoResp.Body.Close()
+	defer func() { _ = infoResp.Body.Close() }()
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(infoResp.Body)
 		t.Fatalf("status=%d want 401 (DPoP-bound token without proof) body=%s", infoResp.StatusCode, rb)
@@ -295,7 +295,7 @@ func TestDPoPResource_LegacyBearerStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -311,7 +311,7 @@ func TestDPoPResource_LegacyBearerStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer infoResp.Body.Close()
+	defer func() { _ = infoResp.Body.Close() }()
 	// The exact status varies based on user lookup; the key
 	// assertion is that we DID NOT get 401 "DPoP-required" —
 	// legacy bearer path was honored.
@@ -329,7 +329,7 @@ func TestDPoP_DiscoveryAdvertises(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	algs, _ := doc["dpop_signing_alg_values_supported"].([]any)

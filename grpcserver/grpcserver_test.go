@@ -52,9 +52,9 @@ func startGRPC(t *testing.T, recorder *audit.Recorder, prov permissions.Provider
 		t.Fatalf("grpc.NewClient: %v", err)
 	}
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	})
 	return conn
 }
@@ -127,18 +127,18 @@ func TestAudit_RecordWithoutRecorderFailsPrecondition(t *testing.T) {
 func newAuthzFixture(t *testing.T) (*memory.Registry, permissions.Provider) {
 	t.Helper()
 	prov := permissions.NewMemoryProvider()
-	prov.AddRole(context.Background(), "web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*", "order:read"}})
-	prov.SetMenus(context.Background(), "web-app", permissions.MenuTree{
+	_ = prov.AddRole(context.Background(), "web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*", "order:read"}})
+	_ = prov.SetMenus(context.Background(), "web-app", permissions.MenuTree{
 		{ID: "m-users", Name: "Users", Permission: "user:read"},
 		{ID: "m-audit", Name: "Audit", Permission: "audit:read"}, // not held
 	})
-	prov.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"})
+	_ = prov.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"})
 	return memory.New(), prov
 }
 
 func TestAuthz_Check_Allowed(t *testing.T) {
 	reg, prov := newAuthzFixture(t)
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
 	client := authzv1.NewAuthorizerClient(conn)
 
@@ -155,7 +155,7 @@ func TestAuthz_Check_Allowed(t *testing.T) {
 
 func TestAuthz_Check_Denied(t *testing.T) {
 	reg, prov := newAuthzFixture(t)
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
 	client := authzv1.NewAuthorizerClient(conn)
 
@@ -172,7 +172,7 @@ func TestAuthz_Check_Denied(t *testing.T) {
 
 func TestAuthz_Check_RequiredFieldsValidated(t *testing.T) {
 	reg, prov := newAuthzFixture(t)
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
 	client := authzv1.NewAuthorizerClient(conn)
 
@@ -186,7 +186,7 @@ func TestAuthz_Check_RequiredFieldsValidated(t *testing.T) {
 
 func TestAuthz_GetMenus_FilteredByPermissions(t *testing.T) {
 	reg, prov := newAuthzFixture(t)
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
 	client := authzv1.NewAuthorizerClient(conn)
 
@@ -207,7 +207,7 @@ func TestAuthz_GetMenus_FilteredByPermissions(t *testing.T) {
 
 func TestAuthz_ListRoles(t *testing.T) {
 	reg, prov := newAuthzFixture(t)
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
 	client := authzv1.NewAuthorizerClient(conn)
 
@@ -226,7 +226,7 @@ func TestAuthz_ListRoles(t *testing.T) {
 
 func TestDiscovery_RegisterDiscoverDeregister(t *testing.T) {
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, nil, reg)
 	client := discoveryv1.NewDiscoveryClient(conn)
 	ctx := context.Background()
@@ -259,7 +259,7 @@ func TestDiscovery_RegisterDiscoverDeregister(t *testing.T) {
 
 func TestDiscovery_Watch_StreamsAddedAndRemoved(t *testing.T) {
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, nil, reg)
 	client := discoveryv1.NewDiscoveryClient(conn)
 

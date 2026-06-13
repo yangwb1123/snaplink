@@ -30,7 +30,7 @@ func TestRun_AppliesStepsAndSkipsRepeats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer bs.Close()
+	defer func() { _ = bs.Close() }()
 
 	var hits atomic.Int64
 	bs.Register(ssobootstrap.StepFunc("create_schema", 1, func(_ context.Context) error {

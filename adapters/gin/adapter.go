@@ -80,7 +80,7 @@ func (c *ginContext) Request() *http.Request {
 }
 
 func (c *ginContext) ResponseWriter() http.ResponseWriter {
-	return c.Context.Writer
+	return c.Writer
 }
 
 func (c *ginContext) Param(name string) string {
@@ -92,7 +92,7 @@ func (c *ginContext) Query(name string) string {
 }
 
 func (c *ginContext) Bind(v any) error {
-	return c.Context.ShouldBindJSON(v)
+	return c.ShouldBindJSON(v)
 }
 
 func (c *ginContext) JSON(code int, v any) {

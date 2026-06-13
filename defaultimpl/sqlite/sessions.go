@@ -181,7 +181,7 @@ func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by user: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanSessionList(rows)
 }
 
@@ -192,7 +192,7 @@ func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list all: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanSessionList(rows)
 }
 

@@ -59,7 +59,7 @@ func getBranding(t *testing.T, srv *httptest.Server, host string) (int, map[stri
 	if err != nil {
 		t.Fatalf("GET /branding: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

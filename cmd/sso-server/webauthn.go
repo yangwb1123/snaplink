@@ -924,7 +924,7 @@ func webauthnIssueErrorStatus(err error) (int, string) {
 }
 
 func decodeBeginRequest(r *http.Request) (*webauthnBeginRequest, error) {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	if err != nil {
 		return nil, err

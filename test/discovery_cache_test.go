@@ -71,7 +71,7 @@ func TestDiscoveryCache_AmortizesListCalls(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status=%d on call %d", resp.StatusCode, i)
 		}
@@ -90,7 +90,7 @@ func TestDiscoveryCache_DisabledWhenTTLZero(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	if got := counter.calls.Load(); got != 3 {
 		t.Errorf("ClientStore.List was called %d times, want 3 (cache disabled)", got)
@@ -206,7 +206,7 @@ func fetchDoc(t *testing.T, srv *httptest.Server) map[string]any {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return decodeBody(t, resp)
 }
 

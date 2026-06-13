@@ -225,13 +225,13 @@ func (p *Provider) RemoveRole(ctx context.Context, clientID, roleCode string) er
 	for rows.Next() {
 		var userID, rolesJSON string
 		if err := rows.Scan(&userID, &rolesJSON); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return fmt.Errorf("permissions/sqlite: scan assignment row: %w", err)
 		}
 		var roles []string
 		if rolesJSON != "" {
 			if err := json.Unmarshal([]byte(rolesJSON), &roles); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return fmt.Errorf("permissions/sqlite: unmarshal assignment: %w", err)
 			}
 		}
@@ -248,7 +248,7 @@ func (p *Provider) RemoveRole(ctx context.Context, clientID, roleCode string) er
 			updates = append(updates, pending{userID: userID, roles: filtered})
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("permissions/sqlite: assignment rows: %w", err)
 	}
@@ -283,7 +283,7 @@ func (p *Provider) ListAllRoles(ctx context.Context, clientID string) ([]permiss
 	if err != nil {
 		return nil, fmt.Errorf("permissions/sqlite: list roles: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []permissions.Role
 	for rows.Next() {
 		var code, name, description, permsJSON string
@@ -461,7 +461,7 @@ func (p *Provider) ListAssignments(ctx context.Context, clientID string) ([]perm
 	if err != nil {
 		return nil, fmt.Errorf("permissions/sqlite: list assignments: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]permissions.Assignment, 0)
 	for rows.Next() {
 		var userID, rolesJSON string

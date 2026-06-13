@@ -66,7 +66,7 @@ func TestPerClientDeviceTTL_OverrideShortensWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device/code: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
@@ -90,7 +90,7 @@ func TestPerClientDeviceTTL_FallsBackToServerDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)

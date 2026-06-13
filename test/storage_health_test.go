@@ -88,7 +88,7 @@ func storageHealthGET(t *testing.T, srv *sso.Server) (int, map[string]any) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	if len(body) > 0 {
@@ -221,7 +221,7 @@ func newStorageHealthAdminHarness(t *testing.T, validClaims *sso.TokenClaims, pr
 func TestStorageHealth_AdminGated_NoToken401(t *testing.T) {
 	srv := newStorageHealthAdminHarness(t, &sso.TokenClaims{Subject: "user-alice"}, adminProvider(t))
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/storage-health", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -233,7 +233,7 @@ func TestStorageHealth_AdminGated_NoToken401(t *testing.T) {
 func TestStorageHealth_AdminGated_NoScope403(t *testing.T) {
 	srv := newStorageHealthAdminHarness(t, &sso.TokenClaims{Subject: "user-bob"}, nonAdminProvider(t))
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/storage-health", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -242,7 +242,7 @@ func TestStorageHealth_AdminGated_NoScope403(t *testing.T) {
 func TestStorageHealth_AdminGated_WithScope200(t *testing.T) {
 	srv := newStorageHealthAdminHarness(t, &sso.TokenClaims{Subject: "user-alice"}, adminProvider(t))
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/storage-health", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -264,7 +264,7 @@ func TestStorageHealth_OptInOff404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (route must not mount without WithStorageHealth)", resp.StatusCode)
 	}

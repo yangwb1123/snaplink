@@ -159,7 +159,7 @@ func refreshTokenColumnExists(ctx context.Context, x migrate.Execer, column stri
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var (
 			cid         int

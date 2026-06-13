@@ -24,7 +24,7 @@ func TestCORSE2E_AllowedOriginGetsAllowOriginHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /livez: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
 		t.Errorf("Allow-Origin = %q, want https://app.example.com", got)
@@ -42,7 +42,7 @@ func TestCORSE2E_DisallowedOriginGetsNoHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /livez: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
 		t.Error("disallowed origin should not receive Allow-Origin header")
@@ -63,7 +63,7 @@ func TestCORSE2E_PreflightReturns204(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OPTIONS preflight: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("preflight status = %d, want 204", resp.StatusCode)

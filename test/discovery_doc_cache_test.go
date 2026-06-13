@@ -31,7 +31,7 @@ func TestDiscoveryDocCache_ServesETagAndCacheControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -47,7 +47,7 @@ func TestDiscoveryDocCache_ServesETagAndCacheControl(t *testing.T) {
 func TestDiscoveryDocCache_HonorsIfNoneMatch(t *testing.T) {
 	srv := newDiscoveryDocCacheHarness(t, time.Minute)
 	first, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
-	first.Body.Close()
+	_ = first.Body.Close()
 	etag := first.Header.Get("ETag")
 	if etag == "" {
 		t.Fatal("no ETag on first response")
@@ -59,7 +59,7 @@ func TestDiscoveryDocCache_HonorsIfNoneMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotModified {
 		t.Fatalf("status=%d want 304", resp.StatusCode)
 	}
@@ -68,9 +68,9 @@ func TestDiscoveryDocCache_HonorsIfNoneMatch(t *testing.T) {
 func TestDiscoveryDocCache_ETagStableAcrossRefetches(t *testing.T) {
 	srv := newDiscoveryDocCacheHarness(t, time.Minute)
 	first, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
-	first.Body.Close()
+	_ = first.Body.Close()
 	second, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
-	second.Body.Close()
+	_ = second.Body.Close()
 	if a, b := first.Header.Get("ETag"), second.Header.Get("ETag"); a != b {
 		t.Fatalf("ETag drift: first=%q second=%q (cache should be stable within TTL)", a, b)
 	}
@@ -84,7 +84,7 @@ func TestDiscoveryDocCache_DisabledByZeroTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200", resp.StatusCode)
 	}
@@ -102,10 +102,10 @@ func TestDiscoveryDocCache_BodyMatchesCachedAndUncached(t *testing.T) {
 	srv := newDiscoveryDocCacheHarness(t, time.Minute)
 	a, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
 	bodyA := readAllBody(t, a)
-	a.Body.Close()
+	_ = a.Body.Close()
 	b, _ := http.Get(srv.URL + "/.well-known/openid-configuration")
 	bodyB := readAllBody(t, b)
-	b.Body.Close()
+	_ = b.Body.Close()
 	if bodyA != bodyB {
 		t.Fatalf("body drift between consecutive fetches under cache:\nA=%s\nB=%s", bodyA, bodyB)
 	}

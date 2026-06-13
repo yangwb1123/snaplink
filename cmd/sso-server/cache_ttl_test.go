@@ -18,7 +18,7 @@ func fetchDoc(t *testing.T, url string) (map[string]any, http.Header) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(body, &doc)
@@ -33,7 +33,7 @@ func TestBuildApp_DiscoveryDocCacheTTLDisabledOmitsCacheControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -51,7 +51,7 @@ func TestBuildApp_JWKSCacheTTLAppliedToResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -59,7 +59,7 @@ func TestBuildApp_JWKSCacheTTLAppliedToResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET jwks: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	cc := resp.Header.Get("Cache-Control")
 	// SDK emits "public, max-age=<seconds>" — confirm our TTL flowed through.
 	if !strings.Contains(cc, "max-age=17") {
@@ -79,7 +79,7 @@ func TestBuildApp_DiscoveryCacheTTLBuildsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 

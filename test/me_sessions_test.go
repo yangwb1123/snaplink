@@ -82,7 +82,7 @@ func newMeSessionsHarness(t *testing.T) (
 		if err != nil {
 			t.Fatalf("login(%s): %v", username, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
@@ -159,7 +159,7 @@ func newMeConsentsHarness(t *testing.T) (
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
@@ -186,7 +186,7 @@ func doReq(t *testing.T, srv *httptest.Server, method, path, bearer string) (int
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
@@ -242,7 +242,7 @@ func TestGetMySessions_NoStoreHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	cc := resp.Header.Get("Cache-Control")
 	if cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
@@ -257,7 +257,7 @@ func TestGetMySessions_WWWAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -406,7 +406,7 @@ func TestGetMyConsents_NoStoreHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
@@ -479,7 +479,7 @@ func TestSessionRoutes_NotMountedWithoutSessionMgr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (route unmounted)", resp.StatusCode)
 	}
@@ -505,7 +505,7 @@ func TestConsentRoutes_NotMountedWithoutConsentStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (route unmounted)", resp.StatusCode)
 	}

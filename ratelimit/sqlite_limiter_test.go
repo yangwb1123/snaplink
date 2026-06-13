@@ -92,12 +92,12 @@ func TestSQLiteLimiter_BucketNamesIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("limA: %v", err)
 	}
-	defer limA.Close()
+	defer func() { _ = limA.Close() }()
 	limB, err := NewSQLiteLimiter(dsn, 0, 1, "send-code")
 	if err != nil {
 		t.Fatalf("limB: %v", err)
 	}
-	defer limB.Close()
+	defer func() { _ = limB.Close() }()
 
 	if ok, _ := limA.Allow("alice"); !ok {
 		t.Fatal("limA first call denied")
@@ -122,12 +122,12 @@ func TestSQLiteLimiter_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("limA: %v", err)
 	}
-	defer limA.Close()
+	defer func() { _ = limA.Close() }()
 	limB, err := NewSQLiteLimiter(dsn, 0, 1, "")
 	if err != nil {
 		t.Fatalf("limB: %v", err)
 	}
-	defer limB.Close()
+	defer func() { _ = limB.Close() }()
 
 	if ok, _ := limA.Allow("alice"); !ok {
 		t.Fatal("limA first allow denied")

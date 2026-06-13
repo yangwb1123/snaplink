@@ -18,7 +18,7 @@ func fetchDiscovery(t *testing.T, url string) map[string]any {
 	if err != nil {
 		t.Fatalf("GET discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("discovery status = %d", resp.StatusCode)
 	}
@@ -37,7 +37,7 @@ func TestBuildApp_SupportedACRValuesAppearsInDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -63,7 +63,7 @@ func TestBuildApp_OperatorMetadataAppearsInDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -85,7 +85,7 @@ func TestBuildApp_IDTokenIssuerWiredByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -107,7 +107,7 @@ func TestBuildApp_OperatorMetadataOmittedWhenAllEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 

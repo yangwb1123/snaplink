@@ -101,12 +101,10 @@ func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot
 		for _, c := range cs {
 			clientIDs = append(clientIDs, c.ID)
 		}
-	} else if s.Permissions != nil || s.NetPolicy != nil {
-		// We still need clientIDs for permissions/menus enumeration. If
-		// Clients store is nil we can't enumerate; permissions stays
-		// empty in that case (operator-acceptable: the destination
-		// presumably already has clients seeded).
 	}
+	// When the Clients store is nil (or excluded), clientIDs stays empty and
+	// permissions/menus enumeration below is skipped — operator-acceptable:
+	// the destination presumably already has clients seeded.
 
 	if s.Users != nil && !excluded(CategoryUsers, opts.Exclude) {
 		us, err := s.Users.List(ctx)

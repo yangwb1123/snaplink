@@ -12,7 +12,7 @@ import (
 
 func TestStore_ApplyGetList(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	p := &netpolicy.Policy{Name: "intranet", CIDRs: []string{"10.0.0.0/8"}}
 	got, err := s.Apply(context.Background(), p)
@@ -42,7 +42,7 @@ func TestStore_ApplyGetList(t *testing.T) {
 
 func TestStore_ApplyTwiceIncrementsVersion(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	p := &netpolicy.Policy{Name: "x"}
 	v1, _ := s.Apply(context.Background(), p)
 	v2, _ := s.Apply(context.Background(), p)
@@ -53,7 +53,7 @@ func TestStore_ApplyTwiceIncrementsVersion(t *testing.T) {
 
 func TestStore_ApplyMissingNameErrors(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if _, err := s.Apply(context.Background(), &netpolicy.Policy{}); err == nil {
 		t.Fatal("expected error for missing Name")
 	}
@@ -61,7 +61,7 @@ func TestStore_ApplyMissingNameErrors(t *testing.T) {
 
 func TestStore_GetUnknownReturnsErrNotFound(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if _, err := s.Get(context.Background(), "nope"); !errors.Is(err, netpolicy.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -69,7 +69,7 @@ func TestStore_GetUnknownReturnsErrNotFound(t *testing.T) {
 
 func TestStore_DeleteIdempotent(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if err := s.Delete(context.Background(), "ghost"); err != nil {
 		t.Fatalf("Delete of missing should be nil, got %v", err)
 	}
@@ -84,7 +84,7 @@ func TestStore_DeleteIdempotent(t *testing.T) {
 
 func TestStore_WatchDeliversAddUpdateRemove(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -115,7 +115,7 @@ func TestStore_WatchDeliversAddUpdateRemove(t *testing.T) {
 
 func TestStore_WatchClosesOnContextCancel(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	ch, _ := s.Watch(ctx)
 	cancel()

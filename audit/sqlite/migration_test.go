@@ -16,7 +16,7 @@ func TestNew_StampsCurrentVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	v, err := migrate.CurrentVersion(context.Background(), s.db, "audit")
 	if err != nil {
 		t.Fatalf("CurrentVersion: %v", err)
@@ -37,7 +37,7 @@ func TestNewWithDB_AdoptsPreMigrationSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Simulate a pre-migration deployment: create the baseline schema
 	// directly + seed a row (no tenant_id — the v2 migration will add

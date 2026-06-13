@@ -19,18 +19,18 @@ func TestMigration_IndependentNamespacesOnSharedDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	us, err := NewUserStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("NewUserStoreWithDB: %v", err)
 	}
-	defer us.Close()
+	defer func() { _ = us.Close() }()
 	ss, err := NewSessionStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("NewSessionStoreWithDB: %v", err)
 	}
-	defer ss.Close()
+	defer func() { _ = ss.Close() }()
 
 	for _, ns := range []string{"webauthn_users", "webauthn_sessions"} {
 		v, err := migrate.CurrentVersion(ctx, db, ns)

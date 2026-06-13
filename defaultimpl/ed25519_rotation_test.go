@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"strings"
 	"testing"
 
 	"github.com/snaplink/sso"
@@ -80,11 +79,8 @@ func TestKeyRotation_NewTokensSignedByPrimary(t *testing.T) {
 	// Newly issued token must round-trip on the new primary (we
 	// don't accidentally sign with the retired key).
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
-	// Decode the header to extract kid — the primary's new-kid.
-	if !strings.Contains(tok.AccessToken, "."+`eyJ`) {
-		// nothing to assert about base64 contents directly; just
-		// make sure validation works.
-	}
+	// The retired key must not have signed this: validation against the
+	// primary (which only trusts the new kid for signing) must succeed.
 	if _, err := iss.Validate(context.Background(), tok.AccessToken); err != nil {
 		t.Errorf("new token failed to validate against primary: %v", err)
 		_ = oldPriv

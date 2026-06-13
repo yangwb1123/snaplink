@@ -1706,30 +1706,6 @@ func (s *Server) recordRefreshRotationVelocity(ctx HandlerContext, clientID, fam
 	audit.RecordRefreshRotationVelocityExceeded(s.auditor, ctx, clientID, familyID, count, killed)
 }
 
-// itoa is a tiny strconv-free int formatter — keeps audit_handler.go
-// free of a strconv import for one call site.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
-
 // recordCallbackFailure emits a callback_failure event.
 func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
 	audit.RecordCallbackFailure(s.auditor, ctx, provider, reason)
@@ -3042,10 +3018,6 @@ func (s *Server) handleMyMenus(ctx HandlerContext)       { permissions.HandleMyM
 
 func (s *Server) resolvePermissionsForLogin(ctx context.Context, userID, clientID string) ([]permissions.Role, []permissions.Permission, permissions.MenuTree) {
 	return permissions.ResolveForLogin(s.permissions, s.logger, ctx, userID, clientID)
-}
-
-func (s *Server) recordPermissionQuery(ctx HandlerContext, userID, clientID, kind string, ok bool) {
-	permissions.RecordQuery(s.auditor, ctx, userID, clientID, kind, ok)
 }
 
 // AuthenticatedSubject exposes authenticatedSubject for handlers/ subpackages

@@ -30,7 +30,7 @@ func twoPolicyStore(t *testing.T) netpolicy.Store {
 		Hostnames: []string{"sso.example.com"},
 		Priority:  50,
 	})
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -82,7 +82,7 @@ func TestClassifier_NoMatchReturnsNil(t *testing.T) {
 
 func TestClassifier_PriorityBreaksHostnameTie(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	mustApply(t, s, &netpolicy.Policy{Name: "lo", Hostnames: []string{"x.example"}, Priority: 1})
 	mustApply(t, s, &netpolicy.Policy{Name: "hi", Hostnames: []string{"x.example"}, Priority: 99})
 	c := newClassifier(t, s)
@@ -94,7 +94,7 @@ func TestClassifier_PriorityBreaksHostnameTie(t *testing.T) {
 
 func TestClassifier_BareIPCIDR(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	mustApply(t, s, &netpolicy.Policy{Name: "single", CIDRs: []string{"203.0.113.42"}})
 	c := newClassifier(t, s)
 	if got := c.Classify("203.0.113.42", ""); got == nil || got.Name != "single" {
@@ -107,7 +107,7 @@ func TestClassifier_BareIPCIDR(t *testing.T) {
 
 func TestClassifier_StartAppliesWatchUpdates(t *testing.T) {
 	s := memory.New()
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	c := netpolicy.NewClassifier()
 
 	ctx, cancel := context.WithCancel(context.Background())

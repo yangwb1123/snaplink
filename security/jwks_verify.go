@@ -281,6 +281,7 @@ func ecdsaPublicFromJWK(alg string, jwk core.JWK) (*ecdsa.PublicKey, int, error)
 	y := new(big.Int).SetBytes(yb)
 	// Reject points not on the curve — defends against invalid-curve
 	// attacks where an attacker supplies a crafted off-curve "public key".
+	//nolint:staticcheck // raw on-curve check is the precise intent; crypto/ecdh would re-encode and hide the validation we need here.
 	if !curve.IsOnCurve(x, y) {
 		return nil, 0, errors.New("jws: EC point not on curve")
 	}

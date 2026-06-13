@@ -106,7 +106,7 @@ func TestJWTClientAssertion_PARAuthenticatesClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("par: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
@@ -128,7 +128,7 @@ func TestJWTClientAssertion_IntrospectAuthenticatesClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tokResp.Body.Close()
+	defer func() { _ = tokResp.Body.Close() }()
 	tokRB, _ := io.ReadAll(tokResp.Body)
 	var tokOut map[string]any
 	_ = json.Unmarshal(tokRB, &tokOut)
@@ -145,7 +145,7 @@ func TestJWTClientAssertion_IntrospectAuthenticatesClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer introResp.Body.Close()
+	defer func() { _ = introResp.Body.Close() }()
 	introRB, _ := io.ReadAll(introResp.Body)
 	if introResp.StatusCode != http.StatusOK {
 		t.Fatalf("introspect status=%d body=%s", introResp.StatusCode, introRB)
@@ -167,7 +167,7 @@ func TestJWTClientAssertion_RevokeAuthenticatesClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tokResp.Body.Close()
+	defer func() { _ = tokResp.Body.Close() }()
 	var tokOut map[string]any
 	_ = json.NewDecoder(tokResp.Body).Decode(&tokOut)
 	access, _ := tokOut["access_token"].(string)
@@ -180,7 +180,7 @@ func TestJWTClientAssertion_RevokeAuthenticatesClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer revResp.Body.Close()
+	defer func() { _ = revResp.Body.Close() }()
 	if revResp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke status=%d", revResp.StatusCode)
 	}

@@ -66,7 +66,9 @@ func (c *Context) Bind(v any) error {
 func (c *Context) JSON(code int, v any) {
 	c.w.Header().Set(HeaderContentType, ContentTypeJSON)
 	c.w.WriteHeader(code)
-	json.NewEncoder(c.w).Encode(v)
+	// Best-effort: the status + headers are already written, so a mid-encode
+	// write failure (client hung up) can't be recovered into the response.
+	_ = json.NewEncoder(c.w).Encode(v)
 }
 
 func (c *Context) Redirect(code int, url string) {

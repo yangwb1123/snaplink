@@ -99,7 +99,7 @@ func TestAuditFacets_NotImplementedWhenSinkLacksSupport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Fatalf("status = %d, want 501", resp.StatusCode)
 	}
@@ -115,7 +115,7 @@ func TestAuditFacets_NotImplementedWhenSinkLacksSupport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get events: %v", err)
 	}
-	defer ev.Body.Close()
+	defer func() { _ = ev.Body.Close() }()
 	if ev.StatusCode != http.StatusOK {
 		t.Errorf("events status = %d, want 200", ev.StatusCode)
 	}
@@ -139,7 +139,7 @@ func newAuditFacetsAdminHarness(t *testing.T, validClaims *sso.TokenClaims) *htt
 func TestAuditFacets_AdminGated_NoToken401(t *testing.T) {
 	srv := newAuditFacetsAdminHarness(t, &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/audit/facets", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -156,7 +156,7 @@ func TestAuditFacets_AdminGated_NoScope403(t *testing.T) {
 	t.Cleanup(httpSrv.Close)
 
 	resp := httpDo(t, "GET", httpSrv.URL+"/api/v1/audit/facets", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -165,7 +165,7 @@ func TestAuditFacets_AdminGated_NoScope403(t *testing.T) {
 func TestAuditFacets_AdminGated_WithScope200(t *testing.T) {
 	srv := newAuditFacetsAdminHarness(t, &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/audit/facets", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

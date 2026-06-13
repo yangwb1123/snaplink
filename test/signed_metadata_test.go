@@ -41,7 +41,7 @@ func fetchSignedDiscovery(t *testing.T, srv *httptest.Server) map[string]any {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	if err := json.Unmarshal(body, &doc); err != nil {

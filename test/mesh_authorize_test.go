@@ -79,7 +79,7 @@ func newMeshAuthorizeServer(t *testing.T, opts ...sso.Option) (*sso.Server, *htt
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var out map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		tok, _ := out["access_token"].(string)
@@ -221,7 +221,7 @@ func TestMeshAuthorize_ExpiredToken_DeniesInvalidToken(t *testing.T) {
 	}
 	var out map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&out)
-	lresp.Body.Close()
+	_ = lresp.Body.Close()
 	bearer, _ := out["access_token"].(string)
 	time.Sleep(5 * time.Millisecond)
 
@@ -382,7 +382,7 @@ func TestMeshAuthorize_IdentityMatchesHTTPHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("http ext_authz: %v", err)
 	}
-	defer hResp.Body.Close()
+	defer func() { _ = hResp.Body.Close() }()
 	if hResp.StatusCode != http.StatusOK {
 		t.Fatalf("http status = %d want 200", hResp.StatusCode)
 	}
@@ -470,7 +470,7 @@ func TestMeshAuthorize_Residency_DisallowedRegionDenies(t *testing.T) {
 	}
 	var out map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&out)
-	lresp.Body.Close()
+	_ = lresp.Body.Close()
 	bearer, _ := out["access_token"].(string)
 	if bearer == "" {
 		t.Fatalf("no access_token: %v", out)
@@ -630,7 +630,7 @@ func TestMeshAuthorize_HTTPNonceResponseByteIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("http ext_authz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		body, _ := io.ReadAll(resp.Body)
@@ -685,7 +685,7 @@ func mintDPoPBoundTokenWithKey(t *testing.T, srv *httptest.Server, priv ed25519.
 		t.Fatalf("token: %v", err)
 	}
 	rb, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
 	if out["token_type"] != "DPoP" {
@@ -718,7 +718,7 @@ func mintDPoPBoundTokenWithNonce(t *testing.T, srv *httptest.Server, priv ed2551
 		t.Fatalf("token step 1: %v", err)
 	}
 	nonce := resp1.Header.Get(sso.HeaderDPoPNonce)
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 	if nonce == "" {
 		t.Fatalf("token step 1 yielded no DPoP-Nonce (nonce provider not enforcing?)")
 	}
@@ -734,7 +734,7 @@ func mintDPoPBoundTokenWithNonce(t *testing.T, srv *httptest.Server, priv ed2551
 		t.Fatalf("token step 2: %v", err)
 	}
 	rb, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
 	if out["token_type"] != "DPoP" {

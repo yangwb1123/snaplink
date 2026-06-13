@@ -16,7 +16,7 @@ func newSvc(id, name string) *registry.Service {
 
 func TestRegister_RequiresIDAndName(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if err := r.Register(context.Background(), &registry.Service{Name: "x"}); err == nil {
 		t.Error("expected error for missing ID")
 	}
@@ -30,7 +30,7 @@ func TestRegister_RequiresIDAndName(t *testing.T) {
 
 func TestRegisterAndDiscover(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 	if err := r.Register(ctx, newSvc("sso-1", "sso")); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -46,7 +46,7 @@ func TestRegisterAndDiscover(t *testing.T) {
 
 func TestDiscover_UnknownReturnsErrNotFound(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	_, err := r.Discover(context.Background(), "nope")
 	if !errors.Is(err, registry.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
@@ -55,7 +55,7 @@ func TestDiscover_UnknownReturnsErrNotFound(t *testing.T) {
 
 func TestDiscover_MultipleInstances(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 	_ = r.Register(ctx, newSvc("sso-1", "sso"))
 	_ = r.Register(ctx, newSvc("sso-2", "sso"))
@@ -68,7 +68,7 @@ func TestDiscover_MultipleInstances(t *testing.T) {
 
 func TestDeregister(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 	_ = r.Register(ctx, newSvc("sso-1", "sso"))
 	if err := r.Deregister(ctx, "sso-1"); err != nil {
@@ -81,7 +81,7 @@ func TestDeregister(t *testing.T) {
 
 func TestDeregister_UnknownIsNoop(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	if err := r.Deregister(context.Background(), "ghost"); err != nil {
 		t.Fatalf("Deregister unknown should not error; got %v", err)
 	}
@@ -89,7 +89,7 @@ func TestDeregister_UnknownIsNoop(t *testing.T) {
 
 func TestRegister_UpdatesEmitUpdatedEvent(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 
 	watch, _ := r.Watch(ctx, "sso")
@@ -109,7 +109,7 @@ func TestRegister_UpdatesEmitUpdatedEvent(t *testing.T) {
 
 func TestWatch_DeliversAddedAndRemoved(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 	watch, err := r.Watch(ctx, "sso")
 	if err != nil {
@@ -131,7 +131,7 @@ func TestWatch_DeliversAddedAndRemoved(t *testing.T) {
 
 func TestWatch_ClosedOnContextCancel(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	ch, _ := r.Watch(ctx, "sso")
 
@@ -183,7 +183,7 @@ func TestOperationsAfterClose(t *testing.T) {
 
 func TestTTLExpiry(t *testing.T) {
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 
 	svc := newSvc("sso-1", "sso")
@@ -211,7 +211,7 @@ func TestRegisterDeepCopiesInputs(t *testing.T) {
 	// Mutating the supplied Service's Tags / Metadata after Register must
 	// not bleed into the registry's snapshot.
 	r := memory.New()
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ctx := context.Background()
 
 	svc := &registry.Service{

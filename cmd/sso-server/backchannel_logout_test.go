@@ -17,7 +17,7 @@ func TestBuildApp_BackchannelLogoutFlipsDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -89,7 +89,7 @@ func TestBuildApp_BCL_SQLiteIndexWires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -106,7 +106,7 @@ func TestBuildApp_BackchannelLogoutDisabledOmitsDiscoveryFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 

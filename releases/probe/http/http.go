@@ -44,7 +44,7 @@ func (p *Probe) Probe(ctx context.Context, _ *releases.Release) error {
 	if err != nil {
 		return fmt.Errorf("releases/probe/http: do: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("releases/probe/http: status %d", resp.StatusCode)
 	}

@@ -75,7 +75,7 @@ func pingRequestAuthReqID(t *testing.T, httpSrv *httptest.Server, notifToken str
 	if err != nil {
 		t.Fatalf("POST /backchannel-authentication: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -197,7 +197,7 @@ func cibaPingMetricValue(t *testing.T, httpSrv *httptest.Server, outcome string)
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	want := metrics.NameCIBAPingTotal + `{outcome="` + outcome + `"} `
 	for _, line := range strings.Split(string(body), "\n") {
@@ -315,7 +315,7 @@ func TestCIBAPing_DiscoveryAdvertisesPing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	modes, _ := doc["backchannel_token_delivery_modes_supported"].([]any)

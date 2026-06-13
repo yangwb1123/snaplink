@@ -17,7 +17,7 @@ func TestRunPushApprovalPrune_RemovesExpiredAtInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPushApprovalStore: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -65,7 +65,7 @@ func TestRunPushApprovalPrune_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL"
 	store, _ := sqlitestores.NewPushApprovalStore(dsn)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

@@ -46,7 +46,7 @@ func TestSigningKeyRotationsTotal_ScrapeReportsCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), metrics.NameSigningKeyRotationsTotal+" 2") {
 		t.Errorf("expected %q with value 2 in scrape", metrics.NameSigningKeyRotationsTotal)

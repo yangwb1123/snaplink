@@ -121,7 +121,7 @@ func login(t *testing.T, base string, scope string) map[string]any {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		bb, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login status = %d body=%s", resp.StatusCode, bb)
@@ -204,7 +204,7 @@ func TestPairwise_DiscoveryAdvertisesPairwise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	types, _ := doc["subject_types_supported"].([]any)
@@ -237,7 +237,7 @@ func TestPairwise_DiscoveryOmitsPairwiseWithoutStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	types, _ := doc["subject_types_supported"].([]any)

@@ -157,7 +157,7 @@ func (s *ClientStore) List(ctx context.Context) ([]*sso.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list clients: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*sso.Client
 	for rows.Next() {
 		c, err := scanClient(rows)
@@ -177,7 +177,7 @@ func (s *ClientStore) Stats(ctx context.Context) (int, string, error) {
 	if err != nil {
 		return 0, "", fmt.Errorf("sqlite: stats clients: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var clients []*sso.Client
 	for rows.Next() {
 		var (
@@ -209,7 +209,7 @@ func (s *ClientStore) ListByTenant(ctx context.Context, tenantID string) ([]*sso
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by tenant: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*sso.Client
 	for rows.Next() {
 		c, err := scanClient(rows)

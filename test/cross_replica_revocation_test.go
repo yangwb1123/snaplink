@@ -92,7 +92,7 @@ func TestCrossReplicaRevocation_PropagatesAndRejectsOnPeer(t *testing.T) {
 	defer cancel()
 
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	issuerA := newRevocationIssuer(priv)
@@ -159,7 +159,7 @@ func TestCrossReplicaRevocation_NoBroadcastLoop(t *testing.T) {
 	defer cancel()
 
 	bus := newCountingBus()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	issuerA := newRevocationIssuer(priv)
@@ -215,7 +215,7 @@ func TestCrossReplicaRevocation_PublishFailOpen(t *testing.T) {
 	ctx := context.Background()
 
 	bus := clustermemory.New()
-	bus.Close() // closed bus: every Publish returns ErrClosed (fail-open path)
+	_ = bus.Close() // closed bus: every Publish returns ErrClosed (fail-open path)
 
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	issuerA := newRevocationIssuer(priv)
@@ -246,7 +246,7 @@ func TestCrossReplicaRevocation_UnarmedNoop(t *testing.T) {
 	defer cancel()
 
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	issuerA := newRevocationIssuer(priv)

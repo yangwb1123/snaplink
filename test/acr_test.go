@@ -65,7 +65,7 @@ func acrLogin(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)

@@ -60,7 +60,7 @@ func postToken(t *testing.T, srv *httptest.Server, body map[string]any) (int, ma
 	if err != nil {
 		t.Fatalf("POST /auth/token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(respBody, &out)
@@ -89,7 +89,7 @@ func TestToken_BadJSON_400(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
@@ -245,7 +245,7 @@ func TestToken_ClientCredentials_NoStrategyConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 (no matching strategy)", resp.StatusCode)
 	}

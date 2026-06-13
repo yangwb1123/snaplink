@@ -42,7 +42,7 @@ func TestLivez_AlwaysOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /livez: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
@@ -58,7 +58,7 @@ func TestReadyz_NoChecks_AlwaysReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /readyz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("no-checks readyz = %d, want 200", resp.StatusCode)
 	}
@@ -73,7 +73,7 @@ func TestReadyz_AllChecksPass_Returns200(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /readyz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("all-pass readyz = %d, want 200", resp.StatusCode)
 	}
@@ -99,7 +99,7 @@ func TestReadyz_OneCheckFails_Returns503(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /readyz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("one-fail readyz = %d, want 503", resp.StatusCode)
 	}
@@ -139,7 +139,7 @@ func TestReadyz_PerCheckTimeoutFiresBeforeAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /readyz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	elapsed := time.Since(start)
 	if elapsed > 400*time.Millisecond {
 		t.Errorf("/readyz took %v — per-check timeout didn't fire", elapsed)
@@ -183,7 +183,7 @@ func TestReadyz_PerCheckTimeoutRegisterOrderIndependent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GET /readyz: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 				t.Errorf("/readyz took %v — per-check timeout didn't fire (order: %s)", elapsed, tc.name)
 			}
@@ -208,14 +208,14 @@ func TestLivezReadyz_BypassRateLimit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /livez: %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("/livez status = %d under rate-limit (must bypass!)", resp.StatusCode)
 		}
 	}
 	for range 20 {
 		resp, _ := http.Get(srv.URL + "/readyz")
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("/readyz status = %d under rate-limit (must bypass!)", resp.StatusCode)
 		}
@@ -230,7 +230,7 @@ func TestBodyLimit_RejectsByContentLength(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413", resp.StatusCode)
 	}
@@ -249,7 +249,7 @@ func TestBodyLimit_AcceptsSmallBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
 		t.Errorf("small body wrongly rejected as too large")
 	}

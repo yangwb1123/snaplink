@@ -92,7 +92,7 @@ func newUserInfoServer(t *testing.T) (*httptest.Server, func(scopes []string) st
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var out map[string]any
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		tok, _ := out["access_token"].(string)
@@ -125,7 +125,7 @@ func fetchUserInfo(t *testing.T, srv *httptest.Server, bearer string) map[string
 	if err != nil {
 		t.Fatalf("GET /userinfo: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("userinfo status = %d", resp.StatusCode)
 	}

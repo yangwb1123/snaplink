@@ -27,7 +27,7 @@ type netHarness struct {
 func newNetHarness(t *testing.T, withClassifier bool) *netHarness {
 	t.Helper()
 	store := memory.New()
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 
 	var classifier *netpolicy.Classifier
 	if withClassifier {
@@ -72,7 +72,7 @@ func (h *netHarness) do(t *testing.T, method, path, body string) (*http.Response
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	buf := make([]byte, 4096)
 	n, _ := resp.Body.Read(buf)
 	return resp, buf[:n]
@@ -183,7 +183,7 @@ func TestNetPolicyHTTP_ResolveMeUsesRequestHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -196,7 +196,7 @@ func TestNetPolicyHTTP_ResolveMeUsesRequestHost(t *testing.T) {
 
 func TestServer_ClassifyRequestHelper(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	_, _ = store.Apply(context.Background(), &netpolicy.Policy{
 		Name: "intranet", CIDRs: []string{"10.0.0.0/8"},
 	})

@@ -81,7 +81,7 @@ func TestSAMLUnconfigured_NoRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	// Run the full handler-composition path (where the SAML block lives) to
 	// prove the empty handler mounts nothing.
 	if _, err := buildHTTPHandler(cfg, a, quietLogger()); err != nil {
@@ -95,7 +95,7 @@ func TestSAMLUnconfigured_NoRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", sso.PathSAMLMetadata, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET %s = %d, want 404 (no SAML route when saml.handler is empty)", sso.PathSAMLMetadata, resp.StatusCode)
 	}
@@ -132,7 +132,7 @@ func TestSAMLConfigured_MountsRoutesAndAuthenticator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	// buildHTTPHandler is where the SAML block runs (run() calls it after
 	// buildApp); invoke it directly so the test exercises the mount path.
 	if _, err := buildHTTPHandler(cfg, a, quietLogger()); err != nil {
@@ -160,7 +160,7 @@ func TestSAMLConfigured_MountsRoutesAndAuthenticator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", sso.PathSAMLMetadata, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET %s = %d, want 200 (SAML route mounted)", sso.PathSAMLMetadata, resp.StatusCode)
 	}
@@ -177,7 +177,7 @@ func TestSAMLConfigured_UnregisteredHandlerFailsBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	// The unregistered-handler error surfaces from buildHTTPHandler (the
 	// lookup site), which run() treats as fatal.
 	if _, err := buildHTTPHandler(cfg, a, quietLogger()); err == nil {

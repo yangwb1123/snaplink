@@ -95,7 +95,7 @@ func rarLogin(t *testing.T, srv *httptest.Server, authzDetails string, codeFlow 
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	rbody, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(rbody, &out)
@@ -266,7 +266,7 @@ func TestRAR_CodeFlowPersistsToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("exchange status=%d body=%s", resp.StatusCode, raw)
@@ -326,7 +326,7 @@ func TestRAR_DiscoveryAdvertisesUnion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	doc := map[string]any{}
 	raw, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(raw, &doc)
@@ -430,7 +430,7 @@ func TestRAR_SurvivesRefreshRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh exchange status=%d body=%s", resp.StatusCode, raw)
@@ -481,7 +481,7 @@ func TestRAR_SurvivesRefreshRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second rotation: %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	raw2, _ := io.ReadAll(resp2.Body)
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("second rotation status=%d body=%s", resp2.StatusCode, raw2)
@@ -528,7 +528,7 @@ func TestRAR_RefreshWithoutOriginalGrantStaysClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("refresh exchange status=%d body=%s", resp.StatusCode, raw)

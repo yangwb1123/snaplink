@@ -104,7 +104,7 @@ func scPostJSON(t *testing.T, srv *httptest.Server, path string, body map[string
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -117,7 +117,7 @@ func scPostForm(t *testing.T, srv *httptest.Server, path string, form url.Values
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

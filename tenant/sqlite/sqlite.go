@@ -165,7 +165,7 @@ func (s *Store) ListTenants(ctx context.Context) ([]*tenant.Tenant, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: list tenants: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*tenant.Tenant
 	for rows.Next() {
 		var id string
@@ -297,7 +297,7 @@ func (s *Store) ListDomains(ctx context.Context) ([]*tenant.Domain, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: list domains: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanDomainRows(rows)
 }
 
@@ -309,7 +309,7 @@ func (s *Store) ListDomainsByTenant(ctx context.Context, tenantID string) ([]*te
 	if err != nil {
 		return nil, fmt.Errorf("tenant/sqlite: list domains by tenant: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanDomainRows(rows)
 }
 

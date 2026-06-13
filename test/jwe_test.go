@@ -173,7 +173,7 @@ func (h *jweHarness) loginJWE(t *testing.T, request string) (int, map[string]any
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -243,7 +243,7 @@ func TestJWEJAR_DiscoveryAdvertisesAlgEnc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	doc := map[string]any{}
 	_ = json.Unmarshal(raw, &doc)
@@ -262,7 +262,7 @@ func TestJWEJAR_DiscoveryAdvertisesAlgEnc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery (no dec): %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	raw2, _ := io.ReadAll(resp2.Body)
 	doc2 := map[string]any{}
 	_ = json.Unmarshal(raw2, &doc2)
@@ -280,7 +280,7 @@ func TestJWEJAR_JWKSExposesEncryptionKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jwks: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	doc := map[string]any{}
 	_ = json.Unmarshal(raw, &doc)

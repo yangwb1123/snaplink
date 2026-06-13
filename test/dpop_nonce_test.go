@@ -181,7 +181,7 @@ func TestDPoPNonce_TokenEndpointChallengesWithoutNonce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 (use_dpop_nonce)", resp.StatusCode)
 	}
@@ -203,7 +203,7 @@ func TestDPoPNonce_TokenEndpointAcceptsValidNonceRetry(t *testing.T) {
 	req1.Header.Set("DPoP", proof1)
 	resp1, _ := http.DefaultClient.Do(req1)
 	nonce := resp1.Header.Get(sso.HeaderDPoPNonce)
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 	if nonce == "" {
 		t.Fatal("step 1 yielded no nonce")
 	}
@@ -219,7 +219,7 @@ func TestDPoPNonce_TokenEndpointAcceptsValidNonceRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("step 2 status=%d want 200 with valid nonce", resp2.StatusCode)
 	}
@@ -241,7 +241,7 @@ func TestDPoPNonce_TokenEndpointRejectsTamperedNonce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 (tampered nonce → fresh challenge)", resp.StatusCode)
 	}

@@ -87,7 +87,7 @@ func httpDo(t *testing.T, method, url, bearer string) *http.Response {
 func TestAdminHTTP_NoTokenIs401(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/clients", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -96,7 +96,7 @@ func TestAdminHTTP_NoTokenIs401(t *testing.T) {
 func TestAdminHTTP_BadTokenIs401(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/clients", "wrong")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -105,7 +105,7 @@ func TestAdminHTTP_BadTokenIs401(t *testing.T) {
 func TestAdminHTTP_ValidTokenWithoutScopeIs403(t *testing.T) {
 	srv := newAdminHTTPHarness(t, nonAdminProvider(t), &sso.TokenClaims{Subject: "user-bob"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/clients", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -114,7 +114,7 @@ func TestAdminHTTP_ValidTokenWithoutScopeIs403(t *testing.T) {
 func TestAdminHTTP_ValidTokenWithScope_200(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/admin/clients", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -125,7 +125,7 @@ func TestAdminHTTP_NonAdminPathPassesThrough(t *testing.T) {
 	// Truly non-admin paths (no /api/v1 prefix, or /api/v1/netpolicy/
 	// resolve-me) MUST pass through without auth.
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/netpolicy/resolve-me", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		// httptest mux returns 404 for unmounted path — confirms the
 		// middleware short-circuited to next.ServeHTTP rather than
@@ -141,7 +141,7 @@ func TestAdminHTTP_AuditEventsNowGated(t *testing.T) {
 	// the audit log.
 	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/audit/events", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (audit must require admin bearer)", resp.StatusCode)
 	}
@@ -153,7 +153,7 @@ func TestAdminHTTP_AuditEventsNowGated(t *testing.T) {
 func TestAdminHTTP_AuditEventsWithValidScope_OK(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/audit/events", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (admin-scoped audit access)", resp.StatusCode)
 	}
@@ -162,7 +162,7 @@ func TestAdminHTTP_AuditEventsWithValidScope_OK(t *testing.T) {
 func TestAdminHTTP_NetpolicyPoliciesGated(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), &sso.TokenClaims{Subject: "user-alice"})
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/netpolicy/policies", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("netpolicy/policies unauthed: got %d want 401", resp.StatusCode)
 	}
@@ -171,7 +171,7 @@ func TestAdminHTTP_NetpolicyPoliciesGated(t *testing.T) {
 func TestAdminHTTP_NetpolicyResolveMeStaysOpen(t *testing.T) {
 	srv := newAdminHTTPHarness(t, adminProvider(t), nil)
 	resp := httpDo(t, "GET", srv.URL+"/api/v1/netpolicy/resolve-me", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
 		t.Fatal("netpolicy/resolve-me must stay open (client-facing)")
 	}

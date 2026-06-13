@@ -30,13 +30,9 @@ import (
 	"github.com/snaplink/sso/tenant"
 )
 
-// errorBody / errorBodyWithDescription delegate to core/error_body.go.
-// Keep the lowercase names so the 100+ call sites stay one-line.
+// errorBody delegates to core/error_body.go. Keep the lowercase name so the
+// 100+ call sites stay one-line.
 func errorBody(code string) map[string]string { return core.ErrorBody(code) }
-
-func errorBodyWithDescription(code, desc string) map[string]string {
-	return core.ErrorBodyDesc(code, desc)
-}
 
 // bearerToken delegates to oauth.BearerToken — see that function for
 // the RFC 6750 §2.1 missing-vs-bad-credential distinction.
@@ -1247,7 +1243,9 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 	var auth Authenticator
 	var err error
 	if provider != "" {
-		auth, err = s.getAuthenticator(provider)
+		// Miss is surfaced via the auth == nil check below, so the lookup
+		// error itself is not needed here.
+		auth, _ = s.getAuthenticator(provider)
 	} else {
 		for _, a := range s.authenticators {
 			if _, err = a.Callback(context.Background(), &CallbackState{Code: code, State: state}); err == nil {
@@ -1277,7 +1275,11 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 		Attributes: result.Attributes,
 	}
 	if s.userProvider != nil {
-		s.userProvider.CreateOrUpdate(ctx.Request().Context(), user)
+		if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
+			s.logger.Error("failed to upsert user", "error", err)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
 	}
 
 	session, err := s.sessionMgr.Create(ctx.Request().Context(), result.UserID)

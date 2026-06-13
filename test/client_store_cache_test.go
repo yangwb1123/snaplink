@@ -73,7 +73,7 @@ func TestClientCache_DCRUpdateEvicts(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 	rawBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("put status=%d body=%s", resp.StatusCode, rawBody)
 	}
@@ -109,7 +109,7 @@ func TestClientCache_DCRDeleteEvicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete status=%d", resp.StatusCode)
 	}

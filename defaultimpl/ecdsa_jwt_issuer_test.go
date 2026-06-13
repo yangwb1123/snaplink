@@ -147,7 +147,7 @@ func TestECDSAJWT_JWKS(t *testing.T) {
 	}
 	// The published point must match the issuer's actual public key.
 	pub := iss.PublicKey()
-	if pub.X.Cmp(bigFromBytes(xb)) != 0 || pub.Y.Cmp(bigFromBytes(yb)) != 0 {
+	if pub.X.Cmp(bigFromBytes(xb)) != 0 || pub.Y.Cmp(bigFromBytes(yb)) != 0 { //nolint:staticcheck // raw EC coords required to verify published JWK X/Y
 		t.Error("published JWK coords don't match issuer public key")
 	}
 }

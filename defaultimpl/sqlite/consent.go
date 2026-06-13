@@ -147,7 +147,7 @@ func (s *ConsentStore) ListByUser(ctx context.Context, userID string) ([]core.Co
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list consent_grants: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []core.ConsentGrant
 	for rows.Next() {
 		g, err := scanConsentGrant(rows)

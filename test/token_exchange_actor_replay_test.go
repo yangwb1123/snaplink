@@ -65,7 +65,7 @@ func txARLogin(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -92,7 +92,7 @@ func txARExchange(t *testing.T, srv *httptest.Server, subject, actor string) (in
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	body := map[string]any{}
 	_ = json.Unmarshal(raw, &body)

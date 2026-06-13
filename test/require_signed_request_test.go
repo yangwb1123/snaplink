@@ -60,7 +60,7 @@ func TestRequireSignedRequestObject_DiscoveryAdvertisesGlobalFlag(t *testing.T) 
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)
@@ -80,7 +80,7 @@ func TestRequireSignedRequestObject_RejectsDirectLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, rb)

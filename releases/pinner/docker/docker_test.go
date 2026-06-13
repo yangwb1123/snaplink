@@ -56,7 +56,7 @@ func TestNew_RejectsMissingDir(t *testing.T) {
 
 func TestNew_RejectsFile(t *testing.T) {
 	f, _ := os.CreateTemp(t.TempDir(), "*")
-	f.Close()
+	_ = f.Close()
 	if _, err := docker.New(f.Name()); err == nil {
 		t.Fatal("expected error when path is a file")
 	}

@@ -35,9 +35,9 @@ func startGRPCBackend(t *testing.T, prov permissions.Provider, recorder *audit.R
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	})
 	return conn
 }
@@ -53,12 +53,18 @@ var (
 func authzProvider(t *testing.T) permissions.Provider {
 	t.Helper()
 	p := permissions.NewMemoryProvider()
-	p.AddRole(context.Background(), "web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*"}})
-	p.SetMenus(context.Background(), "web-app", permissions.MenuTree{
+	if err := p.AddRole(context.Background(), "web-app", permissions.Role{Code: "admin", Permissions: []string{"user:*"}}); err != nil {
+		t.Fatalf("AddRole: %v", err)
+	}
+	if err := p.SetMenus(context.Background(), "web-app", permissions.MenuTree{
 		{ID: "m-users", Permission: "user:read"},
 		{ID: "m-audit", Permission: "audit:read"},
-	})
-	p.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"})
+	}); err != nil {
+		t.Fatalf("SetMenus: %v", err)
+	}
+	if err := p.AssignRoles(context.Background(), "user-alice", "web-app", []string{"admin"}); err != nil {
+		t.Fatalf("AssignRoles: %v", err)
+	}
 	return p
 }
 

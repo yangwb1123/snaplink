@@ -105,7 +105,7 @@ func requestCodeWithPKCE(t *testing.T, srv *httptest.Server, challenge, method s
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -131,7 +131,7 @@ func exchangeWithVerifier(t *testing.T, srv *httptest.Server, code, verifier str
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -404,7 +404,7 @@ func TestPKCE_AuthCodeFollowedByRefreshGrantIgnoresPKCE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer lresp.Body.Close()
+	defer func() { _ = lresp.Body.Close() }()
 	var lOut map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&lOut)
 	code, _ := lOut["code"].(string)
@@ -422,7 +422,7 @@ func TestPKCE_AuthCodeFollowedByRefreshGrantIgnoresPKCE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer tresp.Body.Close()
+	defer func() { _ = tresp.Body.Close() }()
 	var tOut map[string]any
 	_ = json.NewDecoder(tresp.Body).Decode(&tOut)
 	refresh, _ := tOut["refresh_token"].(string)
@@ -442,7 +442,7 @@ func TestPKCE_AuthCodeFollowedByRefreshGrantIgnoresPKCE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	defer rresp.Body.Close()
+	defer func() { _ = rresp.Body.Close() }()
 	if rresp.StatusCode != http.StatusOK {
 		var out map[string]any
 		_ = json.NewDecoder(rresp.Body).Decode(&out)

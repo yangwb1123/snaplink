@@ -49,8 +49,7 @@ func TestJWKThumbprintRFC7638_ECCanonicalForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	x := base64.RawURLEncoding.EncodeToString(priv.PublicKey.X.FillBytes(make([]byte, 32)))
-	y := base64.RawURLEncoding.EncodeToString(priv.PublicKey.Y.FillBytes(make([]byte, 32)))
+	x, y := ecCoordsP256(t, priv)
 
 	got, err := jwkThumbprintRFC7638(JWK{Kty: "EC", Crv: "P-256", X: x, Y: y})
 	if err != nil {
@@ -84,17 +83,22 @@ func TestJWKThumbprintRFC7638_OKPCanonicalForm(t *testing.T) {
 // correct thumbprints (not the same value, not an error). Before the fix the
 // only thumbprint path was OKP-only.
 func TestJWKThumbprintRFC7638_PerKtyDistinct(t *testing.T) {
-	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	ecX := base64.RawURLEncoding.EncodeToString(ecPriv.PublicKey.X.FillBytes(make([]byte, 32)))
-	ecY := base64.RawURLEncoding.EncodeToString(ecPriv.PublicKey.Y.FillBytes(make([]byte, 32)))
+	ecPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("EC keygen: %v", err)
+	}
+	ecX, ecY := ecCoordsP256(t, ecPriv)
 	ecJKT, err := jwkThumbprintRFC7638(JWK{Kty: "EC", Crv: "P-256", X: ecX, Y: ecY})
 	if err != nil {
 		t.Fatalf("EC thumbprint: %v", err)
 	}
 
-	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
-	rsaN := base64.RawURLEncoding.EncodeToString(rsaPriv.PublicKey.N.Bytes())
-	rsaE := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(rsaPriv.PublicKey.E)).Bytes())
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("RSA keygen: %v", err)
+	}
+	rsaN := base64.RawURLEncoding.EncodeToString(rsaPriv.N.Bytes())
+	rsaE := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(rsaPriv.E)).Bytes())
 	rsaJKT, err := jwkThumbprintRFC7638(JWK{Kty: "RSA", N: rsaN, E: rsaE})
 	if err != nil {
 		t.Fatalf("RSA thumbprint: %v", err)
@@ -102,6 +106,26 @@ func TestJWKThumbprintRFC7638_PerKtyDistinct(t *testing.T) {
 	if ecJKT == "" || rsaJKT == "" || ecJKT == rsaJKT {
 		t.Fatalf("expected distinct non-empty EC/RSA thumbprints, got ec=%q rsa=%q", ecJKT, rsaJKT)
 	}
+}
+
+// ecCoordsP256 returns the base64url-encoded raw 32-byte X and Y coordinates
+// of a P-256 ECDSA public key. It routes through crypto/ecdh rather than the
+// deprecated big.Int X/Y fields: ecdh.PublicKey.Bytes() yields the uncompressed
+// SEC1 point 0x04 || X(32) || Y(32), from which the fixed-width halves are
+// sliced directly.
+func ecCoordsP256(t *testing.T, priv *ecdsa.PrivateKey) (x, y string) {
+	t.Helper()
+	pub, err := priv.PublicKey.ECDH()
+	if err != nil {
+		t.Fatalf("ECDH conversion: %v", err)
+	}
+	raw := pub.Bytes() // 1 (0x04 prefix) + 32 + 32 for P-256
+	if len(raw) != 65 {
+		t.Fatalf("unexpected P-256 point length %d", len(raw))
+	}
+	x = base64.RawURLEncoding.EncodeToString(raw[1:33])
+	y = base64.RawURLEncoding.EncodeToString(raw[33:65])
+	return x, y
 }
 
 // parseDPoPHeaderJWK keeps only the public members per kty and rejects

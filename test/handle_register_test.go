@@ -45,7 +45,7 @@ func postDCR(t *testing.T, srv *httptest.Server, bearer string, body any) (int, 
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respRaw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(respRaw, &out)
@@ -242,7 +242,7 @@ func TestDCR_NotConfigured_Returns501(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -260,7 +260,7 @@ func TestDCR_AdvertisedInDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)
@@ -300,7 +300,7 @@ func TestDCR_RegisteredClient_UsableForLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	defer regResp.Body.Close()
+	defer func() { _ = regResp.Body.Close() }()
 	regRaw, _ := io.ReadAll(regResp.Body)
 	var regOut map[string]any
 	_ = json.Unmarshal(regRaw, &regOut)

@@ -160,7 +160,7 @@ func main() {
 	// Service discovery: register self in an in-memory registry. Swap
 	// memory.New() for etcd.New(...) when you have an etcd cluster.
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	self := &registry.Service{
 		ID:      "sso-1",
 		Name:    "sso",

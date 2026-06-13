@@ -71,7 +71,7 @@ func TestTokenExchange_PreservesAuthorizationDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var loginOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&loginOut)
 	subjectToken, _ := loginOut["access_token"].(string)
@@ -97,7 +97,7 @@ func TestTokenExchange_PreservesAuthorizationDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer exResp.Body.Close()
+	defer func() { _ = exResp.Body.Close() }()
 	rb, _ := io.ReadAll(exResp.Body)
 	if exResp.StatusCode != http.StatusOK {
 		t.Fatalf("exchange status=%d body=%s", exResp.StatusCode, rb)
@@ -133,7 +133,7 @@ func TestTokenExchange_NoAuthorizationDetailsStaysClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var loginOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&loginOut)
 	subjectToken, _ := loginOut["access_token"].(string)
@@ -149,7 +149,7 @@ func TestTokenExchange_NoAuthorizationDetailsStaysClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer exResp.Body.Close()
+	defer func() { _ = exResp.Body.Close() }()
 	rb, _ := io.ReadAll(exResp.Body)
 	var exOut map[string]any
 	_ = json.Unmarshal(rb, &exOut)

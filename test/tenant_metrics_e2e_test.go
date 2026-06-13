@@ -109,7 +109,7 @@ func tenantLoginAs(t *testing.T, srv *httptest.Server, clientID, password string
 	if err != nil {
 		t.Fatalf("POST /auth/login (%s): %v", clientID, err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode
 }
 

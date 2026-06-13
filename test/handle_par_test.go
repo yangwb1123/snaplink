@@ -69,7 +69,7 @@ func postPARForm(t *testing.T, srv *httptest.Server, form url.Values) (int, map[
 	if err != nil {
 		t.Fatalf("par: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -113,7 +113,7 @@ func TestPAR_HappyPath_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("par json: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -138,7 +138,7 @@ func TestPAR_BasicAuthPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("par basic: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -217,7 +217,7 @@ func TestPAR_LoginConsumesRequestURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -249,7 +249,7 @@ func TestPAR_LoginRejectsUnknownRequestURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -281,7 +281,7 @@ func TestPAR_StoreNotConfigured_Returns501(t *testing.T) {
 	if err != nil {
 		t.Fatalf("par: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -353,7 +353,7 @@ func parThenLogin(t *testing.T, srv *httptest.Server, details string, extraAuthz
 	if err != nil {
 		t.Fatalf("par: %v", err)
 	}
-	defer parResp.Body.Close()
+	defer func() { _ = parResp.Body.Close() }()
 	rawPAR, _ := io.ReadAll(parResp.Body)
 	var parOut map[string]any
 	_ = json.Unmarshal(rawPAR, &parOut)
@@ -380,7 +380,7 @@ func parThenLogin(t *testing.T, srv *httptest.Server, details string, extraAuthz
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer loginResp.Body.Close()
+	defer func() { _ = loginResp.Body.Close() }()
 	rawLogin, _ := io.ReadAll(loginResp.Body)
 	loginBody = map[string]any{}
 	_ = json.Unmarshal(rawLogin, &loginBody)
@@ -487,7 +487,7 @@ func TestPAR_AdvertisedInDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)

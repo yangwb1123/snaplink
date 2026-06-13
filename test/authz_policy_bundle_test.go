@@ -54,7 +54,7 @@ const bundlePath = "/api/v1/admin/authz/policy-bundle"
 func TestAuthzPolicyBundle_OKWithETagAndCacheControl(t *testing.T) {
 	srv := newAuthzBundleHarness(t, seededBundleProvider(t), time.Minute)
 	resp := httpDo(t, "GET", srv.URL+bundlePath+"?client_id=web-app", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200", resp.StatusCode)
 	}
@@ -80,7 +80,7 @@ func TestAuthzPolicyBundle_OKWithETagAndCacheControl(t *testing.T) {
 func TestAuthzPolicyBundle_IfNoneMatch304(t *testing.T) {
 	srv := newAuthzBundleHarness(t, seededBundleProvider(t), time.Minute)
 	first := httpDo(t, "GET", srv.URL+bundlePath+"?client_id=web-app", "good")
-	first.Body.Close()
+	_ = first.Body.Close()
 	etag := first.Header.Get("ETag")
 	if etag == "" {
 		t.Fatal("no ETag on first response")
@@ -92,7 +92,7 @@ func TestAuthzPolicyBundle_IfNoneMatch304(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotModified {
 		t.Fatalf("status=%d want 304", resp.StatusCode)
 	}
@@ -101,7 +101,7 @@ func TestAuthzPolicyBundle_IfNoneMatch304(t *testing.T) {
 func TestAuthzPolicyBundle_MissingClientID400(t *testing.T) {
 	srv := newAuthzBundleHarness(t, seededBundleProvider(t), time.Minute)
 	resp := httpDo(t, "GET", srv.URL+bundlePath, "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", resp.StatusCode)
 	}
@@ -115,7 +115,7 @@ func TestAuthzPolicyBundle_MissingClientID400(t *testing.T) {
 func TestAuthzPolicyBundle_UnknownClient404(t *testing.T) {
 	srv := newAuthzBundleHarness(t, seededBundleProvider(t), time.Minute)
 	resp := httpDo(t, "GET", srv.URL+bundlePath+"?client_id=nope", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status=%d want 404", resp.StatusCode)
 	}
@@ -129,7 +129,7 @@ func TestAuthzPolicyBundle_UnknownClient404(t *testing.T) {
 func TestAuthzPolicyBundle_MissingTokenIs401(t *testing.T) {
 	srv := newAuthzBundleHarness(t, seededBundleProvider(t), time.Minute)
 	resp := httpDo(t, "GET", srv.URL+bundlePath+"?client_id=web-app", "")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", resp.StatusCode)
 	}
@@ -155,7 +155,7 @@ func TestAuthzPolicyBundle_InsufficientScopeIs403(t *testing.T) {
 	t.Cleanup(httpSrv.Close)
 
 	resp := httpDo(t, "GET", httpSrv.URL+bundlePath+"?client_id=web-app", "good")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status=%d want 403", resp.StatusCode)
 	}
@@ -180,7 +180,7 @@ func TestAuthzPolicyBundle_MutationInvalidatesCache(t *testing.T) {
 	t.Cleanup(httpSrv.Close)
 
 	first := httpDo(t, "GET", httpSrv.URL+bundlePath+"?client_id=web-app", "good")
-	first.Body.Close()
+	_ = first.Body.Close()
 	etag1 := first.Header.Get("ETag")
 	if etag1 == "" {
 		t.Fatal("no ETag on first response")
@@ -196,7 +196,7 @@ func TestAuthzPolicyBundle_MutationInvalidatesCache(t *testing.T) {
 	srv.InvalidateAuthzPolicyBundleCache("web-app")
 
 	second := httpDo(t, "GET", httpSrv.URL+bundlePath+"?client_id=web-app", "good")
-	second.Body.Close()
+	_ = second.Body.Close()
 	etag2 := second.Header.Get("ETag")
 	if etag2 == etag1 {
 		t.Fatalf("ETag unchanged after role edit + invalidation: %q (cache not busted)", etag2)

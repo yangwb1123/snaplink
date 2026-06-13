@@ -148,7 +148,7 @@ func (s *RecentLoginStore) Recent(ctx context.Context, subjectID string, since t
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: recent recent_logins: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*anomaly.LoginEntry
 	for rows.Next() {
 		var (

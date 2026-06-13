@@ -129,7 +129,7 @@ func (h *jfHarness) login(t *testing.T, requestURI string) (int, map[string]any)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -232,7 +232,7 @@ func TestJARFetch_NoFetcherWiredRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", resp.StatusCode)
 	}
@@ -244,7 +244,7 @@ func TestJARFetch_DiscoveryAdvertises(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if v, _ := doc["request_uri_parameter_supported"].(bool); !v {

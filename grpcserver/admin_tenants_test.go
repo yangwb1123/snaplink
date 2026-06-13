@@ -43,9 +43,9 @@ func startTenantAdminGRPCFull(t *testing.T, store tenant.Store, recorder *audit.
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	})
 	return conn
 }

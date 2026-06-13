@@ -54,7 +54,7 @@ func TestBuildApp_AuditWebhookFansOutAlongsideMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.recorder == nil {
 		t.Fatal("recorder nil")
 	}
@@ -103,7 +103,7 @@ func TestBuildApp_AuditWebhookRetriesTransientFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 
 	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "user-r"})
 
@@ -145,8 +145,8 @@ func TestBuildApp_AuditWebhookComposesWithAsync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
-	defer a.auditAsyncSink.Close(context.Background())
+	defer func() { _ = a.registry.Close() }()
+	defer func() { _ = a.auditAsyncSink.Close(context.Background()) }()
 
 	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "user-a"})
 
@@ -182,7 +182,7 @@ func TestBuildApp_AuditWebhookHeaderPropagation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 
 	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "u"})
 

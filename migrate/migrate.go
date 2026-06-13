@@ -143,7 +143,7 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 	if err != nil {
 		return fmt.Errorf("migrate(%s): acquire conn: %w", namespace, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Set the busy timeout on THIS connection so BEGIN IMMEDIATE waits
 	// for a contended write lock instead of failing fast — independent
@@ -233,7 +233,7 @@ func Status(ctx context.Context, db *sql.DB) ([]NamespaceStatus, error) {
 	for rows.Next() {
 		var t string
 		if err := rows.Scan(&t); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("migrate: scan version table name: %w", err)
 		}
 		tables = append(tables, t)
@@ -241,7 +241,7 @@ func Status(ctx context.Context, db *sql.DB) ([]NamespaceStatus, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	out := make([]NamespaceStatus, 0, len(tables))
 	for _, table := range tables {

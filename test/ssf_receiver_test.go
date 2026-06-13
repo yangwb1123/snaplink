@@ -169,7 +169,7 @@ func TestSSFReceiver_ValidSET_RevokesAndAcks(t *testing.T) {
 		t.Fatal("precondition: local user should start with access")
 	}
 	resp := h.postSET(t, h.signSET(t, ssfSessionRevokedSET(ssfLocalUser, "ssf-jti-1")))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
@@ -206,7 +206,7 @@ func TestSSFReceiver_ForgedSET_RejectedNoRevocation(t *testing.T) {
 	forged := good[:len(good)-4] + "AAAA"
 
 	resp := h.postSET(t, forged)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -229,7 +229,7 @@ func TestSSFReceiver_WrongAudience_Rejected(t *testing.T) {
 	claims := ssfSessionRevokedSET(ssfLocalUser, "ssf-jti-aud")
 	claims["aud"] = []string{"https://elsewhere.test"}
 	resp := h.postSET(t, h.signSET(t, claims))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -245,7 +245,7 @@ func TestSSFReceiver_Replay_SecondNoop(t *testing.T) {
 	set := h.signSET(t, ssfSessionRevokedSET(ssfLocalUser, "ssf-jti-replay"))
 
 	resp1 := h.postSET(t, set)
-	resp1.Body.Close()
+	_ = resp1.Body.Close()
 	if resp1.StatusCode != http.StatusAccepted {
 		t.Fatalf("first status = %d, want 202", resp1.StatusCode)
 	}
@@ -254,7 +254,7 @@ func TestSSFReceiver_Replay_SecondNoop(t *testing.T) {
 		t.Fatalf("recreate session: %v", err)
 	}
 	resp2 := h.postSET(t, set)
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	if resp2.StatusCode != http.StatusBadRequest {
 		t.Fatalf("replayed SET status = %d, want 400 (replay blocked)", resp2.StatusCode)
 	}
@@ -268,7 +268,7 @@ func TestSSFReceiver_Replay_SecondNoop(t *testing.T) {
 func TestSSFReceiver_UnmappedSubject_AckedNoRevocation(t *testing.T) {
 	h := newSSFHarness(t)
 	resp := h.postSET(t, h.signSET(t, ssfSessionRevokedSET("nobody-here", "ssf-jti-ghost")))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (valid SET for unknown subject is acked)", resp.StatusCode)
 	}
@@ -286,7 +286,7 @@ func TestSSFReceiver_UnknownEvent_Acked(t *testing.T) {
 		"https://schemas.openid.net/secevent/risc/event-type/credential-compromise": map[string]any{},
 	}
 	resp := h.postSET(t, h.signSET(t, claims))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", resp.StatusCode)
 	}
@@ -305,7 +305,7 @@ func TestSSFReceiver_NoFreshnessClaim_Rejected(t *testing.T) {
 	delete(claims, "iat")
 	delete(claims, "exp")
 	resp := h.postSET(t, h.signSET(t, claims))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (no-freshness SET rejected)", resp.StatusCode)
 	}
@@ -341,7 +341,7 @@ func TestSSFReceiver_NotMounted_WhenUnwired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (route must be unmounted when no receiver wired)", resp.StatusCode)
 	}

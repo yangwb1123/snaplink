@@ -95,7 +95,7 @@ func loginAsMultiRP(t *testing.T, srv *httptest.Server, clientID string) string 
 	if err != nil {
 		t.Fatalf("login %s: %v", clientID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login %s status=%d body=%s", clientID, resp.StatusCode, rb)
@@ -129,7 +129,7 @@ func TestBCLFanOut_NotifiesEveryRPWithLogoutURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logout: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("logout status=%d", resp.StatusCode)
 	}
@@ -196,7 +196,7 @@ func TestBCLFanOut_FallsBackToSingleRPWithoutIndex(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+tokA)
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	calls := notifier.snapshot()
 	if len(calls) != 1 {

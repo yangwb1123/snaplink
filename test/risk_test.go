@@ -126,7 +126,7 @@ func TestRiskScorer_NoScorer_ZeroOverhead(t *testing.T) {
 	// doesn't break the happy path).
 	srv, _ := buildRiskHarness(t, nil)
 	resp := loginRisk(t, srv)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
@@ -137,7 +137,7 @@ func TestRiskScorer_Allow_LoginProceeds(t *testing.T) {
 	stub := newStubScorer(spi.DecisionAllow)
 	srv, _ := buildRiskHarness(t, stub)
 	resp := loginRisk(t, srv)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Allow path returned %d, want 200", resp.StatusCode)
 	}
@@ -150,7 +150,7 @@ func TestRiskScorer_Deny_Returns403_AndEmitsFailureEvent(t *testing.T) {
 	stub := newStubScorer(spi.DecisionDeny)
 	srv, sink := buildRiskHarness(t, stub)
 	resp := loginRisk(t, srv)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Deny path returned %d, want 403 body=%s", resp.StatusCode, raw)
@@ -190,7 +190,7 @@ func TestRiskScorer_ScorerError_FailsOpen(t *testing.T) {
 	srv, _ := buildRiskHarness(t, stub)
 
 	resp := loginRisk(t, srv)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("scorer-error path returned %d, want 200 (fail-open contract) body=%s", resp.StatusCode, raw)
@@ -206,7 +206,7 @@ func TestRiskScorer_RequireMFA_TreatedAsAllow_v1(t *testing.T) {
 	srv, _ := buildRiskHarness(t, stub)
 
 	resp := loginRisk(t, srv)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("RequireMFA returned %d, want 200 (treated as Allow in v1)", resp.StatusCode)
 	}

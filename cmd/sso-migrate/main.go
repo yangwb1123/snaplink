@@ -87,7 +87,7 @@ func runStatus(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := db.PingContext(context.Background()); err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
@@ -108,16 +108,16 @@ func renderStatus(w io.Writer, st []migrate.NamespaceStatus, asJSON bool) error 
 		return enc.Encode(st)
 	}
 	if len(st) == 0 {
-		fmt.Fprintln(w, "(no migrated namespaces — empty or non-SSO database)")
+		_, _ = fmt.Fprintln(w, "(no migrated namespaces — empty or non-SSO database)")
 		return nil
 	}
-	fmt.Fprintf(w, "%-24s  %-8s  %-28s  %s\n", "NAMESPACE", "VERSION", "LATEST MIGRATION", "APPLIED AT")
+	_, _ = fmt.Fprintf(w, "%-24s  %-8s  %-28s  %s\n", "NAMESPACE", "VERSION", "LATEST MIGRATION", "APPLIED AT")
 	for _, s := range st {
 		applied := "-"
 		if !s.AppliedAt.IsZero() {
 			applied = s.AppliedAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Fprintf(w, "%-24s  %-8d  %-28s  %s\n", s.Namespace, s.Version, s.Name, applied)
+		_, _ = fmt.Fprintf(w, "%-24s  %-8d  %-28s  %s\n", s.Namespace, s.Version, s.Name, applied)
 	}
 	return nil
 }

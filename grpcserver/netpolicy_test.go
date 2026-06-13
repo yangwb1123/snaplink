@@ -35,16 +35,16 @@ func startNetPolicyGRPC(t *testing.T, store netpolicy.Store, c *netpolicy.Classi
 		t.Fatalf("grpc.NewClient: %v", err)
 	}
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	})
 	return conn
 }
 
 func TestNetPolicy_ApplyGet(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 
@@ -68,7 +68,7 @@ func TestNetPolicy_ApplyGet(t *testing.T) {
 
 func TestNetPolicy_GetUnknownIsNotFound(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 	_, err := c.Get(context.Background(), &netpolicyv1.GetRequest{Name: "ghost"})
@@ -79,7 +79,7 @@ func TestNetPolicy_GetUnknownIsNotFound(t *testing.T) {
 
 func TestNetPolicy_ApplyMissingNameIsInvalidArgument(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 	_, err := c.Apply(context.Background(), &netpolicyv1.ApplyRequest{Policy: &netpolicyv1.NetworkPolicy{}})
@@ -90,7 +90,7 @@ func TestNetPolicy_ApplyMissingNameIsInvalidArgument(t *testing.T) {
 
 func TestNetPolicy_ApplyWritesAuditEvent(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	sink := audit.NewMemorySink(10)
 	recorder := audit.New(sink)
 	conn := startNetPolicyGRPC(t, store, nil, recorder)
@@ -122,7 +122,7 @@ func TestNetPolicy_ApplyWritesAuditEvent(t *testing.T) {
 
 func TestNetPolicy_DeleteIsIdempotent(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 	if _, err := c.Delete(context.Background(), &netpolicyv1.DeleteRequest{Name: "ghost"}); err != nil {
@@ -132,7 +132,7 @@ func TestNetPolicy_DeleteIsIdempotent(t *testing.T) {
 
 func TestNetPolicy_WatchStreamsAfterHeader(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 
@@ -184,7 +184,7 @@ func TestNetPolicy_WatchStreamsAfterHeader(t *testing.T) {
 
 func TestNetPolicy_Classify(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	_, _ = store.Apply(context.Background(), &netpolicy.Policy{
 		Name: "intranet", CIDRs: []string{"10.0.0.0/8"},
 	})
@@ -205,7 +205,7 @@ func TestNetPolicy_Classify(t *testing.T) {
 
 func TestNetPolicy_ClassifyWithoutClassifierIsUnimplemented(t *testing.T) {
 	store := memory.New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 	_, err := c.Classify(context.Background(), &netpolicyv1.ClassifyRequest{RemoteAddr: "1.2.3.4"})

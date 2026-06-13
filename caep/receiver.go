@@ -386,15 +386,6 @@ func WithReceiverSubjectResolver(res SubjectResolver) ReceiverOption {
 	}
 }
 
-// withReceiverClock injects a clock for tests.
-func withReceiverClock(now func() time.Time) ReceiverOption {
-	return func(r *Receiver) {
-		if now != nil {
-			r.now = now
-		}
-	}
-}
-
 // defaultReceiverAlgs is the asymmetric-alg allowlist used when a
 // TrustedTransmitter declares none. Mirrors the SPIFFE validator default
 // (ES256/RS256/PS256/EdDSA — every alg the in-process issuers emit, none

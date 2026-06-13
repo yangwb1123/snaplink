@@ -81,7 +81,7 @@ func usLogin(t *testing.T, srv *httptest.Server, clientID string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -101,7 +101,7 @@ func TestUserinfoSigned_JSONByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	ct := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("Content-Type = %q want application/json (no signed-alg config)", ct)
@@ -117,7 +117,7 @@ func TestUserinfoSigned_JWTWhenClientOptsIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	ct := resp.Header.Get("Content-Type")
 	if ct != "application/jwt" {
 		t.Errorf("Content-Type = %q want application/jwt (client opts into signed userinfo)", ct)
@@ -134,7 +134,7 @@ func TestUserinfoSigned_DiscoveryAdvertises(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	algs, _ := doc["userinfo_signing_alg_values_supported"].([]any)

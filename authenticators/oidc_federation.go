@@ -235,7 +235,7 @@ func (o *OIDCFederationAuthenticator) exchangeCode(ctx context.Context, code str
 	if err != nil {
 		return nil, fmt.Errorf("oidc-federation: token req: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return nil, fmt.Errorf("oidc-federation: read token body: %w", err)
@@ -262,7 +262,7 @@ func (o *OIDCFederationAuthenticator) fetchUserinfo(ctx context.Context, accessT
 	if err != nil {
 		return nil, fmt.Errorf("oidc-federation: userinfo req: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return nil, fmt.Errorf("oidc-federation: read userinfo: %w", err)

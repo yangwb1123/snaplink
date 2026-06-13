@@ -319,7 +319,7 @@ func (t *Transmitter) post(ctx context.Context, endpoint, auth, set string) erro
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Drain a bounded slice of the body so HTTP/1.1 connection reuse works.
 	_, _ = io.CopyN(io.Discard, resp.Body, 1<<14)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {

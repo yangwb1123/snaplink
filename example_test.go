@@ -35,7 +35,7 @@ func Example_productionWiring() {
 	// 1. Tracing — boots the OTLP exporter from OTEL_* env vars.
 	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
 	tracingShutdown, _ := tracing.Init(ctx, tracing.WithServiceName("sso-server"))
-	defer tracingShutdown(ctx)
+	defer func() { _ = tracingShutdown(ctx) }()
 
 	// 2. SDK building blocks (the things every deployment needs).
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("sso-server"))

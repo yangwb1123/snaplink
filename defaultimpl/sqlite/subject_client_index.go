@@ -121,7 +121,7 @@ func (s *SubjectClientIndex) ListClients(ctx context.Context, subject string) ([
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list clients: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var cid string

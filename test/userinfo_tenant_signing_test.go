@@ -167,7 +167,7 @@ func utLogin(t *testing.T, h *utHarness, clientID string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -187,7 +187,7 @@ func utUserinfo(t *testing.T, h *utHarness, accessToken string) (string, string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.Header.Get("Content-Type"), string(body)
 }

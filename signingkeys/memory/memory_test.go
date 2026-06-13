@@ -11,7 +11,7 @@ import (
 
 func TestMemoryRegistry_PublishListSubscribe(t *testing.T) {
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	ctx := context.Background()
 
 	sub, err := reg.Subscribe(ctx)
@@ -54,7 +54,7 @@ func TestMemoryRegistry_PublishListSubscribe(t *testing.T) {
 
 func TestMemoryRegistry_PublishUpsertsPerReplica(t *testing.T) {
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	ctx := context.Background()
 
 	_ = reg.Publish(ctx, signingkeys.Announcement{ReplicaID: "r1", Keys: []core.JWK{{Kid: "old"}}})
@@ -74,7 +74,7 @@ func TestMemoryRegistry_PublishUpsertsPerReplica(t *testing.T) {
 
 func TestMemoryRegistry_EmptyReplicaIDRejected(t *testing.T) {
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	if err := reg.Publish(context.Background(), signingkeys.Announcement{}); err == nil {
 		t.Fatal("expected error on empty replica_id")
 	}
@@ -86,8 +86,8 @@ func TestMemoryRegistry_CloseClosesSubscribers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	reg.Close()
-	reg.Close() // idempotent
+	_ = reg.Close()
+	_ = reg.Close() // idempotent
 
 	if _, ok := <-sub; ok {
 		t.Fatal("subscriber channel not closed on Close")
@@ -102,7 +102,7 @@ func TestMemoryRegistry_CloseClosesSubscribers(t *testing.T) {
 
 func TestMemoryRegistry_SubscribeCtxCancelCleansUp(t *testing.T) {
 	reg := memory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	sub, err := reg.Subscribe(ctx)
 	if err != nil {

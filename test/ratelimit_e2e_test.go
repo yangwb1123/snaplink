@@ -99,11 +99,11 @@ func TestRateLimitE2E_LoginBlockedAfterBurst(t *testing.T) {
 	// First attempt — within burst, may succeed or fail-creds, both
 	// fine; bucket is now empty.
 	resp := postLoginRL(t, srv, "s3cret")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Second attempt — bucket empty, expect 429.
 	resp = postLoginRL(t, srv, "s3cret")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("2nd login status = %d, want 429 body=%s", resp.StatusCode, raw)
@@ -122,15 +122,15 @@ func TestRateLimitE2E_HealthNotBlockedByLoginPolicy(t *testing.T) {
 	srv, _ := buildRateLimitHarness(t)
 
 	// Exhaust the /auth/login bucket.
-	postLoginRL(t, srv, "wrong").Body.Close()
-	postLoginRL(t, srv, "wrong").Body.Close()
+	_ = postLoginRL(t, srv, "wrong").Body.Close()
+	_ = postLoginRL(t, srv, "wrong").Body.Close()
 
 	// /health uses the default (loose) bucket — must still pass.
 	resp, err := http.Get(srv.URL + "/health")
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("/health = %d, want 200 (loose bucket)", resp.StatusCode)
 	}
@@ -141,7 +141,7 @@ func TestRateLimitE2E_MetricsNeverRateLimited(t *testing.T) {
 
 	// Exhaust the /auth/login bucket aggressively.
 	for range 10 {
-		postLoginRL(t, srv, "wrong").Body.Close()
+		_ = postLoginRL(t, srv, "wrong").Body.Close()
 	}
 
 	// /metrics must NEVER 429 — Prometheus scrapers depend on it
@@ -151,7 +151,7 @@ func TestRateLimitE2E_MetricsNeverRateLimited(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /metrics: %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("/metrics status = %d (rate-limited?!)", resp.StatusCode)
 		}
@@ -162,9 +162,9 @@ func TestRateLimitE2E_429sCountedAs4xxInMetrics(t *testing.T) {
 	srv, _ := buildRateLimitHarness(t)
 
 	// Generate a 429 deterministically.
-	postLoginRL(t, srv, "wrong").Body.Close()
+	_ = postLoginRL(t, srv, "wrong").Body.Close()
 	resp := postLoginRL(t, srv, "wrong")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 on 2nd POST, got %d", resp.StatusCode)
 	}
@@ -172,7 +172,7 @@ func TestRateLimitE2E_429sCountedAs4xxInMetrics(t *testing.T) {
 	// Scrape /metrics; should see a POST 4xx in the request counter.
 	mResp, _ := http.Get(srv.URL + "/metrics")
 	body, _ := io.ReadAll(mResp.Body)
-	mResp.Body.Close()
+	_ = mResp.Body.Close()
 	if !bytes.Contains(body, []byte(`sso_http_requests_total{method="POST",status_class="4xx"}`)) {
 		t.Errorf("429s not visible in HTTP counter; scrape:\n%s", body)
 	}

@@ -118,7 +118,7 @@ func (a *Aggregator) TopTenants(ctx context.Context, period metering.UsagePeriod
 	if err != nil {
 		return nil, fmt.Errorf("metering/sqlite: top_tenants: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tops []*metering.TenantUsage
 	for rows.Next() {

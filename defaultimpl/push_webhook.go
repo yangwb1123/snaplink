@@ -190,7 +190,7 @@ func (t *HTTPWebhookPushTransport) sendOnce(ctx context.Context, body []byte) er
 	if err != nil {
 		return fmt.Errorf("http POST %s: %w", t.URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("http POST %s: status %d", t.URL, resp.StatusCode)
 	}

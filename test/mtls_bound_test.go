@@ -113,7 +113,7 @@ func TestMTLSBound_StampsCnfX5TS256(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
@@ -145,7 +145,7 @@ func TestMTLSBound_NoBindingWithoutExtractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -162,7 +162,7 @@ func TestMTLSBound_DiscoveryFlagFlipsWithExtractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if v, _ := doc["tls_client_certificate_bound_access_tokens"].(bool); !v {
@@ -225,7 +225,7 @@ func TestMTLSResource_RejectsWhenCertMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var tokOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&tokOut)
 	access, _ := tokOut["access_token"].(string)
@@ -241,7 +241,7 @@ func TestMTLSResource_RejectsWhenCertMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer infoResp.Body.Close()
+	defer func() { _ = infoResp.Body.Close() }()
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(infoResp.Body)
 		t.Fatalf("status=%d want 401 (cert missing on bound token) body=%s", infoResp.StatusCode, rb)
@@ -256,7 +256,7 @@ func TestMTLSResource_RejectsWhenCertThumbprintDiffers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var tokOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&tokOut)
 	access, _ := tokOut["access_token"].(string)
@@ -274,7 +274,7 @@ func TestMTLSResource_RejectsWhenCertThumbprintDiffers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer infoResp.Body.Close()
+	defer func() { _ = infoResp.Body.Close() }()
 	if infoResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401 (cert thumbprint mismatch)", infoResp.StatusCode)
 	}
@@ -292,7 +292,7 @@ func TestMTLSResource_LegacyBearerSkipsCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var tokOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&tokOut)
 	access, _ := tokOut["access_token"].(string)
@@ -304,7 +304,7 @@ func TestMTLSResource_LegacyBearerSkipsCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer infoResp.Body.Close()
+	defer func() { _ = infoResp.Body.Close() }()
 	// The exact status varies based on user lookup; the key
 	// assertion is that we DID NOT get 401 from the mTLS gate.
 	// /userinfo with an unbound token + no user record returns
@@ -323,7 +323,7 @@ func TestMTLSBound_DiscoveryOmitsWithoutExtractor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if _, present := doc["tls_client_certificate_bound_access_tokens"]; present {

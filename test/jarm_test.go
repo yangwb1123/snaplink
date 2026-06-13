@@ -95,11 +95,11 @@ func TestJARM_QueryDeliverySignedResponse(t *testing.T) {
 		resp := jarmLogin(t, srv, mode)
 		if resp.StatusCode != http.StatusFound {
 			raw, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			t.Fatalf("mode=%s status=%d body=%s", mode, resp.StatusCode, raw)
 		}
 		loc, err := url.Parse(resp.Header.Get("Location"))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			t.Fatalf("mode=%s parse Location: %v", mode, err)
 		}
@@ -120,7 +120,7 @@ func TestJARM_QueryDeliverySignedResponse(t *testing.T) {
 func TestJARM_FragmentDelivery(t *testing.T) {
 	srv := newJARMHarness(t, true)
 	resp := jarmLogin(t, srv, "fragment.jwt")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status=%d want 302", resp.StatusCode)
 	}
@@ -132,7 +132,7 @@ func TestJARM_FragmentDelivery(t *testing.T) {
 func TestJARM_FormPostDelivery(t *testing.T) {
 	srv := newJARMHarness(t, true)
 	resp := jarmLogin(t, srv, "form_post.jwt")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200", resp.StatusCode)
 	}
@@ -147,7 +147,7 @@ func TestJARM_FailsClosedWithoutSigner(t *testing.T) {
 	// (fail-closed; never degrade to an unsigned response).
 	srv := newJARMHarness(t, false)
 	resp := jarmLogin(t, srv, "jwt")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, raw)
@@ -166,7 +166,7 @@ func TestJARM_DiscoveryAdvertisesWhenWired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 
@@ -186,7 +186,7 @@ func TestJARM_DiscoveryOmitsWhenUnwired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if _, ok := doc["authorization_signing_alg_values_supported"]; ok {

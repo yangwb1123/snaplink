@@ -73,7 +73,7 @@ func TestFormPost_RendersAutoSubmitHTML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -127,7 +127,7 @@ func TestFormPost_HTMLEscapesUntrustedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if bytes.Contains(raw, []byte("<script>alert(1)</script>")) {
 		t.Errorf("untrusted state rendered without escaping: %s", raw)
@@ -148,7 +148,7 @@ func TestFormPost_RejectsUnknownResponseMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, raw)
@@ -175,7 +175,7 @@ func TestFormPost_EmptyResponseModeFallsThroughToJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("Content-Type = %q want json (legacy fallback)", ct)
 	}
@@ -193,7 +193,7 @@ func TestFormPost_DiscoveryAdvertisesResponseModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	modes, _ := doc["response_modes_supported"].([]any)

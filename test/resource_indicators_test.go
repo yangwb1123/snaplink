@@ -91,7 +91,7 @@ func TestResourceIndicators_LoginStampsAudClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -121,7 +121,7 @@ func TestResourceIndicators_LoginRejectsUnregisteredResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, raw)
@@ -147,7 +147,7 @@ func TestResourceIndicators_EmptyClientAllowlistAcceptsAny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status=%d want 200 (legacy compat)", resp.StatusCode)
 	}
@@ -166,7 +166,7 @@ func TestResourceIndicators_ClientCredentialsStampsAud(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -198,7 +198,7 @@ func TestResourceIndicators_TokenEndpointRejectsUnregistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -224,7 +224,7 @@ func TestResourceIndicators_RefreshPropagatesResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var login map[string]any
 	_ = json.Unmarshal(raw, &login)
@@ -247,7 +247,7 @@ func TestResourceIndicators_RefreshPropagatesResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	defer rresp.Body.Close()
+	defer func() { _ = rresp.Body.Close() }()
 	rraw, _ := io.ReadAll(rresp.Body)
 	var rot map[string]any
 	_ = json.Unmarshal(rraw, &rot)

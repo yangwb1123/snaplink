@@ -61,7 +61,7 @@ func newMePasswordHarness(t *testing.T) (*httptest.Server, *defaultimpl.MemoryPa
 		if err != nil {
 			t.Fatalf("login: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out map[string]any
 		_ = json.Unmarshal(raw, &out)
@@ -86,7 +86,7 @@ func postPassword(t *testing.T, baseURL, token, current, next string) int {
 	if err != nil {
 		t.Fatalf("POST /me/password: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode
 }
 
@@ -154,7 +154,7 @@ func TestMyPassword_FormEncodedWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("form POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("form-encoded change status=%d, want 204", resp.StatusCode)
 	}

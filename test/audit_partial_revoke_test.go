@@ -75,7 +75,7 @@ func TestPartialRevokeFailure_AuditEmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, err := sink.Query(context.Background(), audit.Query{})
 	if err != nil {
@@ -94,7 +94,7 @@ func TestPartialRevokeFailure_AuditEmitted(t *testing.T) {
 	if found.Outcome != audit.OutcomeFailure {
 		t.Errorf("outcome = %q, want failure", found.Outcome)
 	}
-	if got, _ := found.Metadata["failed"]; !strings.Contains(got, "jwt") {
+	if got := found.Metadata["failed"]; !strings.Contains(got, "jwt") {
 		t.Errorf("metadata.failed = %q, want to contain \"jwt\"", got)
 	}
 }
@@ -121,7 +121,7 @@ func TestPartialRevokeFailure_NotEmittedOnFullSuccess(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/token/revoke-all", nil)
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	resp, _ := http.DefaultClient.Do(req)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	events, _ := sink.Query(context.Background(), audit.Query{})
 	for _, e := range events {

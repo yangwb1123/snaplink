@@ -130,7 +130,7 @@ func TestAuditEvent_RefreshTokenIssuedOnRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rotation post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("rotation status = %d", resp.StatusCode)
 	}
@@ -171,7 +171,7 @@ func TestAuditEvent_IDTokenIssuedOnOpenIDLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -202,7 +202,7 @@ func TestAuditEvent_DeviceCodeIssued(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device/code: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -228,7 +228,7 @@ func TestAuditEvent_DeviceCodeApproved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -262,7 +262,7 @@ func TestAuditEvent_DeviceCodeDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	e := h.hasEvent(t, audit.EventDeviceCodeDenied)
 	if e == nil {
@@ -286,7 +286,7 @@ func loginAndGetTokens(t *testing.T, h *oauthAuditHarness) (string, string) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -308,7 +308,7 @@ func startDeviceFlow(t *testing.T, h *oauthAuditHarness) string {
 	if err != nil {
 		t.Fatalf("device/code: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)

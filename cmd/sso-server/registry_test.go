@@ -18,7 +18,7 @@ func TestBuildRegistry_MemoryDefault(t *testing.T) {
 			if err != nil {
 				t.Fatalf("err = %v", err)
 			}
-			defer reg.Close()
+			defer func() { _ = reg.Close() }()
 			if kind != "memory" {
 				t.Errorf("kind = %q; want memory", kind)
 			}

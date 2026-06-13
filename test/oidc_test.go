@@ -105,7 +105,7 @@ func TestOIDC_LoginWithOpenIDScopeEmitsIDToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
@@ -143,7 +143,7 @@ func TestOIDC_LoginWithoutOpenIDScopeOmitsIDToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if id, _ := out["id_token"].(string); id != "" {
@@ -182,7 +182,7 @@ func TestOIDC_LoginWithoutIDTokenIssuerOmitsIDToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if id, _ := out["id_token"].(string); id != "" {
@@ -209,7 +209,7 @@ func TestOIDC_AuthCodeFlowEmitsIDTokenWithCapturedNonce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer lresp.Body.Close()
+	defer func() { _ = lresp.Body.Close() }()
 	var lOut map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&lOut)
 	code, _ := lOut["code"].(string)
@@ -229,7 +229,7 @@ func TestOIDC_AuthCodeFlowEmitsIDTokenWithCapturedNonce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer tresp.Body.Close()
+	defer func() { _ = tresp.Body.Close() }()
 	if tresp.StatusCode != http.StatusOK {
 		t.Fatalf("token status = %d", tresp.StatusCode)
 	}

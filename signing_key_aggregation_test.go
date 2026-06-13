@@ -65,7 +65,7 @@ func newAggServer(t *testing.T, replicaID string, reg *signingkeysmemory.Registr
 // and A's kid appears in B's JWKS union (and vice versa).
 func TestSigningKeyAggregation_CrossReplicaVerify(t *testing.T) {
 	reg := signingkeysmemory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -123,7 +123,7 @@ func TestSigningKeyAggregation_CrossReplicaVerify(t *testing.T) {
 	}
 
 	cancel()
-	reg.Close()
+	_ = reg.Close()
 	<-doneA
 	<-doneB
 }
@@ -183,7 +183,7 @@ func TestSigningKeyAggregation_OptInByteIdentity(t *testing.T) {
 // ReplicaID — would never land, so peers could not verify its tokens).
 func TestSigningKeyAggregation_RequiresReplicaID(t *testing.T) {
 	reg := signingkeysmemory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://sso.example"))
 	srv := sso.NewServer(

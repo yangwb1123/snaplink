@@ -50,7 +50,7 @@ func BindParams(ctx core.HandlerContext, v any) error {
 // subset of types OAuth request bodies use: string, bool, []string.
 func formIntoStruct(form url.Values, v any) error {
 	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return errors.New("oauth: BindParams target must be *struct")
 	}
 	rv = rv.Elem()

@@ -89,7 +89,7 @@ func directLogin(t *testing.T, srv *httptest.Server, scope []string) (access, re
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
@@ -119,7 +119,7 @@ func refreshExchange(t *testing.T, srv *httptest.Server, refresh, scope, clientI
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -178,7 +178,7 @@ func TestRefreshToken_LoginOmitsRefreshTokenWhenStoreUnwired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if rt, _ := out["refresh_token"].(string); rt != "" {
@@ -324,7 +324,7 @@ func TestRefreshToken_ExchangeBindingClientIDMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var loginOut map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&loginOut)
 	refresh, _ := loginOut["refresh_token"].(string)
@@ -343,7 +343,7 @@ func TestRefreshToken_ExchangeBindingClientIDMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	defer rresp.Body.Close()
+	defer func() { _ = rresp.Body.Close() }()
 	if rresp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 invalid_grant", rresp.StatusCode)
 	}
@@ -376,7 +376,7 @@ func TestRefreshToken_ExchangeWithoutStore_NotImplemented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotImplemented {
 		t.Errorf("status = %d, want 501", resp.StatusCode)
 	}
@@ -477,7 +477,7 @@ func TestRefreshToken_AuthCodeExchangeIncludesRefreshTokenWhenStoreWired(t *test
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer lresp.Body.Close()
+	defer func() { _ = lresp.Body.Close() }()
 	var lOut map[string]any
 	_ = json.NewDecoder(lresp.Body).Decode(&lOut)
 	code, _ := lOut["code"].(string)
@@ -497,7 +497,7 @@ func TestRefreshToken_AuthCodeExchangeIncludesRefreshTokenWhenStoreWired(t *test
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
-	defer tresp.Body.Close()
+	defer func() { _ = tresp.Body.Close() }()
 	var tOut map[string]any
 	_ = json.NewDecoder(tresp.Body).Decode(&tOut)
 	if tresp.StatusCode != http.StatusOK {

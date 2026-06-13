@@ -56,7 +56,7 @@ func fetchMFADiscovery(t *testing.T, srv *httptest.Server) map[string]any {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		t.Fatalf("decode discovery: %v", err)

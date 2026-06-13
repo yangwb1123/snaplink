@@ -163,12 +163,12 @@ func TestUserStore_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A: %v", err)
 	}
-	defer storeA.Close()
+	defer func() { _ = storeA.Close() }()
 	storeB, err := NewUserStore(dsn)
 	if err != nil {
 		t.Fatalf("B: %v", err)
 	}
-	defer storeB.Close()
+	defer func() { _ = storeB.Close() }()
 
 	ctx := context.Background()
 	user, err := storeA.CreateUser(ctx, "alice", "Alice")

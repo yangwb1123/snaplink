@@ -32,7 +32,7 @@ func TestBuildInvalidationBus_Memory(t *testing.T) {
 	if bus == nil || kind != "memory" {
 		t.Fatalf("bus=%v kind=%q; want non-nil memory", bus, kind)
 	}
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 }
 
 // TestBuildInvalidationBus_EtcdRequiresEndpoints mirrors buildRegistry's

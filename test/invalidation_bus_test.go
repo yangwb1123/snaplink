@@ -52,7 +52,7 @@ func TestInvalidationBus_SuspensionPropagatesAcrossReplicas(t *testing.T) {
 	defer cancel()
 
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	tstore := tenantmemory.New()
 	_ = tstore.PutTenant(ctx, &tenant.Tenant{
@@ -109,7 +109,7 @@ func TestInvalidationBus_DiscoveryReloadAcrossReplicas(t *testing.T) {
 	defer cancel()
 
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	// Shared client store (cluster-shared backend stand-in).
 	clients := defaultimpl.NewMemoryClientStore()

@@ -95,7 +95,7 @@ func consentLogin(t *testing.T, srv *httptest.Server, scopes []string, prompt st
 	if err != nil {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -298,9 +298,9 @@ var _ sso.ConsentStore = (*failOpenConsentStore)(nil)
 func consentLoginWithChallengeID(t *testing.T, srv *httptest.Server, scopes []string, challengeID string) (int, map[string]any) {
 	t.Helper()
 	req := map[string]any{
-		"provider":              authenticators.MethodPassword,
-		"client_id":             consentClientID,
-		"credential":            map[string]string{"username": consentUser, "password": consentPassword},
+		"provider":                authenticators.MethodPassword,
+		"client_id":               consentClientID,
+		"credential":              map[string]string{"username": consentUser, "password": consentPassword},
 		sso.KeyConsentChallengeID: challengeID,
 	}
 	if len(scopes) > 0 {
@@ -311,7 +311,7 @@ func consentLoginWithChallengeID(t *testing.T, srv *httptest.Server, scopes []st
 	if err != nil {
 		t.Fatalf("POST /auth/login with challenge: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

@@ -66,7 +66,7 @@ func loginForTokens(t *testing.T, srv *httptest.Server) (access, refresh string)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d body=%s", resp.StatusCode, raw)
@@ -90,7 +90,7 @@ func postIntrospect(t *testing.T, srv *httptest.Server, token, hint, id, secret 
 	if err != nil {
 		t.Fatalf("introspect: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -205,7 +205,7 @@ func TestIntrospect_AcceptsBasicAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
@@ -238,7 +238,7 @@ func postRevoke(t *testing.T, srv *httptest.Server, token, hint, id, secret stri
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode
 }
 

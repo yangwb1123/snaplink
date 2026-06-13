@@ -212,7 +212,7 @@ func (c *HIBPPasswordHealthChecker) lookup(ctx context.Context, prefix, suffix s
 	if err != nil {
 		return 0, fmt.Errorf("http GET range: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("http GET range: status %d", resp.StatusCode)
 	}

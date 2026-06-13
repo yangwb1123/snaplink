@@ -68,7 +68,7 @@ func callTokenAssertion(t *testing.T, srv *httptest.Server, assertion string) (i
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -272,7 +272,7 @@ func loginJARMulti(t *testing.T, srv *httptest.Server, jar string) (int, map[str
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -441,7 +441,7 @@ func callTokenDPoPMulti(t *testing.T, srv *httptest.Server, proof string) (int, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)
@@ -531,7 +531,7 @@ func TestMultiAlg_DPoP_DifferentKeyFailsResourceBinding_ES256(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		rb, _ := io.ReadAll(resp.Body)
 		t.Fatalf("mismatched-key /userinfo status=%d want 401 body=%s", resp.StatusCode, rb)
@@ -625,7 +625,7 @@ func TestMultiAlg_FederationShapedRP_AuthCodeExchange(t *testing.T) {
 				t.Fatal(err)
 			}
 			lraw, _ := io.ReadAll(lresp.Body)
-			lresp.Body.Close()
+			_ = lresp.Body.Close()
 			var lout map[string]any
 			_ = json.Unmarshal(lraw, &lout)
 			code, _ := lout["code"].(string)
@@ -652,7 +652,7 @@ func TestMultiAlg_FederationShapedRP_AuthCodeExchange(t *testing.T) {
 				t.Fatal(err)
 			}
 			traw, _ := io.ReadAll(tresp.Body)
-			tresp.Body.Close()
+			_ = tresp.Body.Close()
 			var tout map[string]any
 			_ = json.Unmarshal(traw, &tout)
 			if tresp.StatusCode != http.StatusOK {

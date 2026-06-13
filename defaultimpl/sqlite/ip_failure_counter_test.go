@@ -84,9 +84,9 @@ func TestSQLiteIPFailureCounter_ClusterSharedSameDSN(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	a, _ := NewIPFailureCounter(dsn)
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	b, _ := NewIPFailureCounter(dsn)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	_ = a.Record(context.Background(), "ip1", "alice", time.Now())
 	total, _, _ := b.Count(context.Background(), "ip1", time.Time{})

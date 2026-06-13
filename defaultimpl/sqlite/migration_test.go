@@ -22,7 +22,7 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Legacy schema: the 8 original columns, none of the 4 later ones.
 	if _, err := db.Exec(`CREATE TABLE refresh_tokens (
@@ -65,7 +65,7 @@ func TestBusyTimeoutPragma(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var v int
 	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&v); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestMigration_PerStoreNamespacesShareOneDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Construct three stores (each runs its baseline) against one DB.
 	if _, err := sqlite.NewPARStoreWithDB(db); err != nil {

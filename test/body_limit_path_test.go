@@ -42,13 +42,13 @@ func TestBodyLimitPath_OverrideAllowsLargerOnSpecificPath(t *testing.T) {
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
 		t.Errorf("/par rejected at 1KiB despite 16KiB override: status=%d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	resp = postRaw(t, srv.URL+"/token", body)
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("/token accepted 1KiB body despite 200B global cap: status=%d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestBodyLimitPath_LongestPrefixWins(t *testing.T) {
@@ -68,13 +68,13 @@ func TestBodyLimitPath_LongestPrefixWins(t *testing.T) {
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
 		t.Errorf("/token/revoke rejected: longest-prefix rule failed (4B cap leaked through)")
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	resp = postRaw(t, srv.URL+"/token", body)
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("/token accepted 1KiB despite 4B cap: status=%d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestBodyLimitPath_ZeroOverrideMeansUnlimited(t *testing.T) {
@@ -90,7 +90,7 @@ func TestBodyLimitPath_ZeroOverrideMeansUnlimited(t *testing.T) {
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
 		t.Errorf("/par rejected despite unlimited (0) override: status=%d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func postRaw(t *testing.T, url, body string) *http.Response {

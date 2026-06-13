@@ -130,7 +130,7 @@ func TestBuildPermissionsProvider_SQLiteSeedIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second seed: %v", err)
 	}
-	defer p2.(interface{ Close() error }).Close()
+	defer func() { _ = p2.(interface{ Close() error }).Close() }()
 	roles, _ := p2.ListAllRoles(context.Background(), "web")
 	if len(roles) != 1 {
 		t.Fatalf("re-seed should not duplicate role rows; got %v", roles)
@@ -168,7 +168,7 @@ func TestBuildPermissionsProvider_SQLiteRolesUnknownUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildPermissionsProvider: %v", err)
 	}
-	defer p.(interface{ Close() error }).Close()
+	defer func() { _ = p.(interface{ Close() error }).Close() }()
 
 	_, err = p.Roles(context.Background(), "ghost", "web")
 	if !errors.Is(err, permissions.ErrUserNotFound) {

@@ -19,7 +19,7 @@ func TestBuildApp_MetricsEndpointServedWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
@@ -28,7 +28,7 @@ func TestBuildApp_MetricsEndpointServedWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d want 200", resp.StatusCode)
 	}
@@ -48,7 +48,7 @@ func TestBuildApp_MetricsEndpointAbsentWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
@@ -57,7 +57,7 @@ func TestBuildApp_MetricsEndpointAbsentWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// /metrics isn't registered in the outer mux, so it falls through
 	// to the SSO router, which has no handler for it → 404.
 	if resp.StatusCode != http.StatusNotFound {
@@ -78,7 +78,7 @@ func TestBuildApp_MetricsRegistersAsyncSinkCollectorWhenAuditAsyncOn(t *testing.
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.auditAsyncSink != nil {
 		defer func() { _ = a.auditAsyncSink.Close(context.Background()) }()
 	}
@@ -90,7 +90,7 @@ func TestBuildApp_MetricsRegistersAsyncSinkCollectorWhenAuditAsyncOn(t *testing.
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "sso_audit_async_queue_capacity") {
 		t.Errorf("response missing async sink series: %.500q", body)

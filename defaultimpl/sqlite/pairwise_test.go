@@ -116,12 +116,12 @@ func TestPairwiseSubjectStore_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A: %v", err)
 	}
-	defer storeA.Close()
+	defer func() { _ = storeA.Close() }()
 	storeB, err := NewPairwiseSubjectStore(dsn)
 	if err != nil {
 		t.Fatalf("B: %v", err)
 	}
-	defer storeB.Close()
+	defer func() { _ = storeB.Close() }()
 
 	if err := storeA.MapPairwise(context.Background(), "shared-pw", "alice"); err != nil {
 		t.Fatalf("A.MapPairwise: %v", err)

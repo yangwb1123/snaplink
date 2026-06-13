@@ -58,7 +58,7 @@ func validates(iss *defaultimpl.Ed25519JWTIssuer, token string) bool {
 // deadline and the kid is gone after.
 func TestCoordinatedRotation_CutoverAcrossReplicas(t *testing.T) {
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -243,7 +243,7 @@ func TestCoordinatedRotation_NilBusByteIdentical(t *testing.T) {
 // and the new key's JWK material — exactly what the receive side consumes.
 func TestCoordinatedRotation_PublishCarriesDeadlineAndNewKey(t *testing.T) {
 	bus := clustermemory.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

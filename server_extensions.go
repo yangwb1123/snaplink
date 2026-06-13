@@ -1494,7 +1494,7 @@ func (n *HTTPLogoutNotifier) Notify(ctx context.Context, uri string, logoutToken
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Drain the body up to a small cap so HTTP/1.1 connection reuse works
 	// even when the RP sends a verbose error page; throw it away.
 	_, _ = io.CopyN(io.Discard, resp.Body, 1<<14)

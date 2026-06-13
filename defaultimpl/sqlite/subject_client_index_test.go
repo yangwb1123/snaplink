@@ -179,12 +179,12 @@ func TestSubjectClientIndex_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A: %v", err)
 	}
-	defer idxA.Close()
+	defer func() { _ = idxA.Close() }()
 	idxB, err := NewSubjectClientIndex(dsn)
 	if err != nil {
 		t.Fatalf("B: %v", err)
 	}
-	defer idxB.Close()
+	defer func() { _ = idxB.Close() }()
 
 	if err := idxA.RecordAccess(context.Background(), "alice", "web"); err != nil {
 		t.Fatalf("A.RecordAccess: %v", err)

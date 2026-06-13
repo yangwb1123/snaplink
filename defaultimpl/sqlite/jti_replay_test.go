@@ -142,12 +142,12 @@ func TestJTIReplayStore_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("instance A: %v", err)
 	}
-	defer storeA.Close()
+	defer func() { _ = storeA.Close() }()
 	storeB, err := NewJTIReplayStore(dsn)
 	if err != nil {
 		t.Fatalf("instance B: %v", err)
 	}
-	defer storeB.Close()
+	defer func() { _ = storeB.Close() }()
 
 	first, err := storeA.MarkSeen(context.Background(), "cross-jti", time.Now().Add(5*time.Minute))
 	if err != nil {

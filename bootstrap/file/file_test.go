@@ -29,7 +29,7 @@ func TestTracker_MissingFileStartsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	v, _ := tr.AppliedVersion(context.Background(), "ns")
 	if v != 0 {
 		t.Errorf("v = %d, want 0 for missing file", v)
@@ -56,7 +56,7 @@ func TestTracker_PersistsAcrossInstances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New (reload): %v", err)
 	}
-	defer tr2.Close()
+	defer func() { _ = tr2.Close() }()
 	got, _ := tr2.AppliedVersion(ctx, "sso-server")
 	if got != 3 {
 		t.Errorf("after reload: got %d, want 3", got)
@@ -102,7 +102,7 @@ func TestTracker_StateFileShape(t *testing.T) {
 
 func TestTracker_MonotonicVersion(t *testing.T) {
 	tr, _ := New(tempState(t))
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	ctx := context.Background()
 
 	_ = tr.MarkApplied(ctx, "ns", 5, "five")
@@ -116,7 +116,7 @@ func TestTracker_MonotonicVersion(t *testing.T) {
 
 func TestTracker_NamespacesIsolated(t *testing.T) {
 	tr, _ := New(tempState(t))
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	ctx := context.Background()
 
 	_ = tr.MarkApplied(ctx, "a", 7, "step")
@@ -173,7 +173,7 @@ func TestTracker_EmptyFileLoadsAsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New (empty file): %v", err)
 	}
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	if v, _ := tr.AppliedVersion(context.Background(), "ns"); v != 0 {
 		t.Errorf("v = %d on empty file", v)
 	}
@@ -186,7 +186,7 @@ func TestTracker_CreatesMissingDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	if err := tr.MarkApplied(context.Background(), "ns", 1, "step"); err != nil {
 		t.Fatalf("MarkApplied: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestTracker_CreatesMissingDir(t *testing.T) {
 
 func TestTracker_ConcurrentMarksSerialized(t *testing.T) {
 	tr, _ := New(tempState(t))
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	ctx := context.Background()
 	const n = 50
 	var wg sync.WaitGroup
@@ -216,6 +216,6 @@ func TestTracker_ConcurrentMarksSerialized(t *testing.T) {
 
 func TestTracker_SatisfiesInterface(t *testing.T) {
 	tr, _ := New(tempState(t))
-	defer tr.Close()
+	defer func() { _ = tr.Close() }()
 	var _ bootstrap.Tracker = tr
 }

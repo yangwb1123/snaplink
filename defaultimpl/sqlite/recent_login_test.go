@@ -187,12 +187,12 @@ func TestSQLiteRecentLoginStore_ClusterSharedSameDSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a: %v", err)
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	b, err := NewRecentLoginStore(dsn)
 	if err != nil {
 		t.Fatalf("b: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	if err := a.Append(context.Background(), &anomaly.LoginEntry{
 		SubjectID: "alice",

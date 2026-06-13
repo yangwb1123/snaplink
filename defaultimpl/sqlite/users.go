@@ -194,7 +194,7 @@ func (p *UserProvider) List(ctx context.Context) ([]*sso.User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []*sso.User
 	for rows.Next() {

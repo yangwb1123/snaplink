@@ -72,7 +72,7 @@ func TestBuildApp_ReadyCheck_SQLiteFlipsTo503(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 
 	// Initial /readyz should report every sqlite check as "ok".
 	rec1 := callReadyz(t, a)

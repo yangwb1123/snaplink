@@ -57,7 +57,7 @@ func postSendCode(t *testing.T, srv *httptest.Server, body map[string]any) (int,
 	if err != nil {
 		t.Fatalf("POST /auth/send-code: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(respBody, &out)
@@ -90,7 +90,7 @@ func TestSendCode_HappyPath(t *testing.T) {
 		t.Errorf("audit events = %d, want 1", len(events))
 	}
 	// And the masked target lands in metadata — but NOT the raw value.
-	if got, _ := events[0].Metadata["target"]; got == "+15551234567" {
+	if got := events[0].Metadata["target"]; got == "+15551234567" {
 		t.Errorf("target metadata should be masked, got raw value %q", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestSendCode_BadJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}

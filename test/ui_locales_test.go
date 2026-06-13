@@ -86,7 +86,7 @@ func TestUILocales_PreservedAndThreaded(t *testing.T) {
 		"ui_locales": "fr-CA fr en-US",
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	got := auth.snapshot()
 	want := []string{"fr-CA", "fr", "en-US"}
 	if !reflect.DeepEqual(got, want) {
@@ -102,7 +102,7 @@ func TestUILocales_AbsentByDefault(t *testing.T) {
 		"credential": map[string]string{"username": uiLocalesUserID, "password": uiLocalesPassword},
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if got := auth.snapshot(); len(got) != 0 {
 		t.Errorf("UILocales = %v want empty", got)
 	}

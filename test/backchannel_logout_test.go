@@ -121,7 +121,7 @@ func loginBCL(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("login status=%d body=%s", resp.StatusCode, raw)
@@ -144,7 +144,7 @@ func logoutBCL(t *testing.T, srv *httptest.Server, bearer string) {
 	if err != nil {
 		t.Fatalf("logout: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("logout status=%d body=%s", resp.StatusCode, raw)
@@ -342,7 +342,7 @@ func TestBCL_DiscoveryAdvertisesSupport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)
@@ -375,7 +375,7 @@ func TestBCL_EndSessionAlsoFiresNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("end_session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s want 204 (no post_logout_redirect_uri)", resp.StatusCode, body)
@@ -436,7 +436,7 @@ func TestBCL_NotWired_NoNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var doc map[string]any
 	_ = json.Unmarshal(raw, &doc)

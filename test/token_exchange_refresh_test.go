@@ -69,7 +69,7 @@ func loginForExchange(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -96,7 +96,7 @@ func TestTokenExchange_ReturnsRefreshTokenWhenRequested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
@@ -155,7 +155,7 @@ func TestTokenExchange_RejectsRefreshWithoutStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		rb, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, rb)
@@ -186,7 +186,7 @@ func TestTokenExchange_RotatedRefreshHonored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(rb, &out)
@@ -206,7 +206,7 @@ func TestTokenExchange_RotatedRefreshHonored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rotResp.Body.Close()
+	defer func() { _ = rotResp.Body.Close() }()
 	rotRB, _ := io.ReadAll(rotResp.Body)
 	if rotResp.StatusCode != http.StatusOK {
 		t.Fatalf("rotate status=%d body=%s", rotResp.StatusCode, rotRB)

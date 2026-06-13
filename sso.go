@@ -64,7 +64,6 @@ type Server struct {
 	clientStore             ClientStore
 	sessionMgr              SessionManager
 	router                  Router
-	middleware              []MiddlewareFunc
 	logger                  spi.Logger
 	auditor                 *audit.Recorder
 	caepTransmitter         *caep.Transmitter
@@ -1942,8 +1941,8 @@ func WithAdminConsoleFS(adminFS fs.FS) Option {
 
 // WithHostedLoginFS serves the hosted-login SPA at /login/ from the provided
 // filesystem. The SPA calls /auth/login over JSON — no protocol changes to
-// the OAuth/OIDC surface. Typically wired by embedding web/login with
-// go:embed in the operator's cmd binary.
+// the OAuth/OIDC surface. Typically wired by embedding web/login with an
+// embed directive in the operator's cmd binary.
 //
 // Nil (the default) leaves /login/ unmounted — byte-identical to a build
 // without the hosted login UI.

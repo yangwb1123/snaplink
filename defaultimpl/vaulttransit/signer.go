@@ -661,7 +661,7 @@ func (s *Signer) doRequest(ctx context.Context, method, path string, reqBody []b
 		// so the token is not exposed.
 		return nil, fmt.Errorf("vaulttransit: %s %s: %w", method, vaultTransitOpName(path), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Bound the body read so a misbehaving/hostile endpoint can't stream
 	// unbounded data into the signing goroutine. Transit replies are small
 	// (a public-key PEM or a base64 signature); 1 MiB is generous headroom.

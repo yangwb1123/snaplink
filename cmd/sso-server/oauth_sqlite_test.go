@@ -162,7 +162,7 @@ func TestBuildApp_IdentitySQLiteEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.clientStore == nil || a.userProvider == nil {
 		t.Fatal("identity stores not wired")
 	}
@@ -183,7 +183,7 @@ func TestBuildApp_SQLiteEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	if a.server == nil {
 		t.Fatal("server nil")
 	}

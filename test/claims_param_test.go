@@ -104,7 +104,7 @@ func TestClaimsParam_AcceptedAndThreaded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, rb)
@@ -139,7 +139,7 @@ func TestClaimsParam_RejectsNonObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, rb)
@@ -164,7 +164,7 @@ func TestClaimsParam_RejectsInnerNonObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", resp.StatusCode)
 	}
@@ -187,7 +187,7 @@ func TestClaimsParam_RejectsTypoedEssentialBool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 on essential=\"true\" typo", resp.StatusCode)
 	}
@@ -207,7 +207,7 @@ func TestClaimsParam_RejectsValuesNotAnArray(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400 on values=string", resp.StatusCode)
 	}
@@ -227,7 +227,7 @@ func TestClaimsParam_AcceptsNullPerSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want 200 on valid mixed shape", resp.StatusCode)
 	}
@@ -248,7 +248,7 @@ func TestClaimsParam_PARPushSurvives(t *testing.T) {
 		"request_uri": uri,
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	got := auth.snapshot()
 	if len(got) == 0 {
 		t.Fatalf("RequestedClaims not threaded from PAR")
@@ -266,7 +266,7 @@ func TestClaimsParam_DiscoveryAdvertises(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if v, _ := doc["claims_parameter_supported"].(bool); !v {

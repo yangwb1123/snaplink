@@ -175,7 +175,7 @@ var _ signingkeys.Registry = (*flakyRegistry)(nil)
 // audit event per transition (and one recovered).
 func TestSigningKeyAggregation_SelfHealsOnChannelClose(t *testing.T) {
 	reg := newFlakyRegistry()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 
 	m := metrics.New()
 	sink := audit.NewMemorySink(0)
@@ -286,7 +286,7 @@ func TestSigningKeyAggregation_SelfHealsOnChannelClose(t *testing.T) {
 // /readyz or emit a degraded audit event.
 func TestSigningKeyAggregation_CleanCancelNotDegraded(t *testing.T) {
 	reg := signingkeysmemory.New()
-	defer reg.Close()
+	defer func() { _ = reg.Close() }()
 
 	sink := audit.NewMemorySink(0)
 	rec := audit.New(sink)

@@ -67,10 +67,9 @@ func TestJWKSBodyCache_Enabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if &b1[0] == &b2[0] {
-		// Same underlying array = cache hit (best-effort check; pointer
-		// equality is fragile but sufficient for a unit test).
-	}
+	// A cache hit returns the same underlying backing array, but pointer
+	// equality is too fragile to assert; the byte-identity check below is the
+	// real contract.
 	if string(b1) != string(b2) {
 		t.Error("cache enabled: docs should be identical")
 	}

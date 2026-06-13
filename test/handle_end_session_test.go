@@ -72,7 +72,7 @@ func loginAndGetIDToken(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -103,7 +103,7 @@ func TestEndSession_RedirectsToAllowlistedURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status = %d want 302", resp.StatusCode)
 	}
@@ -126,7 +126,7 @@ func TestEndSession_RejectsUnknownRedirectURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("status = %d want 204 (no redirect to unallowed URI)", resp.StatusCode)
 	}
@@ -143,7 +143,7 @@ func TestEndSession_BadIDTokenHintRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d want 400", resp.StatusCode)
 	}
@@ -156,7 +156,7 @@ func TestEndSession_NoHintReturns204(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("status = %d want 204", resp.StatusCode)
 	}
@@ -173,7 +173,7 @@ func TestEndSession_KillsRefreshTokensForClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Issue a fresh refresh token tagged with the test subject so we
 	// can verify the wipe took effect.
@@ -193,7 +193,7 @@ func TestEndSession_DiscoveryAdvertisesEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	got, _ := out["end_session_endpoint"].(string)

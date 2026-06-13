@@ -93,7 +93,7 @@ func newPermHarness(t *testing.T, withProvider bool) (*httptest.Server, *audit.M
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var loginResp map[string]any
 	_ = json.Unmarshal(raw, &loginResp)
@@ -115,7 +115,7 @@ func getWithBearer(t *testing.T, srv *httptest.Server, path, bearer string) (int
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := map[string]any{}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
@@ -284,7 +284,7 @@ func TestEmbedPermissionsInLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)

@@ -116,7 +116,7 @@ func (f *redirectTestFetcher) get(ctx context.Context, url string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, errors.New("non-2xx (redirect not followed)")
 	}
@@ -163,7 +163,7 @@ func TestDialWithSSRFCheck_BlocksInternalIPs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, err := federation.DialWithSSRFCheck(context.Background(), "tcp", tc.addr)
 			if err == nil {
-				conn.Close()
+				_ = conn.Close()
 				t.Fatalf("DialWithSSRFCheck(%q): expected SSRF error, got nil", tc.addr)
 			}
 		})

@@ -81,7 +81,7 @@ func (c *echoContext) Request() *http.Request {
 }
 
 func (c *echoContext) ResponseWriter() http.ResponseWriter {
-	return c.Context.Response()
+	return c.Response()
 }
 
 func (c *echoContext) Param(name string) string {
@@ -89,7 +89,7 @@ func (c *echoContext) Param(name string) string {
 }
 
 func (c *echoContext) Query(name string) string {
-	return c.Context.QueryParam(name)
+	return c.QueryParam(name)
 }
 
 func (c *echoContext) Bind(v any) error {
@@ -97,11 +97,13 @@ func (c *echoContext) Bind(v any) error {
 }
 
 func (c *echoContext) JSON(code int, v any) {
-	c.Context.JSON(code, v)
+	// Best-effort response write; a broken client connection is non-actionable here.
+	_ = c.Context.JSON(code, v)
 }
 
 func (c *echoContext) Redirect(code int, url string) {
-	c.Context.Redirect(code, url)
+	// Best-effort response write; a broken client connection is non-actionable here.
+	_ = c.Context.Redirect(code, url)
 }
 
 func (c *echoContext) Set(key string, val any) {

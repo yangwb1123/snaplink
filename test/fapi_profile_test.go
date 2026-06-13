@@ -192,7 +192,7 @@ func TestFAPI_Enforce_DiscoveryReflectsConstraints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if doc["require_pushed_authorization_requests"] != true {

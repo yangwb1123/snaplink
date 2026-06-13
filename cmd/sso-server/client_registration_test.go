@@ -16,7 +16,7 @@ func TestBuildApp_DCREnabledAdvertisesRegistrationEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 
@@ -34,7 +34,7 @@ func TestBuildApp_DCRDisabledOmitsRegistrationEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}
-	defer a.registry.Close()
+	defer func() { _ = a.registry.Close() }()
 	srv := httptest.NewServer(a.server.Handler())
 	defer srv.Close()
 

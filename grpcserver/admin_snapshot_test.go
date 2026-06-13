@@ -66,9 +66,9 @@ func startSnapshotGRPC(t *testing.T) *snapshotFixture {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	})
 	return &snapshotFixture{
 		srcClients: src, srcUsers: srcUsers,

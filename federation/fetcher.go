@@ -195,7 +195,7 @@ func (f *httpFetcher) get(ctx context.Context, rawURL, accept string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("federation: fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("federation: fetch status %d", resp.StatusCode)
 	}

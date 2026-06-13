@@ -57,7 +57,7 @@ func auditGET(t *testing.T, h *auditHarness, path string) (int, map[string]any) 
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(body, &out)

@@ -78,7 +78,7 @@ func TestOIDC_DiscoveryJWKSAndIDTokenAreConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer discoResp.Body.Close()
+	defer func() { _ = discoResp.Body.Close() }()
 	disco := map[string]any{}
 	_ = json.NewDecoder(discoResp.Body).Decode(&disco)
 
@@ -99,7 +99,7 @@ func TestOIDC_DiscoveryJWKSAndIDTokenAreConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JWKS fetch: %v", err)
 	}
-	defer jwksResp.Body.Close()
+	defer func() { _ = jwksResp.Body.Close() }()
 	jwksRaw, _ := io.ReadAll(jwksResp.Body)
 	var jwks struct {
 		Keys []struct {
@@ -138,7 +138,7 @@ func TestOIDC_DiscoveryJWKSAndIDTokenAreConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer loginResp.Body.Close()
+	defer func() { _ = loginResp.Body.Close() }()
 	var loginOut map[string]any
 	_ = json.NewDecoder(loginResp.Body).Decode(&loginOut)
 	idToken, _ := loginOut["id_token"].(string)

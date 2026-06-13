@@ -105,7 +105,7 @@ func TestACRValues_ParsedAndThreaded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -135,7 +135,7 @@ func TestACRValues_PARPushSurvives(t *testing.T) {
 		"request_uri": uri,
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	got := auth.snapshot()
 	want := []string{"level-high", "level-medium"}
 	if !reflect.DeepEqual(got, want) {
@@ -159,7 +159,7 @@ func TestACRValues_PARPushBeatsLoginParam(t *testing.T) {
 		"acr_values":  "level-weak", // tampered redirect-time value
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	got := auth.snapshot()
 	sort.Strings(got)
 	want := []string{"level-strong"}
@@ -176,7 +176,7 @@ func TestACRValues_AbsentByDefault(t *testing.T) {
 		"credential": map[string]string{"username": acrUserID, "password": acrPassword},
 	})
 	resp, _ := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if got := auth.snapshot(); len(got) != 0 {
 		t.Errorf("ACRValues = %v want empty (no hint supplied)", got)
 	}
@@ -229,7 +229,7 @@ func acrEnforcementLogin(t *testing.T, srv *httptest.Server, acrValues string) (
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(rb, &out)

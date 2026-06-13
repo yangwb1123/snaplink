@@ -70,7 +70,7 @@ func rfLogin(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out map[string]any
 	dec := jsonDecodeRespBody(resp)
 	out = dec
@@ -96,7 +96,7 @@ func rfRotate(t *testing.T, srv *httptest.Server, refresh string) (status int, b
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body = jsonDecodeRespBody(resp)
 	status = resp.StatusCode
 	return

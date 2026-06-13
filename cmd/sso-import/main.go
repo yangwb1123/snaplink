@@ -117,7 +117,7 @@ Examples:
 	if err != nil {
 		fatalf("open input: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	users, err := parseInput(*format, r)
 	if err != nil {
@@ -133,7 +133,7 @@ Examples:
 	if err != nil {
 		fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := runImport(context.Background(), db, users, *batchSize); err != nil {
 		fatalf("import: %v", err)

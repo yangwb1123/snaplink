@@ -208,13 +208,13 @@ func TestAccountLockout_CrossInstanceSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A: %v", err)
 	}
-	defer lockoutA.Close()
+	defer func() { _ = lockoutA.Close() }()
 	lockoutA.MaxFailures = 3
 	lockoutB, err := NewAccountLockout(dsn)
 	if err != nil {
 		t.Fatalf("B: %v", err)
 	}
-	defer lockoutB.Close()
+	defer func() { _ = lockoutB.Close() }()
 	lockoutB.MaxFailures = 3
 
 	// Two failures via A.

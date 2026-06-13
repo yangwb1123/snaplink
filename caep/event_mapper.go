@@ -13,7 +13,9 @@ type scopeKind int
 
 const (
 	// scopeNone — the event does not map to any SSF event; do not broadcast.
-	scopeNone scopeKind = iota
+	// Pinned as iota 0 so a zero-valued mappedEvent never broadcasts; do not
+	// drop or the next scope becomes the zero value (wrong-receiver footgun).
+	scopeNone scopeKind = iota //nolint:unused // zero-value sentinel: must stay iota 0
 
 	// scopeClient — push to the single client named on the audit event
 	// (Event.ClientID is the AFFECTED RP). Used when the event reliably

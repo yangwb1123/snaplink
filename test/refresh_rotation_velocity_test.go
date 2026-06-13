@@ -87,7 +87,7 @@ func rvLogin(t *testing.T, srv *httptest.Server) string {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out := jsonDecodeRespBody(resp)
 	r, _ := out["refresh_token"].(string)
 	if r == "" {
@@ -112,7 +112,7 @@ func rvRotateRaw(t *testing.T, srv *httptest.Server, refresh string) (int, []byt
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, raw
 }

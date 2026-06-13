@@ -37,7 +37,7 @@ func TestInit_WithExporter_RegistersProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer func() { _ = shutdown(context.Background()) }()
 
 	// Emit a span via the now-global tracer.
 	tracer := otel.Tracer("test")
@@ -66,7 +66,7 @@ func TestMiddleware_GeneratesSpanPerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer func() { _ = shutdown(context.Background()) }()
 
 	mw := tracing.Middleware("test-op")
 	called := false
@@ -119,7 +119,7 @@ func TestMiddleware_HonorsIncomingTraceparent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer func() { _ = shutdown(context.Background()) }()
 
 	mw := tracing.Middleware("test-op")
 	wrapped := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

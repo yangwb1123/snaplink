@@ -108,7 +108,7 @@ func completeMFAFromRegion(t *testing.T, ts *httptest.Server, challengeID, metho
 	if err != nil {
 		t.Fatalf("POST /auth/mfa: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	if len(raw) > 0 {

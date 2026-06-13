@@ -21,7 +21,7 @@ func TestRunAuditRetention_PrunesOldEventsAtInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -76,7 +76,7 @@ func TestRunAuditRetention_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "audit.db") + "?_journal=WAL"
 	sink, _ := auditsqlite.New(dsn)
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

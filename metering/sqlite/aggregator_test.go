@@ -21,7 +21,7 @@ func TestAggregator_basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit Sink: %v", err)
 	}
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 
 	day := time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
 	tenantID := "acme"
@@ -75,7 +75,7 @@ func TestAggregator_topTenants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit Sink: %v", err)
 	}
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 
 	day := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
 

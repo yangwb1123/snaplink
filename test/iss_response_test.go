@@ -47,7 +47,7 @@ func TestRFC9207_CodeFlowResponseCarriesIss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -77,7 +77,7 @@ func TestRFC9207_DirectMintResponseCarriesIss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -107,7 +107,7 @@ func TestRFC9207_ErrorResponseCarriesIss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s want 400", resp.StatusCode, raw)
@@ -141,7 +141,7 @@ func TestRFC9207_IssMatchesConfiguredIssuer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
@@ -167,7 +167,7 @@ func TestRFC9207_DiscoveryIssAndResponseIssAgree(t *testing.T) {
 		t.Fatalf("discovery: %v", err)
 	}
 	draw, _ := io.ReadAll(dresp.Body)
-	dresp.Body.Close()
+	_ = dresp.Body.Close()
 	var disco map[string]any
 	_ = json.Unmarshal(draw, &disco)
 	discoIss, _ := disco["issuer"].(string)
@@ -186,7 +186,7 @@ func TestRFC9207_DiscoveryIssAndResponseIssAgree(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 	lraw, _ := io.ReadAll(lresp.Body)
-	lresp.Body.Close()
+	_ = lresp.Body.Close()
 	var login map[string]any
 	_ = json.Unmarshal(lraw, &login)
 
@@ -210,7 +210,7 @@ func TestRFC9207_ProviderListResponseCarriesIss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, raw)

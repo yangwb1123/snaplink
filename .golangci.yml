@@ -5,11 +5,8 @@
 # "declared and not used" positives. The CI lint job pins a compatible version.
 #
 # The default high-value linters (errcheck, govet, ineffassign, staticcheck,
-# unused) are enabled, plus misspell + unconvert. The CI `lint` job runs this
-# REPORT-ONLY for now (it does not gate PRs) — the same non-wedging stance the
-# govulncheck + gosec jobs document. There is a known backlog (~88 findings,
-# mostly errcheck on deferred Close()/Encode() + a few unused helpers); promote
-# the job to a hard gate once that backlog is burned down.
+# unused) are enabled, plus misspell + unconvert. The tree is clean against
+# this config, so the CI `lint` job is a HARD GATE (new findings fail the PR).
 version: "2"
 
 run:

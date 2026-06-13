@@ -220,13 +220,11 @@ jobs:
           category: gosec
 
   lint:
-    # golangci-lint over the root module (.golangci.yml). Report-only for now
-    # (continue-on-error) — there is a known pre-existing backlog (errcheck on
-    # deferred Close()/Encode(), a few unused helpers, staticcheck), so this
-    # surfaces findings in the Checks tab without wedging unrelated PRs, the
-    # same non-wedging stance as the govulncheck + gosec jobs. Promote to a
-    # hard gate once the backlog is burned down.
-    name: golangci-lint (report-only)
+    # golangci-lint over the root module (.golangci.yml) — a HARD GATE: the
+    # backlog is burned down (the tree is golangci-clean), so new findings
+    # fail the PR. errcheck/staticcheck/unused/govet/ineffassign + misspell +
+    # unconvert.
+    name: golangci-lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -241,7 +239,6 @@ jobs:
         # repo's Go toolchain (older golangci-lint cannot parse go1.26 and
         # emits false "declared and not used" positives).
         uses: golangci/golangci-lint-action@v6
-        continue-on-error: true
         with:
           version: v2.1.0
 

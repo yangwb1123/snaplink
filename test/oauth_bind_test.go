@@ -69,7 +69,7 @@ func loginFormHarness(t *testing.T, srv *httptest.Server) (access, refresh strin
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -92,7 +92,7 @@ func postForm(t *testing.T, srv *httptest.Server, path string, vals url.Values, 
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	out := map[string]any{}
 	_ = json.Unmarshal(raw, &out)
@@ -173,7 +173,7 @@ func TestFormEncoded_BasicAuthAlsoAcceptedRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
@@ -277,7 +277,7 @@ func TestFormEncoded_JSONStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("json fallback failed: status=%d", resp.StatusCode)
 	}

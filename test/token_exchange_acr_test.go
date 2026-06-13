@@ -76,7 +76,7 @@ func txACRExchange(t *testing.T, srv *httptest.Server, subjectToken, acrDemand s
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	body := map[string]any{}
 	_ = json.Unmarshal(raw, &body)

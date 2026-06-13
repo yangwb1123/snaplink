@@ -74,7 +74,7 @@ func (n *httpCIBAPingNotifier) Notify(ctx context.Context, clientID, authReqID, 
 	if err != nil {
 		return fmt.Errorf("ciba ping: post to %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("ciba ping: endpoint %s returned %d", endpoint, resp.StatusCode)
 	}

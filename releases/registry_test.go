@@ -278,7 +278,6 @@ type scriptedRestorer struct {
 
 type atomicSlice struct {
 	calls atomic.Int32
-	ids   []string
 	id0   atomic.Value // last id seen, for tests that only care about one
 }
 

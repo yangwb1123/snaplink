@@ -62,7 +62,7 @@ func cibaBackchannelAuth(t *testing.T, srv *httptest.Server, form url.Values) (i
 	if err != nil {
 		t.Fatalf("POST /backchannel-authentication: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -81,7 +81,7 @@ func cibaTokenPoll(t *testing.T, srv *httptest.Server, authReqID string) (int, m
 	if err != nil {
 		t.Fatalf("POST /token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
@@ -196,7 +196,7 @@ func TestCIBA_DiscoveryAdvertised(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 	if _, ok := doc["backchannel_authentication_endpoint"]; !ok {
