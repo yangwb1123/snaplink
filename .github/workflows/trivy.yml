@@ -1,0 +1,59 @@
+# Trivy supply-chain + secret + misconfiguration scan. Complements the
+# call-graph-aware govulncheck (Go advisories) with a broader sweep:
+#   * vuln   — every dependency in go.sum across the repo (not just reachable
+#              symbols) so a transitive CVE is visible even if unreached today
+#   * secret — accidentally committed credentials / private keys
+#   * config — Dockerfile + workflow misconfiguration (the build artifacts an
+#              SSO server ships in)
+#
+# Results upload to the repo Security tab as code-scanning alerts (SARIF).
+# Report-only (exit-code 0) — same non-wedging philosophy as govulncheck:
+# a freshly-published advisory surfaces as an alert without blocking unrelated
+# PRs. Promote to a hard gate on CRITICAL once the noise floor is understood.
+name: trivy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1"
+
+concurrency:
+  group: trivy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: trivy fs (vuln + secret + config)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          # Report-only: never fail the run on a finding (see job comment).
+          # The SARIF upload below is the signal channel.
+          exit-code: "0"
+          # Ignore unfixed vulns in the inline log noise; the SARIF still
+          # carries everything for the Security tab.
+          ignore-unfixed: "false"
+
+      - name: upload sarif to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        # Run even if the scan step reported findings.
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs

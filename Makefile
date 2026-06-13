@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -24,6 +24,10 @@ bench: ## Run the hot-path benchmarks (token issue/validate, JWKS, param bind, r
 
 vet: ## Static analysis (go vet).
 	$(GO) vet ./...
+
+security-scan: ## Local SAST/SCA sweep over the root module (govulncheck CVEs + gosec). Mirrors the CI govulncheck + gosec jobs; CI also runs CodeQL + Trivy on GitHub infra.
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@latest -quiet ./...
 
 fmt: ## Check gofmt; fails if any file needs formatting.
 	@unformatted=$$(gofmt -l . | grep -v '^\.claude/'); \

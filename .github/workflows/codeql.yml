@@ -1,0 +1,63 @@
+# CodeQL static analysis (GitHub-native SAST). Procurement security
+# questionnaires (SOC2 / pentest) ask directly whether SAST runs on every
+# change; this is that control. Findings land in the repo Security tab as
+# code-scanning alerts — it does NOT gate PRs by default, so a newly-shipped
+# query can't wedge unrelated work (same philosophy as the govulncheck job).
+#
+# Scope: the ROOT module only. The nested modules (kms/*, saml, redis, ...)
+# carry their own go.mod; CodeQL's single-build autobuild model does not
+# descend into them. The root module is the credential-handling core and the
+# highest-value SAST target; per-submodule scanning is a deliberate follow-up.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly re-scan so a query-pack update surfaces latent issues even on a
+    # quiet week with no pushes. Monday 07:00 UTC.
+    - cron: "0 7 * * 1"
+
+# Cancel an in-flight scan when a newer commit lands on the same ref.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (go)
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for the action to upload SARIF results to code-scanning.
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Pin to the repo toolchain so the extractor builds with the same
+          # Go the code targets (the bundled CodeQL CLI tracks recent Go).
+          go-version-file: go.mod
+          cache: true
+
+      - name: initialize codeql
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          # security-extended adds the higher-signal security queries on top
+          # of the default pack (taint tracking into exec/SQL/SSRF sinks).
+          queries: security-extended
+
+      - name: build
+        # Manual build (not autobuild) — `go build ./...` is the exact command
+        # the ci `test` job already proves green, so the extractor never trips
+        # on a build quirk autobuild might guess wrong.
+        run: go build ./...
+
+      - name: analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"

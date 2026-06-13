@@ -182,6 +182,43 @@ jobs:
           CGO_ENABLED: ${{ matrix.module == 'kms/pkcs11' && '1' || '' }}
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  gosec:
+    # gosec security scanner (CWE-mapped: hardcoded credentials, weak crypto,
+    # SQL/command injection, path traversal, unhandled errors in sensitive
+    # sinks). Scans the ROOT module — the credential-handling core; the nested
+    # modules are separate go.mod roots that `./...` does not descend into.
+    # SARIF uploads to the Security tab. Report-only (-no-fail) so a
+    # low-confidence false positive (e.g. an OAuth URN string flagged G101)
+    # can't wedge unrelated PRs — the same non-wedging stance as govulncheck.
+    # Promote to a hard gate once the finding floor is tuned.
+    name: gosec
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: run gosec
+        # `go run ...@latest` mirrors the govulncheck job's pattern (no
+        # unpinned third-party action in a security job). -no-fail makes it
+        # report-only — gosec writes SARIF and exits 0 even with findings;
+        # the SARIF upload is the signal channel. ./... stays inside the root
+        # module (nested modules are separate go.mod roots).
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail -fmt sarif -out gosec.sarif ./...
+
+      - name: upload sarif to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
+
   proto:
     name: buf lint + breaking
     runs-on: ubuntu-latest
