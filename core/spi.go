@@ -204,3 +204,22 @@ type ConsentStore interface {
 	// Returns empty slice (not error) when none exist.
 	ListByUser(ctx context.Context, userID string) ([]ConsentGrant, error)
 }
+
+// PasswordCredentialStore persists per-user password hashes for the
+// self-service password-change flow (POST /me/password). Keyed by the stable
+// UserID (the bearer's sub), so one store can back BOTH /me/password and an
+// operator's login authenticator (resolve username -> UserID, then
+// VerifyPassword) — keeping the credential the user changes and the one login
+// checks the same. When nil (not wired), /me/password is not mounted —
+// byte-identical to a build without it.
+type PasswordCredentialStore interface {
+	// SetPassword stores newPassword for userID, hashing it at rest. Creates
+	// the credential when absent, replaces it otherwise.
+	SetPassword(ctx context.Context, userID, newPassword string) error
+
+	// VerifyPassword returns nil when plaintext matches the stored hash for
+	// userID, and ErrPasswordMismatch on mismatch OR unknown user (the caller
+	// MUST NOT distinguish — the unknown path runs a cost-matched dummy compare
+	// for timing parity, matching the password authenticator's anti-enumeration).
+	VerifyPassword(ctx context.Context, userID, plaintext string) error
+}

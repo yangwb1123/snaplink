@@ -26,4 +26,11 @@ var (
 	// The consent gate in /auth/login treats this as "user has never
 	// consented" and returns consent_required.
 	ErrNoConsentGrant = errors.New("sso: no consent grant found")
+
+	// ErrPasswordMismatch is returned by PasswordCredentialStore.VerifyPassword
+	// when the supplied password does not match the stored hash OR no
+	// credential exists for the user. Callers MUST NOT distinguish the two
+	// (anti-enumeration); the store runs a cost-matched dummy compare on the
+	// unknown-user path for timing parity.
+	ErrPasswordMismatch = errors.New("sso: password mismatch")
 )

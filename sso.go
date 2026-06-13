@@ -404,6 +404,10 @@ type Server struct {
 	// to a build without the feature.
 	consentStore ConsentStore
 
+	// passwordCredentialStore backs POST /me/password (WithPasswordCredentialStore).
+	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
+	passwordCredentialStore PasswordCredentialStore
+
 	// consentChallengeMu guards consentChallenges.
 	consentChallengeMu sync.Mutex
 	// consentChallenges holds server-issued single-use consent challenge tokens.
@@ -1860,6 +1864,16 @@ func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
 }
 
+// WithPasswordCredentialStore wires a per-user password store and mounts the
+// self-service POST /me/password endpoint. The store is keyed by UserID, so an
+// operator can also build their login authenticator over it (resolve username
+// -> UserID -> VerifyPassword) to keep the changed credential and the login
+// credential the same. When nil (the default), /me/password is not mounted —
+// byte-identical to a build without this feature.
+func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
+	return func(srv *Server) { srv.passwordCredentialStore = s }
+}
+
 // WithTenantUsageAggregator wires the per-tenant metering Aggregator and
 // mounts GET /api/v1/admin/tenants/:id/usage (admin:read). The endpoint
 // returns aggregated login / token-issuance / active-user / MFA-challenge
@@ -2025,6 +2039,11 @@ func (s *Server) Mount() {
 	// profile is its core); byte-identical without one.
 	if s.userProvider != nil {
 		s.router.GET(PathMe, s.handleMe)
+	}
+	// Self-service password change. Mounted only with a password credential
+	// store; byte-identical without one.
+	if s.passwordCredentialStore != nil {
+		s.router.POST(PathMyPassword, s.handleChangeMyPassword)
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to

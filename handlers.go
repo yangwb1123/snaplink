@@ -3213,6 +3213,45 @@ func (s *Server) handleMe(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, out)
 }
 
+// handleChangeMyPassword serves POST /me/password — the authenticated user
+// changes their own password. Body: {current_password, new_password}. Verifies
+// the current password against the credential store, then sets the new one.
+//
+// Credential endpoint: no-store headers. The caller is authenticated as their
+// own account, so naming the wrong-current-password case (invalid_password) is
+// not an enumeration leak — the user needs to know their entry was wrong. The
+// store's VerifyPassword is itself anti-enumeration (dummy compare on unknown).
+func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	// bindOAuthParams accepts form-urlencoded + JSON (the §2 binder), unlike a
+	// JSON-only decode. An empty current_password is rejected here so an
+	// omitted field can never count as proof of the current credential (which
+	// would otherwise pass against an empty-password account).
+	if err := bindOAuthParams(ctx, &req); err != nil || req.NewPassword == "" || req.CurrentPassword == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	if err := s.passwordCredentialStore.VerifyPassword(ctx.Request().Context(), userID, req.CurrentPassword); err != nil {
+		// Wrong current password (or no credential): one response either way.
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidPassword))
+		return
+	}
+	if err := s.passwordCredentialStore.SetPassword(ctx.Request().Context(), userID, req.NewPassword); err != nil {
+		s.logger.Error("set password failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
 // handleMySessions serves GET /sessions/me — lists the authenticated user's
 // own active sessions. Session data is credential-adjacent so we apply the
 // same cache-prevention headers as /token and /userinfo.

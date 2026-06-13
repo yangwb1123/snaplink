@@ -1115,6 +1115,43 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /me/password:
+    post:
+      tags: [self-service]
+      summary: Authenticated self-service password change.
+      description: |
+        Verifies the bearer's current password against the configured
+        `PasswordCredentialStore`, then sets a new one. The caller is
+        authenticated as their own account, so a wrong current password
+        returns `invalid_password` (not an enumeration leak). Mounted only when
+        a password credential store is wired. `Cache-Control: no-store`.
+      operationId: changeMyPassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string }
+      responses:
+        "204":
+          description: Password changed.
+        "400":
+          description: |
+            `invalid_password` (current password wrong) or `invalid_request`
+            (missing/empty new password).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /branding:
     get:
       tags: [self-service]

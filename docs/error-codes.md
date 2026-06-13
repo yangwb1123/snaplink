@@ -28,6 +28,7 @@ exact emission site.
 | `invalid_request`                     | 400  | Request body fails to parse, or required field absent              | Fix the request payload                    |
 | `missing_client_id`                   | 400  | `client_id` omitted from a request that requires it                | Include `client_id`                        |
 | `invalid_credentials`                 | 401  | Username/password mismatch, code mismatch, or other auth failure   | Re-prompt for credentials                  |
+| `invalid_password`                    | 400  | `POST /me/password`: the current password did not match            | Re-prompt for the current password         |
 | `invalid_client`                      | 401  | `client_id` does not resolve in the client store                   | Check the configured client                |
 | `invalid_client_secret`               | 401  | Token endpoint received a bad client secret                        | Rotate or correct the secret               |
 | `inactive_client`                     | 403  | Client exists but `Active: false` in config                        | Operator re-enables the client             |

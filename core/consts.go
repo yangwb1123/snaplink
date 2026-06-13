@@ -46,6 +46,10 @@ const (
 	// a self-service portal lands on.
 	PathMe = "/me"
 
+	// PathMyPassword is the authenticated self-service password change
+	// (POST). Verifies the current password, then sets a new one.
+	PathMyPassword = "/me/password"
+
 	// PathMeshExtAuthz is the default mount point for the opt-in
 	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
 	// mesh data-plane, the HTTP variant). A mesh sidecar calls it per
@@ -410,6 +414,12 @@ const (
 	ErrInteractionRequired      = "interaction_required"
 	ErrConsentRequired          = "consent_required"
 	ErrAccountSelectionRequired = "account_selection_required"
+
+	// ErrInvalidPassword is returned by POST /me/password when the supplied
+	// current password does not match. The caller is authenticated as their
+	// own account (bearer), so naming the wrong-current-password case is not
+	// an enumeration leak — the user needs to know their entry was wrong.
+	ErrInvalidPassword = "invalid_password"
 
 	// ErrUnmetAuthReqs is returned on /auth/login when the RP
 	// supplied acr_values and the authenticator's AchievedACR is
