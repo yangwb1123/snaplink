@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -28,6 +28,9 @@ load-test: ## Load-test the /token hot path against a RUNNING server (env: BASE_
 
 vet: ## Static analysis (go vet).
 	$(GO) vet ./...
+
+lint: ## Run golangci-lint over the root module (.golangci.yml). Needs a go1.26-compatible golangci-lint; @latest tracks it.
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --timeout 5m
 
 security-scan: ## Local SAST/SCA sweep over the root module (govulncheck CVEs + gosec). Mirrors the CI govulncheck + gosec jobs; CI also runs CodeQL + Trivy on GitHub infra.
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...

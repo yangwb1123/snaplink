@@ -219,6 +219,32 @@ jobs:
           sarif_file: gosec.sarif
           category: gosec
 
+  lint:
+    # golangci-lint over the root module (.golangci.yml). Report-only for now
+    # (continue-on-error) — there is a known pre-existing backlog (errcheck on
+    # deferred Close()/Encode(), a few unused helpers, staticcheck), so this
+    # surfaces findings in the Checks tab without wedging unrelated PRs, the
+    # same non-wedging stance as the govulncheck + gosec jobs. Promote to a
+    # hard gate once the backlog is burned down.
+    name: golangci-lint (report-only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        # Pinned to a v2 release whose bundled type-checker understands the
+        # repo's Go toolchain (older golangci-lint cannot parse go1.26 and
+        # emits false "declared and not used" positives).
+        uses: golangci/golangci-lint-action@v6
+        continue-on-error: true
+        with:
+          version: v2.1.0
+
   proto:
     name: buf lint + breaking
     runs-on: ubuntu-latest

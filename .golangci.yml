@@ -1,0 +1,31 @@
+# golangci-lint configuration (schema v2).
+#
+# Requires a golangci-lint built with Go >= 1.26 (the repo's toolchain) — older
+# releases' bundled type-checker cannot parse 1.26 source and emit false
+# "declared and not used" positives. The CI lint job pins a compatible version.
+#
+# The default high-value linters (errcheck, govet, ineffassign, staticcheck,
+# unused) are enabled, plus misspell + unconvert. The CI `lint` job runs this
+# REPORT-ONLY for now (it does not gate PRs) — the same non-wedging stance the
+# govulncheck + gosec jobs document. There is a known backlog (~88 findings,
+# mostly errcheck on deferred Close()/Encode() + a few unused helpers); promote
+# the job to a hard gate once that backlog is burned down.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - misspell
+    - unconvert
+  settings:
+    misspell:
+      # "strat" is a deliberate abbreviation for token strategy, not a typo.
+      ignore-rules:
+        - strat
+  exclusions:
+    # Generated protobuf + gateway code is not ours to lint.
+    generated: lax
+    paths:
+      - gen/proto
