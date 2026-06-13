@@ -2021,6 +2021,12 @@ func (s *Server) Mount() {
 		s.router.GET(PathMyConsents, s.handleMyConsents)
 		s.router.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
 	}
+	// Public per-host branding lookup for the hosted login SPA. Only mounted
+	// with a tenant store (Domain.Branding is its source) — byte-identical to
+	// a single-tenant build without it.
+	if s.tenantStore != nil {
+		s.router.GET(PathBranding, s.handleBranding)
+	}
 
 	// Authorization policy bundle export (decentralized authz). Full
 	// path (not group-relative) registered directly on the router; its

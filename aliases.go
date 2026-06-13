@@ -286,6 +286,7 @@ const PathMySessions = core.PathMySessions
 const PathMySessionByID = core.PathMySessionByID
 const PathMyConsents = core.PathMyConsents
 const PathMyConsentByID = core.PathMyConsentByID
+const PathBranding = core.PathBranding
 const PathMeshExtAuthz = core.PathMeshExtAuthz
 const PathNetPolicies = core.PathNetPolicies
 const PathNetPolicyByName = core.PathNetPolicyByName

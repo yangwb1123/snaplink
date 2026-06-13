@@ -36,6 +36,11 @@ const (
 	PathMyConsents    = "/consents/me"
 	PathMyConsentByID = "/consents/me/:client_id"
 
+	// PathBranding is the public, unauthenticated tenant-branding lookup the
+	// hosted login SPA fetches (by client_id) to white-label the sign-in page.
+	// Returns only non-sensitive presentation data (brand name, color, logo).
+	PathBranding = "/branding"
+
 	// PathMeshExtAuthz is the default mount point for the opt-in
 	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
 	// mesh data-plane, the HTTP variant). A mesh sidecar calls it per

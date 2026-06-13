@@ -27,6 +27,7 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/tenant"
 )
 
 // tracer is shared by audit-event helpers for parsing inbound W3C
@@ -3126,6 +3127,54 @@ func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok boo
 		return "", false
 	}
 	return claims.Subject, true
+}
+
+// handleBranding serves GET /branding — the public white-label lookup the
+// hosted login SPA fetches before authentication to theme the sign-in page.
+// Branding is per-vanity-host (tenant.Domain.Branding), so it resolves by the
+// request Host, reusing the exact host extraction + trust model the tenant
+// middleware uses. Returns only that presentation map (name, color, logo).
+//
+// Unauthenticated and non-enumerable: an unknown host, a domain with no
+// branding, no tenant store, or a store outage all return the same 200 with an
+// empty branding object, so the endpoint never reveals which hosts are
+// configured. Branding carries only non-sensitive UI data.
+func (s *Server) handleBranding(ctx HandlerContext) {
+	out := map[string]any{
+		"branding": map[string]string{},
+		KeyIss:     s.resolveIssuer(ctx),
+	}
+	if s.tenantStore == nil {
+		ctx.JSON(http.StatusOK, out)
+		return
+	}
+	// Prefer the domain the tenant middleware already resolved for this host.
+	if r, ok := tenant.FromHandlerContext(ctx); ok && r.Domain != nil && len(r.Domain.Branding) > 0 {
+		out["branding"] = r.Domain.Branding
+		ctx.JSON(http.StatusOK, out)
+		return
+	}
+	// Fall back to a direct host lookup — the middleware skips stashing for a
+	// suspended tenant. Branding is UI-only, so showing a suspended tenant's
+	// brand on its own login host is harmless. Use the same host extractor the
+	// tenant middleware was configured with, so an operator who disabled
+	// X-Forwarded-Host trust is honored here too.
+	extract := s.tenantMiddlewareOpts.HostExtractor
+	if extract == nil {
+		extract = tenant.DefaultHostExtractor
+	}
+	host := extract(ctx.Request())
+	if host == "" {
+		ctx.JSON(http.StatusOK, out)
+		return
+	}
+	d, err := s.tenantStore.GetDomain(ctx.Request().Context(), host)
+	if err != nil || d == nil || len(d.Branding) == 0 {
+		ctx.JSON(http.StatusOK, out)
+		return
+	}
+	out["branding"] = d.Branding
+	ctx.JSON(http.StatusOK, out)
 }
 
 // handleMySessions serves GET /sessions/me — lists the authenticated user's

@@ -7,6 +7,12 @@
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Brand surface — overridden at runtime from the tenant's /branding response. */
+:root {
+  --brand-primary: #6366f1;
+  --brand-primary-hover: #4f46e5;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: #f3f4f6;
@@ -83,8 +89,8 @@ input:focus, select:focus {
   transition: background .15s, transform .1s;
 }
 .btn:active { transform: scale(.98); }
-.btn-primary { background: #6366f1; color: #fff; }
-.btn-primary:hover { background: #4f46e5; }
+.btn-primary { background: var(--brand-primary); color: #fff; }
+.btn-primary:hover { background: var(--brand-primary-hover); }
 .btn-secondary {
   background: transparent;
   color: #6366f1;
@@ -198,8 +204,9 @@ input:focus, select:focus {
 <body>
 <div class="card">
   <div class="logo">
-    <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="44" height="44" rx="10" fill="#6366f1"/>
+    <img id="brand-logo" alt="" style="display:none; max-height:48px; max-width:180px;">
+    <svg id="brand-mark" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="44" height="44" rx="10" fill="var(--brand-primary)"/>
       <path d="M22 10C15.373 10 10 15.373 10 22s5.373 12 12 12 12-5.373 12-12S28.627 10 22 10zm0 5a4 4 0 110 8 4 4 0 010-8zm0 17c-3.315 0-6.26-1.517-8.2-3.9a9.96 9.96 0 0116.4 0C28.26 30.483 25.315 32 22 32z" fill="#fff"/>
     </svg>
   </div>
@@ -327,6 +334,7 @@ input:focus, select:focus {
   // by the same origin.
   var loginURL    = "../auth/login";
   var mfaURL      = "../auth/mfa";
+  var brandingURL = "../branding";
 
   // --- State ---
   var currentMFAChallengeID = "";
@@ -350,6 +358,34 @@ input:focus, select:focus {
     if (providerSel.options.length > 1) {
       $("field-provider").style.display = "";
     }
+  })();
+
+  // --- White-label branding (async, best-effort) ---
+  // Theme the page from the tenant's per-host /branding response. Honors
+  // primary_color (CSS var driving the button + logo mark), logo_url (swaps
+  // the default mark for the tenant logo), and brand_name (tab title). Any
+  // failure or empty response silently keeps the default theme.
+  (function loadBranding() {
+    fetch(brandingURL, {headers: {"Accept": "application/json"}})
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        var b = data && data.branding;
+        if (!b) return;
+        if (b.primary_color) {
+          document.documentElement.style.setProperty("--brand-primary", b.primary_color);
+          document.documentElement.style.setProperty("--brand-primary-hover", b.primary_color);
+        }
+        if (b.logo_url) {
+          var img = $("brand-logo"), mark = $("brand-mark");
+          img.onload = function() { mark.style.display = "none"; img.style.display = "inline-block"; };
+          img.src = b.logo_url;
+          img.alt = b.brand_name || "";
+        }
+        if (b.brand_name) {
+          document.title = "Sign in · " + b.brand_name;
+        }
+      })
+      .catch(function() { /* keep default theme */ });
   })();
 
   // --- Probe for available providers (async, best-effort) ---
