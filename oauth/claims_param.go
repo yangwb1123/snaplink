@@ -86,6 +86,51 @@ func parseClaimsSection(raw json.RawMessage) (map[string]*ClaimRequest, error) {
 	return out, nil
 }
 
+// RequestedACRFromClaims extracts the ACR value constraints requested via the
+// OIDC Core §5.5.1.1 `claims` parameter id_token.acr entry. Both the single
+// `value` and the `values` array are decoded as JSON strings and returned as
+// their union. Returns nil when the claims parameter carries no id_token.acr
+// request (or fails to parse — fail-open, the caller treats nil as "no extra
+// ACR constraint").
+//
+// Requesting acr through the claims parameter is the documented alternative to
+// the acr_values request parameter; callers fold the result into the SAME
+// enforcement path so either channel is honored identically (otherwise a
+// conformance suite that requests acr via claims sees it silently ignored).
+func RequestedACRFromClaims(raw json.RawMessage) []string {
+	idTok, _, err := ParseRequestedClaims(raw)
+	if err != nil || len(idTok) == 0 {
+		return nil
+	}
+	cr, ok := idTok["acr"]
+	if !ok || cr == nil {
+		return nil
+	}
+	var out []string
+	if s, ok := decodeJSONString(cr.Value); ok {
+		out = append(out, s)
+	}
+	for _, v := range cr.Values {
+		if s, ok := decodeJSONString(v); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// decodeJSONString unmarshals a raw JSON value as a non-empty string,
+// reporting ok=false for empty input, non-string JSON, or the empty string.
+func decodeJSONString(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil || s == "" {
+		return "", false
+	}
+	return s, true
+}
+
 // OIDC Core §5.5 — the `claims` request parameter.
 //
 // Lets the RP request specific claims for inclusion in the

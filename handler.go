@@ -584,32 +584,26 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		_ = s.accountLockout.RegisterSuccess(ctx.Request().Context(), lockKey)
 	}
 
-	// OIDC Core §3.1.2.6 / §5.5.1.1 acr_values enforcement.
-	// When the RP requests specific ACR values the AS MUST achieve
-	// one of them.  Check immediately after credential validation
-	// so the gate applies regardless of whether MFA or a risk
-	// decision follows.  Empty req.ACRValues = no constraint;
-	// a present list with no matching AchievedACR = fail.
-	if req.ACRValues != "" {
-		acrList := splitScope(req.ACRValues)
-		if len(acrList) > 0 {
-			achieved := result.AchievedACR
-			matched := false
-			for _, want := range acrList {
-				if want == achieved {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				// AchievedACR is empty or not in the requested set.
-				// Return the spec-mandated error; do NOT reveal which
-				// ACR was achieved (oracle-safe).
-				s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrUnmetAuthReqs)
-				ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnmetAuthReqs))
-				return
-			}
-		}
+	// OIDC Core §3.1.2.6 / §5.5.1.1 ACR enforcement.
+	// The RP can request specific ACR values through EITHER the acr_values
+	// request parameter OR the claims parameter's id_token.acr entry; both
+	// are honored with identical strictness, so a conformance suite that
+	// uses the claims-parameter channel does not see its request silently
+	// ignored. Checked immediately after credential validation so the gate
+	// applies regardless of whether MFA or a risk decision follows. Empty
+	// union = no constraint; a present list with no matching AchievedACR =
+	// fail.
+	acrList := splitScope(req.ACRValues)
+	if len(req.Claims) > 0 {
+		acrList = append(acrList, oauth.RequestedACRFromClaims(req.Claims)...)
+	}
+	if len(acrList) > 0 && !slices.Contains(acrList, result.AchievedACR) {
+		// AchievedACR is empty or not in the requested set. Return the
+		// spec-mandated error; do NOT reveal which ACR was achieved
+		// (oracle-safe).
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrUnmetAuthReqs)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnmetAuthReqs))
+		return
 	}
 
 	// Risk evaluation. Skipped entirely (zero overhead) when no scorer
@@ -959,20 +953,12 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 			// (omit id_token) rather than sign with the shared key.
 			s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", result.UserID)
 		} else if emit {
-			// OIDC Core §5.5 — project id_token-section requested claims.
-			// result.Attributes is the base; any claim in the id_token
-			// section of the claims parameter that is absent from Attributes
-			// is a no-op (we can't invent values). Fail-open on parse error.
-			idTokenClaims := result.Attributes
-			if len(req.Claims) > 0 {
-				if idTokReq, _, parseErr := oauth.ParseRequestedClaims(req.Claims); parseErr == nil && len(idTokReq) > 0 {
-					extra := make(map[string]string, len(result.Attributes))
-					for k, v := range result.Attributes {
-						extra[k] = v
-					}
-					idTokenClaims = extra
-				}
-			}
+			// OIDC Core §5.5 — the id_token carries the resolved user
+			// attribute set. The claims-parameter id_token.acr request is
+			// enforced upstream (folded into ACR enforcement after credential
+			// validation), so it is not re-projected here; requested claims
+			// that the AS cannot source from Attributes are a no-op (we can't
+			// invent values).
 			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
 				Subject:     issuedSub,
 				Audience:    client.ID,
@@ -980,7 +966,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 				AuthTime:    time.Now(),
 				AMR:         amrForResult(result),
 				ACR:         result.AchievedACR,
-				Claims:      idTokenClaims,
+				Claims:      result.Attributes,
 				SID:         session.ID,
 				AccessToken: token.AccessToken,
 			})
