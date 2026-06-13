@@ -1085,6 +1085,61 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me:
+    get:
+      tags: [self-service]
+      summary: Authenticated self-service account overview.
+      description: |
+        Returns the bearer's own `sub`, profile (`user`), and
+        `active_sessions` / `granted_apps` counts — the landing entry for a
+        self-service portal, consolidating data a SPA would otherwise assemble
+        from `/sessions/me` + `/consents/me` + the token. Each enrichment is
+        best-effort: a store outage drops that field, never the whole response.
+        Mounted only when a `UserProvider` is wired. `Cache-Control: no-store`.
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account overview.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub: { type: string }
+                  iss: { type: string }
+                  user: { $ref: "#/components/schemas/User" }
+                  active_sessions: { type: integer }
+                  granted_apps: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /branding:
+    get:
+      tags: [self-service]
+      summary: Public per-host white-label branding for the hosted login SPA.
+      description: |
+        Unauthenticated. Resolves the request Host to a tenant `Domain` and
+        returns its non-sensitive `branding` map (e.g. `brand_name`,
+        `primary_color`, `logo_url`) for theming the sign-in page before
+        authentication. Non-enumerable: an unknown host or a domain with no
+        branding returns the same `200` with an empty `branding` object.
+        Mounted only when a tenant store is wired.
+      operationId: getBranding
+      responses:
+        "200":
+          description: Branding map (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  branding:
+                    type: object
+                    additionalProperties: { type: string }
+                  iss: { type: string }
+
   /userinfo:
     get:
       tags: [userinfo]

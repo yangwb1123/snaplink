@@ -3177,6 +3177,42 @@ func (s *Server) handleBranding(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, out)
 }
 
+// handleMe serves GET /me — the authenticated user's self-service account
+// overview: their own profile plus active-session and granted-app counts. The
+// landing entry for a self-service portal, consolidating data the SPA would
+// otherwise assemble from /sessions/me + /consents/me + the token.
+//
+// Credential-adjacent (same no-store headers as /userinfo). Each enrichment is
+// best-effort: a store outage drops that field rather than failing the whole
+// response, and the sub/iss baseline is always present.
+func (s *Server) handleMe(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	out := map[string]any{
+		KeyIss: s.resolveIssuer(ctx),
+		KeySub: userID,
+	}
+	if s.userProvider != nil {
+		if u, err := s.userProvider.GetByID(ctx.Request().Context(), userID); err == nil && u != nil {
+			out["user"] = u
+		}
+	}
+	if s.sessionMgr != nil {
+		if sessions, err := s.sessionMgr.ListByUser(ctx.Request().Context(), userID); err == nil {
+			out["active_sessions"] = len(sessions)
+		}
+	}
+	if s.consentStore != nil {
+		if grants, err := s.consentStore.ListByUser(ctx.Request().Context(), userID); err == nil {
+			out["granted_apps"] = len(grants)
+		}
+	}
+	ctx.JSON(http.StatusOK, out)
+}
+
 // handleMySessions serves GET /sessions/me — lists the authenticated user's
 // own active sessions. Session data is credential-adjacent so we apply the
 // same cache-prevention headers as /token and /userinfo.

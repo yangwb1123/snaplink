@@ -41,6 +41,11 @@ const (
 	// Returns only non-sensitive presentation data (brand name, color, logo).
 	PathBranding = "/branding"
 
+	// PathMe is the authenticated self-service account overview: the bearer's
+	// own profile plus active-session and granted-app counts. The entry point
+	// a self-service portal lands on.
+	PathMe = "/me"
+
 	// PathMeshExtAuthz is the default mount point for the opt-in
 	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
 	// mesh data-plane, the HTTP variant). A mesh sidecar calls it per
