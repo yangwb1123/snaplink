@@ -223,3 +223,35 @@ type PasswordCredentialStore interface {
 	// for timing parity, matching the password authenticator's anti-enumeration).
 	VerifyPassword(ctx context.Context, userID, plaintext string) error
 }
+
+// MFAEnrolledFactor describes one registered second factor for the
+// self-service management view (GET/DELETE /me/mfa). It carries only
+// non-sensitive metadata — never the TOTP secret or WebAuthn private material.
+type MFAEnrolledFactor struct {
+	// ID is the opaque per-factor handle used to unbind it. Stable per factor.
+	ID string `json:"id"`
+	// Method is the factor kind ("totp", "webauthn", "push", ...).
+	Method string `json:"method"`
+	// Label is an optional human-friendly name (e.g. a passkey's device name).
+	Label string `json:"label,omitempty"`
+	// AddedAt is when the factor was registered.
+	AddedAt time.Time `json:"added_at,omitzero"`
+}
+
+// MFAEnrollmentStore lists and removes a user's registered second factors for
+// self-service management (GET/DELETE /me/mfa). Verification + challenges stay
+// on MFAProvider / MFAChallengeStore; this is the MANAGEMENT seam an operator
+// implements over their concrete factor backends (TOTP secrets, WebAuthn
+// credentials, ...). When nil (not wired), /me/mfa is not mounted —
+// byte-identical to a build without it.
+type MFAEnrollmentStore interface {
+	// ListFactors returns userID's registered factors (empty slice, not error,
+	// when none). Order unspecified.
+	ListFactors(ctx context.Context, userID string) ([]MFAEnrolledFactor, error)
+
+	// RemoveFactor unbinds the factor with factorID from userID. Idempotent:
+	// a missing factor (or one owned by another user) returns nil — the
+	// handler enforces ownership via ListFactors so a cross-user delete is a
+	// 404, never a silent removal of someone else's factor.
+	RemoveFactor(ctx context.Context, userID, factorID string) error
+}

@@ -1152,6 +1152,66 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /me/mfa:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's registered second factors.
+      description: |
+        Returns non-sensitive metadata (id, method, label, added_at) for each
+        factor — never the TOTP secret or WebAuthn key material. Mounted only
+        when an MFA enrollment store is wired. `Cache-Control: no-store`.
+      operationId: listMyMFAFactors
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's registered factors.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        method: { type: string }
+                        label: { type: string }
+                        added_at: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/mfa/{id}:
+    delete:
+      tags: [self-service]
+      summary: Unbind one of the authenticated user's second factors.
+      description: |
+        Removes the factor by id. A factor owned by another user (or a missing
+        id) returns the same 404 — ownership is enforced via the user-scoped
+        list, so a cross-user delete can never remove someone else's factor.
+        `Cache-Control: no-store`.
+      operationId: deleteMyMFAFactor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Factor unbound.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such factor for this user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /branding:
     get:
       tags: [self-service]

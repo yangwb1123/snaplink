@@ -3252,6 +3252,62 @@ func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// handleMyMFAFactors serves GET /me/mfa — lists the authenticated user's
+// registered second factors (non-sensitive metadata only). Credential-adjacent;
+// same cache headers as /userinfo.
+func (s *Server) handleMyMFAFactors(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	factors, err := s.mfaEnrollmentStore.ListFactors(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("list mfa factors failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if factors == nil {
+		factors = []core.MFAEnrolledFactor{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"factors": factors})
+}
+
+// handleDeleteMyMFAFactor serves DELETE /me/mfa/:id — unbinds one of the
+// authenticated user's own factors. A factor belonging to another user (or a
+// missing id) responds with the same 404 (oracle-safe: ownership is enforced
+// via the user-scoped list, so a cross-user delete can never remove someone
+// else's factor).
+func (s *Server) handleDeleteMyMFAFactor(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	factorID := ctx.Param("id")
+	if factorID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	factors, err := s.mfaEnrollmentStore.ListFactors(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("list mfa factors failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if !slices.ContainsFunc(factors, func(f core.MFAEnrolledFactor) bool { return f.ID == factorID }) {
+		// Not owned by this user, or never existed — one response either way.
+		ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+		return
+	}
+	if err := s.mfaEnrollmentStore.RemoveFactor(ctx.Request().Context(), userID, factorID); err != nil {
+		s.logger.Error("remove mfa factor failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
 // handleMySessions serves GET /sessions/me — lists the authenticated user's
 // own active sessions. Session data is credential-adjacent so we apply the
 // same cache-prevention headers as /token and /userinfo.

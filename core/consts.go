@@ -50,6 +50,11 @@ const (
 	// (POST). Verifies the current password, then sets a new one.
 	PathMyPassword = "/me/password"
 
+	// PathMyMFA lists the authenticated user's registered second factors (GET);
+	// PathMyMFAByID unbinds one (DELETE).
+	PathMyMFA     = "/me/mfa"
+	PathMyMFAByID = "/me/mfa/:id"
+
 	// PathMeshExtAuthz is the default mount point for the opt-in
 	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
 	// mesh data-plane, the HTTP variant). A mesh sidecar calls it per

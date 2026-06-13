@@ -408,6 +408,10 @@ type Server struct {
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	passwordCredentialStore PasswordCredentialStore
 
+	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
+	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
+	mfaEnrollmentStore MFAEnrollmentStore
+
 	// consentChallengeMu guards consentChallenges.
 	consentChallengeMu sync.Mutex
 	// consentChallenges holds server-issued single-use consent challenge tokens.
@@ -1874,6 +1878,15 @@ func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
 	return func(srv *Server) { srv.passwordCredentialStore = s }
 }
 
+// WithMFAEnrollmentStore wires a store for the self-service MFA management
+// endpoints (GET /me/mfa to list registered factors, DELETE /me/mfa/:id to
+// unbind one). An operator implements it over their concrete factor backends
+// (TOTP secrets, WebAuthn credentials). When nil (the default), the routes are
+// not mounted — byte-identical to a build without this feature.
+func WithMFAEnrollmentStore(s MFAEnrollmentStore) Option {
+	return func(srv *Server) { srv.mfaEnrollmentStore = s }
+}
+
 // WithTenantUsageAggregator wires the per-tenant metering Aggregator and
 // mounts GET /api/v1/admin/tenants/:id/usage (admin:read). The endpoint
 // returns aggregated login / token-issuance / active-user / MFA-challenge
@@ -2044,6 +2057,12 @@ func (s *Server) Mount() {
 	// store; byte-identical without one.
 	if s.passwordCredentialStore != nil {
 		s.router.POST(PathMyPassword, s.handleChangeMyPassword)
+	}
+	// Self-service MFA factor management. Mounted only with an enrollment
+	// store; byte-identical without one.
+	if s.mfaEnrollmentStore != nil {
+		s.router.GET(PathMyMFA, s.handleMyMFAFactors)
+		s.router.DELETE(PathMyMFAByID, s.handleDeleteMyMFAFactor)
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to
