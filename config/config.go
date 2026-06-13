@@ -62,6 +62,7 @@ type Config struct {
 	Federation         FederationConfig         `yaml:"federation"`
 	SAML               SAMLConfig               `yaml:"saml"`
 	HostedLogin        HostedLoginConfig        `yaml:"hosted_login"`
+	SelfService        SelfServiceConfig        `yaml:"self_service"`
 }
 
 // SAMLConfig opts into a SAML 2.0 capability supplied by an operator's
@@ -137,6 +138,26 @@ type SAMLSPProviderConfig struct {
 // build without the hosted UI.
 type HostedLoginConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// SelfServiceConfig wires the end-user self-service stores the hosted login +
+// portal SPAs depend on. Each store is opt-in: an empty backend leaves its
+// routes unmounted and behavior byte-identical to a build without it. The
+// MFA-factor management store (/me/mfa) is intentionally not here — it is
+// operator-implemented over the concrete TOTP/WebAuthn backends, not a generic
+// memory|sqlite toggle. Self-service password change (/me/password) likewise
+// needs the operator's user-provisioning model and is wired by the embedder.
+type SelfServiceConfig struct {
+	// Consent backs the consent gate + records (/consents/me, consent_required).
+	// Enabling it turns ON consent enforcement at /auth/login.
+	Consent SelfServiceStoreConfig `yaml:"consent"`
+}
+
+// SelfServiceStoreConfig selects a self-service store backend. Empty Backend =
+// disabled (routes unmounted). memory = dev/single-node; sqlite = durable.
+type SelfServiceStoreConfig struct {
+	Backend string               `yaml:"backend"` // "" | memory | sqlite
+	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
 }
 
 // MeshConfig opts into the service-mesh data-plane integrations

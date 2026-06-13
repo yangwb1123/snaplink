@@ -1660,6 +1660,26 @@ func buildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
 	}
 }
 
+// buildConsentStore selects the self-service consent store backend. An empty
+// backend returns (nil, nil) — consent enforcement stays OFF and the routes
+// stay unmounted (byte-identical). memory is dev/single-node; sqlite is durable
+// and required for the GDPR consent-record retention a real deployment needs.
+func buildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryConsentStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("self_service.consent.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewConsentStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown self_service.consent.backend %q", cfg.Backend)
+	}
+}
+
 func buildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
@@ -4015,6 +4035,19 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if cfg.HostedLogin.Enabled {
 		opts = append(opts, sso.WithHostedLoginFS(loginSubFS()))
 		logger.Info("hosted login UI enabled", "path", "/login/")
+	}
+
+	// Self-service consent store. Opt-in: enabling it turns ON the consent gate
+	// at /auth/login and mounts /consents/me. The hosted-login consent screen
+	// is inert without it, so an operator deploying the SPA wires this to make
+	// consent (and its GDPR records) actually work.
+	consentStore, err := buildConsentStore(cfg.SelfService.Consent)
+	if err != nil {
+		return nil, fmt.Errorf("self_service consent store: %w", err)
+	}
+	if consentStore != nil {
+		opts = append(opts, sso.WithConsentStore(consentStore))
+		logger.Info("self-service consent enabled", "backend", cfg.SelfService.Consent.Backend)
 	}
 
 	srv = sso.NewServer(opts...)
