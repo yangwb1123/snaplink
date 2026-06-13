@@ -264,6 +264,13 @@ const (
 	KeyMFAMethod      = "mfa_method"
 	KeyMFAMethodData  = "mfa_method_data"
 
+	// KeyConsentChallengeID is the opaque server-issued token returned in a
+	// consent_required response. The SPA must present it back (unchanged) in
+	// the next /auth/login call to prove the server computed the need for
+	// consent before the approval arrived. Without it, any client could bypass
+	// the consent screen by fabricating consent_approved.
+	KeyConsentChallengeID = "consent_challenge_id"
+
 	// SPIFFE JWT-SVID audit metadata keys — written via audit.SetMeta on
 	// the spiffe_jwt_svid_accepted event (internal). Mesh-workload
 	// identity dimensions a SIEM pivots on.

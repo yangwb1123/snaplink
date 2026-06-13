@@ -42,6 +42,18 @@ import (
 	"github.com/snaplink/sso/tracing"
 )
 
+// pendingConsentChallenge is a short-lived server-issued token that binds a
+// consent gate decision to a specific (UserID, ClientID, Scopes) tuple. The
+// SPA must present the challenge ID back in the next /auth/login call instead
+// of a bare consent_approved boolean — this proves the AS computed the need for
+// consent before accepting the approval signal.
+type pendingConsentChallenge struct {
+	UserID    string
+	ClientID  string
+	Scopes    []string
+	ExpiresAt time.Time
+}
+
 // Server is the core SSO orchestrator.
 type Server struct {
 	authenticators          map[string]Authenticator
@@ -391,6 +403,13 @@ type Server struct {
 	// When nil all consent checks are skipped — behavior is byte-identical
 	// to a build without the feature.
 	consentStore ConsentStore
+
+	// consentChallengeMu guards consentChallenges.
+	consentChallengeMu sync.Mutex
+	// consentChallenges holds server-issued single-use consent challenge tokens.
+	// Each entry is bound to (UserID, ClientID, Scopes) and expires after
+	// consentChallengeTTL. Lazy-initialized on first issue.
+	consentChallenges map[string]*pendingConsentChallenge
 
 	// usageAggregator backs GET /api/v1/admin/tenants/:id/usage
 	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —

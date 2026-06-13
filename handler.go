@@ -93,7 +93,7 @@ type loginRequest struct {
 	ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
 	UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
 	Claims               json.RawMessage   `json:"claims"`                // OIDC Core §5.5: requested claims JSON object
-	ConsentApproved      bool              `json:"consent_approved"`      // true = user explicitly approved the consent screen
+	ConsentChallengeID   string            `json:"consent_challenge_id"`  // server-issued challenge from a prior consent_required response
 }
 
 func (s *Server) handleLogin(ctx HandlerContext) {
@@ -743,7 +743,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	// will actually appear in the issued token — the grant we check and
 	// record is authoritative for exactly those scopes.
 	if s.consentStore != nil {
-		if s.handleConsentGate(ctx, result.UserID, client.ID, req.Scope, req.Prompt, req.ConsentApproved) {
+		if s.handleConsentGate(ctx, result.UserID, client.ID, req.Scope, req.Prompt, req.ConsentChallengeID) {
 			return
 		}
 	}
@@ -2303,6 +2303,10 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, client)
 }
 
+// consentChallengeTTL is the lifetime of a server-issued consent challenge.
+// The SPA must present the challenge ID within this window.
+const consentChallengeTTL = 5 * time.Minute
+
 // handleConsentGate checks whether the user has consented to the requested
 // scopes for the given client. Returns true when the gate fired (caller
 // MUST return immediately) or false when the request may proceed.
@@ -2313,10 +2317,13 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 //  3. Existing grant that doesn't cover all requested scopes -> consent_required.
 //  4. Otherwise -> record/refresh the grant (updates granted_at) and continue.
 //
-// On consent_required the response is HTTP 200 so the SPA can detect it
-// as a structured signal (not an error HTTP status) and surface a consent
-// screen. The iss field is always present per RFC 9207.
-func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, scopes []string, prompt string, consentApproved bool) (halted bool) {
+// When consent_required is returned, a server-issued consentChallengeID is
+// included. The SPA must present this ID back in the next /auth/login call
+// (consent_challenge_id field). The gate validates and atomically consumes the
+// challenge — the challenge is bound to (userID, clientID, exact scopes) and
+// expires after consentChallengeTTL, so a client cannot fabricate an approval
+// or reuse a challenge for a different scope set.
+func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, scopes []string, prompt string, consentChallengeID string) (halted bool) {
 	requestCtx := ctx.Request().Context()
 
 	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
@@ -2342,14 +2349,19 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 	}
 
 	if needsConsent {
-		if !consentApproved {
+		// Require a server-issued challenge that was previously returned in a
+		// consent_required response. A bare boolean would let any caller bypass
+		// the consent screen by fabricating the approval signal.
+		if consentChallengeID == "" || !s.consumeConsentChallenge(consentChallengeID, userID, clientID, scopes) {
+			challengeID := s.issueConsentChallenge(userID, clientID, scopes)
 			ctx.JSON(http.StatusOK, map[string]any{
-				KeyError: ErrConsentRequired,
-				KeyIss:   s.resolveIssuer(ctx),
+				KeyError:              ErrConsentRequired,
+				KeyConsentChallengeID: challengeID,
+				KeyIss:                s.resolveIssuer(ctx),
 			})
 			return true
 		}
-		// User approved via the consent screen: record the grant and continue.
+		// Challenge validated and consumed: record the grant and continue.
 		_ = s.consentStore.RecordConsent(requestCtx, ConsentGrant{
 			UserID:    userID,
 			ClientID:  clientID,
@@ -2371,6 +2383,72 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 		GrantedAt: time.Now(),
 	})
 	return false
+}
+
+// issueConsentChallenge generates and stores a single-use consent challenge
+// bound to (userID, clientID, scopes). Returns the opaque challenge ID to
+// include in the consent_required response.
+func (s *Server) issueConsentChallenge(userID, clientID string, scopes []string) string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	id := base64.RawURLEncoding.EncodeToString(b)
+
+	s.consentChallengeMu.Lock()
+	defer s.consentChallengeMu.Unlock()
+	if s.consentChallenges == nil {
+		s.consentChallenges = make(map[string]*pendingConsentChallenge)
+	}
+	s.consentChallenges[id] = &pendingConsentChallenge{
+		UserID:    userID,
+		ClientID:  clientID,
+		Scopes:    slices.Clone(scopes),
+		ExpiresAt: time.Now().Add(consentChallengeTTL),
+	}
+	return id
+}
+
+// consumeConsentChallenge validates and atomically removes the challenge with
+// the given ID. Returns true only if the challenge exists, matches
+// (userID, clientID, exact scopes), and has not expired.
+func (s *Server) consumeConsentChallenge(id, userID, clientID string, scopes []string) bool {
+	s.consentChallengeMu.Lock()
+	defer s.consentChallengeMu.Unlock()
+	if s.consentChallenges == nil {
+		return false
+	}
+
+	// Prune expired entries on every lookup to bound memory growth.
+	now := time.Now()
+	for k, v := range s.consentChallenges {
+		if now.After(v.ExpiresAt) {
+			delete(s.consentChallenges, k)
+		}
+	}
+
+	ch, ok := s.consentChallenges[id]
+	if !ok || now.After(ch.ExpiresAt) {
+		return false
+	}
+	if ch.UserID != userID || ch.ClientID != clientID || !consentScopesMatch(ch.Scopes, scopes) {
+		return false
+	}
+	// Single-use: consume immediately.
+	delete(s.consentChallenges, id)
+	return true
+}
+
+// consentScopesMatch reports whether a and b contain exactly the same scopes
+// regardless of order. Used to bind challenge validation to the exact scope set
+// the challenge was issued for.
+func consentScopesMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	as := slices.Clone(a)
+	bs := slices.Clone(b)
+	slices.Sort(as)
+	slices.Sort(bs)
+	return slices.Equal(as, bs)
 }
 
 // hasPromptValue reports whether the space-separated OIDC prompt parameter

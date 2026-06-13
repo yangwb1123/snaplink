@@ -1,714 +1,258 @@
 # AGENTS.md
 
-Operational guide for AI agents. Follows [agents.md](https://agents.md).
-User instructions override conflicts. **§2 invariants are gates, not
-style — violating one is a regression.** §4 is a map, not a manual: it
-points at the code; the code is the source of truth.
+Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§4 invariants are gates — violations are regressions.**
 
 ---
 
-## 1. Orient
+## 1. System Overview
 
-`github.com/snaplink/sso` — Go SSO server SDK + runnable binary: OAuth
-2.0 + OIDC, swappable authenticators, audit, permissions, service
-registry, admin gRPC/REST, snapshot + release lifecycle. Every concern
-is an interface; defaults in `defaultimpl/` (memory) +
-`defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS dep. Consumers
-wire **embedded** (`ssoclient/local`) or **centralized**
-(`ssoclient/remote`, gRPC + JWKS) per capability;
-`examples/{embedded-app,remote-app}` share one `appcore.Handler`.
-
-### Build, test
+**Binary:** OAuth 2.0 + OIDC SSO server SDK + runnable binary. All concerns are interfaces; defaults in `defaultimpl/` (memory) + `defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS deps. Consumers wire embedded (`ssoclient/local`) or centralized (`ssoclient/remote`, gRPC+JWKS).
 
 ```bash
 go build ./...
 go test ./... -race
-go test ./test/ -run TestE2E -v     # cross-wire HTTP + JWKS + bufconn
-make ci                              # gofmt + vet + race + build + proto-lint + ci-modules
-make docker | make release-snapshot
+go test ./test/ -run TestE2E -v    # cross-wire HTTP + JWKS + bufconn
+make ci                             # gofmt + vet + race + build + proto-lint + ci-modules
 ```
 
-Run E2E whenever changing anything crossing the gRPC or JWKS wire.
-Protobuf stubs are checked in (regen: `protoc -I proto --go_out=...
---go-grpc_out=... proto/<svc>/v1/<svc>.proto`).
-
-### Layout
-
-Root `package sso` is **9 non-test files**: `sso.go` (Server + Options +
-routes), `handler.go` (login orchestrator), `handlers.go` (discovery +
-delegators), `server_extensions.go` (Server-coupled DPoP/mTLS/JAR/JWE/
-BCL/FCL/pairwise/tenant-susp/client-assertion/buildinfo), `mesh_authz.go`
-(in-core `MeshAuthorize` seam + HTTP ext_authz), `signing_key_aggregation.go`
-(leaderless JWKS aggregation loop), `storage_health.go` (storage-health
-report), `accessors.go` (field accessors backing the hexagonal `Deps`
-ifaces), `aliases.go` (re-exports). Server-level integration tests live in
-`test/` (`package ssotest`, full `*sso.Server` over HTTP on a shared
-harness — add new ones there); subpackage unit tests sit beside their code;
-root keeps a few `package sso` unit tests (`example`,
-`header_client_cert_extractor`, `jwks_singleflight`, `signing_algs`).
-
+**Middleware stack** (probes registered OUTSIDE):
 ```
-core/          Foundational types + SPIs (User/Client/Session/Token/Subject/
-               AuthRequest/AuthResult/HandlerContext/Router/MiddlewareFunc +
-               Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/
-               JWK/JWKSProvider + wire consts + sentinels)
-oauth/         AuthCode/Device/Refresh/PAR stores, DCR+RAR+claims validators;
-               Hexagonal handlers (HandleIntrospect/Revoke/PAR/Register/CIBA)
-oidc/          ID Token SPIs (IDTokenIssuer/UserinfoSigner/MetadataSigner);
-               Hexagonal handlers (JWKS/EndSession/SilentRenewal/FormPost/JARM)
-security/      Lockout, JTI replay, JAR fetch/JWE, step-up, mTLS extractor,
-               pairwise, subject-client index, ConstantTimeStringEq, QuoteAuthParam
-spi/           Standalone SPIs: Logger, CodeSender, RiskScorer, MFAProvider
-fapi/          FAPI 2.0 Validator (Inspection|Enforce) + baseline rules
-anomaly/       Async behavioral-detection SPIs
-cluster/       Cross-replica Bus (Publish/Subscribe) for cache invalidation; memory+etcd
-middleware/    Auth, CORS, Logger, Tracing, RequestID, no-store, base-URL
-admin/         Admin auth: HTTP middleware + gRPC interceptor + scope rules
-tenant/ geo/   Tenant resolution + Geo enrichment middleware
-region/{memory}/  IN-CORE multi-region / data-residency SPI + resolvers
-authenticators/  9 pluggable + webauthn/ (helper + AAGUID attestation policy + FIDO MDS)
-scim/          IN-CORE SCIM 2.0 provisioning — Users+Groups CRUD/PATCH/filter (RFC 7643/7644)
-caep/          IN-CORE OpenID SSF v1 (CAEP+RISC) — SET push transmitter + receiver
-federation/    IN-CORE OpenID Federation 1.0 — entity config + trust-chain resolver +
-               auto client registration + §8 fetch + constraints/trust-marks (imports core+security only)
-defaultimpl/   Default issuers (Ed25519/ECDSA/RSA, each w/ CryptoSigner() stdlib seam) +
-               Memory* stores + JWE (RSA/ECDH/Multi) + cryptosigner KMS bridge; /sqlite
-               (pure-Go); /detectors; /vaulttransit (in-core dep-free Vault transit signer)
-adapters/{echo,gin}/   Router adapters
-audit/         Recorder + Sinks + hash chain
-permissions/   Roles + menus + wildcard matcher
-compliance/    GDPR/CCPA/PIPL data-subject erasure + export (composes existing SPIs; no new store)
-netpolicy/{memory,etcd}/   Network classification
-registry/{memory,etcd}/    Service discovery
-bootstrap/{file,memory,builtin,lock}/   First-run init + dist lock
-snapshot/{storage,encryption,loader}/   State export/restore
-releases/{store,pinner,probe}/   Frontend+backend release pinning
-signingkeys/{memory,etcd}/   Opt-in leaderless multi-replica JWKS public-key aggregation
-ratelimit/ cors/ metrics/ tracing/   Middleware + observability
-config/{etcd}/   YAML + env + etcd + flag loader
-proto/ gen/proto/ grpcserver/   Protobuf + generated Go + gRPC + REST gateway
-ssoclient/{local,remote,dev,bootstrap}/   Consumer-facing clients
-migrate/       Pure-Go SQLite migration runner (versioned, per-namespace, forward-only)
-cmd/{sso-server,sso-audit-verify,sso-snapshotctl,sso-migrate}/   Binary + offline CLIs
-deploy/{openresty,k8s,compose,grafana}/   Operator artifacts
-test/          Server-level integration suite (package ssotest)
-
-# Nested modules — vendor SDK stays OUT of core go.mod (no go.work; it would
-# surface in root `go list -m all`). `make ci` → `ci-modules` builds + race-tests each.
-kms/awskms/         AWS KMS crypto.Signer peer (aws-sdk-go-v2; no Ed25519)
-kms/gcpkms/         GCP Cloud KMS crypto.Signer peer, +Ed25519 (cloud.google.com/go/kms)
-kms/azurekeyvault/  Azure Key Vault crypto.Signer peer (azure-sdk-for-go; no Ed25519)
-kms/pkcs11/         PKCS#11 HSM/smart-card crypto.Signer peer, CGO (miekg/pkcs11)
-saml/               full SAML 2.0 SP+IdP (SSO+SLO), own importable Deps/HandlerSpec (crewjam/saml)
-ldap/               LDAP/AD sso.Authenticator, search-then-bind over TLS (go-ldap/ldap/v3)
-kerberos/           SPNEGO/Kerberos Negotiate handler, Windows Integrated Auth (gokrb5/v8)
-radius/             RADIUS sso.Authenticator (PAP relay + RadSec/RFC 6614) (layeh.com/radius)
-extauthz/           gRPC Envoy ext_authz over the in-core MeshAuthorize seam (go-control-plane)
-redis/              Redis hot-path store peers (session/refresh/authcode/par/jti/ratelimit/
-                    device/mfa/ciba) for the >1k-QPS scale layer; Lua/GETDEL/SETNX/INCR (go-redis)
-```
-
----
-
-## 2. Wire-contract invariants
-
-- **Plugin SPI + storage.** Every concern is an interface in its parent
-  package + a `memory` impl + optionally `sqlite`/`etcd`/`file`; new
-  backends slot in via `WithXxx`. **No mocks** — use Memory* in tests.
-  SQLite covers every OAuth/OIDC + WebAuthn + MFA flow (§4). Redis is the
-  recommended next step for SaaS-scale auth-heavy loads.
-- **Form + JSON via `bindOAuthParams`** (wraps `oauth.BindParams`,
-  `oauth/bind.go`). All OAuth/OIDC endpoints accept both form-urlencoded
-  (RFC-mandatory) and JSON.
-- **HTTP Basic > body credentials** (RFC 6749 §2.3.1) on `/token`,
-  `/token/introspect`, `/token/revoke`, `/par`.
-- **Oracle-leak hardening.** Single-use consumption (AuthCode/Refresh/
-  Device/PAR/PKCE verifier) MUST collapse unknown/expired/consumed/
-  client-mismatch into ONE response: `400 invalid_grant` (/token),
-  `invalid_request_uri` (on `/auth/login` consuming a stale/missing PAR
-  `request_uri`). DPoP/mTLS failure → `invalid_token`;
-  `private_key_jwt` → `invalid_client`.
-- **Anti-enumeration.**
-  - `/register/:client_id` (RFC 7592): missing/wrong/unknown bearer →
-    identical 401 `invalid_token` (compare via `crypto/subtle`).
-  - `/token/revoke` (RFC 7009 §2.2): 200 on valid client creds
-    regardless of token existence.
-  - `/token/introspect` inactive → `{"active":false}`.
-  - Bcrypt verifier runs a cost-matched dummy hash for unknown users.
-  - WebAuthn unknown user/session → `404 session_invalid`.
-  - MFA unknown/expired/consumed challenge, unsupported method, wrong
-    factor → `400 mfa_invalid` on `/auth/mfa`; detail only via the
-    `mfa_failure` audit event.
-- **Fail-open** (log + continue): refresh issuance during login/auth_code
-  exchange, ID Token issuance, geo, risk-scorer error, audit Sink error,
-  tenant-suspension lookup outage, JTI-replay store error (default —
-  availability; the JAR/DPoP/client_assertion/actor_token jti is treated
-  first-seen). **Fail-closed**: refresh rotation grant (500),
-  signature/validation failure, scope expansion, family-reuse (kills family
-  → 400 `invalid_grant`). JTI-replay opts in via `WithJTIReplayFailClosed`
-  — a store error then rejects with that site's detected-replay code (same
-  wire shape, no store-health oracle); detected-replay + happy paths
-  unchanged either way.
-- **PKCE: first-exchange only.** `code_challenge` captured at
-  `/auth/login`, verified at `/token` `grant=authorization_code`. Refresh
-  rotations carry no verifier (bound via `client_id`).
-- **Refresh-token family rotation** (BCP §4.13/§4.14). Every token carries
-  `FamilyID` through every rotation. Opt into reuse detection via
-  `RefreshTokenFamilyTracker`: replay → `ErrRefreshTokenReused` →
-  `DeleteFamily(fid)` → audit `refresh_token_reuse_detected` →
-  `invalid_grant`. Empty `FamilyID` opts out. Optional per-family rotation
-  VELOCITY cap via `RefreshTokenRotationLimiter` (type-asserted on the store;
-  over-cap → the same `DeleteFamily` + `invalid_grant` wire shape
-  [oracle-leak], fail-OPEN on store error, audit
-  `refresh_rotation_velocity_exceeded`). Opt-in
-  `WithRefreshRotationGrace(window)` makes a BENIGN concurrent double-submit
-  idempotent: the rotated successor is cached per consumed token for `window`,
-  so a re-presentation of the SAME just-rotated token within it REPLAYS that
-  successor (200) instead of tripping the reuse kill — a genuine post-window
-  replay finds no entry and still kills the family, so §4.13 is unweakened
-  (nil/0 = strict single-use, byte-identical).
-- **Session Refresh refuses expired/revoked.** Memory + SQLite
-  `SessionManager.Refresh` filter expired/revoked rows BEFORE extending.
-  Assumes a FORWARD/MONOTONIC wall clock — a backward step (NTP step,
-  VM-snapshot rollback) can transiently let a just-expired session pass
-  `expires_at > now`. Session + refresh expiry are deliberately EXACT (no
-  skew slack — unlike the DPoP/JWT iat-window, which gets configurable
-  skew; loosening would accept slightly-expired tokens). Ops MUST slew,
-  never step, the clock (chrony).
-- **Audit metadata via `SetMeta(e, k, v)`.** Geo + tenant middleware
-  enrich `Event.Metadata`; **never** assign `e.Metadata = map{...}`
-  (clobbers enrichment).
-- **X-Forwarded-* trust.** `requestBaseURL` + `DefaultGeoIPExtractor` +
-  `DefaultHostExtractor` honor first-hop `X-Forwarded-Proto/Host/For` —
-  **only safe behind a trusted edge** that strips + re-sets them;
-  internet-facing without one MUST front it with a proxy that strips
-  untrusted `X-Forwarded-*`. The same "edge must strip untrusted headers"
-  model governs `security.mtls.backend: header`, ratelimit IP keying, and
-  the mesh ext_authz `X-Auth-*` headers — the mesh MUST strip any
-  client-supplied `X-Auth-*` at ingress (derived, never trusted inbound)
-  (§3, §4, §6).
-- **`aud` claim parsing** (RFC 7519 §4.1.3): `audClaim` unmarshals string
-  or array, marshals single-aud as a compact string per OIDC.
-- **`alg` + `typ` allowlist on Validate** (RFC 9068 §4), checked BEFORE
-  signature verify, so alg-confusion (`alg=none`, wrong-key-shape) fails
-  early. New signer → extend `supportedJWTAlgs` explicitly.
-- **RFC 9068 access-token claims.** Every Issue MUST set `Subject.ClientID`
-  (REQUIRED §2.2). Login sets `AuthTime`+`AMR` from the live event — `AMR`
-  via `amrForResult` = `AuthResult.AuthMethods` (the RFC 8176 tags
-  authenticators record: `pwd`/`otp`/`x509`/`fed`/…), falling back to the
-  provider id only when none were recorded; the MFA second leg folds the
-  verified factor + `mfa` in via `withMFAMethod` (`amr.go`). Login also stamps
-  `acr` from `AuthResult.AchievedACR` (the authenticator's satisfied ACR; empty
-  → claim omitted, the default). The auth_code
-  grant stamps `auth_time` from `AuthCode.AuthTime` captured at issue (OIDC
-  Core §2 — the real /auth/login moment, NOT the exchange time; sqlite v2
-  column, zero→falls back to now), but its `AMR` is still the stored provider
-  id (the grant record doesn't persist `AuthMethods` yet); device likewise.
-  Refresh propagates original `AMR` without resetting
-  `AuthTime`; token-exchange propagates `AuthTime`+`ACR`+`AMR`+`SID` from
-  the inbound subject_token (multi-hop `act` chain prepended,
-  time-ordered); `client_credentials` sets `ClientID` only. `jti` always
-  auto-generated.
-- **Discovery is derived** from server state — endpoints from request base
-  URL, scopes from `openid` ∪ every client's `AllowedScopes`, opt-in
-  features (PAR/DCR/JARFetcher/mTLS/BCL/MFA/JWE-JAR) flip flags only when
-  wired. New opt-in → branch the doc.
-- **`iss` on authorization responses** (RFC 9207). Every `/auth/login`
-  response (success/error/provider-list) carries `iss` via
-  `s.resolveIssuer(ctx)` (= discovery `issuer`). New authorization
-  handlers MUST use `s.authzErrorBody(ctx, code)`, not `errorBody`.
-- **JWKS + discovery caching.** JWKS stamps `Cache-Control: public,
-  max-age=<ttl>` + strong `ETag=sha256(body)[:8]` (default 5min,
-  `WithJWKSCacheTTL`); rotation serves outgoing + incoming keys; concurrent
-  doc computes are single-flighted (TTL-free, so a rotation still shows on
-  the next poll). Discovery double-cached: `WithDiscoveryCacheTTL` (5s,
-  snapshot) + `WithDiscoveryDocCacheTTL` (5s, body + `ETag` per base URL,
-  multi-host safe, `If-None-Match` → 304). Body TTL 0 disables in-process
-  cache AND headers.
-- **Cache headers on credential endpoints** (RFC 6749 §5.1): `/token`,
-  `/token/introspect`, `/token/revoke[-all]`, `/par`, `/auth/login`,
-  `/userinfo`, `/register*` stamp `Cache-Control: no-store` +
-  `Pragma: no-cache` via `tokenNoStoreHeaders(ctx)` — including error
-  responses (a cached cross-user 401 from `/userinfo` is catastrophic).
-- **WWW-Authenticate on 401** (RFC 6750 §3) via `setBearerChallenge`:
-  missing-token omits `error=`; validation failure carries
-  `error="invalid_token"`. Descriptions pass `security.QuoteAuthParam`
-  (anti auth-param injection).
-
----
-
-## 3. OAuth 2.0 / OIDC surface
-
-One row per spec. **File** = current owner: Server-coupled glue lives in
-`server_extensions.go`/`handlers.go` (root), hexagonal bodies in
-`oauth/`+`oidc/`. §2 gotchas apply across grants.
-
-| Spec | Endpoint(s) | Opt-in | File |
-|---|---|---|---|
-| RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `oauth/auth_code.go` |
-| RFC 6749 §4.4 client_credentials | `/token` | always | `oauth/client_creds.go` |
-| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; opt-in benign-double-submit grace `WithRefreshRotationGrace(window)` (`refresh_grace.go`) — caches the rotated successor per consumed token for `window` so a concurrent re-submit (multi-tab/retry) replays it idempotently instead of tripping family-reuse; nil/0 = strict single-use, post-window replay still kills the family | `oauth/refresh_token.go` |
-| RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `oauth/auth_code.go` |
-| RFC 7662 introspection | `/token/introspect` | always | `oauth/handle_introspect.go` |
-| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk via `RefreshTokenSubjectIndex`; access-token deny-set is exp-bounded (pruned at/after `exp`); opt-in cross-replica propagation `WithCrossReplicaRevocation` (broadcasts the revoked token+exp over `cluster.Bus` `KindTokenRevoked`, peers ADOPT local-only — additive, oracle-safe, fail-open, no re-broadcast; nil=local-only); opt-in DURABILITY across restart via `With{Algo}RevocationStore` (`defaultimpl.RevocationStore` memory+sqlite; issuer persists each Revoke + `SeedRevocations` re-seeds at boot; Validate stays on the fast in-process map; cmd `keys.signing.revocation_backend`) — orthogonal to the live bus, closes the restart/late-join resurrection gap | `oauth/handle_revoke.go` + `defaultimpl/revocation_set.go` + `defaultimpl/sqlite/revocations.go` |
-| RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `oauth/device_code.go` |
-| RFC 8693 token-exchange | `/token` | always; refresh via `WithRefreshTokenStore`; actor replay via `WithJTIReplayStore` | `handlers.go` + `oauth/token_exchange_helpers.go` |
-| RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | per-grant |
-| RFC 9126 PAR | `/par` | `WithPARStore` | `oauth/handle_par.go` |
-| RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `oauth/handle_register.go` |
-| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` (§3.1.3.6) stamped whenever an `access_token` rides the same response (`IDTokenRequest.AccessToken`), hash per the id_token signing alg (EdDSA→SHA-512, ES256/RS256/PS256→SHA-256), left-half base64url; empty→omitted (byte-identical) | `handler.go` + `oidc/userinfo_signing.go` + `defaultimpl/at_hash.go` |
-| OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `handlers.go` + `oidc/discovery_doc_cache.go` |
-| OIDC RP-Initiated Logout | `/end_session` | always | `oidc/handle_end_session.go` |
-| OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP via `WithSubjectClientIndex` | `server_extensions.go` |
-| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `server_extensions.go` |
-| OIDC `sid` claim | access + id + logout | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
-| OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `handler.go` + `oauth/par.go` + `server_extensions.go` |
-| OIDC Form Post Response Mode | `/auth/login`, `/par`, JAR | always | `oidc/form_post.go` |
-| JARM | `/auth/login` `response_mode={jwt,query.jwt,fragment.jwt,form_post.jwt}` | `WithJARM(signer)` (reuse signing issuer; fail-closed without) | `oidc/jarm.go` |
-| OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
-| RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS`; assertion sig verified via `security.VerifyCompactJWS` (asymmetric allowlist `security.AsymmetricJWSAlgs`: EdDSA/ES256/384/512/RS256/PS256 — alg-confusion-safe, no alg=none/HS\*) | `server_extensions.go` |
-| RFC 9207 AS Issuer Id | every `/auth/login` | always | `handlers.go` |
-| RFC 9068 JWT Access Token | `{Ed25519,ECDSA,RSA}JWTIssuer` (EdDSA/ES256/RS256\|PS256) | always; alg gate `WithSupportedSigningAlgs`, strict per-issuer kid→alg; `Rotate`/`Retire`/`StartRotation` + `With{Algo}ExternalSigner` KMS/HSM seam (peers: `kms/{awskms,gcpkms,azurekeyvault,pkcs11}` + in-core `defaultimpl/vaulttransit`; EdDSA only on gcp/pkcs11/vault) + `CryptoSigner()` stdlib accessor (SAML XML-DSig) | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` + `defaultimpl/crypto_signer.go` |
-| RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
-| RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
-| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; proof sig (header `jwk`, OKP/EC/RSA) verified via `security.VerifyCompactJWS` (asymmetric allowlist `security.AsymmetricJWSAlgs`; DPoP usually ES256); `cnf.jkt` = RFC 7638 thumbprint per kty (OKP crv/kty/x · EC crv/kty/x/y · RSA e/kty/n); replay via `WithJTIReplayStore`; nonce via `WithDPoPNonceProvider`; iat window via `WithDPoPProofMaxAge`/`WithDPoPMaxClockSkew` (default 60s each) | `server_extensions.go` |
-| RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `handlers.go` |
-| OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
-| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)`; rules: PAR-only, signed request, S256, code-only, sender-constrained, no shared secret | `fapi/` + `handler.go` |
-| RFC 9396 RAR | `authorization_details` | per-client allowlist | `oauth/rar.go` |
-| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; request-object sig verified via `security.VerifyCompactJWS` (asymmetric allowlist `security.AsymmetricJWSAlgs`); URL fetch `WithJARFetcher` + `AllowedRequestURIs`; required via `Client.RequireSignedRequestObject` | `server_extensions.go` + `security/jar_fetch.go` |
-| RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key auto-published in JWKS `use:enc` | `security/jwe.go` |
-| OIDC Core §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg`/`_Enc`; RP key from `Client.JWKS` `use:enc` | `oidc/userinfo_signing.go` + `server_extensions.go` |
-| OIDC Core §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg`/`_Enc` | `oidc/userinfo_signing.go` |
-| OIDC CIBA Core 1.0 (poll + ping) | `/backchannel-authentication`, `/token` (`grant=…:ciba`) | `WithCIBA`; ping via `WithCIBAPingNotifier` + `ResolveBackchannelAuthRequest` (detached ping goroutine is supervised: bounded `cibaPingDeliveryTimeout` + recover + `sso_ciba_ping_total` / `ciba_ping_failed` audit) | `oauth/ciba.go` + `oauth/handle_ciba.go` |
-| MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` (gated by Risk `RequireMFA`) | `handlers.go` + `spi/mfa.go` |
-| Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
-| SPIFFE JWT-SVID token-exchange | `/token` (`subject_token_type=jwt`, `sub` = `spiffe://` URI) | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` — validates the SVID vs the SPIRE trust-bundle JWKS (`security.VerifyCompactJWS`, no alg=none); strict `aud`+trust-domain; maps `spiffe://`→Subject (AMR `["spiffe"]`, ClientID set); tried only as a fallback after the local-issuer path; all failures→`invalid_grant` (oracle-safe); nil=off; JWT-SVID only | `security/spiffe_svid.go` + `security/jwks_verify.go` + `handlers.go` |
-| OpenID SSF v1 (CAEP+RISC) SET push — transmitter | none (push to the RP receiver in `Client.Attributes`) | `WithCAEPTransmitter`; signed SET via issuer `SignJWT` (`typ:secevent+jwt`); scoped to the affected client/tenant (no cross-tenant leak); async best-effort | `caep/` |
-| OpenID SSF v1 SET receive — receiver | `/ssf/receive` (`PathSSFReceive`) | `WithCAEPReceiver` — consumes inbound SETs from configured trusted transmitters (`security.VerifyCompactJWS` + iss-allowlist + `aud` + jti-replay, FAIL-CLOSED) → revokes local access via subject mapping (`sub_id`/`iss_sub`); error `invalid_key` (RFC 8935); audit `ssf_event_received`/`ssf_revocation` | `caep/receiver.go` |
-| Envoy/Istio ext_authz (HTTP mode) | `/mesh/ext-authz` (GET+POST, default path) | `WithMeshExtAuthz(path)` — validates the bearer EXACTLY like `/userinfo` (`validateAnyToken` + DPoP/mTLS sender-constraint, so a stolen sender-constrained token can't replay as a plain bearer); ALLOW 200 + derived `X-Auth-{Subject,Client-Id,Scopes,Expires}` (+`X-Auth-Roles` if permissions wired), else 401 DENY `invalid_token` oracle-safe no body; `tokenNoStoreHeaders`; read-side residency gate (§4); mesh MUST strip client-supplied `X-Auth-*` (edge-strip §2); nil=off; dep-free `MeshAuthorize` seam reused by the gRPC variant | `handler.go` + `mesh_authz.go` |
-| Envoy/Istio ext_authz (gRPC mode) | `envoy.service.auth.v3.Authorization` | `extauthz` nested module (`NewAuthorizationServer(srv)`); SAME `MeshAuthorize` decision as the HTTP row — ALLOW injects `X-Auth-*` (`HeadersToRemove`+OVERWRITE edge-strip), DENY=`PERMISSION_DENIED` 401 no body; surfaces the RFC 9449 §8 `DPoP-Nonce` on DENY | `extauthz/authz.go` |
-| SAML 2.0 (SP+IdP, SSO+SLO) | `/auth/saml/callback`+`/auth/saml/slo` (SP); `/saml/{metadata,sso,sso/finish,slo,slo/continue}` (IdP) | `saml` nested module (`saml.Build(deps,cfg)`→operator-fork mounts); SP consumes a pinned-cert IdP assertion (XSW-resistant: SignedInfo-ref'd, boot-pinned cert, ≠1-assertion reject), IdP mints enveloped-XML-DSig assertions per-tenant (`CryptoSigner()`; RSA/ECDSA-DER only, EdDSA→`saml_assertion_failed`); SLO back-channel fan-out + front-channel chain (detached §3.4.4.1 sigs, single-use rotating state); oracle-safe (`saml_assertion_invalid`/`saml_request_invalid`); ACS/SLO URL allowlist + https-only SSRF gate; sqlite replay/index peers | `saml/saml.go` |
-| Kerberos/SPNEGO (Windows Integrated Auth) | `/auth/kerberos` (Negotiate, cmd-mounted) | `kerberos` nested module (`kerberosauth.Build(deps,cfg,validator)`); RFC 4559 401-Negotiate handshake; validates AP-REQ against the KEYTAB (fail-closed: sig+lifetime+per-process replay cache), maps `principal@REALM`→Subject (AMR `["krb5"]`, RFC 9068 ClientID), mints via per-tenant issuer/session seams; oracle-safe `invalid_token`+retry; NO refresh; gokrb5 replay cache is PER-PROCESS → multi-replica needs sticky affinity; optional `MaxClockSkew`; secret-free `login_failure` audit | `kerberos/handler.go` |
-| RADIUS authenticator | via `allowed_authenticators` (operator-fork `WithAuthenticator`) | `radius` nested module — `sso.Authenticator` relaying PAP Access-Request to an external RADIUS server, maps Access-Accept→Subject (AMR `["radius"]`, `AuthMethodRADIUS`); RadSec/RFC 6614 TLS option; anti-enumeration (Reject→one `ErrAuthFailed`, transport→`ErrServerUnavailable`); Response-Authenticator validated un-skippable | `radius/authenticator.go` |
-| WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}`; AAGUID allowlist/denylist gated at `FinishRegistration` AFTER go-webauthn verifies attestation; active policy requires conveyance≥direct (boot guard) + rejects `none`-attestation; optional FIDO MDS (`BuildMDSProvider`, JWS-rooted at FIDO ProductionMDSRoot) makes the gate adversary-resistant; new code `attestation_denied` (403, oracle-safe) | `authenticators/webauthn/{attestation_policy,mds}.go` |
-| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck(ttl)`; tenant `HomeRegion`/`AllowedRegions`/`EnforceWrites` gate the serving region: write-gate on every login mint (`residencyGateLogin`), read-gate on resource access (`residencyDeniedForAccess`); fail-OPEN on tenant-store outage (AP/governance); `region_not_allowed`/`residency_violation` are governance codes (reveal residency binding like `tenant_mismatch`, NOT credential oracles); `/token` grant-side + introspect deliberately uncovered | `region/region.go` + `server_extensions.go` |
-| SCIM 2.0 provisioning (RFC 7643/7644) | `/api/v1/scim/v2/{Users,Groups,ServiceProviderConfig,Schemas}` (admin-gated, method→scope) | in-core `scim.NewHandler(users, basePath, WithRecorder, WithGroups(provider, clientID))`, cmd-mounted; Users CRUD+PATCH+`?filter=`; Groups optional (permissions-backed, `scim.groups.enabled`); SCIM attrs in `core.User.Attributes` `scim:` namespace; own `scimType` taxonomy (`application/scim+json`, NOT the OAuth `error`) | `scim/handler.go` |
-| OpenID Federation 1.0 — entity config (slice 1: OP as entity) | `/.well-known/openid-federation` | `WithFederationEntity(cfg, signer)` — serves the OP's SELF-SIGNED Entity Statement (`iss==sub==issuer`, `typ entity-statement+jwt` via issuer `SignJWT`, `jwks`=published keys, `metadata.openid_provider` DERIVED from discovery via `BuildOPMetadata` [byte-identical], `authority_hints`+`federation_entity` from cfg); ETag→304, Cache-Control public max-age (PUBLIC, not no-store); signing failure→500; `federation/` imports core+security only; `FederationNow` clock seam; nil=off (route unmounted) | `federation/` + `handlers.go` |
-| OpenID Federation 1.0 — trust-chain resolution+validation (slice 2: the trust boundary) | none (internal `federation.TrustChainResolver` via `EntityHandler.Resolver()`; no anchors→`ErrFederationResolverDisabled`, slice-1 byte-identical) | `ResolveTrustChain(ctx, leafEntityID)` walks `authority_hints` up to an operator-CONFIGURED `TrustAnchor` (cmd loads `jwks_file`→`TrustAnchor.Keys` at boot, unloadable=boot error); FAIL-CLOSED canonical chain `[leafConfig, SS_1..SS_n, anchorConfig]` (intermediates' own configs NAVIGATION-only), per-hop `security.VerifyCompactJWS` with key provenance TOP-DOWN (anchor vs CONFIGURED keys never fetched; each SS vs the keys the link above vouched; leaf vs `SS_1.jwks`, not self-asserted), `typ`+iss/sub+exp/iat per hop, path-length + cycle + total-fetch bounds; SSRF fetcher (`EntityStatementFetcher`, default https-only + no-redirect + bounded + best-effort internal-IP block; full SSRF needs operator egress policy); `metadata_policy` (§10) merged top-down→leaf `openid_relying_party` (value/add/default/one_of/subset_of/superset_of/essential; conflict/violation=reject); all failures→one `ErrTrustChainInvalid` (oracle-safe); `WithTrustChainClock` | `federation/trust_chain.go` + `fetcher.go` + `metadata_policy.go` |
-| OpenID Federation 1.0 — automatic client registration (slice 3) | existing `/auth/login` (+`/token` for client auth) | `WithFederationAutoRegistration()` decorates the `ClientStore`: on a `Get` MISS when federation is active AND `client_id` is a valid HTTPS entity ID (`validateFederationURL`), resolves the RP chain (slice 2) + DERIVES a `core.Client` from the POLICY-CONSTRAINED `openid_relying_party` via `MetadataToClient` (`JWKS`=chain-vouched keys for `private_key_jwt`/JAR, `Secret=""` NEVER, `Federation=true`, auth_method `none`→RequirePKCE); pre-registered client WINS (short-circuits before any fetch); invalid/forged/unanchored/expired chain→the wrapped store's ORIGINAL miss (byte-identical `invalid_client`, oracle-safe); the derived client runs the SAME authz validation, bounded by `metadata_policy` (disallowed redirect/response_type/scope simply ABSENT); cached per entity ID bounded by `TrustChain.Expiry`, concurrency-safe; REQUIRES `WithClientStore`+`WithFederationEntity` with anchors else INERT; cmd `federation.auto_register` (boot error without `trust_anchors`) | `federation/registration.go` + `sso.go` |
-| OpenID Federation 1.0 — §6.2 constraints + §7 trust marks (slice 4) | none (additive gate on slice 2/3) | trust-chain `EntityConstraints` (§6.2: `max_path_length`, `NamingConstraints` [leading-dot subtree], `allowed_entity_types`) enforced as the validated chain's tail (additive, fail-safe); `RequiredTrustMarkTypes` (§7) requires an auto-registering RP to carry a `trust-mark+jwt` of each type SIGNED by a configured (or, opt-in `AllowFederationResolvedTrustMarkIssuers`, federation-resolved) authorized Trust Mark Issuer (`sub`==RP, signed `trust_mark_type` authoritative, iat/exp fresh); any fail→the slice-3 unknown-client path (oracle-safe) | `federation/constraints.go` + `trust_marks.go` |
-| OpenID Federation 1.0 — §8 Federation Fetch (this server as SUPERIOR) | `/fetch` (`GET ?sub=<subordinate>[&iss=<this server>]`) | `WithFederationEntity` cfg `Subordinates []SubordinateEntity{EntityID, JWKSFile→Keys, MetadataPolicy?, Constraints?}` — issues a SIGNED Subordinate Statement AUTHORED from OPERATOR CONFIG (`iss`==this server, `sub`==looked-up subordinate, `jwks`==the subordinate's vouched keys, NOT request input; + optional imposed `metadata_policy`/`constraints`) via issuer `SignJWT`; ETag→304, Cache-Control public max-age (not no-store); missing `sub` / `iss`≠this server→400 `invalid_request`, unknown `sub`→404 `not_found`, signing→500 `internal_error` (§8 FEDERATION error JSON `{error,error_description}`, NOT the OAuth shape, own error-codes section); per-`(iss,sub)` cache; `federation_fetch_endpoint` advertised + route mounted ONLY when subordinates configured (else slice-1 byte-identical); slice 2 CONSUMES what §8 issues (`FetchSubordinateStatement` round-trip); cmd loads each `subordinates[].jwks_file`→Keys at boot (unloadable=boot error) | `federation/fetch.go` + `handlers.go` + `sso.go` |
-
-**JWE decrypters/encrypters** (JAR-in, id_token-out, userinfo-out):
-`RSA` (RSA-OAEP-256 + A256GCM, default), `ECDH` (ECDH-ES), or `Multi`
-(composes both, selects by the RP's published key type).
-
-**Token strategies** (per-client `token_strategy: jwt|session`): `jwt` —
-stateless, signed + JWKS (pass one `Ed25519JWTIssuer` to both
-`WithTokenIssuer` + `WithIDTokenIssuer`); `session` — opaque, backed by
-`SessionManager`. Register via `sso.WithTokenIssuer(name, issuer)`.
-
-**Signing-key lifecycle.** The 3 issuers (`Ed25519`/`ECDSA`/`RSA`) route
-signing through a `{Algo}Signer` seam — default in-process, or
-`With{Algo}ExternalSigner` for a KMS/HSM key that never enters the process
-(`defaultimpl/cryptosigner` bridges any `crypto.Signer`; ECDSA DER→R‖S).
-External peers `kms/{awskms,gcpkms,azurekeyvault,pkcs11}` + in-core
-`defaultimpl/vaulttransit`: ES256 (P-256, via the bridge) + RS256/PS256,
-Ed25519 only on gcp/pkcs11/vault, AWS+Azure → `ErrUnsupportedKey` (per-peer
-traps §4).
-KMS/HSM sign is a 5-50ms round-trip → extend token TTL / cache. The 3 issuers
-also expose `CryptoSigner()` for a stdlib `crypto.Signer` (SAML XML-DSig).
-`RotateKey`/`RetireKey` do overlap-window rotation (demoted key stays
-verify-only in JWKS through its TTL); `StartRotation` runs the scheduled
-loop; cmd wires `keys.rotation.*` → `signing_key_rotated` audit +
-`sso_signing_key_rotations_total` + busts the signed-discovery cache.
-Single-issuer cluster: leader, shared KMS signer, or leaderless aggregation
-(below). Alg via `keys.signing.alg` (`eddsa|es256|rs256|ps256`); each issuer
-accepts ONLY its own alg, so `validateAnyToken` is structurally
-alg-confusion-safe. **Same-kid multi-replica rotation** (shared KMS signer)
-can deadline-COORDINATE the cutover: `WithCoordinatedKeyRotation`
-(`keys.rotation.coordinated_cutover`) broadcasts the demoted+new kids + a
-`now+GracePeriod` retire deadline over `cluster.Bus`
-(`KindSigningKeyRotation`) so every replica retires the old kid at the SAME
-instant — eliminating the rolling-deploy `unknown kid` 401. FAIL-SAFE: the
-deferred retire only ever WIDENS the verify window (clamped ≥ the local grace
-floor, never retires early; the local timer is the floor), nil/unarmed =
-byte-identical; `sso_signing_key_cutover_total`, audit
-`signing_key_rotation_coordinated`.
-
-**Leaderless multi-replica aggregation** (opt-in, `signingkeys/`). When
-replicas each hold their OWN per-process signing key (distinct kid, no shared
-KMS), a token signed by A fails on B. `WithSharedSigningKeyRegistry` +
-`StartSigningKeyAggregation` fix it: each replica PUBLISHES its signing PUBLIC
-keys to a shared `signingkeys.Registry` and ADOPTS peers' keys VERIFY-ONLY
-(`{Ed25519,ECDSA,RSA}JWTIssuer.AdoptVerifyKey/DropVerifyKey` into the
-matching-alg issuer), so JWKS + Validate serve the union while each replica
-still SIGNS only with its own key. Adoption is alg-matched BEFORE install
-(RS256≠PS256 skipped — alg-confusion-safe); peer-key decode fails OPEN (logged
-+ skipped); adopted keys sit in a separate verify set untouched by local
-`RotateKey`/`RetireKey`. **`WithSigningKeyReplicaID` is REQUIRED** once wired.
-Re-publish on rotation. The adoption loop SELF-HEALS: a watch-death (Subscribe
-close while ctx live) flips a degraded flag (→ `signing-key-aggregation`
-/readyz 503 + `signing_key_aggregation_degraded` audit + metrics §5), backs
-off, resubscribes (re-seeding `List`); a clean ctx-cancel exits WITHOUT
-degrading. Backends: `memory` (single-process) + `etcd` (KeepAlive'd lease; a
-crashed replica's expiry drops its keys). Nil registry = zero regression.
-
----
-
-## 4. Subsystems
-
-Map only — locator + key trap + file pointer. Code is the source of truth.
-
-**External signers** (`With{Algo}ExternalSigner` fleet — §3 lifecycle). All
-bridge via `defaultimpl/cryptosigner` (ECDSA DER→R‖S), fail closed, amortize
-over token TTL/cache, and enforce the ECDSA hash↔curve pairing fail-closed (a
-caller can't sign under a hash disagreeing with the curve's ES\* alg JWKS
-publishes). Through the cryptosigner issuer bridge, ECDSA = **ES256 (P-256)
-only** + RSA RS256/PS256; ES384/512 reachable only as a bare `crypto.Signer`.
-The 4 `kms/*` are SEPARATE nested modules (vendor SDK out of core go.mod;
-**no `go.work`** — it would
-surface in root `go list -m all`); `defaultimpl/vaulttransit` is IN-CORE
-dep-free (net/http only — a runtime HTTPS call ≠ a go.mod dep). Per-peer traps:
-
-| peer | dep | ECDSA out | Ed25519 | trap |
-|---|---|---|---|---|
-| `kms/awskms/` | `aws-sdk-go-v2` | DER | no → `ErrUnsupportedKey` | private key never leaves the HSM (FIPS/PCI/SOC2) |
-| `kms/gcpkms/` | `cloud.google.com/go/kms` | DER | **yes** (`EC_SIGN_ED25519`, un-prehashed `Data`) | key = a `CryptoKeyVersion` (the version fixes the scheme) |
-| `kms/pkcs11/` | `miekg/pkcs11` | RAW R‖S→DER | **yes** (`CKM_EDDSA`) | **CGO** (`CGO_ENABLED=1` + C toolchain to build); RS256 over DigestInfo, PSS salt=hashlen |
-| `kms/azurekeyvault/` | `azure-sdk-for-go` `azkeys` | RAW R‖S→DER | no → `ErrUnsupportedKey` | own signing pubkey from a raw JWK (N/E/X/Y, not x509 SPKI), on-curve + `e<3`/even + 2048-bit rejection |
-| `defaultimpl/vaulttransit/` | none (in-core) | DER (`marshaling_algorithm=asn1`) | **yes** (raw message un-prehashed) | RSA `pss`/`pkcs1v15`; `TokenSource` per request; `https`-only verifying TLS (never InsecureSkipVerify); token never logged |
-
-**SQLite substrate** (`defaultimpl/sqlite/`). Pure-Go
-(`modernc.org/sqlite`). Race-free via `DELETE … RETURNING` (single-use
-stores), `UPDATE … RETURNING WHERE expires_at>now AND revoked=0` (session
-refresh), `INSERT … ON CONFLICT` (JTI/index upserts), `BEGIN IMMEDIATE`
-(lockout RMW). Prod DSN `file:/var/lib/sso/sso.db?_journal=WAL`; tests
-`file::memory:?cache=shared`. `sql.ErrNoRows` → typed `ErrNoSuchX`;
-timestamps Unix-ns INTEGER.
-
-**Redis hot-path peer** (`redis/`, SEPARATE nested module — go-redis out of
-core go.mod; `ci-modules` builds + race-tests against miniredis, NO real
-Redis). The >1k-QPS multi-replica scale layer; SQLite stays the embedded
-fallback. Peers for the full hot-path set (`SessionManager`;
-`RefreshTokenStore` + Inspector/Subject Index/Counter/ClientPurger/
-FamilyTracker; `AuthCodeStore`; `PARStore`; `JTIReplayStore`;
-`ratelimit.Limiter`; `DeviceCodeStore`; `MFAChallengeStore`; `CIBAStore`),
-each mirroring its SQLite atomic: Consume = **GETDEL** (single-use, §2
-oracle-leak); session Refresh = **Lua** (refuses expired/revoked before
-extending); JTI MarkSeen = **SET NX EX**; rate-limit Allow = **Lua
-INCR+EXPIRE** (fixed-window, fails OPEN per §2); CIBA SetStatus = **Lua
-KEEPTTL** pending-only guard (Get/poll collapse unknown/expired to one
-`ErrCIBARequestNotFound`); device user_code = pointer key → canonical record;
-refresh families ride a `consumed:<tok>` marker + family/subject/client SET
-indexes → reuse → `ErrRefreshTokenReused` → `DeleteFamily`. Wire via the same
-`WithSessionManager`/`WithRefreshTokenStore`/`WithAuthCodeStore`/`WithPARStore`/
-`WithJTIReplayStore`/`WithDeviceCodeStore`/`WithMFAChallengeStore`/`WithCIBA`/
-`WithRateLimit`. Fail-closed on `/token` per §2; cross-region replication-lag
-caveat (run single-use traffic on the primary).
-
-**Migrations** (`migrate/`, pure-Go). Backends declare
-`[]migrate.Migration` and route `New`/`NewWithDB` through `migrate.Run(ctx,
-db, "<ns>", …)`; v1 = existing schema (populated DBs no-op + stamp).
-Per-store namespace (`schema_migrations_<ns>`), forward-only, one `BEGIN
-IMMEDIATE` txn (serialize via the runner's `PRAGMA busy_timeout`, NOT the
-DSN param modernc ignores). New column/index → append v2+. Inspect offline:
-`sso-migrate status --dsn`.
-
-**Cluster-shared backends** — each has a memory + sqlite peer; memory
-`Ping` is a no-op, cmd auto-registers `sqlite-<subsystem>` readychecks
-only when the backend exposes `Ping`. YAML toggles:
-
-| Subsystem | toggle |
-|---|---|
-| Identity (User/Client/Session) | `identity.backend` |
-| OAuth (AuthCode/Refresh/Device/PAR) | `oauth.<store>.backend` |
-| JTI replay / Account lockout | `security.{jti_replay,account_lockout}.backend` |
-| Pairwise subjects | `server.pairwise_subjects.backend` |
-| BCL subject-client index | `backchannel_logout.index.backend` |
-| Rate limiter | `security.rate_limit.backend` |
-| WebAuthn (users + sessions) | `webauthn.storage.{users,sessions}.backend` |
-| MFA challenges / Push approvals | `mfa.{challenge,provider.push}.backend` |
-| CIBA requests | `ciba.backend` |
-| Audit sink / Permissions | `audit.backend` / `permissions.backend` |
-| Tenants + Domains | `tenant.backend` |
-| Recent logins / IP failure counter | `anomaly.{recent_login,ip_failure}.backend` |
-| Signing-key registry (opt-in leaderless aggregation; memory+etcd) | `keys.signing_key_registry.backend` |
-| Network policy / Service registry (memory+etcd) | `network.store.backend` / `registry.backend` |
-
-**Authenticators** (`authenticators/`). 9 pluggable: `password`, `phone`,
-`email`, `temp_token`, `keypair`, `apikey`, `certificate`, `totp`,
-`oidc_federation` (Google/Microsoft/GitHub/Auth0/Keycloak via
-`?provider=`). `allowed_authenticators` per client gates methods; unknown
-password users hit a cost-matched dummy bcrypt hash. **WebAuthn**
-(`authenticators/webauthn/`): the four-call ceremony doesn't fit the SPI,
-so cmd mounts `/webauthn/{registration,login}/{begin,finish}`;
-`login/finish?client_id=` mints tokens (AMR `["webauthn"]`). The `password`
-authenticator optionally chains a `spi.PasswordHealthChecker`
-(`WithPasswordHealthChecker`, reference `DictionaryPasswordHealthChecker`):
-a fail-open, NON-blocking signal run AFTER bcrypt verify. A hit rides on
-`AuthResult.CredentialHealth` (`json:"-"`, NEVER in tokens — keep it OFF
-`Attributes`, which flows into id_token claims) and surfaces as a
-`password_weak`/`password_compromised` audit event (Outcome=success); adds
-no wire error.
-
-**Risk scoring** (`spi/risk.go`). `RiskScorer` runs on `/auth/login` AFTER
-creds, BEFORE issuance → `Allow`/`RequireMFA`/`Deny` (403). Fail-open,
-zero overhead when unset. Reference `RuleBasedRiskScorer` (IP/country
-deny-allow lists; `deny_on_geo_missing` hardens when geo absent). Richer
-scorers own their store inside `Score` — don't pad `RiskRequest`.
-
-**Anomaly detection** (`anomaly/` + `defaultimpl/detectors/`). Async, OFF
-the request path, on every login event; surfaces via audit + webhook,
-NEVER feeds back into the decision. `AsyncAnomalyRunner` worker pool (1024
-queue / 4 workers / drop-newest); nil = zero overhead. Per-detector inspect
-timeout `WithInspectTimeout` (default 5s, `anomaly.runner.inspect_timeout`);
-drop-RATE derivable from `sso_anomaly_dispatch_{received,drops}_total`.
-Detectors: `ImpossibleTravel` (haversine, 800km/h ceiling), `Velocity`,
-`NewDevice`, `NewCountry`, `BruteForceShadow` (cross-account same-IP via
-`IPFailureCounter`). State in `RecentLoginStore` (hashed/PII-light) +
-`IPFailureCounter`.
-
-**MFA orchestration** (`handler.go` + `handlers.go`; SPI `spi/mfa.go`).
-Two-leg step-up gated by Risk `RequireMFA`; without both `WithMFAProvider`
-+ `WithMFAChallengeStore` it decays to Allow. `/auth/login` returns
-`{error: mfa_required, mfa_challenge_id, mfa_methods, iss}` (HTTP 200);
-client POSTs `/auth/mfa` → server replays `finishLogin` on frozen state.
-Single-use `Consume`. Providers: `TOTP` (1-call), `WebAuthn`/`Push`
-(2-call), `Multi` (composes; name conflicts rejected at construction).
-Audit: `mfa_required`/`mfa_success`/`mfa_failure`.
-
-**Audit** (`audit/`). `Recorder` fans Events (each carries W3C
-`TraceID`/`SpanID`) to `Sink`s. Compose **Async → Multi → Retry → leaf**:
-`WithHashChain` (`PrevHash`+`Hash`; `VerifyChain` oldest-first;
-`sso-audit-verify` CLI), `WithRedactor` (runs BEFORE the chainer),
-`NewRetryingSink`, `NewAsyncSink` (bounded, never blocks, drops on full).
-Query has an OPTIONAL `FacetQuerier` (`Facets(ctx, Query) → *Facets`,
-type-asserted) backing the admin-gated `GET /api/v1/audit/facets`; 501 when
-the Sink lacks support. Bounded dimensions only —
-outcome/type/client/provider (§5 cardinality rule). Memory + sqlite reuse the
-same `Query.Match`/WHERE builder (`audit/sqlite/facets_conformance_test.go`
-locks memory==sqlite).
-
-**Permissions** (`permissions/`). Per-app role registries, wildcard matcher
-(`user:*` ⊇ `user:read`, `*` ⊇ all), menu filtering, login embedding via
-`WithEmbedPermissionsInLogin()`. SQLite peer: 3 tables; `RemoveRole`
-transactionally strips the code from every assignment.
-`permissionstest.ConformanceSuite` locks memory/sqlite equivalence.
-**Decentralized authz** (`policy_bundle.go`): read-only admin export `GET
-/api/v1/admin/authz/policy-bundle?client_id=` (admin:read, via the
-`/api/v1/admin/` prefix) serializes ONLY role DEFINITIONS (code → permissions[] + static `WildcardSemantics`), NOT
-per-subject assignments — for sidecar local enforcement (OPA/Cedar; ref Rego
-`docs/examples/opa-authz-policy.rego`; pairs with `WithEmbedPermissionsInLogin`).
-ETag-cached, content-hash EXCLUDING `generated_at`; 304 on `If-None-Match`;
-`WithAuthzPolicyBundleCacheTTL` (default 5m). Role/menu mutations fire
-`InvalidateAuthzPolicyBundleCache` (local + bus `KindAuthzPolicyChange`,
-fail-open) via the nil-safe callback on `grpcserver.PermissionAdminService`
-(callback-field pattern, NOT a `*sso.Server` injection).
-
-**Compliance** (`compliance/`). GDPR Art. 17/15/20 (+ CCPA/PIPL) workflows
-no single SPI owns. `Eraser`: revoke refresh tokens (per client) → destroy
-sessions → delete user — credentials-first so a mid-way failure leaves the
-subject locked-out not half-usable; idempotent; best-effort `Report`
-(per-step errors never abort siblings); `DryRun` previews. `Exporter`: JSON
-bundle from `UserProvider` + `SessionManager` + pluggable `SubjectExporter`s
-(refresh tokens excluded — exporting opaque secrets leaks). Pure: composes
-existing SPIs, adds no storage, emits no audit (the caller records). cmd
-mounts `/api/v1/compliance/users/:id/{export,erase}` under `AdminMiddleware`
-(read|write).
-
-**Service registry** (`registry/`). `memory` (TTL+Watch) / `etcd`
-(lease+KeepAlive) via `registry.backend`. cmd self-registers `Name:"sso"`,
-`Service.ID = registry.service_id` (default `<issuer>-<short-hostname>`,
-prevents replica clobber), TTL 30s under etcd.
-
-**gRPC** (`proto/` + `grpcserver/`). Services **reuse the same**
-`audit.Recorder` / `permissions.Provider` / `registry.Registry` as HTTP.
-`sso.AdminMiddleware` validates Bearer, requires `admin:read`/`admin:write`
-(`admin:*` ⊇ both), 401 carries `Bearer realm="admin"`, every mutation
-emits `admin_*` audit. `isAdminProtectedPath` covers `/api/v1/audit/*` +
-`/netpolicy/policies*` + `/classify` + `/api/v1/compliance/*`;
-`/netpolicy/resolve-me` stays open.
-
-| Phase | Services | REST |
-|---|---|---|
-| A core | `audit.v1.AuditWriter`, `authz.v1.Authorizer`, `discovery.v1.Discovery` | — |
-| B netpolicy | `netpolicy.v1.PolicyService` | `/api/v1/netpolicy/` |
-| C admin | `admin.v1.{Client,User,Token,Permission}AdminService` | `/api/v1/admin/` |
-| D | `admin.v1.{Snapshot,Release}AdminService` | `/api/v1/admin/{snapshots,releases}` |
-| E tenant | `admin.v1.TenantAdminService` | `/api/v1/admin/{tenants,domains}` |
-
-**Network policy** (`netpolicy/`). Named classes (intranet/public/dmz/…)
-of CIDRs + hostnames + URLs; hostname-beats-CIDR, priority breaks ties.
-`Classifier` holds a hot snapshot subscribed to `Store.Watch` via `Start`
-(subscribe before the seed `Reload` to avoid lost events). Backends
-`memory`/`etcd`, seeded via `config.ApplyNetworkPolicySeeds`.
-
-**Bootstrap** (`bootstrap/`). Versioned first-run init; Runner re-runs only
-`Version > high-water`. Trackers `memory`/`file`; Lock SPI
-`noop`/`file`/`etcd` (loss → `ErrLockLost` cancels in-flight Steps).
-Built-in steps (namespace `"sso-server"`): v0 `restore_from_snapshot`, v1
-`seed_admin_role`, v2 `seed_admin_user` (**prints the generated password
-ONCE to stdout — capture it**), v3 `seed_default_netpolicy`, v4
-`seed_admin_client`.
-
-**Snapshot** (`snapshot/`). Export/restore operator state. `Restore` modes
-`ModeMerge`/`ModeOverwrite`/`ModeReplace` (`Confirm==SnapshotID`); `DryRun`
-counts only. Sealers (§6) + storage `file`/`inline`; `Pipeline`
-sha256-verifies (`ErrChecksumMismatch`). First-boot auto-restore via
-`snapshot.restore_from` (builtin v0, before seeds). Retention
-`snapshot.PruneOldest` keeps last N. Offline CLI `sso-snapshotctl
-list|inspect|verify`. **Opt-in `SnapshotRedactSecrets()`** (export-time
-`ExportOptions.Redactor` / `Snapshotter.DefaultExportRedactor`,
-`snapshot.redact_secrets`) zeros `Client.Secret` +
-`RegistrationAccessToken` on export-local COPIES — defense-in-depth for
-SAFE-SHARING/inspection, NOT restore (a redacted snapshot's clients
-can't authenticate; encryption stays the restorable-backup path).
-Default nil ⇒ byte-identical export; never mutates the live store.
-
-**Releases** (`releases/`). Frontend+backend version pin/rollback;
-`Validate` refuses one-sided. `Pinner` encodes asymmetric order
-(backend-first forward, frontend-first rollback); backends
-`noop`/`static`/`docker`. Forward `Pin` rejects schema regression
-(`ErrSchemaRegress` → use `Rollback`); `HealthProbe` gates forward
-(all-fail → auto-rollback). REST under `/api/v1/admin/releases`.
-
-**Geo** (`geo/`). IP → enrichment as **UX hint, NOT security**. 200ms
-timeout, `ErrNotFound` non-fatal, nil = no-op. Login response carries
-`country_code` + `recommended_language`; every Event gets `geo.*`.
-
-**Tenant** (`tenant/`). Multi-tenant + multi-domain; a Tenant is the
-business boundary above `Client` (one tenant → many clients).
-`Client.TenantID` set → login + token reject mismatch 403
-`tenant_mismatch`; empty = any. **Active suspension**
-(`WithTenantSuspensionCheck(ttl)`): tenant-bound tokens get a Status
-lookup, Suspended → `ErrTenantSuspended` (cached, default 30s; admin
-`SetStatus` MUST call `InvalidateTenantSuspensionCache`; outage
-fail-open). Without it, existing tokens survive suspension.
-
-**Multi-region / data residency** (`region/`, IN-CORE; §3 row + §6 own the
-gates + governance codes). Opt-in, nil-default byte-identical, non-fatal
-`region.Middleware` (after geo). SPI = `ID`/`Resolver`/`ResidencyPolicy`/
-`PolicyStore` + `ConfigPinned`/`Header`/`Chain` resolvers (header path
-anti-injection allowlisted, `X-Forwarded-*`-class edge header §2) + a `memory`
-peer. The **serving region** (which DEPLOYMENT served the request) is a
-deliberately different namespace from `geo.Region` (where the CLIENT is).
-Tenant gains `HomeRegion`/`AllowedRegions`/`EnforceWrites` (sqlite migration);
-`WithTenantResidencyCheck(ttl)` arms it (admin tenant-mutation MUST call
-`InvalidateTenantResidencyCache`). WebAuthn login (mounted outside the
-`HandlerContext` gate) closes the hole via the context-free `ResidencyDecision`
-seam (cmd resolves the region off the raw request). FAIL-OPEN on tenant-store
-outage. `/token` grant-side + introspect deliberately uncovered (no
-`HandlerContext` in scope).
-
-**CAEP / Shared Signals** (`caep/`). OpenID SSF v1 (CAEP+RISC), bidirectional
-(§3 transmitter + receiver rows). **Transmitter** (`WithCAEPTransmitter`, nil
-⇒ no-op): an `audit.Sink` on the recorder; `event_mapper.go` maps a small
-subset (`refresh_token_reuse_detected`→session-revoked+token-claims-change,
-`tenant_tokens_revoked`→account-disabled+session-revoked, scoped
-`admin_token_revoked`→token-revoked) → signed SET (RFC 8417) → POST. **Scoping
-is the crux**: push ONLY to the AFFECTED client's receiver — client-named
-events → that client; tenant events → `ListByTenant` of THAT tenant only (no
-cross-tenant leak); multi-RP-per-subject fan-out is v2. Receiver endpoint+auth
-come ONLY from `Client.Attributes["caep_receiver_endpoint"|"caep_receiver_auth"]`
-(validated https at create/update, never request input), resolved FRESH per
-send. Async + best-effort + fail-open (dead receiver drops the SET →
-`sso_caep_sets_total` + `caep_broadcast_failed` audit; bounded timeout +
-`recover()`, no retry). jti unique per SET (RP replay defense). **Receiver**
-(`WithCAEPReceiver`, `/ssf/receive`): consumes inbound SETs from configured
-trusted transmitters → local revocation (§3 row).
-
-**SAML 2.0** (`saml/`, SEPARATE nested module, `crewjam/saml` + goxmldsig +
-etree). Full SP+IdP, SSO+SLO (§3 row owns the wire/XSW/cert-pin/allowlist
-gates). A nested module can't import cmd `package main`, so it exports its OWN
-importable `Deps`/`Config`/`HandlerSpec`/`BuildResult` + `Build(deps,cfg)`; the
-operator's fork adapts onto cmd's `SAMLHandlerSet`. SP assertion replay uses a
-bounded per-replica AssertionID store (NOT the OAuth JTI store); IdP signs
-per-tenant via `deps.IssuerForClient` + `CryptoSigner()` (EdDSA →
-`saml_assertion_failed`, fail-closed, never cross-tenant fallback). SLO
-back-channel fan-out is gated by the opt-in `SAMLSessionIndex`; the front-channel
-browser chain uses single-use rotating 256-bit state; LogoutRequest signing is
-MANDATORY. Multi-replica sqlite peers for the replay/index stores (FAIL-CLOSED;
-`saml/samltest` locks memory==sqlite); the two sticky-session browser-flow stores
-stay memory-only by design. https-only SSRF gate throughout.
-
-**LDAP / AD** (`ldap/`, SEPARATE nested module, `go-ldap/ldap/v3`). An
-`sso.Authenticator` (search-then-bind over TLS), registered via the normal
-`WithAuthenticator`/`allowed_authenticators` seam from the operator's fork.
-Injection-safe (`ldap.EscapeFilter` on every user value — the raw value is NEVER
-formatted into a filter); anti-enumeration (unknown user ≡ wrong password → one
-`ErrAuthFailed`, both pay a dummy-bind timing cost like the password
-authenticator's dummy bcrypt); TLS-required default (plaintext/InsecureSkipVerify
-needs an explicit dev opt-out); bind creds + user password never logged;
-DialTimeout/RequestTimeout bound a dead directory.
-
-**Kerberos / SPNEGO** (`kerberos/`, SEPARATE nested module, `gokrb5/v8`). Windows
-Integrated Auth / desktop SSO (§3 row owns the RFC 4559 handshake / KEYTAB
-validation / AMR / per-process-replay / `MaxClockSkew` / oracle-safe gates).
-SPNEGO is a Negotiate-HEADER handshake, so it's a cmd-MOUNTED handler (like
-WebAuthn/SAML) exporting its own `Deps`/`Config`/`SPNEGOValidator`/`HandlerSpec`/
-`Build`. The KEYTAB is the trust anchor + a high-value secret, loaded once, never
-logged. The `principal@REALM`→Subject map carries ONLY the 2 derived
-realm+PAC-group attrs — a ticket can't smuggle a claim. The minimal validator
-seam keeps handler tests KDC-free.
-
-**gRPC ext_authz** (`extauthz/`, SEPARATE nested module, `go-control-plane`).
-The gRPC companion to the in-core HTTP-mode mesh ext_authz (§3 rows). ALL auth
-logic is the dep-free `MeshAuthorize` core seam (`mesh_authz.go`) —
-`*sso.Server` satisfies the package's `MeshAuthorizer`; `Check` does ONLY
-`CheckRequest`↔seam↔`CheckResponse` wire-mapping (URL rebuilt for the DPoP htu
-binding; Envoy peer cert → `*x509.Certificate` for mTLS). Single source of
-truth ⇒ a stolen DPoP/mTLS-bound token presented as a plain bearer is DENIED
-over gRPC exactly as over HTTP. Operator fork constructs
-`NewAuthorizationServer(srv)` + registers it on its own grpc.Server
-(mesh-internal).
-
-**WebAuthn attestation policy** (`authenticators/webauthn/`; §3 row + §6 own the
-AAGUID gate + `attestation_denied` 403). Why the gate's shape: it rejects
-`none`-attestation because go-webauthn accepts that format with ZERO sig
-verification → an untrustworthy AAGUID. **Without MDS the gate is an OPERATIONAL
-control** (honest-client gating + audit), NOT adversary-resistant — a hostile
-registrant can craft a self-signed x5c asserting an allowlisted AAGUID.
-`Config.MDS` (`BuildMDSProvider`, JWS-rooted at the built-in FIDO
-`ProductionMDSRoot`; STARTUP SNAPSHOT, reload by restart) makes it
-adversary-resistant: the attestation cert chain must root in the FIDO MDS. AAGUID
-canonicalization is in-tree (avoids promoting `google/uuid` to a direct dep).
-Nil/off = byte-identical.
-
-**ssoclient.** Per-capability `ssoclient/local` (in-process) or
-`ssoclient/remote` (gRPC + JWKS); mix freely on one `appcore.Handler`.
-`remote.JWKSCache` does background refresh + single-flight refetch on
-unknown `kid`. `ssoclient/dev` bypass stubs emit a one-time stderr `AUTH
-BYPASS ACTIVE` (suppress via `WithSilent*` in tests).
-
-**Edge** (`deploy/`). OpenResty `lua-resty-jwt` = **fast-reject, not a
-trust boundary** (Go re-validates). Kubernetes Kustomize + distroless pod
-security. docker compose = onboarding/smoke only, NOT production. Grafana
-`sso-overview.json` + `alerts.yaml`.
-
-**Middleware order.** Probes registered OUTSIDE the stack so kubelet can't
-be throttled:
-
-```
-/metrics, /livez, /readyz                          (outside)
+/metrics, /livez, /readyz                         ← outside ratelimit
 tracing → ratelimit → bodyLimit → metrics → CORS → router
 ```
 
-Wire via `sso.With{Tracing,RateLimit,BodyLimit,Metrics,CORS}`.
-**Ratelimit** `KeyByClientIP` honors XFF (trust an edge — see §2
-X-Forwarded-*); `KeyByClientIDOrIP` keys Basic-authed `/token` by
-`client_id`, body creds fall back to IP. **ReadyCheck**: any fail → 503,
-3s aggregate deadline; SQLite stores ship `Ping`, auto-registered.
+**Package layout:**
+
+| Package | Purpose |
+|---|---|
+| `core/` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK/JWKSProvider + wire consts + sentinels |
+| `oauth/` | AuthCode/Device/Refresh/PAR stores, DCR/RAR/claims validators, hexagonal grant handlers |
+| `oidc/` | IDTokenIssuer/UserinfoSigner/MetadataSigner SPIs, JWKS/EndSession/SilentRenewal/FormPost/JARM handlers |
+| `security/` | Lockout, JTI-replay, JAR-fetch, JWE, step-up, mTLS extractor, pairwise, subject-client index, ConstantTimeEq, QuoteAuthParam |
+| `spi/` | Logger, CodeSender, RiskScorer, MFAProvider |
+| `fapi/` | FAPI 2.0 Validator (Inspection\|Enforce) |
+| `anomaly/` | Async behavioral-detection SPIs |
+| `cluster/` | Cross-replica Bus (Publish/Subscribe); memory + etcd |
+| `middleware/` | Auth, CORS, Logger, Tracing, RequestID, no-store, base-URL |
+| `admin/` | HTTP middleware + gRPC interceptor + scope rules |
+| `tenant/` `geo/` | Tenant resolution + Geo enrichment middleware |
+| `region/{memory}/` | Multi-region/data-residency SPI + resolvers |
+| `authenticators/` | 9 pluggable + `webauthn/` (AAGUID attestation + FIDO MDS) |
+| `scim/` | SCIM 2.0 provisioning (RFC 7643/7644) |
+| `caep/` | OpenID SSF v1 SET push transmitter + receiver |
+| `federation/` | OpenID Federation 1.0 — entity config + trust-chain + auto-register + §8 fetch + trust-marks |
+| `defaultimpl/` | Ed25519/ECDSA/RSA issuers + Memory* stores + JWE + KMS bridge + `/sqlite` + `/detectors` + `/vaulttransit` |
+| `adapters/{echo,gin}/` | Router adapters |
+| `audit/` | Recorder + Sinks + hash chain |
+| `permissions/` | Roles + menus + wildcard matcher + policy-bundle export |
+| `compliance/` | GDPR/CCPA/PIPL erasure + export |
+| `netpolicy/{memory,etcd}/` | Network classification |
+| `registry/{memory,etcd}/` | Service discovery |
+| `bootstrap/` | First-run init + dist lock |
+| `snapshot/` | State export/restore |
+| `releases/` | Frontend+backend release pinning |
+| `signingkeys/{memory,etcd}/` | Leaderless JWKS key aggregation |
+| `ratelimit/ cors/ metrics/ tracing/` | Middleware + observability |
+| `config/{etcd}/` | YAML + env + etcd + flag loader |
+| `proto/ gen/proto/ grpcserver/` | Protobuf + generated Go + gRPC + REST gateway |
+| `ssoclient/{local,remote,dev,bootstrap}/` | Consumer-facing clients |
+| `migrate/` | Pure-Go SQLite migration runner (versioned, forward-only) |
+| `cmd/{sso-server,sso-audit-verify,sso-snapshotctl,sso-migrate}/` | Binary + offline CLIs |
+| `deploy/{openresty,k8s,compose,grafana}/` | Operator artifacts |
+| `test/` | Server-level integration suite (`package ssotest`) |
+
+**Nested modules** (no `go.work`; vendor SDK out of core go.mod; `make ci` → `ci-modules`):
+
+| Module | Dep | Notes |
+|---|---|---|
+| `kms/awskms/` | aws-sdk-go-v2 | No Ed25519 |
+| `kms/gcpkms/` | cloud.google.com/go/kms | Ed25519 ✓ |
+| `kms/azurekeyvault/` | azure-sdk-for-go | No Ed25519 |
+| `kms/pkcs11/` | miekg/pkcs11 | CGO required |
+| `saml/` | crewjam/saml | Full SAML 2.0 SP+IdP+SLO |
+| `ldap/` | go-ldap/ldap/v3 | Search-then-bind |
+| `kerberos/` | gokrb5/v8 | SPNEGO / Windows Integrated Auth |
+| `radius/` | layeh.com/radius | PAP + RadSec |
+| `extauthz/` | go-control-plane | gRPC Envoy ext_authz |
+| `redis/` | go-redis | Hot-path scale layer (>1k QPS) |
 
 ---
 
-## 5. Observability
+## 2. Core Module Profiles
 
-**Metrics** — bounded cardinality by design (no per-path/per-user labels;
-per-endpoint breakdowns come from traces). MFA labels restricted to the
-provider's `SupportedMethods()` (user values dropped before the registry).
-`/health` exposes build info via `runtime/debug.ReadBuildInfo`.
+### Root Server (`package sso`)
+
+9 non-test files. Integration tests → `test/` (`package ssotest`, full `*sso.Server` over HTTP, shared harness).
+
+| File | Responsibility |
+|---|---|
+| `sso.go` | Server + Options + routes |
+| `handler.go` | Login orchestrator (`/auth/login`) |
+| `handlers.go` | Discovery + delegators |
+| `server_extensions.go` | DPoP, mTLS, JAR, JWE, BCL, FCL, pairwise, tenant-susp, client-assertion, buildinfo |
+| `mesh_authz.go` | `MeshAuthorize` seam + HTTP ext_authz |
+| `signing_key_aggregation.go` | Leaderless JWKS aggregation loop |
+| `storage_health.go` | Storage-health report (`GET /api/v1/admin/storage-health`, admin:read) |
+| `accessors.go` | Field accessors backing the hexagonal `Deps` ifaces |
+| `aliases.go` | Re-exports |
+
+### OAuth Layer (`oauth/`)
+
+**Input:** HTTP via `bindOAuthParams` (`oauth/bind.go`) — form-urlencoded + JSON. HTTP Basic > body credentials on `/token`, `/introspect`, `/revoke`, `/par` (RFC 6749 §2.3.1).
+
+| Handler | Spec | File |
+|---|---|---|
+| Authorization code | RFC 6749 §4.1 | `auth_code.go` |
+| Client credentials | RFC 6749 §4.4 | `client_creds.go` |
+| Refresh token + rotation | RFC 6749 §6 | `refresh_token.go` |
+| Device code | RFC 8628 | `device_code.go` |
+| PAR | RFC 9126 | `handle_par.go` |
+| DCR | RFC 7591/7592 | `handle_register.go` |
+| Introspection | RFC 7662 | `handle_introspect.go` |
+| Revocation | RFC 7009 | `handle_revoke.go` |
+| CIBA (poll+ping) | OIDC CIBA | `ciba.go` + `handle_ciba.go` |
+| Token exchange | RFC 8693 | `token_exchange_helpers.go` |
+
+**Config knobs:**
+
+| YAML | Effect |
+|---|---|
+| `oauth.<store>.backend` | `memory`\|`sqlite` per store |
+| `oauth.jar` | RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect) |
+| `dpop.{proof_max_age,max_clock_skew}` | DPoP iat-window (default 60s each); 0 = SDK default (byte-identical) |
+| `security.jti_replay.fail_closed` | Store error → reject (treat-as-replay) instead of fail-open |
+| `identity.client_cache.{enabled,ttl}` | Per-login ClientStore.Get TTL cache (default 30s); `KindClientChange` bus-invalidated on every mutation |
+
+**Hard constraints:**
+- Oracle-leak collapse: unknown/expired/consumed/mismatch → one response (§4).
+- Single-use via `DELETE … RETURNING`.
+- Refresh family: `FamilyID` through every rotation; reuse → `DeleteFamily` → `invalid_grant`.
+- `WithRefreshRotationGrace(window)`: concurrent double-submit idempotent within window; post-window replay still kills family.
+- Optional velocity cap (`RefreshTokenRotationLimiter`): over-cap → same `DeleteFamily` + `invalid_grant` (oracle-safe), fail-OPEN on store error.
+
+### OIDC Layer (`oidc/`)
+
+**Input:** Requests routed from `handlers.go`. MUST NOT import `oauth/` (cycle).
+
+| Handler | Key behavior |
+|---|---|
+| JWKS | `Cache-Control: public, max-age=<ttl>` + `ETag=sha256(body)[:8]` (default 5min); concurrent computes single-flighted |
+| Discovery | Derived from server state; double-cached (`WithDiscoveryCacheTTL` 5s snapshot + `WithDiscoveryDocCacheTTL` 5s body+ETag per base URL); `If-None-Match` → 304; TTL 0 disables cache AND headers |
+| EndSession | RP-Initiated Logout |
+| SilentRenewal | `prompt=none` (requires `WithSessionManager` + `WithIDTokenIssuer`) |
+| FormPost | OIDC Form Post Response Mode |
+| JARM | `response_mode={jwt,query.jwt,fragment.jwt,form_post.jwt}` via `WithJARM(signer)`; fail-closed without |
+
+**Config knobs:**
+
+| YAML | Effect |
+|---|---|
+| `server.issuer` | MUST differ from `sso.DefaultIssuer`; stamped into JWT `iss`, discovery `issuer`, every RFC 9207 `iss` |
+
+**Hard constraints:**
+- `at_hash` stamped whenever `access_token` rides the same response (hash per id_token signing alg; left-half base64url; empty → omitted).
+- New opt-in feature → branch the discovery doc.
+- Token strategies (`jwt`\|`session`) registered via `sso.WithTokenIssuer(name, issuer)`.
+
+### Security Layer (`security/`)
+
+| Module | Function | Hard constraint |
+|---|---|---|
+| `account_lockout.go` | Per-account lockout | `BEGIN IMMEDIATE` RMW; `WithAccountLockout` |
+| JTI replay | Replay prevention | `SET NX EX`; fail-open default; `WithJTIReplayFailClosed` for strict |
+| `jar_fetch.go` | RFC 9101 JAR URL fetch | HTTPS only, no-redirect; bounded; best-effort internal-IP block |
+| `jwe.go` | JWE decryption (JAR-in, id_token-out, userinfo-out) | RSA-OAEP-256+A256GCM / ECDH-ES / Multi (composes both) |
+| `step_up_auth.go` | RFC 9470 step-up helper | Resource-server side |
+| `pairwise.go` | Pairwise subject derivation | Opt-in per-client |
+| `spiffe_svid.go` | SPIFFE JWT-SVID validation | `WithSPIFFEJWTSVID`; strict `aud`+trust-domain; all failures → `invalid_grant` (oracle-safe) |
+
+**Alg allowlist (`AsymmetricJWSAlgs`):** EdDSA / ES256/384/512 / RS256 / PS256. No `alg=none`, no HS\*. Checked BEFORE signature verify. New signer → extend `supportedJWTAlgs` explicitly.
+
+**Config knobs:**
+
+| YAML | Effect |
+|---|---|
+| `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
+| `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
+
+### Signing-Key Lifecycle (`defaultimpl/`)
+
+**Issuers:** `Ed25519JWTIssuer`, `ECDSAJWTIssuer`, `RSAJWTIssuer`. Each accepts ONLY its own alg (structurally alg-confusion-safe). External signer via `With{Algo}ExternalSigner` → `defaultimpl/cryptosigner` bridges `crypto.Signer` (ECDSA DER→R‖S; ECDSA = ES256/P-256 only through bridge).
+
+| KMS peer | ECDSA out | Ed25519 | Constraint |
+|---|---|---|---|
+| `kms/awskms/` | DER | No → `ErrUnsupportedKey` | Private key never leaves HSM |
+| `kms/gcpkms/` | DER | Yes (`EC_SIGN_ED25519`, un-prehashed) | Key = CryptoKeyVersion |
+| `kms/pkcs11/` | RAW R‖S→DER | Yes (`CKM_EDDSA`) | CGO required |
+| `kms/azurekeyvault/` | RAW R‖S→DER | No → `ErrUnsupportedKey` | Own signing pubkey from raw JWK |
+| `defaultimpl/vaulttransit/` | DER (asn1) | Yes (raw message un-prehashed) | `https`-only TLS; token never logged |
+
+**Config knobs:**
+
+| YAML | Effect |
+|---|---|
+| `keys.signing.alg` | `eddsa`\|`es256`\|`rs256`\|`ps256` |
+| `keys.rotation.*` | Wires `StartRotation` loop; emits `signing_key_rotated` audit + `sso_signing_key_rotations_total`; busts signed-discovery cache |
+| `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
+| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for durable revocation across restarts; `SeedRevocations` re-seeds at boot |
+| `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
+
+**Hard constraints:**
+- `RotateKey`/`RetireKey`: overlap-window; demoted key stays verify-only through TTL.
+- Leaderless: peer-key adoption is alg-matched BEFORE install (RS256≠PS256 skipped); decode failure OPEN; adopted keys in separate verify set untouched by local rotate/retire. Re-publish on rotation.
+
+### Storage Substrate
+
+**SQLite (`defaultimpl/sqlite/`):**
+
+| Pattern | Used for |
+|---|---|
+| `DELETE … RETURNING` | Single-use stores (AuthCode/Refresh/Device/PAR) |
+| `UPDATE … RETURNING WHERE expires_at>now AND revoked=0` | Session refresh |
+| `INSERT … ON CONFLICT` | JTI/index upserts |
+| `BEGIN IMMEDIATE` | Lockout RMW |
+
+Prod DSN: `file:/var/lib/sso/sso.db?_journal=WAL`. Tests: `file::memory:?cache=shared`. `sql.ErrNoRows` → typed `ErrNoSuchX`; timestamps Unix-ns INTEGER.
+
+**Redis (`redis/`, nested module):** >1k-QPS multi-replica scale layer. Consume = GETDEL; session Refresh = Lua (refuses expired/revoked before extending); JTI = SET NX EX; ratelimit = Lua INCR+EXPIRE (fixed-window, fail-OPEN); CIBA SetStatus = Lua KEEPTTL; device user_code = pointer key. Fail-CLOSED on `/token`.
+
+**Migrations (`migrate/`):** Forward-only; `BEGIN IMMEDIATE`; per-namespace `schema_migrations_<ns>`; v1 = existing schema (populated DBs no-op + stamp). New column/index → append v2+. Offline: `sso-migrate status --dsn`.
+
+**Backend YAML toggles:**
+
+| Subsystem | Key |
+|---|---|
+| Identity (User/Client/Session) | `identity.backend` |
+| OAuth stores | `oauth.<store>.backend` |
+| JTI replay / Lockout | `security.{jti_replay,account_lockout}.backend` |
+| Pairwise / BCL index | `server.pairwise_subjects.backend` / `backchannel_logout.index.backend` |
+| Rate limiter | `security.rate_limit.backend` |
+| WebAuthn | `webauthn.storage.{users,sessions}.backend` |
+| MFA / Push / CIBA | `mfa.{challenge,provider.push}.backend` / `ciba.backend` |
+| Audit / Permissions | `audit.backend` / `permissions.backend` |
+| Tenants + Domains | `tenant.backend` |
+| Anomaly detectors | `anomaly.{recent_login,ip_failure}.backend` |
+| Signing-key registry | `keys.signing_key_registry.backend` |
+| Network policy / Registry | `network.store.backend` / `registry.backend` |
+
+### Audit (`audit/`)
+
+**Pipeline:** Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; verify via `sso-audit-verify`. Bounded dimensions: outcome/type/client/provider (§4 cardinality rule).
+
+**Hard constraints:**
+- Use `SetMeta(e, k, v)`. NEVER `e.Metadata = map{...}` (clobbers enrichment).
+- Every Event carries W3C `TraceID`/`SpanID`.
+- Optional `FacetQuerier` (type-asserted, `GET /api/v1/audit/facets`); 501 when unsupported.
+
+**Retention schedulers:**
+
+| YAML | Function | label |
+|---|---|---|
+| `audit.retention.*` | `audit/sqlite.Sink.Prune` | `audit` |
+| `snapshot.retention.*` | `snapshot.PruneOldest` | `snapshot` |
+| `mfa.provider.push.prune_interval` | `sqlite.PushApprovalStore.PruneExpired` | `push_approvals` |
+
+**Metrics (bounded cardinality — no per-path/per-user labels):**
 
 | Metric | Type | Labels |
 |---|---|---|
@@ -721,240 +265,285 @@ provider's `SupportedMethods()` (user values dropped before the registry).
 | `sso_mfa_completions_total` / `_duration_seconds` | Counter/Histogram | mfa_method, outcome |
 | `sso_webauthn_{registrations,assertions}_total` | Counter | outcome |
 | `sso_credential_health_signals_total` | Counter | signal |
-| `sso_retention_{pruned,prune_errors}_total` | Counter | subsystem |
-| `sso_anomalies_detected_total` | Counter | anomaly_type, severity |
-| `sso_anomaly_dispatch_{received,drops}_total` / `_inspect_errors_total` | Counter | — / reason / detector |
 | `sso_signing_key_rotations_total` | Counter | — |
-| `sso_signing_operations_total` / `_operation_duration_seconds` | Counter/Histogram | alg, outcome / alg |
+| `sso_signing_operations_total` / `_duration_seconds` | Counter/Histogram | alg, outcome / alg |
 | `sso_signing_backend_up` | Gauge | alg |
 | `sso_signing_key_adoption_errors_total` | Counter | reason (decode\|adopt) |
 | `sso_signing_key_aggregation_up` | Gauge | — |
-| `sso_signing_key_cutover_total` | Counter | outcome (deferred\|extended\|adopted_only\|noop) |
+| `sso_signing_key_cutover_total` | Counter | outcome |
 | `sso_token_revocations_propagated_total` | Counter | direction (published\|adopted) |
 | `sso_fapi_violations_total` | Counter | rule, mode |
-| `sso_ciba_ping_total` | Counter | outcome (success\|error) |
-| `sso_caep_sets_total` | Counter | outcome (success\|failed\|dropped) |
+| `sso_ciba_ping_total` | Counter | outcome |
+| `sso_caep_sets_total` | Counter | outcome |
 | `sso_refresh_rotation_velocity_exceeded_total` | Counter | — |
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
-| `sso_{login_attempts,tokens_issued}_by_tenant_total` (opt-in, bounded allowlist) | Counter | tenant, outcome \| tenant, strategy |
 
-**Retention schedulers** — three cmd-side prune loops, uniformly wired
-(cancel + bounded-wait on shutdown, emit `sso_retention_*{subsystem}`,
-first prune AFTER the first interval). Each needs its SQLite backend
-(memory peers self-prune):
+**Config knobs:**
 
-| YAML knob | SDK function | label |
-|---|---|---|
-| `audit.retention.{enabled,max_age,interval}` | `audit/sqlite.Sink.Prune` | `audit` |
-| `snapshot.retention.{enabled,keep,interval}` | `snapshot.PruneOldest` | `snapshot` |
-| `mfa.provider.push.prune_interval` | `sqlite.PushApprovalStore.PruneExpired` | `push_approvals` |
-
----
-
-## 6. Configuration
-
-`cmd/sso-server/config.yaml` is canonical; top-level keys map 1:1 to the
-SDK SPI. The §4 backend table enumerates every `backend (memory|sqlite)`
-knob; below is only the non-obvious operator surface.
-
-- **server.issuer** MUST differ from `sso.DefaultIssuer`; prod SHOULD set
-  the canonical public URL (stamped into JWT `iss`, discovery `issuer`,
-  every RFC 9207 `iss`).
-- **clients[]** map 1:1 to `sso.Client`; `client_id: ""` is a valid bucket
-  (demo); prod tokens should carry explicit audience.
-- **bootstrap.lock.backend** (noop|file|etcd) — loss → `ErrLockLost`.
-- **snapshot.restore_from** — first-boot auto-restore URI (CLI
-  `--bootstrap-restore-from` wins).
-- **snapshot.encryption.backend** (none|passphrase|aes-gcm) — passphrase →
-  argon2id (human secrets); aes-gcm → direct 32-byte key (KMS DEKs).
-- **snapshot.redact_secrets** (bool, default false) — opt-in: wires
-  `SnapshotRedactSecrets()` so every export strips client credentials for
-  SAFE-SHARING/inspection. NOT restorable (use encryption for that).
-- **security.mtls.backend** (tls|header) — `header` for reverse-proxy edges
-  (`X-SSL-Client-Cert` etc.); **edge MUST strip it from untrusted traffic**
-  (same threat model as XFF, §2).
-- **security.jti_replay.fail_closed** (default false) — `WithJTIReplayFailClosed`:
-  on a replay-store transport error, reject (treat-as-replay, same wire code
-  per site) instead of fail-open. For replay-sensitive multi-replica deploys
-  (§2).
-- **tenant.suspension_check.cache_ttl** — admin SetStatus invalidates via
-  `InvalidateTenantSuspensionCache`.
-- **keys.signing_key_registry.{backend,replica_id,lease_ttl,etcd_*}**
-  (backend: ``|memory|etcd) — opt-in leaderless aggregation (§3). `etcd_*`
-  (`endpoints,prefix,dial_timeout,username,password`) mirrors `cluster.bus`.
-  `replica_id` defaults to the service-registry id and MUST be unique per
-  replica; `lease_ttl` is the announcement lease.
-- **spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}** — opt
-  into SPIFFE JWT-SVID token-exchange acceptance (§3). Enabled requires ALL
-  of `trust_domain` + `audience` + `jwks_file` (cmd fails loud; no safe
-  default for any). `jwks_file` is the operator-supplied SPIRE trust-bundle
-  JWKS (`StaticJWKS`); `audience` is THIS server's id the SVID `aud` MUST
-  contain (lax aud = cross-service replay). Disabled = byte-identical off.
-- **mesh.ext_authz.{enabled,path}** — opt into the Envoy/Istio ext_authz
-  HTTP-mode endpoint (§3). `path` empty = SDK default `/mesh/ext-authz` (must
-  match the sidecar filter path); disabled = route NOT mounted
-  (byte-identical). Mesh-internal; the mesh MUST strip client-supplied
-  `X-Auth-*` at ingress (edge-strip §2). The **gRPC**-mode variant is the
-  `extauthz` nested module (`go-control-plane`), operator-fork-wired as a
-  standalone grpc.Server — same `MeshAuthorize` decision, no extra YAML (§4).
-- **oauth.jar** — RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect).
-- **dpop.{proof_max_age,max_clock_skew}** — RFC 9449 proof iat-window
-  (past staleness / future skew). Both 0 = SDK default 60s (byte-identical
-  to the old hardcoded bound); loosen for drifty DPoP-client fleets,
-  tighten for strict deployments. Governs proof iat only — the nonce TTL
-  is `security.dpop_nonce.ttl`.
-- **Observability + perf opt-ins** — `anomaly.runner.inspect_timeout`
-  (per-detector sweep deadline, 0 = SDK 5s); `metrics.tenant_label_allowlist`
-  (`WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + an
-  `"other"` bucket, §5; empty = off); `identity.client_cache.{enabled,ttl}`
-  (`WithClientStoreCache` — per-login `ClientStore.Get` TTL cache, default 30s,
-  `cluster.KindClientChange` bus-invalidated on every client mutation; caches
-  metadata only, NEVER `ValidateSecret`/misses; active-flag/secret staleness
-  bounded by ttl like tenant suspension).
-- **mfa** — gated by Risk `RequireMFA`. `provider.kind`:
-  `totp`/`webauthn`/`push`/`multi` (`provider.kinds: [...]`); cmd fails
-  loud on missing leaf deps. `push.transport` `log`/`webhook` (custom
-  FCM/APNs via cmd fork on `PushTransport`); callback via
-  `POST /push/approval/:id/:decision` (empty auth = open, only safe behind
-  an edge).
-- **caep.{enabled,receiver_timeout,set_ttl}** — OpenID Shared Signals
-  transmitter (reuses the signing issuer + ClientStore + audit pipeline).
-  Per-RP receiver in `clients[].attributes.caep_receiver_endpoint` (https,
-  validated at boot) + `caep_receiver_auth`. The inbound SET **receiver**
-  (`WithCAEPReceiver`, `/ssf/receive`, §3) has its own config block. Disabled
-  = byte-identical.
-- **External signers** (`RegisterExternalSigner` in the operator's fork) —
-  `kms/{awskms,gcpkms,azurekeyvault,pkcs11}` + in-core `defaultimpl/vaulttransit`
-  bridge a `crypto.Signer` into the issuers via `With{Algo}ExternalSigner`
-  (per-peer traps §4; `kms/pkcs11` needs `CGO_ENABLED=1`). Alg from
-  `keys.signing.alg`; key reference is the cloud/HSM/Vault resource id.
-- **saml.{handler,sp_providers[]}** — `handler` is the registered
-  `SAMLHandlerFactory` name (`""` mounts NOTHING, byte-identical); the operator
-  FORKS cmd, imports their SAML module, calls `RegisterSAMLHandlers("<name>",
-  factory)`, and the factory borrows the issuer key off `CryptoSigner()`. The
-  SAML/XML/DSig dep stays OUT of core go.mod; per-SP/IdP `saml_sp_*` `Attributes`
-  live in the module (§3/§4). LDAP + Kerberos are likewise operator-fork-wired
-  (no top-level YAML) — LDAP via `WithAuthenticator` + `allowed_authenticators`,
-  Kerberos via a cmd-mounted Negotiate handler (keytab path + optional
-  `MaxClockSkew` in its `Config`).
-- **region.{serving_region,header_name,allowed_regions,residency_check_cache_ttl}**
-  — opt into the serving-region middleware + data-residency gate (§3/§4).
-  Neither `serving_region` nor `header_name` set ⇒ middleware NOT installed +
-  gate inert (byte-identical). `header_name` reads the serving region off a
-  trusted edge header (allowlisted via `allowed_regions`, anti-injection — same
-  edge-strip model as XFF, §2); `serving_region` is this deployment's pinned
-  fallback. The per-tenant policy is `tenant.{home_region,allowed_regions,
-  enforce_writes}`; `residency_check_cache_ttl` caches it (admin tenant-mutation
-  MUST `InvalidateTenantResidencyCache`). Outage fail-open.
-- **webauthn.attestation.{conveyance,policy_mode,aaguids,mds}** — AAGUID gate
-  (§3/§4). `policy_mode` `""/off|allowlist|denylist`; an active mode REQUIRES
-  `conveyance: direct|enterprise` (boot fails otherwise) + at least one AAGUID
-  (canonical-UUID or bare-32-hex; include the all-zero AAGUID to admit
-  self/no-attestation). `mds.{file|fetch_url,custom_root_pem,fetch_timeout}`
-  (EXACTLY ONE of file/fetch_url; both empty ⇒ MDS off) turns the gate
-  adversary-resistant via FIDO-root-validated metadata; `custom_root_pem` is
-  ONLY for a non-prod/test MDS.
-
-**Multi-source loader.** `config.Loader` composes prioritized `Source`s
-(lowest first, last wins): `NewFileSource` (baseline) → `NewEnvSource`
-(12-factor `SSO_<UPPER>__...`) → `etcd.New` (live) → `NewFlagSource` (CLI).
-Maps deep-merge; scalars + slices overwrite; env/etcd leaf strings pass
-through `yaml.Unmarshal` (`"true"`→bool). `config.Load(path)` is the legacy
-single-source entry.
-
----
-
-## 7. Operations
-
-| CLI | Purpose |
+| YAML | Effect |
 |---|---|
-| `cmd/sso-server` | Production binary |
-| `cmd/sso-audit-verify` | Offline hash-chain check (`--from-url` paginates / `--from-file` JSON) |
-| `cmd/sso-snapshotctl` | Offline snapshot `list|inspect|verify` (passphrase-capable) |
-| `cmd/sso-migrate` | Offline schema-version inspection (`status --dsn`) |
+| `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
 
-Offline CLIs work directly against wire artifacts (no running server) —
-backup-integrity + DR drills.
+### Admin / gRPC (`grpcserver/`)
 
-**Storage-health report** (`storage_health.go`, opt-in `WithStorageHealth`).
-`GET /api/v1/admin/storage-health` (admin:read) — the detailed counterpart to
-`/readyz`'s pass/fail aggregate: per wired store it reports reachability
-(timed Ping → `reachable` + `ping_latency_ms`) + schema version (migrate
-namespace → version, from each SQLite store's `DB()` via `migrate.Status`).
-For DR drills + rolling-upgrade safety. One store down ⇒ `reachable:false` +
-generic error (NO DSN/secret), report still 200 (survivors surface). cmd
-collects sources at the `appendReadyCheck` points (`appendStorageHealthSource`);
-no sources ⇒ route unmounted.
+**Auth:** `sso.AdminMiddleware` validates Bearer; requires `admin:read`/`admin:write` (`admin:*` ⊇ both). Every mutation emits `admin_*` audit. 401 carries `Bearer realm="admin"`. Protected paths: `/api/v1/audit/*`, `/netpolicy/policies*`, `/classify`, `/api/v1/compliance/*`; `/netpolicy/resolve-me` stays open.
 
-**Release pipeline**: `goreleaser` from `.github/workflows/release.yml` on
-`vX.Y.Z` tags (linux+darwin × amd64+arm64 + windows/amd64; archives bundle
-LICENSE + SECURITY.md + CHANGELOG.md; `checksums.txt` + syft SBOMs).
-`release.disable: true` runs the full matrix without publishing; locally
-`make release-snapshot → dist/`.
+| Phase | Services | REST prefix |
+|---|---|---|
+| A | `audit.v1.AuditWriter`, `authz.v1.Authorizer`, `discovery.v1.Discovery` | — |
+| B | `netpolicy.v1.PolicyService` | `/api/v1/netpolicy/` |
+| C | `admin.v1.{Client,User,Token,Permission}AdminService` | `/api/v1/admin/` |
+| D | `admin.v1.{Snapshot,Release}AdminService` | `/api/v1/admin/{snapshots,releases}` |
+| E | `admin.v1.TenantAdminService` | `/api/v1/admin/{tenants,domains}` |
 
-**API specs**: HTTP `docs/openapi.yaml` (update in the same commit as any
-documented endpoint change — CI `make docs-validate`); gRPC `proto/*.proto`.
-`docs/error-codes.md` is the stable catalog of every wire `error` value —
-**adding any new `Err*` requires updating it in the same commit.** SPAs
-branch on `error`, never `error_description`.
+gRPC services reuse the same `audit.Recorder` / `permissions.Provider` / `registry.Registry` as HTTP.
+
+### Cluster / Multi-Replica (`cluster/`)
+
+**Bus event kinds:** `KindTokenRevoked`, `KindSigningKeyRotation`, `KindClientChange`, `KindAuthzPolicyChange`.
+
+| Feature | Config | Behavior |
+|---|---|---|
+| Cross-replica revocation | `WithCrossReplicaRevocation` | Broadcasts revoked token+exp; peers adopt local-only; additive, oracle-safe, fail-open, no re-broadcast |
+| Coordinated key cutover | `WithCoordinatedKeyRotation` | See Signing-Key Lifecycle |
+| Client cache invalidation | `identity.client_cache.enabled` | `KindClientChange` busts per-login TTL cache on every client mutation |
+| Authz policy invalidation | `WithAuthzPolicyBundleCacheTTL` (default 5m) | `KindAuthzPolicyChange` via `InvalidateAuthzPolicyBundleCache`; fail-open |
+
+### Tenant, Residency & Geo
+
+| Module | Trigger | Config | Hard constraint |
+|---|---|---|---|
+| Tenant resolution | `Client.TenantID` set | `tenant.backend` | Mismatch → 403 `tenant_mismatch`; empty = any |
+| Tenant suspension | `WithTenantSuspensionCheck(ttl)` | `tenant.suspension_check.cache_ttl` (default 30s) | Suspended → `ErrTenantSuspended`; fail-OPEN on outage; admin SetStatus MUST call `InvalidateTenantSuspensionCache` |
+| Multi-region residency | `WithRegionMiddleware` + `WithTenantResidencyCheck(ttl)` | `region.{serving_region,header_name,allowed_regions,residency_check_cache_ttl}` | Write-gate on login mint; read-gate on resource access; fail-OPEN on outage; `region_not_allowed`/`residency_violation` are governance codes (NOT credential oracles); admin mutation MUST call `InvalidateTenantResidencyCache`; neither field set → NOT installed (byte-identical) |
+| Geo enrichment | Always if wired | — | UX hint only, NOT security; 200ms timeout; fail-open |
+
+### Permissions (`permissions/`)
+
+| Feature | Detail |
+|---|---|
+| Wildcard semantics | `user:*` ⊇ `user:read`; `*` ⊇ all; MUST pass `permissionstest.ConformanceSuite` |
+| Login embedding | `WithEmbedPermissionsInLogin()` |
+| Policy-bundle export | `GET /api/v1/admin/authz/policy-bundle?client_id=` (admin:read) — role DEFINITIONS only, NOT per-subject assignments; ETag-cached; 304 on `If-None-Match` |
+| SQLite peer | 3 tables; `RemoveRole` transactionally strips code from every assignment |
+
+### Risk Scoring & Anomaly Detection
+
+| Module | Config | Behavior |
+|---|---|---|
+| Risk scorer | `WithRuleBasedRiskScorer` | Runs AFTER creds, BEFORE issuance → `Allow`/`RequireMFA`/`Deny` (403); fail-open, zero overhead when unset |
+| MFA orchestration | `WithMFAProvider` + `WithMFAChallengeStore`; `mfa.provider.kind`: `totp`\|`webauthn`\|`push`\|`multi` | Two-leg step-up gated by Risk `RequireMFA`; without both → decays to Allow. `/auth/login` → `{mfa_required, mfa_challenge_id, mfa_methods, iss}`; client POSTs `/auth/mfa` |
+| Anomaly runner | `anomaly.runner.inspect_timeout` (default 5s) | Async, OFF the request path; 1024 queue / 4 workers / drop-newest; NEVER feeds back into auth decision |
+| Password health | `WithPasswordHealthChecker` | Fail-open; result in `AuthResult.CredentialHealth` (`json:"-"`, NEVER in tokens — keep off `Attributes`); surfaces as `password_weak`/`password_compromised` audit (Outcome=success) |
+
+### Authenticators (`authenticators/`)
+
+9 pluggable: `password`, `phone`, `email`, `temp_token`, `keypair`, `apikey`, `certificate`, `totp`, `oidc_federation`. Unknown password users → cost-matched dummy bcrypt hash (anti-enumeration). WebAuthn ceremony cmd-mounted at `/webauthn/{registration,login}/{begin,finish}`.
+
+| WebAuthn attestation config | Constraint |
+|---|---|
+| `webauthn.attestation.policy_mode` (`off`\|`allowlist`\|`denylist`) | Active mode REQUIRES `conveyance: direct\|enterprise` (boot fails otherwise) + ≥1 AAGUID |
+| `webauthn.attestation.mds.*` | `BuildMDSProvider` (JWS-rooted at FIDO ProductionMDSRoot; startup snapshot; reload by restart) makes gate adversary-resistant |
+| Off / nil | Byte-identical |
+
+**Hard constraint:** Without MDS, the gate is an operational control only (honest-client gating) — a hostile registrant can craft a self-signed x5c asserting an allowlisted AAGUID.
+
+### Federation (`federation/`)
+
+| Slice | Endpoint | Trigger | Hard constraint |
+|---|---|---|---|
+| 1 — Entity Config | `/.well-known/openid-federation` | `WithFederationEntity(cfg, signer)` | `iss==sub==issuer`; metadata DERIVED from discovery (byte-identical); signing failure → 500 |
+| 2 — Trust-Chain Resolution | internal `TrustChainResolver` | `ResolveTrustChain(ctx, leafEntityID)` | FAIL-CLOSED; all failures → `ErrTrustChainInvalid` (oracle-safe); anchor keys NEVER fetched; path-length + cycle + total-fetch bounds |
+| 3 — Auto-Registration | existing `ClientStore.Get` MISS | `WithFederationAutoRegistration()` | Pre-registered client WINS; chain failure → byte-identical `invalid_client`; `Secret=""` NEVER; REQUIRES `WithClientStore`+`WithFederationEntity` with anchors else INERT |
+| 4 — Constraints + Trust Marks | additive gate on 2/3 | `EntityConstraints` + `RequiredTrustMarkTypes` | Any fail → slice-3 unknown-client path (oracle-safe) |
+| 5 — §8 Fetch (superior) | `/fetch` | Subordinates configured | Statements AUTHORED from operator config, NOT request input; route mounted ONLY when subordinates configured (else slice-1 byte-identical) |
+
+### CAEP / Shared Signals (`caep/`)
+
+| Direction | Config | Scope constraint |
+|---|---|---|
+| Transmitter | `WithCAEPTransmitter` | Push ONLY to the AFFECTED client's receiver; client-named events → that client; tenant events → `ListByTenant` of THAT tenant only (no cross-tenant leak); async best-effort, fail-open |
+| Receiver | `WithCAEPReceiver` (`/ssf/receive`) | Inbound SETs from CONFIGURED trusted transmitters only; FAIL-CLOSED; jti-replay verified; errors → `invalid_key` |
+
+Receiver endpoint from `Client.Attributes["caep_receiver_endpoint"]` (HTTPS, validated at create/update — NEVER request input). Config: `caep.{enabled,receiver_timeout,set_ttl}`.
+
+### Bootstrap, Snapshot & Releases
+
+| Module | Key behavior | Hard constraint |
+|---|---|---|
+| `bootstrap/` | Versioned; re-runs only `Version > high-water`. Built-in v2 prints generated admin password ONCE to stdout. | Lock: `noop`\|`file`\|`etcd`; loss → `ErrLockLost` cancels in-flight steps |
+| `snapshot/` | Modes: `ModeMerge`\|`ModeOverwrite`\|`ModeReplace` (requires `Confirm==SnapshotID`). Encryption: `none`\|`passphrase`\|`aes-gcm`. | `snapshot.redact_secrets` zeros `Client.Secret` on export-local COPIES (NOT restorable — use encryption for backup); default nil ⇒ byte-identical |
+| `releases/` | `Validate` refuses one-sided. `Pin` rejects schema regression (`ErrSchemaRegress`). `HealthProbe` gates forward (all-fail → auto-rollback). | — |
+
+### Network Policy & Service Registry
+
+| Module | Backend | Key behavior |
+|---|---|---|
+| `netpolicy/` | `memory`\|`etcd` via `network.store.backend` | Named CIDR/hostname/URL classes; `Classifier` holds hot snapshot via `Store.Watch`; seeded via `config.ApplyNetworkPolicySeeds` |
+| `registry/` | `memory`\|`etcd` via `registry.backend` | cmd self-registers `Name:"sso"`, `ID = registry.service_id` (default `<issuer>-<short-hostname>`; prevents replica clobber), TTL 30s under etcd |
+
+**Config:** Hostname-beats-CIDR, priority breaks ties. Subscribe BEFORE seed `Reload` to avoid lost events.
 
 ---
 
-## 8. Working in this repo
+## 3. Feature Matrix
 
-### Conventions
-- **No literal leaks** — paths/headers/error codes live in `consts.go`
-  (root or per-package).
-- **No mocks for storage** — use real `MemoryProvider`/`MemorySink`/
-  `memory.Registry`.
+| Spec | Endpoint(s) | Opt-in | File |
+|---|---|---|---|
+| RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `oauth/auth_code.go` |
+| RFC 6749 §4.4 client_credentials | `/token` | always | `oauth/client_creds.go` |
+| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; grace: `WithRefreshRotationGrace(window)` | `oauth/refresh_token.go` |
+| RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `oauth/auth_code.go` |
+| RFC 7662 introspection | `/token/introspect` | always | `oauth/handle_introspect.go` |
+| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk: `RefreshTokenSubjectIndex`; cross-replica: `WithCrossReplicaRevocation`; durable: `With{Algo}RevocationStore` | `oauth/handle_revoke.go` |
+| RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `oauth/device_code.go` |
+| RFC 8693 token-exchange | `/token` | always; refresh: `WithRefreshTokenStore`; actor replay: `WithJTIReplayStore` | `handlers.go` + `oauth/token_exchange_helpers.go` |
+| RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | per-grant |
+| RFC 9126 PAR | `/par` | `WithPARStore` | `oauth/handle_par.go` |
+| RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `oauth/handle_register.go` |
+| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` when `access_token` in same response | `handler.go` + `oidc/userinfo_signing.go` |
+| OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `handlers.go` + `oidc/discovery_doc_cache.go` |
+| OIDC RP-Initiated Logout | `/end_session` | always | `oidc/handle_end_session.go` |
+| OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP: `WithSubjectClientIndex` | `server_extensions.go` |
+| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `server_extensions.go` |
+| OIDC `sid` claim | access + id + logout | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
+| OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `handler.go` + `oauth/par.go` + `server_extensions.go` |
+| OIDC Form Post | `/auth/login`, `/par`, JAR | always | `oidc/form_post.go` |
+| JARM | `response_mode={jwt,query.jwt,fragment.jwt,form_post.jwt}` | `WithJARM(signer)` (fail-closed without) | `oidc/jarm.go` |
+| OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
+| RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS`; sig via `AsymmetricJWSAlgs` | `server_extensions.go` |
+| RFC 9207 AS Issuer Id | every `/auth/login` | always | `handlers.go` |
+| RFC 9068 JWT Access Token | JWT access tokens | always; alg gate `WithSupportedSigningAlgs` | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` |
+| RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
+| RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
+| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay: `WithJTIReplayStore`; nonce: `WithDPoPNonceProvider` | `server_extensions.go` |
+| RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `handlers.go` |
+| OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
+| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)` | `fapi/` + `handler.go` |
+| RFC 9396 RAR | `authorization_details` | per-client allowlist | `oauth/rar.go` |
+| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch: `WithJARFetcher`; required: `Client.RequireSignedRequestObject` | `server_extensions.go` + `security/jar_fetch.go` |
+| RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key in JWKS `use:enc` | `security/jwe.go` |
+| OIDC §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg/_Enc` | `oidc/userinfo_signing.go` |
+| OIDC §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg/_Enc` | `oidc/userinfo_signing.go` |
+| OIDC CIBA (poll+ping) | `/backchannel-authentication`, `/token` | `WithCIBA`; ping: `WithCIBAPingNotifier` | `oauth/ciba.go` + `oauth/handle_ciba.go` |
+| MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` | `handlers.go` + `spi/mfa.go` |
+| Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
+| SPIFFE JWT-SVID token-exchange | `/token` | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` | `security/spiffe_svid.go` |
+| OpenID SSF v1 SET transmitter | push to RP receiver | `WithCAEPTransmitter` | `caep/` |
+| OpenID SSF v1 SET receiver | `/ssf/receive` | `WithCAEPReceiver` | `caep/receiver.go` |
+| Envoy ext_authz HTTP | `/mesh/ext-authz` | `WithMeshExtAuthz(path)` | `handler.go` + `mesh_authz.go` |
+| Envoy ext_authz gRPC | `envoy.service.auth.v3.Authorization` | `extauthz` nested module | `extauthz/authz.go` |
+| SAML 2.0 SP+IdP | `/auth/saml/*`, `/saml/*` | `saml` nested module | `saml/saml.go` |
+| Kerberos/SPNEGO | `/auth/kerberos` | `kerberos` nested module | `kerberos/handler.go` |
+| RADIUS authenticator | via `WithAuthenticator` | `radius` nested module | `radius/authenticator.go` |
+| WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `authenticators/webauthn/` |
+| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` | `region/region.go` + `server_extensions.go` |
+| SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `scim/handler.go` |
+| OpenID Federation 1.0 (5 slices) | `/.well-known/openid-federation`, `/fetch` | `WithFederationEntity(cfg, signer)` | `federation/` + `handlers.go` + `sso.go` |
+
+---
+
+## 4. Global Constraints & Edge Cases
+
+### Wire-Contract Invariants (GATES — violations are regressions)
+
+**SPI + Storage**
+- Every concern = interface + `memory` impl ± `sqlite`/`etcd`/`file`. New backends via `WithXxx`. No mocks — use Memory* in tests.
+
+**Form + JSON**
+- All OAuth/OIDC endpoints: `bindOAuthParams` (`oauth/bind.go`). Accepts form-urlencoded + JSON.
+
+**Oracle-Leak Hardening**
+
+| Scenario | Required response |
+|---|---|
+| AuthCode/Refresh/Device/PAR: unknown/expired/consumed/client-mismatch on `/token` | `400 invalid_grant` |
+| Stale/missing PAR `request_uri` on `/auth/login` | `invalid_request_uri` |
+| DPoP/mTLS failure | `invalid_token` |
+| `private_key_jwt` | `invalid_client` |
+
+**Anti-Enumeration**
+
+| Endpoint | Required behavior |
+|---|---|
+| `/register/:client_id` | Missing/wrong/unknown bearer → identical 401 `invalid_token` (subtle compare) |
+| `/token/revoke` | 200 on valid client creds regardless of token existence |
+| `/token/introspect` inactive | `{"active":false}` |
+| bcrypt (unknown user) | Cost-matched dummy hash |
+| WebAuthn (unknown user/session) | `404 session_invalid` |
+| MFA `/auth/mfa` | Unknown/expired/consumed/unsupported/wrong factor → `400 mfa_invalid`; detail ONLY in `mfa_failure` audit |
+
+**Fail-Open** (log + continue): refresh issuance, ID Token issuance, geo, risk-scorer error, audit Sink error, tenant-suspension outage, JTI-replay store error (default).
+
+**Fail-Closed**: refresh rotation grant (500), signature/validation failure, scope expansion, family reuse → `DeleteFamily` → `400 invalid_grant`.
+
+**PKCE:** `code_challenge` captured at `/auth/login`; verified at `/token` `grant=authorization_code` only. Refresh carries no verifier (bound via `client_id`).
+
+**Refresh-Token Family Rotation:**
+- `FamilyID` carried through every rotation.
+- `RefreshTokenFamilyTracker`: replay → `ErrRefreshTokenReused` → `DeleteFamily` → audit `refresh_token_reuse_detected` → `invalid_grant`.
+- Empty `FamilyID` opts out.
+- `WithRefreshRotationGrace(window)`: concurrent double-submit idempotent within window; post-window replay still kills family (§4.13 unweakened).
+- Optional velocity cap (`RefreshTokenRotationLimiter`): over-cap → same `DeleteFamily` + `invalid_grant` (oracle-safe), fail-OPEN on store error, audit `refresh_rotation_velocity_exceeded`.
+
+**Session Refresh:** Refuses expired/revoked rows BEFORE extending. Forward/monotonic wall clock assumed — ops MUST slew, never step (chrony).
+
+**Audit Metadata:** Use `SetMeta(e, k, v)`. NEVER `e.Metadata = map{...}` (clobbers enrichment).
+
+**X-Forwarded-* Trust:** `requestBaseURL` + geo + host honor first-hop XFF — ONLY safe behind a trusted edge that strips + re-sets them. Same model governs `security.mtls.backend: header`, ratelimit IP keying, and mesh `X-Auth-*` headers (mesh MUST strip client-supplied `X-Auth-*` at ingress).
+
+**`aud` Claim:** Unmarshals string or array (RFC 7519 §4.1.3); marshals single-aud as compact string per OIDC.
+
+**`alg` + `typ` Allowlist:** Checked BEFORE signature verify. `alg=none` rejected. New signer → extend `supportedJWTAlgs` explicitly.
+
+**RFC 9068 Claims (REQUIRED on every Issue):**
+- MUST set `Subject.ClientID`.
+- Login: `AuthTime`+`AMR` from live event (`amrForResult` = `AuthResult.AuthMethods`; falls back to provider id); `acr` from `AuthResult.AchievedACR` (empty → omitted). MFA second leg: `withMFAMethod` folds factor + `mfa`.
+- `auth_code` grant: stamps `auth_time` from `AuthCode.AuthTime` (the real `/auth/login` moment, NOT exchange time); AMR = stored provider id.
+- Refresh: propagates original AMR without resetting `AuthTime`.
+- Token-exchange: propagates `AuthTime`+`ACR`+`AMR`+`SID` from inbound `subject_token`; multi-hop `act` chain prepended (time-ordered).
+- `client_credentials`: `ClientID` only.
+- `jti`: always auto-generated.
+
+**RFC 9207 `iss` on Authorization Responses:** Every `/auth/login` response uses `s.resolveIssuer(ctx)`. New authz handlers MUST use `s.authzErrorBody(ctx, code)`, not `errorBody`.
+
+**Cache Headers on Credential Endpoints:** `/token`, `/introspect`, `/revoke[-all]`, `/par`, `/auth/login`, `/userinfo`, `/register*` → `tokenNoStoreHeaders(ctx)` = `Cache-Control: no-store` + `Pragma: no-cache`. Including error responses.
+
+**WWW-Authenticate on 401:** `setBearerChallenge`: missing token omits `error=`; validation failure carries `error="invalid_token"`. Descriptions via `security.QuoteAuthParam`.
+
+**Discovery is derived** from server state. New opt-in → branch the discovery doc. New bearer endpoint → `tokenNoStoreHeaders` + `setBearerChallenge`.
+
+### Coding Conventions
+
+- **No literal leaks** — paths/headers/error codes in `consts.go` (root or per-package).
+- **No mocks** — use real `MemoryProvider`/`MemorySink`/`memory.Registry`.
 - **No emojis** in code, comments, or commits.
-- **Comments explain WHY**, not what — only for hidden constraints,
-  invariants, or workarounds.
-- **Interface guards in implementation packages**, e.g.
-  `var _ ssoclient.AuthClient = (*remote.AuthClient)(nil)` in
-  `ssoclient/remote/` — never in `ssoclient/` (cycle).
-- **gRPC name renames**: protoc-gen-go does `ID→Id`, `URL→Url`.
-- **Tests follow the behavior.** Subpackage unit tests beside the code;
-  cross-server integration tests (full `*sso.Server` over HTTP) live in
-  `test/` (`package ssotest`) on one shared harness. Race/ordering fixes
-  prove with `-count=10+`.
-- **Hexagonal handler extraction**: handler bodies move to oauth/ / oidc/
-  as `HandleX(deps Deps, ctx)` free functions; `*sso.Server` satisfies
-  `Deps` via `accessors.go`; root keeps a one-line delegator. oauth/ must
-  NOT import oidc/ (oidc imports oauth — cycle).
+- **Comments explain WHY** — hidden constraints, invariants, workarounds only. Never "what".
+- **Interface guards** in implementation packages (e.g. `var _ ssoclient.AuthClient = (*remote.AuthClient)(nil)`). Never in the interface package (cycle).
+- **gRPC names:** protoc-gen-go does `ID→Id`, `URL→Url`.
+- **Tests:** Subpackage unit tests beside the code. Cross-server integration tests → `test/` (`package ssotest`, shared harness). Race fixes prove with `-count=10+`.
+- **Hexagonal extraction:** Handler bodies → `oauth/`/`oidc/` as `HandleX(deps Deps, ctx)` free functions. `*sso.Server` satisfies `Deps` via `accessors.go`. `oauth/` MUST NOT import `oidc/`.
+- **Error codes:** New `Err*` → update `docs/error-codes.md` in the same commit.
+- **API specs:** Documented endpoint change → update `docs/openapi.yaml` in the same commit.
 
 ### Don'ts
-- No `git reset --hard`, `push --force`, `branch -D` without explicit
-  authorization; no git-config changes; no hook bypass
-  (`--no-verify`/`--no-gpg-sign`).
+- No `git reset --hard`, `push --force`, `branch -D` without explicit authorization.
+- No git-config changes; no hook bypass (`--no-verify`/`--no-gpg-sign`).
 - No mocks where an in-memory impl exists.
 - No "while I'm here" cleanup/refactors; no Markdown files unless asked.
-- Don't violate oracle-leak / anti-enumeration (§2). Don't bypass
-  `SetMeta` for audit metadata.
+- Never violate oracle-leak / anti-enumeration patterns.
+- Never bypass `SetMeta` for audit metadata.
 
-### Common tasks
-- **New authenticator**: implement `sso.Authenticator` in
-  `authenticators/<name>.go` → YAML knob in `config/config.go` → wire in
-  cmd `buildAuthenticators` → whitelist under `allowed_authenticators:`.
-- **New audit Sink**: implement `audit.Sink` (+ `audit.Closer` if
-  lifecycle); wire via `audit.New(...)` / `MultiSink`.
-- **New permissions backend**: implement `permissions.Provider` in
-  `permissions/<name>/`, plumb `WithPermissionProvider`, keep wildcard
-  semantics, run `permissionstest.ConformanceSuite`.
-- **New netpolicy at runtime**: `POST /api/v1/netpolicy/policies` (or gRPC
-  `PolicyService.Apply`); boot-time via `network.policies:`.
-- **New gRPC service**: `proto/<name>/v1/<name>.proto` → regenerate →
-  implement in `grpcserver/<name>.go` over an interface HTTP already uses →
-  register in cmd `newGRPCServer` → `bufconn` test.
-- **New OAuth/OIDC grant**: handler via `bindOAuthParams`; HTTP Basic >
-  body creds; map errors `400 invalid_<...>` (oracle-leak pattern);
-  single-use atomic `DELETE RETURNING`; wire in `sso.go`; advertise in
-  discovery (`handlers.go`); add `WithXxxStore`; tests enumerate
-  oracle-leak cases.
-- **New credential / bearer endpoint**: `tokenNoStoreHeaders(ctx)` at
-  entry; `setBearerChallenge(ctx, ...)` on 401.
+### Common Task Patterns
+
+| Task | Steps |
+|---|---|
+| New authenticator | `authenticators/<name>.go` → YAML knob in `config/config.go` → wire in `buildAuthenticators` → whitelist in `allowed_authenticators:` |
+| New audit Sink | Implement `audit.Sink` (+ `audit.Closer`); wire via `audit.New(...)` / `MultiSink` |
+| New permissions backend | Implement `permissions.Provider` in `permissions/<name>/`; run `permissionstest.ConformanceSuite` |
+| New gRPC service | `proto/<name>/v1/<name>.proto` → regen → `grpcserver/<name>.go` → register in `newGRPCServer` → `bufconn` test |
+| New OAuth/OIDC grant | `bindOAuthParams`; HTTP Basic > body creds; `400 invalid_<...>` oracle-leak; `DELETE RETURNING`; wire in `sso.go`; advertise in discovery; add `WithXxxStore`; enumerate oracle-leak cases in tests |
+| New credential/bearer endpoint | `tokenNoStoreHeaders(ctx)` at entry; `setBearerChallenge(ctx, ...)` on 401 |
 
 ### Commits
-Conventional (`feat(area):`, `fix(area):`, `chore:`, `docs:`), imperative
-subject, body explains why. Co-author trailer when AI-assisted. Don't
-commit binaries (the four `cmd/` outputs are gitignored).
+Conventional (`feat(area):`, `fix(area):`, `chore:`, `docs:`). Imperative subject. Body explains why. Co-author trailer when AI-assisted. Don't commit binaries (four `cmd/` outputs are gitignored).

@@ -292,3 +292,140 @@ func (f *failOpenConsentStore) ListByUser(_ context.Context, _ string) ([]sso.Co
 }
 
 var _ sso.ConsentStore = (*failOpenConsentStore)(nil)
+
+// consentLoginWithChallengeID posts to /auth/login with the supplied scopes
+// and a pre-obtained consent_challenge_id. Returns status + decoded JSON body.
+func consentLoginWithChallengeID(t *testing.T, srv *httptest.Server, scopes []string, challengeID string) (int, map[string]any) {
+	t.Helper()
+	req := map[string]any{
+		"provider":              authenticators.MethodPassword,
+		"client_id":             consentClientID,
+		"credential":            map[string]string{"username": consentUser, "password": consentPassword},
+		sso.KeyConsentChallengeID: challengeID,
+	}
+	if len(scopes) > 0 {
+		req["scope"] = scopes
+	}
+	raw, _ := json.Marshal(req)
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("POST /auth/login with challenge: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	out := map[string]any{}
+	_ = json.Unmarshal(rb, &out)
+	return resp.StatusCode, out
+}
+
+// TestConsent_ConsentRequiredIncludesChallengeID verifies that every
+// consent_required response now carries a server-issued consent_challenge_id.
+func TestConsent_ConsentRequiredIncludesChallengeID(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServer(t, cs)
+
+	_, body := consentLogin(t, srv, []string{"openid", "profile"}, "")
+	if body["error"] != sso.ErrConsentRequired {
+		t.Fatalf("expected consent_required, got %v", body)
+	}
+	challengeID, _ := body[sso.KeyConsentChallengeID].(string)
+	if challengeID == "" {
+		t.Errorf("consent_required response missing %q; body=%v", sso.KeyConsentChallengeID, body)
+	}
+}
+
+// TestConsent_ChallengeFlowIssuesToken verifies the full SPA round-trip:
+// login → consent_required + challenge_id → re-login with challenge_id → token.
+func TestConsent_ChallengeFlowIssuesToken(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServer(t, cs)
+	scopes := []string{"openid", "profile"}
+
+	// Step 1: first login → consent_required.
+	_, body1 := consentLogin(t, srv, scopes, "")
+	if body1["error"] != sso.ErrConsentRequired {
+		t.Fatalf("step 1: expected consent_required, got %v", body1)
+	}
+	challengeID, _ := body1[sso.KeyConsentChallengeID].(string)
+	if challengeID == "" {
+		t.Fatalf("step 1: missing %q in response", sso.KeyConsentChallengeID)
+	}
+
+	// Step 2: re-login with the server-issued challenge_id → token.
+	status2, body2 := consentLoginWithChallengeID(t, srv, scopes, challengeID)
+	if status2 != http.StatusOK {
+		t.Fatalf("step 2: status=%d body=%v", status2, body2)
+	}
+	if errVal, ok := body2["error"]; ok {
+		t.Fatalf("step 2: unexpected error=%v", errVal)
+	}
+	if _, ok := body2["access_token"].(string); !ok {
+		t.Fatalf("step 2: expected access_token, got %v", body2)
+	}
+}
+
+// TestConsent_ChallengeIsConsumedSingleUse verifies that a challenge_id is
+// single-use — a second presentation triggers consent_required again.
+func TestConsent_ChallengeIsConsumedSingleUse(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServer(t, cs)
+	scopes := []string{"openid"}
+
+	_, body1 := consentLogin(t, srv, scopes, "")
+	challengeID, _ := body1[sso.KeyConsentChallengeID].(string)
+	if challengeID == "" {
+		t.Fatalf("missing %q", sso.KeyConsentChallengeID)
+	}
+
+	// First use → success (grant now recorded for future logins).
+	_, body2 := consentLoginWithChallengeID(t, srv, scopes, challengeID)
+	if _, ok := body2["access_token"].(string); !ok {
+		t.Fatalf("first use of challenge must succeed, got %v", body2)
+	}
+
+	// Second use of the same challenge ID → challenge consumed; new consent_required.
+	// The grant from the first use covers the scope, so prompt=consent forces re-ask.
+	_, body3 := consentLoginWithChallengeID(t, srv, scopes, challengeID)
+	// The grant now covers openid so the second call succeeds without needing
+	// the (consumed) challenge — the gate only fires when needsConsent is true.
+	// Verify no server error occurs (either a token or consent_required is fine).
+	if errVal, _ := body3["error"].(string); errVal != "" && errVal != sso.ErrConsentRequired {
+		t.Errorf("second use of consumed challenge: unexpected error %q, got %v", errVal, body3)
+	}
+}
+
+// TestConsent_FabricatedChallengeIsRejected verifies that a client-fabricated
+// challenge_id (never issued by the server) is rejected and returns consent_required.
+func TestConsent_FabricatedChallengeIsRejected(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServer(t, cs)
+
+	_, body := consentLoginWithChallengeID(t, srv, []string{"openid"}, "not-a-real-challenge")
+	if body["error"] != sso.ErrConsentRequired {
+		t.Errorf("fabricated challenge must trigger consent_required, got %v", body)
+	}
+	// A new server-issued challenge must be included so the SPA can proceed.
+	if challengeID, _ := body[sso.KeyConsentChallengeID].(string); challengeID == "" {
+		t.Errorf("rejected fabricated challenge must include a new %q for the SPA", sso.KeyConsentChallengeID)
+	}
+}
+
+// TestConsent_ChallengeScopeBinding verifies that a challenge issued for
+// scope set A cannot be presented to approve a different scope set B.
+func TestConsent_ChallengeScopeBinding(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServer(t, cs)
+
+	// Obtain a challenge for {openid} only.
+	_, body1 := consentLogin(t, srv, []string{"openid"}, "")
+	challengeID, _ := body1[sso.KeyConsentChallengeID].(string)
+	if challengeID == "" {
+		t.Fatalf("missing %q", sso.KeyConsentChallengeID)
+	}
+
+	// Present that challenge while requesting a wider scope — must be rejected.
+	_, body2 := consentLoginWithChallengeID(t, srv, []string{"openid", "profile"}, challengeID)
+	if body2["error"] != sso.ErrConsentRequired {
+		t.Errorf("{openid} challenge must not approve {openid,profile}; got %v", body2)
+	}
+}

@@ -333,6 +333,7 @@ input:focus, select:focus {
   var currentMFAMethods     = [];
   var selectedMFAMethod     = "";
   var savedLoginPayload     = null; // for consent re-submit
+  var savedConsentChallengeID = ""; // server-issued challenge from consent_required response
 
   // --- Populate provider selector if >1 option ---
   var providerSel = $("provider");
@@ -450,6 +451,7 @@ input:focus, select:focus {
     }
 
     if (code === "consent_required") {
+      savedConsentChallengeID = data.consent_challenge_id || "";
       renderConsentView();
       showView("consent");
       setError("login-error", "");
@@ -605,7 +607,7 @@ input:focus, select:focus {
     var btn = $("consent-allow-btn");
     setError("consent-error", "");
     setLoading(btn, true);
-    var payload = Object.assign({}, savedLoginPayload, { consent_approved: true });
+    var payload = Object.assign({}, savedLoginPayload, { consent_challenge_id: savedConsentChallengeID });
     fetch(loginURL, {
       method: "POST",
       headers: {"Content-Type":"application/json"},

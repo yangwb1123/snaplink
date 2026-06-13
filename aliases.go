@@ -233,6 +233,7 @@ const KeyIss = core.KeyIss
 const KeyIssuedTokenType = core.KeyIssuedTokenType
 const KeyIssuer = core.KeyIssuer
 const KeyJTI = core.KeyJTI
+const KeyConsentChallengeID = core.KeyConsentChallengeID
 const KeyMFAChallengeID = core.KeyMFAChallengeID
 const KeyMFAMethod = core.KeyMFAMethod
 const KeyMFAMethodData = core.KeyMFAMethodData
