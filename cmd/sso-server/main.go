@@ -4069,6 +4069,11 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if cfg.HostedLogin.Enabled {
 		opts = append(opts, sso.WithHostedLoginFS(loginSubFS()))
 		logger.Info("hosted login UI enabled", "path", "/login/")
+		// The end-user self-service portal SPA pairs with the hosted login UI:
+		// once a user signs in they manage sessions/consents/password/MFA at
+		// /portal/ against the same /me* endpoints. Gated by the same flag.
+		opts = append(opts, sso.WithSelfServicePortalFS(portalSubFS()))
+		logger.Info("self-service portal UI enabled", "path", "/portal/")
 	}
 
 	// Self-service consent store. Opt-in: enabling it turns ON the consent gate

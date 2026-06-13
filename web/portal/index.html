@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Account</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root { --brand-primary: #6366f1; --brand-primary-hover: #4f46e5; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f3f4f6; color: #111827; min-height: 100vh;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+h1 { font-size: 1.4rem; margin-bottom: 4px; }
+h2 { font-size: 1.05rem; margin-bottom: 12px; }
+.sub { color: #6b7280; font-size: .9rem; margin-bottom: 24px; }
+
+/* Login screen */
+#login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-card {
+  background: #fff; border-radius: 12px; padding: 36px; width: 100%; max-width: 400px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+}
+.login-card h1 { text-align: center; font-size: 1.25rem; margin-bottom: 8px; }
+.login-card p { text-align: center; color: #6b7280; font-size: .875rem; margin-bottom: 20px; }
+
+label { display: block; font-size: .85rem; font-weight: 500; margin-bottom: 4px; color: #374151; }
+input[type="text"], input[type="password"] {
+  width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+  font-size: .9375rem; margin-bottom: 14px;
+}
+input:focus { outline: none; border-color: var(--brand-primary); box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+
+.btn { border: none; border-radius: 8px; padding: 9px 16px; font-size: .9rem; font-weight: 600; cursor: pointer; }
+.btn-primary { background: var(--brand-primary); color: #fff; }
+.btn-primary:hover { background: var(--brand-primary-hover); }
+.btn-danger { background: #fff; color: #b91c1c; border: 1px solid #fecaca; }
+.btn-danger:hover { background: #fef2f2; }
+.btn-sm { padding: 5px 10px; font-size: .8rem; }
+
+.card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f3f4f6; gap: 12px; }
+.row:last-child { border-bottom: none; }
+.row .meta { font-size: .85rem; color: #6b7280; }
+.row .name { font-weight: 500; }
+.empty { color: #9ca3af; font-size: .9rem; padding: 8px 0; }
+.kv { display: flex; justify-content: space-between; padding: 6px 0; font-size: .9rem; }
+.kv .k { color: #6b7280; }
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.msg { font-size: .85rem; padding: 8px 12px; border-radius: 8px; margin-top: 10px; display: none; }
+.msg.err { background: #fef2f2; color: #991b1b; display: block; }
+.msg.ok { background: #f0fdf4; color: #166534; display: block; }
+.field { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-card">
+    <h1>Your account</h1>
+    <p>Paste your access token to manage your account.</p>
+    <label for="token-input">Access token</label>
+    <input type="password" id="token-input" placeholder="Bearer access token" autocomplete="off">
+    <button class="btn btn-primary" style="width:100%" id="login-btn">Continue</button>
+    <div id="login-msg" class="msg"></div>
+  </div>
+</div>
+
+<div id="app" class="wrap" style="display:none">
+  <div class="topbar">
+    <div>
+      <h1>Your account</h1>
+      <div class="sub" id="whoami"></div>
+    </div>
+    <button class="btn btn-danger btn-sm" id="signout-btn">Sign out</button>
+  </div>
+
+  <div class="card">
+    <h2>Profile</h2>
+    <div id="profile"></div>
+  </div>
+
+  <div class="card">
+    <h2>Active sessions</h2>
+    <div id="sessions"></div>
+  </div>
+
+  <div class="card">
+    <h2>Connected applications</h2>
+    <div id="consents"></div>
+  </div>
+
+  <div class="card">
+    <h2>Two-factor methods</h2>
+    <div id="mfa"></div>
+  </div>
+
+  <div class="card">
+    <h2>Change password</h2>
+    <div class="field"><label for="cur-pw">Current password</label><input type="password" id="cur-pw" autocomplete="current-password"></div>
+    <div class="field"><label for="new-pw">New password</label><input type="password" id="new-pw" autocomplete="new-password"></div>
+    <button class="btn btn-primary" id="pw-btn">Update password</button>
+    <div id="pw-msg" class="msg"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+var $ = function (id) { return document.getElementById(id); };
+var token = "";
+
+// API paths are parent-relative: the SPA is served at /portal/, endpoints at the root.
+function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ "Authorization": "Bearer " + token }, opts.headers || {});
+  return fetch(".." + path, opts);
+}
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+  return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+}); }
+
+function showMsg(el, text, ok) { el.textContent = text; el.className = "msg " + (ok ? "ok" : "err"); }
+
+// --- Auth ---
+$("login-btn").onclick = function () {
+  var t = $("token-input").value.trim();
+  if (!t) { showMsg($("login-msg"), "Enter a token.", false); return; }
+  token = t;
+  // Probe /me to validate the token before showing the app.
+  api("/me").then(function (r) {
+    if (!r.ok) throw new Error("invalid token");
+    return r.json();
+  }).then(function (me) {
+    sessionStorage.setItem("sso_portal_token", token);
+    $("login-screen").style.display = "none";
+    $("app").style.display = "block";
+    render(me);
+    loadAll();
+  }).catch(function () { showMsg($("login-msg"), "That token was not accepted.", false); });
+};
+$("signout-btn").onclick = function () {
+  sessionStorage.removeItem("sso_portal_token");
+  token = "";
+  $("app").style.display = "none";
+  $("login-screen").style.display = "flex";
+  $("token-input").value = "";
+};
+
+// --- Render overview ---
+function render(me) {
+  $("whoami").textContent = me.sub || "";
+  var u = me.user || {};
+  var rows = [
+    ["Subject", me.sub],
+    ["Name", u.name],
+    ["Email", u.email],
+    ["Active sessions", me.active_sessions],
+    ["Connected apps", me.granted_apps],
+  ];
+  $("profile").innerHTML = rows.filter(function (r) { return r[1] != null && r[1] !== ""; })
+    .map(function (r) { return '<div class="kv"><span class="k">' + esc(r[0]) + '</span><span>' + esc(r[1]) + "</span></div>"; })
+    .join("") || '<div class="empty">No profile data.</div>';
+}
+
+function loadAll() { loadSessions(); loadConsents(); loadMFA(); }
+
+// --- Sessions ---
+function loadSessions() {
+  api("/sessions/me").then(function (r) { return r.json(); }).then(function (d) {
+    var list = (d && d.sessions) || [];
+    if (!list.length) { $("sessions").innerHTML = '<div class="empty">No active sessions.</div>'; return; }
+    $("sessions").innerHTML = list.map(function (s) {
+      return '<div class="row"><div><div class="name">' + esc(s.id) + '</div>' +
+        '<div class="meta">' + esc(s.user_agent || s.ip || "") + "</div></div>" +
+        '<button class="btn btn-danger btn-sm" data-sid="' + esc(s.id) + '">Revoke</button></div>';
+    }).join("");
+    Array.prototype.forEach.call($("sessions").querySelectorAll("button[data-sid]"), function (b) {
+      b.onclick = function () {
+        api("/sessions/me/" + encodeURIComponent(b.getAttribute("data-sid")), { method: "DELETE" })
+          .then(function () { loadSessions(); });
+      };
+    });
+  });
+}
+
+// --- Consents ---
+function loadConsents() {
+  api("/consents/me").then(function (r) { return r.json(); }).then(function (d) {
+    var list = (d && d.consents) || [];
+    if (!list.length) { $("consents").innerHTML = '<div class="empty">No connected applications.</div>'; return; }
+    $("consents").innerHTML = list.map(function (c) {
+      return '<div class="row"><div><div class="name">' + esc(c.client_id) + '</div>' +
+        '<div class="meta">' + esc((c.scopes || []).join(" ")) + "</div></div>" +
+        '<button class="btn btn-danger btn-sm" data-cid="' + esc(c.client_id) + '">Revoke</button></div>';
+    }).join("");
+    Array.prototype.forEach.call($("consents").querySelectorAll("button[data-cid]"), function (b) {
+      b.onclick = function () {
+        api("/consents/me/" + encodeURIComponent(b.getAttribute("data-cid")), { method: "DELETE" })
+          .then(function () { loadConsents(); });
+      };
+    });
+  });
+}
+
+// --- MFA factors ---
+function loadMFA() {
+  api("/me/mfa").then(function (r) {
+    if (r.status === 404) { $("mfa").innerHTML = '<div class="empty">Factor management is not enabled.</div>'; return null; }
+    return r.json();
+  }).then(function (d) {
+    if (!d) return;
+    var list = (d && d.factors) || [];
+    if (!list.length) { $("mfa").innerHTML = '<div class="empty">No second factors registered.</div>'; return; }
+    $("mfa").innerHTML = list.map(function (f) {
+      return '<div class="row"><div><div class="name">' + esc(f.label || f.method) + '</div>' +
+        '<div class="meta">' + esc(f.method) + "</div></div>" +
+        '<button class="btn btn-danger btn-sm" data-fid="' + esc(f.id) + '">Remove</button></div>';
+    }).join("");
+    Array.prototype.forEach.call($("mfa").querySelectorAll("button[data-fid]"), function (b) {
+      b.onclick = function () {
+        api("/me/mfa/" + encodeURIComponent(b.getAttribute("data-fid")), { method: "DELETE" })
+          .then(function () { loadMFA(); });
+      };
+    });
+  });
+}
+
+// --- Password change ---
+$("pw-btn").onclick = function () {
+  var cur = $("cur-pw").value, next = $("new-pw").value;
+  if (!cur || !next) { showMsg($("pw-msg"), "Fill in both fields.", false); return; }
+  api("/me/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: cur, new_password: next }),
+  }).then(function (r) {
+    if (r.status === 204) {
+      showMsg($("pw-msg"), "Password updated.", true);
+      $("cur-pw").value = ""; $("new-pw").value = "";
+    } else if (r.status === 404) {
+      showMsg($("pw-msg"), "Password change is not enabled.", false);
+    } else {
+      showMsg($("pw-msg"), "Current password was not accepted.", false);
+    }
+  }).catch(function () { showMsg($("pw-msg"), "Request failed.", false); });
+};
+
+// --- Resume a stored session ---
+(function () {
+  var saved = sessionStorage.getItem("sso_portal_token");
+  if (!saved) return;
+  token = saved;
+  api("/me").then(function (r) {
+    if (!r.ok) throw new Error("expired");
+    return r.json();
+  }).then(function (me) {
+    $("login-screen").style.display = "none";
+    $("app").style.display = "block";
+    render(me);
+    loadAll();
+  }).catch(function () { sessionStorage.removeItem("sso_portal_token"); token = ""; });
+})();
+</script>
+</body>
+</html>

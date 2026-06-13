@@ -448,6 +448,13 @@ type Server struct {
 	// default) leaves /login/ unmounted — byte-identical to a build without
 	// it. Typically wired by the operator's cmd binary via go:embed.
 	hostedLoginFS fs.FS
+
+	// portalFS, when non-nil, serves the end-user self-service portal SPA from
+	// an embedded or OS filesystem at /portal/. The portal is a standalone
+	// browser client that calls /me, /sessions/me, /consents/me, /me/password
+	// and /me/mfa with the end-user's own Bearer token. Nil (the default)
+	// leaves /portal/ unmounted — byte-identical to a build without it.
+	portalFS fs.FS
 }
 
 // jwksSingleFlight collapses concurrent JWKS document computations into a
@@ -1950,6 +1957,19 @@ func WithHostedLoginFS(loginFS fs.FS) Option {
 	return func(s *Server) { s.hostedLoginFS = loginFS }
 }
 
+// WithSelfServicePortalFS serves the end-user self-service portal SPA at
+// /portal/ from the provided filesystem. The portal is a standalone browser
+// client that calls the existing /me, /sessions/me, /consents/me, /me/password
+// and /me/mfa endpoints with the end-user's own Bearer token — no protocol
+// changes. Typically wired by embedding web/portal with an embed directive in
+// the operator's cmd binary.
+//
+// Nil (the default) leaves /portal/ unmounted — byte-identical to a build
+// without the portal UI.
+func WithSelfServicePortalFS(portalFS fs.FS) Option {
+	return func(s *Server) { s.portalFS = portalFS }
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -2243,6 +2263,12 @@ func (s *Server) Handler() http.Handler {
 	// byte-identical to a build without the UI when hostedLoginFS is nil.
 	if s.hostedLoginFS != nil {
 		mux.Handle("/login/", http.StripPrefix("/login/", http.FileServerFS(s.hostedLoginFS)))
+	}
+	// End-user self-service portal SPA (opt-in). Served from /portal/; it calls
+	// the /me* endpoints over JSON with the user's own bearer. Not wired by
+	// default — byte-identical when portalFS is nil.
+	if s.portalFS != nil {
+		mux.Handle("/portal/", http.StripPrefix("/portal/", http.FileServerFS(s.portalFS)))
 	}
 	mux.Handle("/", inner)
 	return mux

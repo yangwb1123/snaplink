@@ -18,3 +18,12 @@ var LoginFS embed.FS
 //
 //go:embed admin
 var AdminFS embed.FS
+
+// PortalFS embeds the end-user self-service portal SPA assets. Pass the
+// sub-filesystem (fs.Sub(PortalFS, "portal")) to sso.WithSelfServicePortalFS
+// so the SPA is served at /portal/. The portal is a standalone browser client
+// that calls the /me, /sessions/me, /consents/me, /me/password and /me/mfa
+// endpoints with the end-user's own Bearer token.
+//
+//go:embed portal
+var PortalFS embed.FS
