@@ -88,7 +88,12 @@ func newClaimsParamHarness(t *testing.T) (*httptest.Server, *claimsCaptureAuthen
 
 func TestClaimsParam_AcceptedAndThreaded(t *testing.T) {
 	srv, auth, _ := newClaimsParamHarness(t)
-	claims := `{"userinfo":{"email":null,"name":{"essential":true}},"id_token":{"acr":{"values":["urn:high"]}}}`
+	// This verifies the claims parameter is parsed and threaded to the
+	// authenticator with both branches intact. The id_token.acr request is
+	// now ENFORCED (the AS must achieve the requested ACR — see TestClaimsACR_*),
+	// so this threading test uses a non-enforced id_token claim to keep both
+	// sections present without tripping the ACR gate.
+	claims := `{"userinfo":{"email":null,"name":{"essential":true}},"id_token":{"email":null}}`
 	body, _ := json.Marshal(map[string]any{
 		"provider":   "password",
 		"client_id":  cpClientID,
