@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -21,6 +21,10 @@ race: ## Run tests with the race detector + no test cache.
 
 bench: ## Run the hot-path benchmarks (token issue/validate, JWKS, param bind, rate limiter).
 	$(GO) test -run='^$$' -bench=. -benchmem ./defaultimpl/ ./oauth/ ./ratelimit/ ./security/
+
+load-test: ## Load-test the /token hot path against a RUNNING server (env: BASE_URL CLIENT_ID CLIENT_SECRET VUS DURATION). Requires k6.
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed — see https://k6.io/docs/get-started/installation/" >&2; exit 1; }
+	k6 run deploy/loadtest/token.js
 
 vet: ## Static analysis (go vet).
 	$(GO) vet ./...

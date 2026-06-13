@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -384,6 +385,33 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 		errCh <- nil
 	}()
 
+	// Optional pprof on a SEPARATE listener bound to a trusted interface
+	// (default 127.0.0.1:6060). Never mounted on the public router — pprof
+	// leaks memory contents and the CPU profile is a DoS vector. Failure is
+	// non-fatal (log-only): profiling is observability, not a serving path.
+	// An explicit mux (not DefaultServeMux) keeps the handlers off any other
+	// server the process might run.
+	var pprofSrv *http.Server
+	if cfg.Server.Pprof.Enabled {
+		pprofAddr := cfg.Server.Pprof.Listen
+		if pprofAddr == "" {
+			pprofAddr = "127.0.0.1:6060"
+		}
+		pmux := http.NewServeMux()
+		pmux.HandleFunc("/debug/pprof/", pprof.Index)
+		pmux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		pmux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pmux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		pmux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		pprofSrv = &http.Server{Addr: pprofAddr, Handler: pmux, ReadHeaderTimeout: readHeaderTimeout}
+		go func() {
+			logger.Info("pprof listening", "addr", pprofAddr)
+			if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("pprof server failed", "error", err)
+			}
+		}()
+	}
+
 	var grpcSrv *grpc.Server
 	if grpcListen != "" {
 		grpcSrv = newGRPCServer(a)
@@ -417,6 +445,9 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		logger.Error("http graceful shutdown failed", "error", err)
 		_ = httpSrv.Close()
+	}
+	if pprofSrv != nil {
+		_ = pprofSrv.Shutdown(ctx)
 	}
 	if grpcSrv != nil {
 		stopped := make(chan struct{})

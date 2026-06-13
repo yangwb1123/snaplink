@@ -2316,10 +2316,21 @@ func ApplyNetworkPolicySeeds(ctx context.Context, store netpolicy.Store, seeds [
 }
 
 // ServerConfig holds top-level Server tunables.
+// PprofConfig controls the optional Go runtime profiling endpoints. Disabled
+// by default: pprof exposes heap/goroutine/CPU profiles (a memory-content
+// leak + a CPU-profile DoS vector), so it MUST run on its own listener bound
+// to a trusted interface — never the public router. Listen defaults to
+// 127.0.0.1:6060 (localhost only); operators reach it via an SSH/port-forward.
+type PprofConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
+}
+
 type ServerConfig struct {
 	Issuer               string        `yaml:"issuer"`
 	BaseURL              string        `yaml:"base_url"`
 	Listen               string        `yaml:"listen"`
+	Pprof                PprofConfig   `yaml:"pprof"`
 	SessionTTL           time.Duration `yaml:"session_ttl"`
 	TokenTTL             time.Duration `yaml:"token_ttl"`
 	DefaultTokenStrategy string        `yaml:"default_token_strategy"`

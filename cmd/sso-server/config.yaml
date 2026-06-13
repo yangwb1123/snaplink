@@ -21,6 +21,13 @@ server:
   # use + visibility in the rendered config.
   base_url: http://localhost:8080
   listen: ":8080"
+  # Optional Go runtime profiling (net/http/pprof) on a SEPARATE listener.
+  # Disabled by default. pprof leaks memory contents and the CPU profile is a
+  # DoS vector, so it MUST bind to a trusted interface — keep listen on
+  # 127.0.0.1 and reach it via an SSH/port-forward. Never expose publicly.
+  pprof:
+    enabled: false
+    listen: "127.0.0.1:6060"
   # session_ttl + token_ttl are read by cmd/sso-server when constructing
   # the default SessionManager / TokenIssuer. They are NOT wired through
   # sso.With{Session,Token}TTL (those options are deprecated no-ops);
