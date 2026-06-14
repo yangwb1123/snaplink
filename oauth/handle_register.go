@@ -312,10 +312,28 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		tokenStrategy = client.TokenStrategy
 	}
 
+	// RFC 7592 §3.2: optionally rotate the registration_access_token on update.
+	// Default-off preserves the stable-token behavior; when on, mint a fresh
+	// token, persist it (hashed at rest by the store), and reveal the plaintext
+	// once in the response. newRAT empty => keep the existing (already-hashed)
+	// token unchanged.
+	ratToStore := client.RegistrationAccessToken // existing hash, unchanged
+	var newRAT string
+	if d.DCRPolicy().RotateRegistrationAccessToken {
+		t, err := GenerateClientSecret()
+		if err != nil {
+			d.SrvLogger().Error("dcr reg-token rotation gen failed", "error", err)
+			ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+			return
+		}
+		newRAT = t
+		ratToStore = t // plaintext; the store hashes it at rest on Update
+	}
+
 	updated := &core.Client{
 		ID:                      client.ID,
-		Secret:                  client.Secret,                  // unchanged
-		RegistrationAccessToken: client.RegistrationAccessToken, // unchanged
+		Secret:                  client.Secret, // unchanged
+		RegistrationAccessToken: ratToStore,
 		Active:                  client.Active,
 		Name:                    req.ClientName,
 		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
@@ -343,7 +361,13 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 	// unknown-client path with an identical 401 (no event), so this never
 	// fires on a rejection (anti-enumeration, §2).
 	recordDCRLifecycle(d, ctx, audit.EventClientUpdated, updated.ID, "")
-	ctx.JSON(http.StatusOK, projectClientToDCRResponse(updated, ctx))
+	resp := projectClientToDCRResponse(updated, ctx)
+	// One-time reveal of the rotated token (the stored value is now hashed).
+	// Without rotation the field stays omitted — GET/PUT never echo the RAT.
+	if newRAT != "" {
+		resp.RegistrationAccessToken = newRAT
+	}
+	ctx.JSON(http.StatusOK, resp)
 }
 
 // HandleRegistrationDelete implements RFC 7592 §2.3 — the client

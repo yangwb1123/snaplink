@@ -29,6 +29,15 @@ type DCRPolicy struct {
 	InitialAccessToken    string
 	AllowOpenRegistration bool
 
+	// RotateRegistrationAccessToken, when true, mints a FRESH
+	// registration_access_token on every successful PUT /register/:id and
+	// returns it in the response (the prior token stops working). RFC 7592
+	// §3.2 permits but does not mandate rotation; it limits the blast radius
+	// of a leaked RAT. Default false preserves the prior behavior (the RAT is
+	// stable across updates) byte-identically — enabling it is a behavior
+	// change a managing client must handle (capture the new token each PUT).
+	RotateRegistrationAccessToken bool
+
 	// DefaultActive controls the Active field on newly-registered
 	// clients. Most deployments want true so clients work
 	// immediately; security-conscious deployments may prefer false

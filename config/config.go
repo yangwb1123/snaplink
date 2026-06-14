@@ -1356,6 +1356,11 @@ type ClientRegistrationConfig struct {
 	DefaultActive         bool     `yaml:"default_active"`
 	DefaultTokenStrategy  string   `yaml:"default_token_strategy"`
 	AllowedAuthenticators []string `yaml:"allowed_authenticators"`
+	// RotateAccessToken mints a fresh registration_access_token on every
+	// PUT /register/:id (RFC 7592 §3.2), limiting a leaked token's lifetime.
+	// Default false keeps the token stable across updates (byte-identical);
+	// enabling it requires managing clients to capture the new token per PUT.
+	RotateAccessToken bool `yaml:"rotate_access_token"`
 }
 
 // BackchannelLogoutConfig opts into OIDC Back-Channel Logout 1.0.

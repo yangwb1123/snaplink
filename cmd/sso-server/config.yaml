@@ -763,6 +763,12 @@ client_registration:
   default_active: true
   default_token_strategy: "jwt"
   allowed_authenticators: []
+  # Mint a fresh registration_access_token on every PUT /register/:id
+  # (RFC 7592 §3.2), limiting a leaked token's lifetime. The new token is
+  # returned once in the PUT response; the old one stops working. Default
+  # false keeps the token stable — enable only if your managing clients
+  # capture the rotated token from each update response.
+  rotate_access_token: false
 
 # WebAuthn (CTAP/FIDO2) ceremony endpoints. Mounts four POST routes on
 # the SSO router when enabled:

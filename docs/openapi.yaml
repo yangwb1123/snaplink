@@ -955,7 +955,12 @@ paths:
         Same validation rules as POST /register. The
         client_secret stays unchanged across updates — operators
         rotate secrets out-of-band via admin tooling, not via
-        this self-service surface.
+        this self-service surface. When the deployment enables
+        registration-access-token rotation (`client_registration.
+        rotate_access_token`, RFC 7592 §3.2), the response carries a
+        fresh `registration_access_token` (one-time reveal) and the
+        prior token stops working; otherwise the token is omitted and
+        stays stable.
       operationId: putRegistration
       security:
         - bearerAuth: []

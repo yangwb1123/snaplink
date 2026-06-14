@@ -147,9 +147,83 @@ func TestRegistrationMgmt_Put_UpdatesMetadata(t *testing.T) {
 	}
 	// The store holds a bcrypt hash of the original token, not the plaintext.
 	// Verify the hash still matches the token issued at registration time —
-	// a PUT must not replace or rotate the registration access token.
+	// with rotation OFF (default) a PUT must not replace the RAT.
 	if !security.CompareClientSecret(stored.RegistrationAccessToken, tok) {
 		t.Errorf("RegistrationAccessToken no longer validates: stored=%q", stored.RegistrationAccessToken)
+	}
+}
+
+// doPut issues an authenticated PUT to the registration management URI and
+// returns the status + decoded body.
+func doPut(t *testing.T, uri, tok, body string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPut, uri, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	out := map[string]any{}
+	_ = json.Unmarshal(raw, &out)
+	return resp.StatusCode, out
+}
+
+// TestRegistrationMgmt_Put_RotatesAccessToken: with rotation enabled, a PUT
+// mints a fresh registration_access_token (returned once), the old token stops
+// working, and the new token authorizes subsequent management calls.
+func TestRegistrationMgmt_Put_RotatesAccessToken(t *testing.T) {
+	srv, store := newDCRHarness(t, oauth.DCRPolicy{
+		AllowOpenRegistration:         true,
+		DefaultActive:                 true,
+		RotateRegistrationAccessToken: true,
+	})
+	id, tok, uri := registerForMgmt(t, srv.URL)
+
+	status, body := doPut(t, uri, tok, `{"redirect_uris":["https://app.example/cb-new"],"client_name":"rotated"}`)
+	if status != http.StatusOK {
+		t.Fatalf("put status=%d body=%v", status, body)
+	}
+	newTok, _ := body["registration_access_token"].(string)
+	if newTok == "" {
+		t.Fatalf("rotation must return a new registration_access_token; body=%v", body)
+	}
+	if newTok == tok {
+		t.Fatalf("rotated token equals the old token")
+	}
+	// Stored hash matches the NEW token, not the old.
+	stored, err := store.Get(context.Background(), id)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if !security.CompareClientSecret(stored.RegistrationAccessToken, newTok) {
+		t.Errorf("stored RAT does not match the rotated token")
+	}
+	if security.CompareClientSecret(stored.RegistrationAccessToken, tok) {
+		t.Errorf("old token still validates after rotation")
+	}
+	// The OLD token is now rejected (401) and the NEW token is accepted.
+	if status, _ := doPut(t, uri, tok, `{"redirect_uris":["https://app.example/cb"]}`); status != http.StatusUnauthorized {
+		t.Errorf("old token after rotation: status=%d want 401", status)
+	}
+	if status, _ := doPut(t, uri, newTok, `{"redirect_uris":["https://app.example/cb2"]}`); status != http.StatusOK {
+		t.Errorf("new token after rotation: status=%d want 200", status)
+	}
+}
+
+// TestRegistrationMgmt_Put_NoRotateByDefault: with rotation off (default), a
+// PUT response does NOT carry a registration_access_token (RAT stays stable).
+func TestRegistrationMgmt_Put_NoRotateByDefault(t *testing.T) {
+	srv, _ := newDCRHarness(t, oauth.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true})
+	_, tok, uri := registerForMgmt(t, srv.URL)
+	status, body := doPut(t, uri, tok, `{"redirect_uris":["https://app.example/cb-new"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("put status=%d", status)
+	}
+	if _, ok := body["registration_access_token"]; ok {
+		t.Errorf("PUT must not echo registration_access_token when rotation is off: %v", body)
 	}
 }
 

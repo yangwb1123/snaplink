@@ -3699,11 +3699,12 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	}
 	if cr := cfg.ClientRegistration; cr.Enabled {
 		opts = append(opts, sso.WithDynamicClientRegistration(oauth.DCRPolicy{
-			InitialAccessToken:    cr.InitialAccessToken,
-			AllowOpenRegistration: cr.AllowOpenRegistration,
-			DefaultActive:         cr.DefaultActive,
-			DefaultTokenStrategy:  cr.DefaultTokenStrategy,
-			AllowedAuthenticators: cr.AllowedAuthenticators,
+			InitialAccessToken:            cr.InitialAccessToken,
+			AllowOpenRegistration:         cr.AllowOpenRegistration,
+			DefaultActive:                 cr.DefaultActive,
+			DefaultTokenStrategy:          cr.DefaultTokenStrategy,
+			AllowedAuthenticators:         cr.AllowedAuthenticators,
+			RotateRegistrationAccessToken: cr.RotateAccessToken,
 		}))
 		if cr.AllowOpenRegistration && cr.InitialAccessToken == "" {
 			logger.Info("client_registration: OPEN — no initial_access_token; production deployments SHOULD restrict")
