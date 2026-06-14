@@ -84,6 +84,7 @@ input:focus { outline: none; border-color: var(--brand-primary); box-shadow: 0 0
   <div class="card">
     <h2>Active sessions</h2>
     <div id="sessions"></div>
+    <button class="btn btn-danger btn-sm" id="signout-others-btn">Sign out of other devices</button>
   </div>
 
   <div class="card">
@@ -185,6 +186,16 @@ function loadSessions() {
     });
   });
 }
+
+// "Sign out everywhere": revoke every other session (the API preserves the
+// current one by default), then refresh the list.
+(function () {
+  var btn = $("signout-others-btn");
+  if (!btn) return;
+  btn.onclick = function () {
+    api("/sessions/me", { method: "DELETE" }).then(function () { loadSessions(); });
+  };
+})();
 
 // --- Consents ---
 function loadConsents() {

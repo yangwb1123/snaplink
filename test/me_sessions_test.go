@@ -3,11 +3,13 @@ package ssotest
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -346,6 +348,119 @@ func TestDeleteMySession_NoBearer(t *testing.T) {
 	code, _ := doReq(t, srv, http.MethodDelete, "/sessions/me/any-id", "")
 	if code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", code)
+	}
+}
+
+// ---------- DELETE /sessions/me (sign out everywhere) ----------
+
+// sidFromJWT pulls the "sid" claim out of a compact JWT access token so the
+// tests can assert which concrete session the "keep current" path preserves.
+func sidFromJWT(t *testing.T, tok string) string {
+	t.Helper()
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a compact JWT: %q", tok)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode jwt payload: %v", err)
+	}
+	var claims struct {
+		SID string `json:"sid"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatalf("unmarshal jwt payload: %v", err)
+	}
+	return claims.SID
+}
+
+func TestRevokeMySessions_KeepsCurrent(t *testing.T) {
+	// Default DELETE /sessions/me is "sign out of all OTHER devices": it must
+	// revoke every session except the one whose ID matches the caller token's
+	// sid, so the user stays signed in to the portal making the request.
+	srv, sessions, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+	sid := sidFromJWT(t, tok)
+	if sid == "" {
+		t.Fatal("login token carries no sid; cannot test current-session preservation")
+	}
+	// Two more sessions for alice (her other devices).
+	_, _ = sessions.Create(context.Background(), "u-alice")
+	_, _ = sessions.Create(context.Background(), "u-alice")
+	if before, _ := sessions.ListByUser(context.Background(), "u-alice"); len(before) != 3 {
+		t.Fatalf("setup: want 3 sessions, got %d", len(before))
+	}
+
+	code, body := doReq(t, srv, http.MethodDelete, "/sessions/me", tok)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", code, body)
+	}
+	if got, _ := body["revoked"].(float64); int(got) != 2 {
+		t.Errorf("revoked = %v, want 2 (all but current)", body["revoked"])
+	}
+	remaining, _ := sessions.ListByUser(context.Background(), "u-alice")
+	if len(remaining) != 1 || remaining[0].ID != sid {
+		t.Errorf("remaining = %v, want only current session %s", remaining, sid)
+	}
+}
+
+func TestRevokeMySessions_All(t *testing.T) {
+	// ?all=true is a full sign-out: even the current session is revoked.
+	srv, sessions, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+	_, _ = sessions.Create(context.Background(), "u-alice")
+
+	code, body := doReq(t, srv, http.MethodDelete, "/sessions/me?all=true", tok)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", code, body)
+	}
+	if remaining, _ := sessions.ListByUser(context.Background(), "u-alice"); len(remaining) != 0 {
+		t.Errorf("remaining = %d, want 0 with all=true", len(remaining))
+	}
+}
+
+func TestRevokeMySessions_OtherUserUntouched(t *testing.T) {
+	// Alice signing out everywhere MUST NOT touch Bob's sessions.
+	srv, sessions, loginAs := newMeSessionsHarness(t)
+	tokAlice := loginAs("alice")
+	_ = loginAs("bob")
+	_, _ = sessions.Create(context.Background(), "u-bob")
+
+	code, _ := doReq(t, srv, http.MethodDelete, "/sessions/me?all=true", tokAlice)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if bob, _ := sessions.ListByUser(context.Background(), "u-bob"); len(bob) == 0 {
+		t.Error("bob's sessions were revoked by alice's sign-out-everywhere")
+	}
+	if alice, _ := sessions.ListByUser(context.Background(), "u-alice"); len(alice) != 0 {
+		t.Errorf("alice still has %d sessions after all=true", len(alice))
+	}
+}
+
+func TestRevokeMySessions_NoBearer(t *testing.T) {
+	srv, _, _ := newMeSessionsHarness(t)
+	code, body := doReq(t, srv, http.MethodDelete, "/sessions/me", "")
+	if code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", code)
+	}
+	if body["error"] != "missing_token" {
+		t.Errorf("error = %v, want missing_token", body["error"])
+	}
+}
+
+func TestRevokeMySessions_NoStoreHeaders(t *testing.T) {
+	srv, _, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/sessions/me", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
 }
 

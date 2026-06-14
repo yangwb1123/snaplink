@@ -2081,6 +2081,7 @@ func (s *Server) Mount() {
 	s.router.GET(PathMyRoles, s.handleMyRoles)
 	if s.sessionMgr != nil {
 		s.router.GET(PathMySessions, s.handleMySessions)
+		s.router.DELETE(PathMySessions, s.handleRevokeMySessions)
 		s.router.DELETE(PathMySessionByID, s.handleDeleteMySession)
 	}
 	if s.consentStore != nil {

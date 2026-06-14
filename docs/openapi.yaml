@@ -1275,6 +1275,39 @@ paths:
                       $ref: "#/components/schemas/Session"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [self-service]
+      summary: Sign out everywhere — revoke the user's sessions in bulk.
+      description: |
+        Revokes the authenticated user's active sessions. By default it
+        preserves the caller's current session (the one whose id matches the
+        token's `sid` claim), matching the "sign out of all other devices"
+        UX; pass `all=true` to revoke the current session too. When the token
+        carries no `sid`, every session is revoked. Scope mirrors single-
+        session revoke (sessions only — bulk refresh-token revocation remains
+        `/token/revoke-all`). Requires a SessionManager; `Cache-Control: no-store`.
+      operationId: revokeMySessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: all
+          in: query
+          required: false
+          description: When `true`, also revoke the caller's current session.
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Bulk revoke result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked:
+                    type: integer
+                    description: Number of sessions revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /sessions/me/{id}:
     delete:
