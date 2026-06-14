@@ -181,6 +181,11 @@ type SelfServiceConfig struct {
 	// hash) and login is served from it, so a password changed via /me/password
 	// takes effect on the next login.
 	Password SelfServiceStoreConfig `yaml:"password"`
+	// Signup enables the opt-in unauthenticated self-service registration
+	// endpoint POST /auth/register (creates a user + sets a password). DEFAULT
+	// OFF — open signup is an abuse surface most enterprise deployments don't
+	// want; they provision via SCIM/admin. Needs the password store enabled too.
+	Signup bool `yaml:"signup"`
 	// DataExport mounts GET /me/data-export — the GDPR Art. 15 self-service
 	// export of the authenticated user's OWN data (assembled by the same
 	// compliance.Exporter the admin route uses, scoped to the caller). Opt-in

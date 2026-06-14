@@ -4,14 +4,20 @@ import "time"
 
 // Endpoint paths registered by Server.Mount.
 const (
-	PathHealth          = "/health"
-	PathLivez           = "/livez"
-	PathReadyz          = "/readyz"
-	PathLogin           = "/auth/login"
-	PathMFAComplete     = "/auth/mfa"
-	PathSendCode        = "/auth/send-code"
-	PathForgotPassword  = "/auth/forgot-password"
-	PathResetPassword   = "/auth/reset-password"
+	PathHealth         = "/health"
+	PathLivez          = "/livez"
+	PathReadyz         = "/readyz"
+	PathLogin          = "/auth/login"
+	PathMFAComplete    = "/auth/mfa"
+	PathSendCode       = "/auth/send-code"
+	PathForgotPassword = "/auth/forgot-password"
+	PathResetPassword  = "/auth/reset-password"
+	// PathSignup is the opt-in unauthenticated self-service registration
+	// endpoint (POST {username, password, email}). Distinct from /register
+	// (RFC 7591 Dynamic CLIENT Registration). Default-off — open signup is an
+	// abuse surface most enterprise deployments don't want (they provision via
+	// SCIM/admin); enable deliberately for B2C.
+	PathSignup          = "/auth/register"
 	PathCallback        = "/auth/callback"
 	PathToken           = "/token"
 	PathIntrospect      = "/token/introspect"
@@ -476,6 +482,9 @@ const (
 	// POST /me/email/verify failure (unknown / expired / consumed token, or a
 	// token belonging to a different user) — cause only in the audit event.
 	ErrEmailChangeInvalid = "email_change_invalid"
+	// ErrAccountExists is returned by POST /auth/register when the chosen
+	// username already exists (signup never overwrites an existing account).
+	ErrAccountExists = "account_exists"
 	// ErrTOTPInvalidCode is the single oracle-safe response for every TOTP
 	// enrollment-confirm failure (bad base32 secret, wrong/expired code) so a
 	// caller cannot tell which input was at fault. ErrTOTPEnrollmentNotSupported

@@ -437,6 +437,11 @@ type Server struct {
 	emailChangeTTL    time.Duration
 	emailChangeSender spi.EmailChangeSender
 
+	// signupEnabled gates POST /auth/register (opt-in self-service signup).
+	// Mounts only when also a UserProvider + PasswordCredentialStore are wired
+	// (signup creates the user + sets the password). Default-off.
+	signupEnabled bool
+
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
@@ -2024,6 +2029,18 @@ func WithEmailChangeSender(sender spi.EmailChangeSender) Option {
 	return func(srv *Server) { srv.emailChangeSender = sender }
 }
 
+// WithSelfServiceSignup enables the opt-in UNAUTHENTICATED self-service
+// registration endpoint POST /auth/register (creates a user + sets a password,
+// reusing the wired UserProvider + PasswordCredentialStore). DEFAULT-OFF: open
+// signup is an abuse surface most enterprise deployments don't want (they
+// provision via SCIM/admin). The endpoint is rate-limited by the standard
+// middleware; operators wanting CAPTCHA / domain-allowlist / email-verification
+// gating should front or extend it. Mounts only when a UserProvider AND a
+// PasswordCredentialStore are also wired.
+func WithSelfServiceSignup() Option {
+	return func(srv *Server) { srv.signupEnabled = true }
+}
+
 // WithMFAEnrollmentStore wires a store for the self-service MFA management
 // endpoints (GET /me/mfa to list registered factors, DELETE /me/mfa/:id to
 // unbind one). An operator implements it over their concrete factor backends
@@ -2231,6 +2248,11 @@ func (s *Server) Mount() {
 	if s.passwordResetStore != nil && s.passwordCredentialStore != nil {
 		s.router.POST(PathForgotPassword, s.handleForgotPassword)
 		s.router.POST(PathResetPassword, s.handleResetPassword)
+	}
+	// Opt-in self-service signup. Needs a UserProvider (create) + credential
+	// store (set password). Default-off — byte-identical when not enabled.
+	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil {
+		s.router.POST(PathSignup, s.handleSelfRegister)
 	}
 	s.router.POST(PathToken, s.handleToken)
 	s.router.POST(PathIntrospect, s.handleIntrospect)

@@ -316,6 +316,7 @@ const PathMyMFATOTPBegin = core.PathMyMFATOTPBegin
 const PathMyMFATOTPConfirm = core.PathMyMFATOTPConfirm
 const PathForgotPassword = core.PathForgotPassword
 const PathResetPassword = core.PathResetPassword
+const PathSignup = core.PathSignup
 const PathMyDataExport = core.PathMyDataExport
 const PathMyAccountErase = core.PathMyAccountErase
 const PathMyEmailChange = core.PathMyEmailChange

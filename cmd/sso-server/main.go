@@ -3373,6 +3373,16 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		opts = append(opts, sso.WithPasswordCredentialStore(passwordStore))
 		logger.Info("self-service password change enabled", "backend", cfg.SelfService.Password.Backend)
 	}
+	// Opt-in self-service signup (POST /auth/register). Needs the password store
+	// (to set the new account's password). Default-off — open signup is an abuse
+	// surface; enable deliberately for B2C.
+	if cfg.SelfService.Signup {
+		if passwordStore == nil {
+			return nil, errors.New("self_service.signup requires self_service.password to be enabled")
+		}
+		opts = append(opts, sso.WithSelfServiceSignup())
+		logger.Info("self-service signup enabled (/auth/register)")
+	}
 
 	// Unauthenticated forgot-password flow. Wire the reset-token store + default
 	// resolvers (identifier-as-userID via the UserProvider, delivery via the

@@ -190,6 +190,12 @@ const (
 	// via GET /me/data-export (GDPR Art. 15 self-service). Outcome=success;
 	// ActorID = the subject. The exported bundle is NOT recorded.
 	EventSubjectDataExported EventType = "subject_data_exported"
+	// EventSelfRegistered — a new account was created via the opt-in
+	// self-service signup (POST /auth/register). Outcome=success; ActorID = the
+	// new userID. The password is NEVER recorded. A conflict (username taken)
+	// records Outcome=failure with Reason "account_exists".
+	EventSelfRegistered EventType = "self_registered"
+
 	// EventEmailChangeRequested — POST /me/email/change minted + delivered a
 	// verification token to a new address. Outcome=success; ActorID = subject.
 	// The token + the new email are NOT recorded.
