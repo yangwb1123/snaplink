@@ -282,3 +282,27 @@ type MFAEnrollmentStore interface {
 type TOTPEnrollmentWriter interface {
 	AddTOTPFactor(ctx context.Context, userID, factorID, label string, secret []byte) error
 }
+
+// TOTPEnroller is the server-side seam the self-service TOTP enrollment handlers
+// call to generate/encode/decode secrets, build the otpauth provisioning URI,
+// and verify the confirm code. It exists to INVERT a dependency: the concrete
+// TOTP primitives live in the authenticators package, which imports the server
+// package — so the server cannot import them directly without a cycle. The
+// server depends on this interface instead; authenticators.NewTOTPEnroller
+// adapts the concrete primitives to it. Wired via WithTOTPEnroller; nil ⇒ the
+// enrollment routes are not mounted (byte-identical off).
+type TOTPEnroller interface {
+	// GenerateSecret mints a fresh raw TOTP secret.
+	GenerateSecret() ([]byte, error)
+	// EncodeSecret renders the base32 form shown in the QR / for manual entry.
+	EncodeSecret(secret []byte) string
+	// DecodeSecret parses the base32 form (as round-tripped from begin) back to
+	// raw bytes. A malformed value MUST return an error, not panic.
+	DecodeSecret(encoded string) ([]byte, error)
+	// OTPAuthURI builds the otpauth://totp/... provisioning URI for issuer +
+	// account that authenticator apps consume from a QR code.
+	OTPAuthURI(issuer, account string, secret []byte) string
+	// VerifyCode reports whether code matches secret at the current time
+	// (within the configured skew), WITHOUT consulting any store.
+	VerifyCode(secret []byte, code string) bool
+}

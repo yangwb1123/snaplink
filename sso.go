@@ -414,6 +414,11 @@ type Server struct {
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
 
+	// totpEnroller backs POST /me/mfa/totp/{begin,confirm} (WithTOTPEnroller).
+	// The enrollment routes mount only when this AND an mfaEnrollmentStore that
+	// implements TOTPEnrollmentWriter are both wired — byte-identical off.
+	totpEnroller TOTPEnroller
+
 	// selfEditableAttrs is the operator allowlist of User.Attributes keys a
 	// user MAY change via PATCH /me (WithSelfEditableProfileAttributes). Empty
 	// (the default) ⇒ PATCH /me may edit the display name only; any attributes
@@ -1921,6 +1926,18 @@ func WithMFAEnrollmentStore(s MFAEnrollmentStore) Option {
 	return func(srv *Server) { srv.mfaEnrollmentStore = s }
 }
 
+// WithTOTPEnroller wires the seam the self-service TOTP enrollment endpoints
+// (POST /me/mfa/totp/begin + /confirm) use to mint/encode/decode secrets, build
+// the otpauth provisioning URI, and verify the confirm code. Use
+// authenticators.NewTOTPEnroller(totpAuth) so the SAME authenticator (and skew
+// window) that backs TOTP login also backs enrollment — a newly enrolled factor
+// then verifies identically at login. The routes mount ONLY when this is wired
+// AND the MFAEnrollmentStore (WithMFAEnrollmentStore) implements
+// TOTPEnrollmentWriter; otherwise the build is byte-identical (routes absent).
+func WithTOTPEnroller(e TOTPEnroller) Option {
+	return func(srv *Server) { srv.totpEnroller = e }
+}
+
 // WithTenantUsageAggregator wires the per-tenant metering Aggregator and
 // mounts GET /api/v1/admin/tenants/:id/usage (admin:read). The endpoint
 // returns aggregated login / token-issuance / active-user / MFA-challenge
@@ -2133,6 +2150,13 @@ func (s *Server) Mount() {
 	if s.mfaEnrollmentStore != nil {
 		s.router.GET(PathMyMFA, s.handleMyMFAFactors)
 		s.router.DELETE(PathMyMFAByID, s.handleDeleteMyMFAFactor)
+		// Self-service TOTP enrollment (the write-half). Mounted only when the
+		// enrollment store can persist a TOTP factor AND a TOTP enroller is
+		// wired to verify the confirm code — byte-identical otherwise.
+		if _, ok := s.mfaEnrollmentStore.(TOTPEnrollmentWriter); ok && s.totpEnroller != nil {
+			s.router.POST(PathMyMFATOTPBegin, s.handleTOTPEnrollBegin)
+			s.router.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
+		}
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to

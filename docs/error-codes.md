@@ -125,6 +125,13 @@ the attestation certificate.
 | `mfa_required`  | 200  | `/auth/login` accepted the primary credential but the RiskScorer returned `DecisionRequireMFA` and `WithMFAProvider` is wired         | Read `mfa_challenge_id` + `mfa_methods`; POST `/auth/mfa`  |
 | `mfa_invalid`   | 400 / 404 | `/auth/mfa` could not complete the challenge (unknown id, expired, already consumed, unsupported method, wrong factor — all collapsed by anti-enumeration) | Restart the auth flow from `/auth/login`                |
 
+### Self-service TOTP enrollment (`/me/mfa/totp/begin`, `/me/mfa/totp/confirm`)
+
+| Code                            | HTTP | Emitted when                                                                                                              | Client should                                          |
+|---------------------------------|------|--------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
+| `totp_invalid_code`             | 400  | `/me/mfa/totp/confirm` could not verify the code: wrong/expired code OR a malformed secret — collapsed by anti-enumeration | Re-check the device clock and re-enter the current code |
+| `totp_enrollment_not_supported` | 501  | The wired `MFAEnrollmentStore` is not a `TOTPEnrollmentWriter`, or no `TOTPEnroller` is wired                            | Not a client error — operator must wire enrollment      |
+
 ### Authorization (`/auth/login`, `/par`)
 
 These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary so off-the-shelf RP libraries (e.g. AppAuth, oauth4webapi, MSAL) recognize them without remapping.

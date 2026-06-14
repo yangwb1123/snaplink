@@ -114,6 +114,18 @@ const (
 	// error — the specifics live here.
 	EventWebAuthnAttestationDenied EventType = "webauthn_attestation_denied"
 
+	// EventTOTPEnrolled — a user completed self-service TOTP enrollment
+	// (POST /me/mfa/totp/confirm proved possession of the new secret).
+	// Outcome=success; ActorID = the subject; Metadata "factor_id" carries
+	// the new factor's opaque handle. The secret itself is NEVER recorded.
+	EventTOTPEnrolled EventType = "mfa_totp_enrolled"
+
+	// EventTOTPEnrollFailed — a self-service TOTP enrollment confirm was
+	// rejected (wrong code or malformed secret). Outcome=failure; ActorID =
+	// the subject; Metadata "reason" carries the operator-side cause while the
+	// caller only ever sees the single oracle-safe totp_invalid_code response.
+	EventTOTPEnrollFailed EventType = "mfa_totp_enroll_failed"
+
 	// Admin control-plane mutations. Every mutating RPC on the
 	// ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits
 	// one of these. ActorID is the admin who issued the call; Reason
