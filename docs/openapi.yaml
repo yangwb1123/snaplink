@@ -1272,6 +1272,90 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me/mfa/totp/begin:
+    post:
+      tags: [self-service]
+      summary: Begin self-service TOTP enrollment.
+      description: |
+        Mints a fresh TOTP secret and returns it (base32) plus an `otpauth://`
+        provisioning URI for QR rendering. The secret is NOT persisted: the flow
+        is stateless and the client returns it to `/me/mfa/totp/confirm` with a
+        code proving possession. Round-tripping is safe — the secret only ever
+        becomes a second factor for the caller's own account. Mounted only when
+        a TOTP enroller and a TOTP-capable enrollment store are wired.
+        `Cache-Control: no-store`.
+      operationId: beginMyTOTPEnrollment
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: A fresh secret + provisioning URI.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string, description: Base32 (no padding) shared secret. }
+                  otpauth_uri: { type: string, description: otpauth://totp/... URI for QR. }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: TOTP enrollment is not wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/mfa/totp/confirm:
+    post:
+      tags: [self-service]
+      summary: Confirm and commit a self-service TOTP factor.
+      description: |
+        Verifies `code` against the supplied `secret` (proof of possession),
+        then persists the secret and records the factor so it is immediately
+        usable at login and listed by `GET /me/mfa`. Oracle-safe: a malformed
+        secret and a wrong code collapse to one `totp_invalid_code` response;
+        the cause is recorded only in the `mfa_totp_enroll_failed` audit event.
+        `Cache-Control: no-store`.
+      operationId: confirmMyTOTPEnrollment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret, code]
+              properties:
+                secret: { type: string, description: The base32 secret from begin. }
+                code: { type: string, description: Current 6-digit TOTP code. }
+                label: { type: string, description: Optional device name. }
+      responses:
+        "201":
+          description: Factor enrolled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factor_id: { type: string }
+                  label: { type: string }
+        "400":
+          description: Malformed request, or `totp_invalid_code` (wrong code / bad secret).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: TOTP enrollment is not wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/oauth-protected-resource:
     get:
       tags: [discovery]

@@ -32,7 +32,7 @@ func TestBuildAuthenticators_OIDCFederationWiresProviderByName(t *testing.T) {
 		},
 	}
 
-	auths, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
 
 	seen := map[string]bool{}
 	for _, a := range auths {
@@ -62,7 +62,7 @@ func TestBuildAuthenticators_OIDCFederationSkipsInvalidEntries(t *testing.T) {
 		nil, // defensive: nil entry must not panic.
 	}
 
-	auths, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
 
 	seen := map[string]bool{}
 	for _, a := range auths {

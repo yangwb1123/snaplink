@@ -3341,12 +3341,20 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		return nil, fmt.Errorf("self_service password store: %w", err)
 	}
 
-	auths, tempStore, totpAuth, err := buildAuthenticators(cfg, logger, passwordStore)
+	auths, tempStore, totpAuth, totpEnrollStore, err := buildAuthenticators(cfg, logger, passwordStore)
 	if err != nil {
 		return nil, fmt.Errorf("authenticators: %w", err)
 	}
 	for _, ath := range auths {
 		opts = append(opts, sso.WithAuthenticator(ath))
+	}
+	// Self-service MFA management + TOTP enrollment ride the SAME store the TOTP
+	// authenticator reads, so a factor enrolled via /me/mfa/totp/confirm is
+	// immediately usable at login. Only wired when TOTP is enabled.
+	if totpEnrollStore != nil {
+		opts = append(opts, sso.WithMFAEnrollmentStore(totpEnrollStore))
+		opts = append(opts, sso.WithTOTPEnroller(authenticators.NewTOTPEnroller(totpAuth)))
+		logger.Info("self-service MFA enabled (/me/mfa list+unbind, /me/mfa/totp enrollment)")
 	}
 	if passwordStore != nil {
 		opts = append(opts, sso.WithPasswordCredentialStore(passwordStore))
@@ -4947,10 +4955,15 @@ func buildPasswordHealthChecker(h *config.PasswordHealthConfig, logger spi.Logge
 // Returns an error when an authenticator's config is invalid (e.g. a
 // missing weak-password extension file) — a misconfigured authenticator
 // should fail the boot loudly, not silently degrade.
-func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, error) {
+func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
+	// totpEnrollStore is the unified TOTP store (also a TOTPEnrollmentWriter +
+	// MFAEnrollmentStore) when TOTP is enabled — surfaced so the caller can wire
+	// self-service /me/mfa + TOTP enrollment over the SAME secret store the
+	// authenticator reads. Nil when TOTP is off.
+	var totpEnrollStore sso.MFAEnrollmentStore
 	codeStore := authenticators.NewMemoryCodeStore()
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
@@ -4962,7 +4975,7 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 			// changed via /me/password takes effect on the next login.
 			v, n, err := buildStoredPasswordVerifier(passwordStore, a.Users, logger)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("password store seed: %w", err)
+				return nil, nil, nil, nil, fmt.Errorf("password store seed: %w", err)
 			}
 			verifier, seeded = v, n
 		} else {
@@ -4972,7 +4985,7 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 		if h := a.Health; h != nil && h.Enabled {
 			checker, err := buildPasswordHealthChecker(h, logger)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("password health checker: %w", err)
+				return nil, nil, nil, nil, fmt.Errorf("password health checker: %w", err)
 			}
 			// Pass the logger alongside the checker so a malfunctioning
 			// custom checker (e.g. an HIBP lookup) is observable in
@@ -5078,22 +5091,19 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 	}
 
 	if a := cfg.Authenticators.TOTP; a != nil && a.Enabled {
-		// MemoryTOTPStore is the dev / demo tier — secrets are
-		// MUST-encrypt material in production, so operators with
-		// durable needs should fork cmd and supply their own
-		// TOTPStore implementation. Leaving the store empty here
-		// means /auth/login?provider=totp returns a generic
-		// "invalid code" until enrollment populates a secret.
+		// MemoryTOTPEnrollmentStore is the dev / demo tier — secrets are
+		// MUST-encrypt material in production, so operators with durable needs
+		// should fork cmd and supply their own store. The unified store plays
+		// THREE roles off one instance: the authenticator's secret source, the
+		// self-service /me/mfa list, and the TOTP enrollment writer — so a
+		// factor enrolled via /me/mfa/totp is immediately usable at login.
 		var totpOpts []authenticators.TOTPOption
 		if a.SkewSteps > 0 {
 			totpOpts = append(totpOpts, authenticators.WithTOTPSkew(a.SkewSteps))
 		}
-		// Held as a typed handle so buildMFA can wrap this exact
-		// instance with TOTPMFAProvider — one secret store, two
-		// consumer roles (primary auth + step-up MFA).
-		totpAuth = authenticators.NewTOTPAuthenticator(
-			authenticators.NewMemoryTOTPStore(), totpOpts...,
-		)
+		enrollStore := defaultimpl.NewMemoryTOTPEnrollmentStore()
+		totpAuth = authenticators.NewTOTPAuthenticator(enrollStore, totpOpts...)
+		totpEnrollStore = enrollStore
 		auths = append(auths, totpAuth)
 		logger.Info("totp authenticator enabled (memory store; supply your own TOTPStore for production)")
 	}
@@ -5121,7 +5131,7 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 		auths = append(auths, auth)
 		logger.Info("oidc_federation enabled", "provider", fed.Name, "authorization_endpoint", fed.AuthorizationEndpoint)
 	}
-	return auths, tempStore, totpAuth, nil
+	return auths, tempStore, totpAuth, totpEnrollStore, nil
 }
 
 func logEndpoints(cfg *config.Config, grpcListen string) {

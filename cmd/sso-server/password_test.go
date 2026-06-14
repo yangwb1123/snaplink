@@ -215,7 +215,7 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
 	for _, a := range auths {
 		if a.Name() == "password" {
 			return
@@ -233,7 +233,7 @@ func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
 		Enabled: true,
 		Health:  &config.PasswordHealthConfig{Enabled: true},
 	}
-	_, _, _, err := buildAuthenticators(cfg, quietLogger(), nil)
+	_, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error wiring password health: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestBuildAuthenticators_PasswordHealthMissingFileIsLoud(t *testing.T) {
 			WeakPasswordFile: filepath.Join(t.TempDir(), "missing.txt"),
 		},
 	}
-	if _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil); err == nil {
+	if _, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil); err == nil {
 		t.Fatal("expected an error for a missing weak-password file, got nil")
 	}
 }

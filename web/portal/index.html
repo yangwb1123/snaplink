@@ -99,6 +99,18 @@ input:focus { outline: none; border-color: var(--brand-primary); box-shadow: 0 0
   <div class="card">
     <h2>Two-factor methods</h2>
     <div id="mfa"></div>
+    <button class="btn btn-primary btn-sm" id="totp-add-btn">Add authenticator app</button>
+    <div id="totp-enroll" style="display:none">
+      <p>Add this secret to your authenticator app (or open the link), then enter the 6-digit code to confirm.</p>
+      <div class="kv"><span class="k">Secret</span><code id="totp-secret"></code></div>
+      <div><a id="totp-uri" href="#" target="_blank" rel="noopener">Open in authenticator app</a></div>
+      <label for="totp-label">Device name (optional)</label>
+      <input type="text" id="totp-label" placeholder="e.g. iPhone" autocomplete="off">
+      <label for="totp-code">6-digit code</label>
+      <input type="text" id="totp-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+      <button class="btn btn-primary btn-sm" id="totp-confirm-btn">Verify and save</button>
+      <div id="totp-msg" class="msg"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -257,6 +269,49 @@ function loadMFA() {
     });
   });
 }
+
+// --- TOTP enrollment (begin -> confirm). Stateless: the secret from begin is
+// held client-side and posted back to confirm with a code proving possession.
+(function () {
+  var addBtn = $("totp-add-btn"), panel = $("totp-enroll");
+  if (!addBtn || !panel) return;
+  var pendingSecret = "";
+  addBtn.onclick = function () {
+    api("/me/mfa/totp/begin", { method: "POST" }).then(function (r) {
+      if (r.status !== 200) {
+        showMsg($("totp-msg"), "TOTP enrollment is not enabled.", false);
+        panel.style.display = "block";
+        return null;
+      }
+      return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      pendingSecret = d.secret || "";
+      $("totp-secret").textContent = pendingSecret;
+      $("totp-uri").href = d.otpauth_uri || "#";
+      $("totp-msg").textContent = "";
+      panel.style.display = "block";
+    });
+  };
+  $("totp-confirm-btn").onclick = function () {
+    var code = $("totp-code").value;
+    if (!pendingSecret || !code) { showMsg($("totp-msg"), "Enter the 6-digit code.", false); return; }
+    api("/me/mfa/totp/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: pendingSecret, code: code, label: $("totp-label").value }),
+    }).then(function (r) {
+      if (r.status === 201) {
+        panel.style.display = "none";
+        pendingSecret = "";
+        $("totp-code").value = ""; $("totp-label").value = "";
+        loadMFA();
+        return;
+      }
+      showMsg($("totp-msg"), "That code was not accepted. Check your device clock and try again.", false);
+    });
+  };
+})();
 
 // --- Password change ---
 $("pw-btn").onclick = function () {
