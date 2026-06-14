@@ -152,6 +152,37 @@ func TestUserStore_AddCredentialAppendsNotReplaces(t *testing.T) {
 	}
 }
 
+func TestUserStore_RemoveCredential(t *testing.T) {
+	store := newUserStoreForTest(t)
+	ctx := context.Background()
+	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	_ = store.AddCredential(ctx, "alice", &gw.Credential{ID: []byte("c1")})
+	_ = store.AddCredential(ctx, "alice", &gw.Credential{ID: []byte("c2")})
+
+	if err := store.RemoveCredential(ctx, "alice", []byte("c1")); err != nil {
+		t.Fatalf("RemoveCredential: %v", err)
+	}
+	got, _ := store.GetByName(ctx, "alice")
+	if len(got.Credentials) != 1 || !bytes.Equal(got.Credentials[0].ID, []byte("c2")) {
+		t.Fatalf("after remove = %#v, want only c2", got.Credentials)
+	}
+
+	// Idempotent: absent credential is a no-op.
+	if err := store.RemoveCredential(ctx, "alice", []byte("nope")); err != nil {
+		t.Fatalf("RemoveCredential absent: %v", err)
+	}
+	if got, _ := store.GetByName(ctx, "alice"); len(got.Credentials) != 1 {
+		t.Fatalf("absent remove changed the set: %#v", got.Credentials)
+	}
+
+	// Unknown user → sentinel.
+	if err := store.RemoveCredential(ctx, "ghost", []byte("c2")); !errors.Is(err, webauthn.ErrUserUnknown) {
+		t.Fatalf("unknown user got %v, want ErrUserUnknown", err)
+	}
+}
+
 func TestUserStore_CrossInstanceSharing(t *testing.T) {
 	// The whole multi-replica defense: a credential registered on
 	// replica A is visible at login time on replica B against the

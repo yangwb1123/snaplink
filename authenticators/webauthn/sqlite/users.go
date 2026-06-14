@@ -190,6 +190,21 @@ func (s *UserStore) UpdateCredential(ctx context.Context, name string, cred *gw.
 	})
 }
 
+// RemoveCredential implements [webauthn.UserStore]. Idempotent: a credentialID
+// absent for the user leaves the set unchanged (nil). Unknown user →
+// ErrUserUnknown (from mutateCredentials).
+func (s *UserStore) RemoveCredential(ctx context.Context, name string, credentialID []byte) error {
+	return s.mutateCredentials(ctx, name, func(creds []gw.Credential) ([]gw.Credential, error) {
+		out := creds[:0:0]
+		for _, c := range creds {
+			if !bytesEqual(c.ID, credentialID) {
+				out = append(out, c)
+			}
+		}
+		return out, nil
+	})
+}
+
 func (s *UserStore) mutateCredentials(ctx context.Context, name string, mutate func([]gw.Credential) ([]gw.Credential, error)) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

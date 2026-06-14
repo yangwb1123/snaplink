@@ -77,6 +77,12 @@ type UserStore interface {
 	CreateUser(ctx context.Context, name, displayName string) (*User, error)
 	AddCredential(ctx context.Context, name string, cred *gw.Credential) error
 	UpdateCredential(ctx context.Context, name string, cred *gw.Credential) error
+	// RemoveCredential unbinds the credential with credentialID from the named
+	// user. Idempotent: a credentialID not enrolled for the user is a no-op
+	// (returns nil), so a fan-out unbind across stores needs no ownership
+	// bookkeeping. Returns [ErrUserUnknown] when name is not enrolled. Backs
+	// self-service passkey removal via DELETE /me/mfa/:id.
+	RemoveCredential(ctx context.Context, name string, credentialID []byte) error
 }
 
 // SessionStore holds challenge + session data between Begin* and
@@ -567,6 +573,26 @@ func (m *MemoryUserStore) UpdateCredential(_ context.Context, name string, cred 
 		}
 	}
 	return errors.New("webauthn: credential not found for user")
+}
+
+// RemoveCredential implements [UserStore]. Idempotent: a credentialID not
+// enrolled for the user leaves the set unchanged (nil). Unknown user →
+// ErrUserUnknown.
+func (m *MemoryUserStore) RemoveCredential(_ context.Context, name string, credentialID []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.byName[name]
+	if !ok {
+		return ErrUserUnknown
+	}
+	out := u.Credentials[:0:0]
+	for _, c := range u.Credentials {
+		if !bytesEqual(c.ID, credentialID) {
+			out = append(out, c)
+		}
+	}
+	u.Credentials = out
+	return nil
 }
 
 // MemorySessionStore is an in-process [SessionStore]. Production

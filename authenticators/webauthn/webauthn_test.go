@@ -223,6 +223,35 @@ func TestMemoryUserStore_AddCredentialUnknownUserErrors(t *testing.T) {
 	}
 }
 
+func TestMemoryUserStore_RemoveCredential(t *testing.T) {
+	store := NewMemoryUserStore()
+	ctx := context.Background()
+	_, _ = store.CreateUser(ctx, "alice", "Alice")
+	_ = store.AddCredential(ctx, "alice", &gw.Credential{ID: []byte("cred-1")})
+	_ = store.AddCredential(ctx, "alice", &gw.Credential{ID: []byte("cred-2")})
+
+	if err := store.RemoveCredential(ctx, "alice", []byte("cred-1")); err != nil {
+		t.Fatalf("RemoveCredential: %v", err)
+	}
+	got, _ := store.GetByName(ctx, "alice")
+	if len(got.Credentials) != 1 || !bytes.Equal(got.Credentials[0].ID, []byte("cred-2")) {
+		t.Fatalf("after remove = %#v, want only cred-2", got.Credentials)
+	}
+
+	// Idempotent: removing an absent credential is a no-op.
+	if err := store.RemoveCredential(ctx, "alice", []byte("nope")); err != nil {
+		t.Fatalf("RemoveCredential absent: %v", err)
+	}
+	if got, _ := store.GetByName(ctx, "alice"); len(got.Credentials) != 1 {
+		t.Fatalf("absent remove changed the set: %#v", got.Credentials)
+	}
+
+	// Unknown user → sentinel.
+	if err := store.RemoveCredential(ctx, "ghost", []byte("cred-2")); !errors.Is(err, ErrUserUnknown) {
+		t.Fatalf("unknown user got %v, want ErrUserUnknown", err)
+	}
+}
+
 // ----- MemorySessionStore -----
 
 func TestMemorySessionStore_PutThenTake(t *testing.T) {
