@@ -311,6 +311,7 @@ type Server struct {
 	parTTL                         time.Duration
 	deviceSecretStore              DeviceSecretStore
 	deviceSecretTTL                time.Duration
+	protectedResourceMetadata      *ProtectedResourceMetadata
 	cibaStore                      oauth.CIBAStore
 	cibaTransport                  oauth.CIBATransport
 	cibaPingNotifier               oauth.CIBAPingNotifier
@@ -2151,6 +2152,11 @@ func (s *Server) Mount() {
 	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
 	// self-signed Entity Statement at the well-known endpoint so the OP is
 	// discoverable as a federation ENTITY. Not mounted unless
+	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
+	// unmounted when not wired (byte-identical).
+	if s.protectedResourceMetadata != nil {
+		s.router.GET(PathProtectedResourceMetadata, s.handleProtectedResourceMetadata)
+	}
 	// WithFederationEntity is wired — byte-identical to a build without it.
 	if s.federationEntity != nil {
 		s.router.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)

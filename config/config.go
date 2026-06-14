@@ -25,45 +25,59 @@ const DefaultFileName = "config.yaml"
 
 // Config is the root configuration document.
 type Config struct {
-	Server             ServerConfig             `yaml:"server"`
-	Authenticators     AuthenticatorsConfig     `yaml:"authenticators"`
-	Logging            LoggingConfig            `yaml:"logging"`
-	Audit              AuditConfig              `yaml:"audit"`
-	Permissions        PermissionsConfig        `yaml:"permissions"`
-	Network            NetworkConfig            `yaml:"network"`
-	Clients            []ClientConfig           `yaml:"clients"`
-	Admin              AdminConfig              `yaml:"admin"`
-	Bootstrap          BootstrapConfig          `yaml:"bootstrap"`
-	Snapshot           SnapshotConfig           `yaml:"snapshot"`
-	Releases           ReleasesConfig           `yaml:"releases"`
-	Geo                GeoConfig                `yaml:"geo"`
-	Region             RegionConfig             `yaml:"region"`
-	Tenant             TenantConfig             `yaml:"tenant"`
-	Security           SecurityConfig           `yaml:"security"`
-	Metrics            MetricsConfig            `yaml:"metrics"`
-	OAuth              OAuthConfig              `yaml:"oauth"`
-	BackchannelLogout  BackchannelLogoutConfig  `yaml:"backchannel_logout"`
-	ClientRegistration ClientRegistrationConfig `yaml:"client_registration"`
-	Identity           IdentityConfig           `yaml:"identity"`
-	WebAuthn           WebAuthnConfig           `yaml:"webauthn"`
-	Registry           RegistryConfig           `yaml:"registry"`
-	Risk               RiskConfig               `yaml:"risk"`
-	MFA                MFAConfig                `yaml:"mfa"`
-	Anomaly            AnomalyConfig            `yaml:"anomaly"`
-	Cluster            ClusterConfig            `yaml:"cluster"`
-	Keys               KeysConfig               `yaml:"keys"`
-	CIBA               CIBAConfig               `yaml:"ciba"`
-	OIDC               OIDCConfig               `yaml:"oidc"`
-	SCIM               SCIMConfig               `yaml:"scim"`
-	DPoP               DPoPConfig               `yaml:"dpop"`
-	CAEP               CAEPConfig               `yaml:"caep"`
-	SPIFFE             SPIFFEConfig             `yaml:"spiffe"`
-	Mesh               MeshConfig               `yaml:"mesh"`
-	Federation         FederationConfig         `yaml:"federation"`
-	SAML               SAMLConfig               `yaml:"saml"`
-	HostedLogin        HostedLoginConfig        `yaml:"hosted_login"`
-	SelfService        SelfServiceConfig        `yaml:"self_service"`
-	NativeSSO          NativeSSOConfig          `yaml:"native_sso"`
+	Server             ServerConfig                    `yaml:"server"`
+	Authenticators     AuthenticatorsConfig            `yaml:"authenticators"`
+	Logging            LoggingConfig                   `yaml:"logging"`
+	Audit              AuditConfig                     `yaml:"audit"`
+	Permissions        PermissionsConfig               `yaml:"permissions"`
+	Network            NetworkConfig                   `yaml:"network"`
+	Clients            []ClientConfig                  `yaml:"clients"`
+	Admin              AdminConfig                     `yaml:"admin"`
+	Bootstrap          BootstrapConfig                 `yaml:"bootstrap"`
+	Snapshot           SnapshotConfig                  `yaml:"snapshot"`
+	Releases           ReleasesConfig                  `yaml:"releases"`
+	Geo                GeoConfig                       `yaml:"geo"`
+	Region             RegionConfig                    `yaml:"region"`
+	Tenant             TenantConfig                    `yaml:"tenant"`
+	Security           SecurityConfig                  `yaml:"security"`
+	Metrics            MetricsConfig                   `yaml:"metrics"`
+	OAuth              OAuthConfig                     `yaml:"oauth"`
+	BackchannelLogout  BackchannelLogoutConfig         `yaml:"backchannel_logout"`
+	ClientRegistration ClientRegistrationConfig        `yaml:"client_registration"`
+	Identity           IdentityConfig                  `yaml:"identity"`
+	WebAuthn           WebAuthnConfig                  `yaml:"webauthn"`
+	Registry           RegistryConfig                  `yaml:"registry"`
+	Risk               RiskConfig                      `yaml:"risk"`
+	MFA                MFAConfig                       `yaml:"mfa"`
+	Anomaly            AnomalyConfig                   `yaml:"anomaly"`
+	Cluster            ClusterConfig                   `yaml:"cluster"`
+	Keys               KeysConfig                      `yaml:"keys"`
+	CIBA               CIBAConfig                      `yaml:"ciba"`
+	OIDC               OIDCConfig                      `yaml:"oidc"`
+	SCIM               SCIMConfig                      `yaml:"scim"`
+	DPoP               DPoPConfig                      `yaml:"dpop"`
+	CAEP               CAEPConfig                      `yaml:"caep"`
+	SPIFFE             SPIFFEConfig                    `yaml:"spiffe"`
+	Mesh               MeshConfig                      `yaml:"mesh"`
+	Federation         FederationConfig                `yaml:"federation"`
+	SAML               SAMLConfig                      `yaml:"saml"`
+	HostedLogin        HostedLoginConfig               `yaml:"hosted_login"`
+	SelfService        SelfServiceConfig               `yaml:"self_service"`
+	NativeSSO          NativeSSOConfig                 `yaml:"native_sso"`
+	ProtectedResource  ProtectedResourceMetadataConfig `yaml:"protected_resource_metadata"`
+}
+
+// ProtectedResourceMetadataConfig opts into the RFC 9728 OAuth 2.0 Protected
+// Resource Metadata endpoint (/.well-known/oauth-protected-resource). Enabling
+// it lets MCP / AI-agent clients discover this server's authorization metadata.
+// All fields beyond Enabled are optional overrides — defaults derive from
+// server state (resource = base URL, authorization_servers = [issuer]).
+type ProtectedResourceMetadataConfig struct {
+	Enabled               bool     `yaml:"enabled"`
+	Resource              string   `yaml:"resource"`
+	AuthorizationServers  []string `yaml:"authorization_servers"`
+	ResourceName          string   `yaml:"resource_name"`
+	ResourceDocumentation string   `yaml:"resource_documentation"`
 }
 
 // NativeSSOConfig opts into OpenID Connect Native SSO 1.0 — a device_secret is

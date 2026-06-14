@@ -4178,6 +4178,17 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		logger.Info("native sso enabled", "backend", cfg.NativeSSO.Backend)
 	}
 
+	// RFC 9728 OAuth 2.0 Protected Resource Metadata (opt-in).
+	if prm := cfg.ProtectedResource; prm.Enabled {
+		opts = append(opts, sso.WithProtectedResourceMetadata(sso.ProtectedResourceMetadata{
+			Resource:              prm.Resource,
+			AuthorizationServers:  prm.AuthorizationServers,
+			ResourceName:          prm.ResourceName,
+			ResourceDocumentation: prm.ResourceDocumentation,
+		}))
+		logger.Info("protected resource metadata enabled", "path", "/.well-known/oauth-protected-resource")
+	}
+
 	srv = sso.NewServer(opts...)
 
 	// Background ctx + Close-at-shutdown mirrors the netpolicy Classifier:

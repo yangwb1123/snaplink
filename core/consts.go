@@ -41,6 +41,12 @@ const (
 	// Returns only non-sensitive presentation data (brand name, color, logo).
 	PathBranding = "/branding"
 
+	// PathProtectedResourceMetadata serves the RFC 9728 OAuth 2.0 Protected
+	// Resource Metadata document, letting clients (notably MCP / AI-agent
+	// clients) discover which authorization server issues tokens for this
+	// resource. Opt-in via WithProtectedResourceMetadata.
+	PathProtectedResourceMetadata = "/.well-known/oauth-protected-resource"
+
 	// PathMe is the authenticated self-service account overview: the bearer's
 	// own profile plus active-session and granted-app counts. The entry point
 	// a self-service portal lands on.

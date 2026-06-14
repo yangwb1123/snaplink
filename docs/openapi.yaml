@@ -1218,6 +1218,39 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [discovery]
+      summary: OAuth 2.0 Protected Resource Metadata (RFC 9728).
+      description: |
+        Public discovery document letting clients — notably MCP / AI-agent
+        clients following the protected-resource discovery flow — learn which
+        authorization server issues tokens for this resource, the JWKS,
+        supported scopes, and token-binding requirements. Derived from server
+        state (resource defaults to the request base URL, authorization_servers
+        to the server issuer). Mounted only when
+        `protected_resource_metadata.enabled`.
+      operationId: protectedResourceMetadata
+      responses:
+        "200":
+          description: Protected Resource Metadata document.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resource]
+                properties:
+                  resource: { type: string }
+                  authorization_servers: { type: array, items: { type: string } }
+                  jwks_uri: { type: string }
+                  scopes_supported: { type: array, items: { type: string } }
+                  bearer_methods_supported: { type: array, items: { type: string } }
+                  resource_signing_alg_values_supported: { type: array, items: { type: string } }
+                  dpop_signing_alg_values_supported: { type: array, items: { type: string } }
+                  tls_client_certificate_bound_access_tokens: { type: boolean }
+                  resource_name: { type: string }
+                  resource_documentation: { type: string }
+
   /sessions/me:
     get:
       tags: [self-service]
