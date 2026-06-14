@@ -5101,11 +5101,21 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 		if a.SkewSteps > 0 {
 			totpOpts = append(totpOpts, authenticators.WithTOTPSkew(a.SkewSteps))
 		}
-		enrollStore := defaultimpl.NewMemoryTOTPEnrollmentStore()
-		totpAuth = authenticators.NewTOTPAuthenticator(enrollStore, totpOpts...)
-		totpEnrollStore = enrollStore
+		if a.SQLiteDSN != "" {
+			sqliteStore, err := sqlitestores.NewTOTPEnrollmentStore(a.SQLiteDSN)
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("totp.sqlite: %w", err)
+			}
+			totpAuth = authenticators.NewTOTPAuthenticator(sqliteStore, totpOpts...)
+			totpEnrollStore = sqliteStore
+			logger.Info("totp authenticator enabled (sqlite store)")
+		} else {
+			enrollStore := defaultimpl.NewMemoryTOTPEnrollmentStore()
+			totpAuth = authenticators.NewTOTPAuthenticator(enrollStore, totpOpts...)
+			totpEnrollStore = enrollStore
+			logger.Info("totp authenticator enabled (memory store; set authenticators.totp.sqlite_dsn for production)")
+		}
 		auths = append(auths, totpAuth)
-		logger.Info("totp authenticator enabled (memory store; supply your own TOTPStore for production)")
 	}
 
 	for _, fed := range cfg.Authenticators.OIDCFederation {

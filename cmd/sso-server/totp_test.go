@@ -58,6 +58,23 @@ func TestBuildAuthenticators_TOTPSurfacesEnrollmentStore(t *testing.T) {
 	}
 }
 
+// TestBuildAuthenticators_TOTPSQLiteStore proves the sqlite_dsn branch builds a
+// durable TOTP store and surfaces it for self-service enrollment wiring.
+func TestBuildAuthenticators_TOTPSQLiteStore(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Authenticators.TOTP = &config.TOTPConfig{
+		Enabled:   true,
+		SQLiteDSN: "file:totpcfg_" + t.Name() + "?mode=memory&cache=shared&_pragma=busy_timeout(5000)",
+	}
+	_, _, totpAuth, store, err := buildAuthenticators(cfg, quietLogger(), nil)
+	if err != nil {
+		t.Fatalf("buildAuthenticators with sqlite_dsn: %v", err)
+	}
+	if store == nil || totpAuth == nil {
+		t.Fatal("sqlite TOTP store/authenticator not built")
+	}
+}
+
 // TestBuildAuthenticators_TOTPSkewStepsApplied proves the optional
 // skew_steps knob actually flows through. The authenticator
 // exposes no public skew accessor — easiest verification is the

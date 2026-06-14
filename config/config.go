@@ -2766,15 +2766,21 @@ type CertificateConfig struct {
 }
 
 // TOTPConfig wires the RFC 6238 TOTP authenticator. Enabled=true
-// constructs an in-process MemoryTOTPStore (operators wanting
-// durable secret storage should fork cmd and supply their own
-// TOTPStore — the secrets are MUST-encrypt material and the
-// in-memory store is a demo / dev tier). SkewSteps tolerates ±N
-// 30-second step windows of clock drift between caller and server;
-// defaults to 1 (≈±30s) when zero.
+// constructs an in-process store (the secrets are MUST-encrypt material
+// and the in-memory store is a demo / dev tier — set SQLiteDSN for
+// durable, multi-replica storage). SkewSteps tolerates ±N 30-second step
+// windows of clock drift between caller and server; defaults to 1 (≈±30s)
+// when zero.
 type TOTPConfig struct {
 	Enabled   bool `yaml:"enabled"`
 	SkewSteps int  `yaml:"skew_steps"`
+	// SQLiteDSN enables durable TOTP secret + factor storage backing both
+	// login verification and self-service enrollment (/me/mfa/totp). When set,
+	// the unified SQLite store is used instead of the in-memory store —
+	// required for secrets to survive restarts and for multi-replica
+	// deployments. The secret is MUST-encrypt material: use an encrypted DSN
+	// or full-disk encryption.
+	SQLiteDSN string `yaml:"sqlite_dsn,omitempty"`
 }
 
 // Load reads and parses a YAML config file, then applies defaults.

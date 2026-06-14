@@ -57,6 +57,10 @@ func MFAChallengesMaxVersion() int { return 1 }
 // for the push_approvals store.
 func PushApprovalsMaxVersion() int { return 1 }
 
+// TOTPFactorsMaxVersion returns the highest migration version declared for
+// the totp_factors store (self-service TOTP enrollment secrets).
+func TOTPFactorsMaxVersion() int { return 1 }
+
 // SubjectClientIndexMaxVersion returns the highest migration version
 // declared for the subject_client_index store.
 func SubjectClientIndexMaxVersion() int { return 1 }
