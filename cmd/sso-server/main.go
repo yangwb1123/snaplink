@@ -1686,6 +1686,24 @@ func buildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, 
 	}
 }
 
+// buildPasswordResetStore selects the forgot-password reset-token backend.
+// Empty backend = the flow stays disabled (byte-identical).
+func buildPasswordResetStore(cfg config.PasswordResetConfig) (sso.PasswordResetStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryPasswordResetStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("self_service.password_reset.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewPasswordResetStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown self_service.password_reset.backend %q", cfg.Backend)
+	}
+}
+
 func buildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
@@ -3354,6 +3372,41 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if passwordStore != nil {
 		opts = append(opts, sso.WithPasswordCredentialStore(passwordStore))
 		logger.Info("self-service password change enabled", "backend", cfg.SelfService.Password.Backend)
+	}
+
+	// Unauthenticated forgot-password flow. Wire the reset-token store + default
+	// resolvers (identifier-as-userID via the UserProvider, delivery via the
+	// user's email). The token SENDER needs operator email/SMS infra and is
+	// SDK-wired (WithPasswordResetSender) — without it the endpoint stays
+	// anti-enumeration-safe but delivers nothing, so we warn loudly.
+	passwordResetStore, err := buildPasswordResetStore(cfg.SelfService.PasswordReset)
+	if err != nil {
+		return nil, fmt.Errorf("self_service password_reset store: %w", err)
+	}
+	if passwordResetStore != nil && passwordStore != nil {
+		up := userProvider
+		opts = append(opts,
+			sso.WithPasswordResetStore(passwordResetStore, cfg.SelfService.PasswordReset.TTL),
+			sso.WithPasswordResetResolver(func(ctx context.Context, identifier string) (string, error) {
+				// Default: treat the identifier as the userID (resolve via the
+				// directory). Deployments that log in by email/username supply
+				// their own resolver via the SDK.
+				u, gerr := up.GetByID(ctx, identifier)
+				if gerr != nil || u == nil {
+					return "", nil
+				}
+				return u.ID, nil
+			}),
+			sso.WithPasswordResetDeliveryResolver(func(ctx context.Context, userID string) (string, error) {
+				u, gerr := up.GetByID(ctx, userID)
+				if gerr != nil || u == nil {
+					return "", nil
+				}
+				return u.Email, nil
+			}),
+		)
+		logger.Info("forgot-password store wired; provide a PasswordResetSender via the SDK to deliver tokens (delivery is a no-op until then)",
+			"backend", cfg.SelfService.PasswordReset.Backend)
 	}
 
 	geoProvider, err := buildGeoProvider(cfg, logger)

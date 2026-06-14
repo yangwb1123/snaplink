@@ -345,6 +345,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /auth/forgot-password:
+    post:
+      tags: [auth]
+      summary: Begin an unauthenticated password reset.
+      description: |
+        Resolves the identifier to a user, mints a single-use reset token, and
+        delivers it out-of-band (email/SMS). ANTI-ENUMERATION: ALWAYS returns
+        200 `{status:"sent"}` — an unknown identifier, a user with no delivery
+        address, and a delivery failure are indistinguishable on the wire (the
+        cause is only in the server log + audit `delivery_ok`). The token is
+        never returned. Mounted only when a reset-token store + credential store
+        are wired. `Cache-Control: no-store`.
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { type: string, description: Username or email the user logs in with. }
+      responses:
+        "200":
+          description: Always returned (whether or not the account exists).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: sent }
+
+  /auth/reset-password:
+    post:
+      tags: [auth]
+      summary: Complete a password reset with a token.
+      description: |
+        Consumes the single-use reset token (before setting the password, so a
+        race/failure can't replay it), sets the new password, and best-effort
+        revokes the user's existing sessions. Oracle-safe: unknown / expired /
+        consumed token, user gone, and set-password errors ALL collapse to one
+        `reset_invalid` (400, never 500). `Cache-Control: no-store`.
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token: { type: string }
+                new_password: { type: string }
+      responses:
+        "200":
+          description: Password reset.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "400":
+          description: reset_invalid (any failure — oracle-safe).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /auth/callback:
     get:
       tags: [auth]

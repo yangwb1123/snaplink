@@ -181,6 +181,22 @@ type SelfServiceConfig struct {
 	// hash) and login is served from it, so a password changed via /me/password
 	// takes effect on the next login.
 	Password SelfServiceStoreConfig `yaml:"password"`
+	// PasswordReset backs the UNAUTHENTICATED forgot-password flow
+	// (/auth/forgot-password + /auth/reset-password). Enabling it (backend set)
+	// wires the single-use reset-token store + a default identifier resolver
+	// (treats the identifier as the userID) + a delivery resolver (UserProvider
+	// email). The token DELIVERY mechanism (PasswordResetSender) needs operator
+	// email/SMS infra and is wired via the SDK — without it the endpoint stays
+	// anti-enumeration-safe but delivers nothing (a startup warning is logged).
+	PasswordReset PasswordResetConfig `yaml:"password_reset"`
+}
+
+// PasswordResetConfig wires the forgot-password reset-token store. Mirrors
+// NativeSSOConfig (Backend + SQLite + TTL). Empty backend = flow disabled.
+type PasswordResetConfig struct {
+	Backend string               `yaml:"backend"` // "" (disabled) | memory | sqlite
+	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
+	TTL     time.Duration        `yaml:"ttl"` // reset-token lifetime; 0 = SDK default (15m)
 }
 
 // SelfServiceStoreConfig selects a self-service store backend. Empty Backend =

@@ -133,6 +133,13 @@ the attestation certificate.
 | `totp_enrollment_not_supported` | 501  | The wired `MFAEnrollmentStore` is not a `TOTPEnrollmentWriter`, or no `TOTPEnroller` is wired                            | Not a client error — operator must wire enrollment      |
 | `webauthn_registration_failed`  | 400  | `/me/mfa/webauthn/finish` could not complete: expired/unknown session, bad attestation, or malformed body — collapsed (cause in logs) | Retry the passkey registration from begin               |
 
+### Account recovery (`/auth/forgot-password`, `/auth/reset-password`)
+
+| Code            | HTTP | Emitted when                                                                                                                         | Client should                                  |
+|-----------------|------|------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------|
+| (none)          | 200  | `/auth/forgot-password` ALWAYS returns 200 `{status:"sent"}` — unknown identifier / no delivery address / send failure are indistinguishable (anti-enumeration) | Tell the user "if the account exists, a reset was sent" |
+| `reset_invalid` | 400  | `/auth/reset-password` could not complete: unknown / expired / already-consumed token, user gone, or set-password error — all collapsed (cause in the audit log) | Request a new reset from `/auth/forgot-password` |
+
 ### Authorization (`/auth/login`, `/par`)
 
 These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary so off-the-shelf RP libraries (e.g. AppAuth, oauth4webapi, MSAL) recognize them without remapping.
