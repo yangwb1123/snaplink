@@ -34,7 +34,7 @@ func newCompositeMFAHarness(t *testing.T, credID string) (*httptest.Server, func
 	}
 	composite := defaultimpl.NewCompositeMFAEnrollmentStore(
 		totp,
-		defaultimpl.NewWebAuthnMFAEnrollmentAdapter(waUsers),
+		webauthn.NewMFAEnrollmentAdapter(waUsers),
 	)
 
 	users := defaultimpl.NewMemoryUserProvider()

@@ -3436,7 +3436,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		mfaEnrollStores = append(mfaEnrollStores, totpEnrollStore)
 	}
 	if webauthnUsers != nil {
-		mfaEnrollStores = append(mfaEnrollStores, defaultimpl.NewWebAuthnMFAEnrollmentAdapter(webauthnUsers))
+		mfaEnrollStores = append(mfaEnrollStores, webauthn.NewMFAEnrollmentAdapter(webauthnUsers))
 	}
 	if n := len(mfaEnrollStores); n > 0 {
 		store := mfaEnrollStores[0]
