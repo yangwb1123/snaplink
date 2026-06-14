@@ -65,6 +65,10 @@ func TOTPFactorsMaxVersion() int { return 1 }
 // for the password_reset_tokens store (forgot-password flow).
 func PasswordResetTokensMaxVersion() int { return 1 }
 
+// EmailChangeTokensMaxVersion returns the highest migration version declared
+// for the email_change_tokens store (verified-email-change flow).
+func EmailChangeTokensMaxVersion() int { return 1 }
+
 // SubjectClientIndexMaxVersion returns the highest migration version
 // declared for the subject_client_index store.
 func SubjectClientIndexMaxVersion() int { return 1 }
