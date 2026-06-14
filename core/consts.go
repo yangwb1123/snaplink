@@ -657,6 +657,9 @@ const (
 	DefaultIssuer          = "snaplink-sso"
 	// DefaultDeviceSecretTTL bounds a Native SSO device_secret's validity.
 	DefaultDeviceSecretTTL = 15 * time.Minute
+	// DefaultPasswordResetTTL bounds a forgot-password reset token's validity.
+	// Short by design — a reset token is a credential-takeover primitive.
+	DefaultPasswordResetTTL = 15 * time.Minute
 )
 
 // SupportedGrants is the canonical list returned for unsupported_grant_type errors.
