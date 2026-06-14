@@ -275,9 +275,11 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 		return
 	}
 	if req.SubjectTokenType != TokenTypeAccessToken &&
-		req.SubjectTokenType != TokenTypeJWT {
-		// RFC 8693 §2.1 lists more token types; v1 only handles
-		// signed access tokens issued by this server.
+		req.SubjectTokenType != TokenTypeJWT &&
+		req.SubjectTokenType != TokenTypeIDToken {
+		// RFC 8693 §2.1 lists more token types; this server handles signed
+		// access tokens + JWTs, plus id_token for the Native SSO 1.0 device-
+		// secret exchange (handled in the actor branch below).
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return
 	}
@@ -356,6 +358,18 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	// be present, or both absent. Mismatch = invalid_request.
 	if (req.ActorToken == "") != (req.ActorTokenType == "") {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	// OpenID Connect Native SSO 1.0 §3.2: a device_secret actor takes a
+	// dedicated, self-contained path — the secret is not a JWT; it is validated
+	// against the device-secret store + the id_token's ds_hash. Requires a wired
+	// store (else the feature is off).
+	if req.ActorToken != "" && req.ActorTokenType == TokenTypeDeviceSecret {
+		if s.deviceSecretStore == nil {
+			ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceSecretNotConfigured))
+			return
+		}
+		s.handleDeviceSecretExchange(ctx, claims, req.SubjectToken, req.ActorToken, client, req)
 		return
 	}
 	var actor *ActorClaim

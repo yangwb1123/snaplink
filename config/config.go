@@ -63,6 +63,17 @@ type Config struct {
 	SAML               SAMLConfig               `yaml:"saml"`
 	HostedLogin        HostedLoginConfig        `yaml:"hosted_login"`
 	SelfService        SelfServiceConfig        `yaml:"self_service"`
+	NativeSSO          NativeSSOConfig          `yaml:"native_sso"`
+}
+
+// NativeSSOConfig opts into OpenID Connect Native SSO 1.0 — a device_secret is
+// issued alongside the tokens when the device_sso scope is requested, and a
+// second native app may exchange an id_token + device_secret for its own tokens
+// (RFC 8693). Disabled (empty backend) ⇒ byte-identical to a build without it.
+type NativeSSOConfig struct {
+	Backend string               `yaml:"backend"` // "" (disabled) | memory | sqlite
+	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
+	TTL     time.Duration        `yaml:"ttl"` // device_secret lifetime; 0 = SDK default (15m)
 }
 
 // SAMLConfig opts into a SAML 2.0 capability supplied by an operator's

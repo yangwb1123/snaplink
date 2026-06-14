@@ -309,6 +309,8 @@ type Server struct {
 	deviceVerifyBaseURL            string
 	parStore                       oauth.PARStore
 	parTTL                         time.Duration
+	deviceSecretStore              DeviceSecretStore
+	deviceSecretTTL                time.Duration
 	cibaStore                      oauth.CIBAStore
 	cibaTransport                  oauth.CIBATransport
 	cibaPingNotifier               oauth.CIBAPingNotifier
@@ -1301,6 +1303,23 @@ func WithRefreshRotationGrace(window time.Duration) Option {
 	return func(s *Server) {
 		if window > 0 {
 			s.refreshGrace = newRefreshGraceCache(window)
+		}
+	}
+}
+
+// WithDeviceSecretStore enables OpenID Connect Native SSO 1.0. When wired, a
+// /token request that includes the device_sso scope receives a device_secret
+// in the response and a ds_hash claim in the id_token; a second native app may
+// then exchange that id_token + device_secret (RFC 8693 token exchange,
+// actor_token_type = urn:openid:params:token-type:device-secret) for its own
+// tokens without re-authenticating the user. ttl bounds a secret's validity
+// (0 = DefaultDeviceSecretTTL). Nil store (the default) disables the feature —
+// byte-identical to a build without it.
+func WithDeviceSecretStore(store DeviceSecretStore, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.deviceSecretStore = store
+		if ttl > 0 {
+			s.deviceSecretTTL = ttl
 		}
 	}
 }

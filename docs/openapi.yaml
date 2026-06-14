@@ -5052,9 +5052,18 @@ components:
           enum:
             - urn:ietf:params:oauth:token-type:access_token
             - urn:ietf:params:oauth:token-type:jwt
+            - urn:openid:params:token-type:device-secret
           description: |
-            RFC 8693 token-type URI for the actor token. Only
-            access_token + jwt are accepted today (refresh / id_token
+            RFC 8693 token-type URI for the actor token.
+            `urn:openid:params:token-type:device-secret` selects the OpenID
+            Connect Native SSO 1.0 device-secret exchange: the subject_token
+            MUST be an `id_token`, the actor_token is the `device_secret`, and
+            the server validates the id_token's `ds_hash` against the secret +
+            the stored binding before minting tokens (+ a fresh device_secret)
+            for the requesting client. Requires `WithDeviceSecretStore` (else
+            501 `device_secret_not_configured`); all validation failures
+            collapse to `invalid_grant`. Otherwise only
+            access_token + jwt are accepted (refresh / id_token
             as actor proofs are out-of-scope per §2.1's typical
             patterns).
         audience:
@@ -5129,7 +5138,15 @@ components:
           type: string
           description: |
             Present when the client requested `openid` scope and
-            `WithIDTokenIssuer` is wired. RFC 9068-shaped JWT.
+            `WithIDTokenIssuer` is wired. RFC 9068-shaped JWT. Carries a
+            `ds_hash` claim when a `device_secret` accompanies it (Native SSO).
+        device_secret:
+          type: string
+          description: |
+            OpenID Connect Native SSO 1.0: present when the client requested the
+            `device_sso` scope and `WithDeviceSecretStore` is wired. A second
+            native app exchanges it (as a device-secret actor_token, with this
+            response's id_token as subject_token) for its own tokens.
         issued_token_type:
           type: string
           enum:

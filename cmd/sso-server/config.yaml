@@ -124,6 +124,18 @@ self_service:
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
 
+# OpenID Connect Native SSO 1.0. When enabled, a /token request that includes
+# the device_sso scope gets a device_secret (+ ds_hash in the id_token); a
+# second native app on the same device exchanges that id_token + device_secret
+# (RFC 8693 token exchange, actor_token_type=urn:openid:params:token-type:
+# device-secret) for its own tokens without re-authenticating the user. Empty
+# backend disables it (byte-identical).
+native_sso:
+  backend: ""           # "" (disabled) | memory | sqlite
+  sqlite:
+    dsn: ""             # e.g. file:/var/lib/sso/device_secrets.db?_journal=WAL&_pragma=busy_timeout(5000)
+  ttl: 15m              # device_secret lifetime; 0 = SDK default (15m)
+
 # First-boot init. The Runner applies pending Steps (seed admin role +
 # user + client + default netpolicy) idempotently — already-applied
 # steps are skipped via the state_path tracker. Set Disabled=true when

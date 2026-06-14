@@ -1667,6 +1667,25 @@ func buildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
 // backend returns (nil, nil) — consent enforcement stays OFF and the routes
 // stay unmounted (byte-identical). memory is dev/single-node; sqlite is durable
 // and required for the GDPR consent-record retention a real deployment needs.
+// buildDeviceSecretStore selects the Native SSO device_secret backend. Empty
+// backend returns (nil, nil) — the feature stays off (byte-identical). sqlite
+// is durable + multi-replica-safe.
+func buildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "":
+		return nil, nil
+	case "memory":
+		return defaultimpl.NewMemoryDeviceSecretStore(), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("native_sso.sqlite.dsn required when backend=sqlite")
+		}
+		return sqlitestores.NewDeviceSecretStore(cfg.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown native_sso.backend %q", cfg.Backend)
+	}
+}
+
 func buildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
@@ -4145,6 +4164,18 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	if consentStore != nil {
 		opts = append(opts, sso.WithConsentStore(consentStore))
 		logger.Info("self-service consent enabled", "backend", cfg.SelfService.Consent.Backend)
+	}
+
+	// OpenID Connect Native SSO 1.0 device_secret store. Opt-in; enabling it
+	// makes the device_sso scope mint a device_secret + ds_hash and accept the
+	// device-secret token exchange.
+	deviceSecretStore, err := buildDeviceSecretStore(cfg.NativeSSO)
+	if err != nil {
+		return nil, fmt.Errorf("native_sso device secret store: %w", err)
+	}
+	if deviceSecretStore != nil {
+		opts = append(opts, sso.WithDeviceSecretStore(deviceSecretStore, cfg.NativeSSO.TTL))
+		logger.Info("native sso enabled", "backend", cfg.NativeSSO.Backend)
 	}
 
 	srv = sso.NewServer(opts...)

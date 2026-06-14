@@ -937,6 +937,18 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		KeyTokenStrategy: strategy,
 		KeyIss:           s.resolveIssuer(ctx),
 	}
+	// Native SSO 1.0: when the client was granted the device_sso scope and a
+	// device-secret store is wired, mint a device_secret BEFORE the id_token so
+	// its ds_hash can ride the id_token. Fail-open: issuance failure logs and
+	// omits the secret (the access_token is already minted).
+	var deviceSecretValue string
+	if slices.Contains(req.Scope, ScopeDeviceSSO) && s.deviceSecretStore != nil {
+		if ds, dsErr := s.issueDeviceSecret(ctx.Request().Context(), result.UserID, session.ID, client.ID); dsErr != nil {
+			s.logger.Error("device secret issue failed", "error", dsErr, "client", client.ID, "user", result.UserID)
+		} else {
+			deviceSecretValue = ds
+		}
+	}
 	// OIDC ID Token: emit alongside the access token whenever the
 	// caller requested "openid" scope AND an issuer is wired. Errors
 	// fail open — a misconfigured ID-token issuer shouldn't block the
@@ -956,15 +968,16 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 			// that the AS cannot source from Attributes are a no-op (we can't
 			// invent values).
 			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:     issuedSub,
-				Audience:    client.ID,
-				Nonce:       req.Nonce,
-				AuthTime:    time.Now(),
-				AMR:         amrForResult(result),
-				ACR:         result.AchievedACR,
-				Claims:      result.Attributes,
-				SID:         session.ID,
-				AccessToken: token.AccessToken,
+				Subject:      issuedSub,
+				Audience:     client.ID,
+				Nonce:        req.Nonce,
+				AuthTime:     time.Now(),
+				AMR:          amrForResult(result),
+				ACR:          result.AchievedACR,
+				Claims:       result.Attributes,
+				SID:          session.ID,
+				AccessToken:  token.AccessToken,
+				DeviceSecret: deviceSecretValue,
 			})
 			if err != nil {
 				s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -973,6 +986,9 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 				s.recordIDTokenIssued(ctx, client.ID, result.UserID)
 			}
 		}
+	}
+	if deviceSecretValue != "" {
+		resp[KeyDeviceSecret] = deviceSecretValue
 	}
 	if result.CountryCode != "" {
 		resp[KeyCountryCode] = result.CountryCode
@@ -1622,6 +1638,17 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				s.recordRefreshTokenIssued(ctx, client.ID, info.UserID, false)
 			}
 		}
+		// Native SSO 1.0: device_secret on the authorization_code grant (the
+		// primary native-app flow). Minted before the id_token so ds_hash rides
+		// it. device_sso is captured in info.Scopes at authorization time.
+		var deviceSecretValue string
+		if slices.Contains(info.Scopes, ScopeDeviceSSO) && s.deviceSecretStore != nil {
+			if ds, dsErr := s.issueDeviceSecret(ctx.Request().Context(), info.UserID, info.SID, client.ID); dsErr != nil {
+				s.logger.Error("device secret issue failed", "error", dsErr, "client", client.ID, "user", info.UserID)
+			} else {
+				deviceSecretValue = ds
+			}
+		}
 		// OIDC ID Token on the authorization_code path: same gate as
 		// the direct-mint login flow, but the scope + nonce come from
 		// what we captured at issue time, not from the exchange body.
@@ -1631,14 +1658,15 @@ func (s *Server) handleToken(ctx HandlerContext) {
 				s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", info.UserID)
 			} else if emit {
 				idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-					Subject:     issuedSub,
-					Audience:    client.ID,
-					Nonce:       info.Nonce,
-					AuthTime:    authTime,
-					AMR:         amrOrProvider(info.AuthMethods, info.Provider),
-					ACR:         info.ACR,
-					Claims:      info.Attributes,
-					AccessToken: token.AccessToken,
+					Subject:      issuedSub,
+					Audience:     client.ID,
+					Nonce:        info.Nonce,
+					AuthTime:     authTime,
+					AMR:          amrOrProvider(info.AuthMethods, info.Provider),
+					ACR:          info.ACR,
+					Claims:       info.Attributes,
+					AccessToken:  token.AccessToken,
+					DeviceSecret: deviceSecretValue,
 				})
 				if err != nil {
 					s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
@@ -1647,6 +1675,9 @@ func (s *Server) handleToken(ctx HandlerContext) {
 					s.recordIDTokenIssued(ctx, client.ID, info.UserID)
 				}
 			}
+		}
+		if deviceSecretValue != "" {
+			resp[KeyDeviceSecret] = deviceSecretValue
 		}
 		ctx.JSON(http.StatusOK, resp)
 	case GrantRefreshToken:
