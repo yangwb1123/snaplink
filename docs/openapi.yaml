@@ -1356,6 +1356,95 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me/mfa/webauthn/begin:
+    post:
+      tags: [self-service]
+      summary: Begin authenticated self-service passkey registration.
+      description: |
+        Starts a WebAuthn registration ceremony bound to the BEARER subject —
+        the new credential can only ever be added to the caller's own account
+        (unlike the unauthenticated /webauthn/registration signup ceremony,
+        which takes the username from the body). Returns the CredentialCreation
+        `options` for `navigator.credentials.create` and an opaque `session_id`
+        to return to finish. Body: optional {display_name}. Mounted only when a
+        WebAuthn registrar is wired. `Cache-Control: no-store`.
+      operationId: beginMyPasskeyRegistration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+      responses:
+        "200":
+          description: Ceremony options + session id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: string }
+                  options: { type: object, description: WebAuthn CredentialCreation options. }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: Passkey registration is not wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/mfa/webauthn/finish:
+    post:
+      tags: [self-service]
+      summary: Finish authenticated self-service passkey registration.
+      description: |
+        Verifies the attestation and commits the passkey, which then appears in
+        `GET /me/mfa`. The begin session (not request input) determines the
+        owning user; a valid bearer is still required. Failures collapse to one
+        `webauthn_registration_failed` (cause in logs). `Cache-Control: no-store`.
+      operationId: finishMyPasskeyRegistration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: The WebAuthn PublicKeyCredential attestation response (standard shape).
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201":
+          description: Passkey registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credential_id: { type: string }
+        "400":
+          description: Missing session_id, or `webauthn_registration_failed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: Passkey registration is not wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/oauth-protected-resource:
     get:
       tags: [discovery]

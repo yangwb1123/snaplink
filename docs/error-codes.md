@@ -131,6 +131,7 @@ the attestation certificate.
 |---------------------------------|------|--------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
 | `totp_invalid_code`             | 400  | `/me/mfa/totp/confirm` could not verify the code: wrong/expired code OR a malformed secret — collapsed by anti-enumeration | Re-check the device clock and re-enter the current code |
 | `totp_enrollment_not_supported` | 501  | The wired `MFAEnrollmentStore` is not a `TOTPEnrollmentWriter`, or no `TOTPEnroller` is wired                            | Not a client error — operator must wire enrollment      |
+| `webauthn_registration_failed`  | 400  | `/me/mfa/webauthn/finish` could not complete: expired/unknown session, bad attestation, or malformed body — collapsed (cause in logs) | Retry the passkey registration from begin               |
 
 ### Authorization (`/auth/login`, `/par`)
 

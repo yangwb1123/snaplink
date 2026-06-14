@@ -3449,6 +3449,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		logger.Info("self-service MFA management enabled (/me/mfa)", "factor_sources", n)
 	}
+	// Authenticated self-service passkey registration over the SAME ceremony
+	// Helper, so a passkey added at /me/mfa/webauthn surfaces in /me/mfa and
+	// works at login. Bearer-bound (registers only to the caller's own account).
+	if webauthnHelper != nil {
+		opts = append(opts, sso.WithWebAuthnRegistrar(webauthn.NewRegistrar(webauthnHelper)))
+		logger.Info("self-service passkey registration enabled (/me/mfa/webauthn)")
+	}
 
 	// MFA orchestration wired AFTER the risk scorer so the wire-up
 	// order matches the runtime gating order (Risk emits
