@@ -1493,6 +1493,13 @@ type OAuthStoreConfig struct {
 	// Only meaningful for the refresh_token store; ignored by other stores.
 	MaxRotationsPerWindow int           `yaml:"max_rotations_per_window"`
 	RotationWindow        time.Duration `yaml:"rotation_window"`
+	// RotationGraceWindow wires the opt-in refresh-rotation grace window
+	// (sso.WithRefreshRotationGrace): within this window a concurrent
+	// double-submit of the just-rotated refresh token is idempotent (returns
+	// the same successor) instead of tripping family-reuse detection — for
+	// multi-tab SPAs / mobile cold-start races. 0 = disabled (strict single-use).
+	// Only meaningful for the refresh_token store.
+	RotationGraceWindow time.Duration `yaml:"rotation_grace_window"`
 }
 
 // OAuthDeviceCodeConfig adds device-code-specific tunables on top of
@@ -2036,6 +2043,17 @@ type TenantConfig struct {
 	Tenants          []TenantSeedConfig          `yaml:"tenants"`
 	Domains          []TenantDomainConfig        `yaml:"domains"`
 	SuspensionCheck  TenantSuspensionCheckConfig `yaml:"suspension_check"`
+	UsageMetering    TenantUsageMeteringConfig   `yaml:"usage_metering"`
+}
+
+// TenantUsageMeteringConfig opts into the per-tenant usage/metering report
+// (GET /api/v1/admin/tenants/:id/usage, admin:read) via
+// sso.WithTenantUsageAggregator. The sqlite aggregator reads the audit_events
+// table, so its DSN is normally the audit SQLite DSN (audit.sqlite.dsn). Empty
+// backend = endpoint not mounted (byte-identical).
+type TenantUsageMeteringConfig struct {
+	Backend string `yaml:"backend"` // "" (disabled) | memory | sqlite
+	DSN     string `yaml:"dsn"`     // sqlite: the audit DB DSN (audit_events source)
 }
 
 // TenantSQLiteConfig is the SQLite backend's DSN.
@@ -2063,6 +2081,11 @@ type TenantSeedConfig struct {
 	Name     string            `yaml:"name"`
 	Status   string            `yaml:"status"` // "active" (default) | "suspended"
 	Settings map[string]string `yaml:"settings"`
+	// TokenStrategy binds this tenant to a registered token issuer/strategy
+	// (sso.WithTenantTokenIssuer) — e.g. "jwt" or "session" — so the tenant's
+	// tokens use that strategy instead of the server default. Empty = use the
+	// default strategy. Must name a registered strategy or boot fails loud.
+	TokenStrategy string `yaml:"token_strategy"`
 }
 
 // TenantDomainConfig declares a hostname → tenant mapping.

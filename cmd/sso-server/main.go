@@ -68,6 +68,9 @@ import (
 	"github.com/snaplink/sso/geo"
 	geostatic "github.com/snaplink/sso/geo/static"
 	"github.com/snaplink/sso/grpcserver"
+	"github.com/snaplink/sso/metering"
+	meteringmemory "github.com/snaplink/sso/metering/memory"
+	meteringsqlite "github.com/snaplink/sso/metering/sqlite"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/migrate"
 	"github.com/snaplink/sso/netpolicy"
@@ -2698,6 +2701,26 @@ func (a *snapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID st
 // and seeds any declared tenants + domains. Returns (nil, nil)
 // when tenant.enabled=false so cmd can pass the result to
 // sso.WithTenantStore unconditionally (the option no-ops on nil).
+// buildTenantUsageAggregator selects the per-tenant usage metering backend.
+// Empty backend returns (nil, nil) — the usage endpoint stays unmounted. The
+// sqlite aggregator reads the audit_events table, so its DSN is normally the
+// audit SQLite DSN.
+func buildTenantUsageAggregator(cfg config.TenantUsageMeteringConfig) (metering.Aggregator, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "":
+		return nil, nil
+	case "memory":
+		return meteringmemory.New(), nil
+	case "sqlite":
+		if cfg.DSN == "" {
+			return nil, errors.New("tenant.usage_metering.dsn required when backend=sqlite (point it at the audit DB)")
+		}
+		return meteringsqlite.New(cfg.DSN)
+	default:
+		return nil, fmt.Errorf("unknown tenant.usage_metering.backend %q", cfg.Backend)
+	}
+}
+
 func buildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, error) {
 	if !cfg.Tenant.Enabled {
 		return nil, nil
@@ -3472,6 +3495,32 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		if cfg.Tenant.SuspensionCheck.Enabled {
 			opts = append(opts, sso.WithTenantSuspensionCheck(cfg.Tenant.SuspensionCheck.CacheTTL))
 		}
+		// Per-tenant token strategy binding (sso.WithTenantTokenIssuer). A seed
+		// tenant may pin a registered strategy ("jwt"|"session") so its tokens
+		// differ from the server default. Validate the name against the strategies
+		// the stock binary registers — an unregistered name would break login for
+		// that tenant at runtime, so fail loud at boot instead.
+		for _, tn := range cfg.Tenant.Tenants {
+			if tn.TokenStrategy == "" {
+				continue
+			}
+			if tn.TokenStrategy != sso.TokenStrategyJWT && tn.TokenStrategy != sso.TokenStrategySession {
+				return nil, fmt.Errorf("tenant %q token_strategy %q is not a registered strategy (want %q or %q)",
+					tn.ID, tn.TokenStrategy, sso.TokenStrategyJWT, sso.TokenStrategySession)
+			}
+			opts = append(opts, sso.WithTenantTokenIssuer(tn.ID, tn.TokenStrategy))
+			logger.Info("tenant token strategy bound", "tenant", tn.ID, "strategy", tn.TokenStrategy)
+		}
+		// Per-tenant usage metering report (sso.WithTenantUsageAggregator →
+		// GET /api/v1/admin/tenants/:id/usage). Reads the audit_events table.
+		agg, err := buildTenantUsageAggregator(cfg.Tenant.UsageMetering)
+		if err != nil {
+			return nil, fmt.Errorf("tenant usage metering: %w", err)
+		}
+		if agg != nil {
+			opts = append(opts, sso.WithTenantUsageAggregator(agg))
+			logger.Info("tenant usage metering enabled", "backend", cfg.Tenant.UsageMetering.Backend)
+		}
 	}
 	// Opt-in per-login ClientStore metadata cache (identity.client_cache).
 	// TTL 0 falls back to sso.DefaultClientStoreCacheTTL inside the SDK.
@@ -3535,6 +3584,14 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-oauth-refresh-tokens", store)
 		refreshTokenStore = store
 		refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
+		// Opt-in refresh-rotation grace window: a concurrent double-submit of
+		// the just-rotated token is idempotent within the window instead of
+		// killing the family (multi-tab SPA / mobile cold-start races). 0 =
+		// strict single-use (byte-identical).
+		if cfg.OAuth.RefreshToken.RotationGraceWindow > 0 {
+			opts = append(opts, sso.WithRefreshRotationGrace(cfg.OAuth.RefreshToken.RotationGraceWindow))
+			logger.Info("refresh rotation grace enabled", "window", cfg.OAuth.RefreshToken.RotationGraceWindow)
+		}
 	}
 	if cfg.OAuth.DeviceCode.Enabled {
 		store, err := buildDeviceCodeStore(cfg.OAuth)

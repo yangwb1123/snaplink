@@ -684,6 +684,10 @@ oauth:
   refresh_token:
     enabled: true       # grant_type=refresh_token, single-use rotation
     ttl: 720h           # 30d; SDK default when <=0
+    # Opt-in grace window: a concurrent double-submit of the just-rotated token
+    # is idempotent within the window (multi-tab SPA / mobile cold-start races)
+    # instead of tripping family-reuse detection. 0 = strict single-use.
+    rotation_grace_window: 0s
   device_code:
     enabled: false      # grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
     ttl: 10m
@@ -1260,6 +1264,7 @@ tenant:
   #   status: "active"        # active | suspended
   #   settings:
   #     billing_tier: gold
+  #   token_strategy: ""      # ""=server default | jwt | session (per-tenant token type)
   domains: []
   # - hostname: "sso.acme.example.com"
   #   tenant_id: "acme"
@@ -1270,6 +1275,12 @@ tenant:
   suspension_check:
     enabled: false
     cache_ttl: 30s
+  # Per-tenant usage/metering report at GET /api/v1/admin/tenants/:id/usage
+  # (admin:read). The sqlite aggregator reads the audit_events table, so point
+  # its dsn at the audit DB (audit.sqlite.dsn). "" = endpoint not mounted.
+  usage_metering:
+    backend: ""              # "" (disabled) | memory | sqlite
+    dsn: ""                  # sqlite: the audit DB DSN
 
 # IP → geo enrichment. Best for UX hints (preferred language, country
 # code on login response); NOT a security boundary. static backend
