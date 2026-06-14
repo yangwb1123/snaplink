@@ -10,6 +10,8 @@ const (
 	PathLogin           = "/auth/login"
 	PathMFAComplete     = "/auth/mfa"
 	PathSendCode        = "/auth/send-code"
+	PathForgotPassword  = "/auth/forgot-password"
+	PathResetPassword   = "/auth/reset-password"
 	PathCallback        = "/auth/callback"
 	PathToken           = "/token"
 	PathIntrospect      = "/token/introspect"
@@ -443,6 +445,10 @@ const (
 	// the oracle-leak hardening contract.
 	ErrMFARequired = "mfa_required"
 	ErrMFAInvalid  = "mfa_invalid"
+	// ErrResetInvalid is the single oracle-safe response for every
+	// /auth/reset-password failure (unknown / expired / consumed token, user
+	// gone, set-password error) — the cause lives only in the audit event.
+	ErrResetInvalid = "reset_invalid"
 	// ErrTOTPInvalidCode is the single oracle-safe response for every TOTP
 	// enrollment-confirm failure (bad base32 secret, wrong/expired code) so a
 	// caller cannot tell which input was at fault. ErrTOTPEnrollmentNotSupported

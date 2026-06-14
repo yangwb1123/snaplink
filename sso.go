@@ -410,6 +410,16 @@ type Server struct {
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	passwordCredentialStore PasswordCredentialStore
 
+	// Forgot-password / account-recovery flow (POST /auth/forgot-password +
+	// /auth/reset-password). All wired via WithPasswordReset*; the routes mount
+	// only when passwordResetStore AND passwordCredentialStore are both set —
+	// byte-identical to a build without them.
+	passwordResetStore            PasswordResetStore
+	passwordResetTTL              time.Duration
+	passwordResetResolver         spi.PasswordResetResolver
+	passwordResetDeliveryResolver spi.PasswordResetDeliveryResolver
+	passwordResetSender           spi.PasswordResetSender
+
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
@@ -1922,6 +1932,43 @@ func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
 	return func(srv *Server) { srv.passwordCredentialStore = s }
 }
 
+// WithPasswordResetStore wires the single-use reset-token store backing the
+// UNAUTHENTICATED forgot-password flow (POST /auth/forgot-password +
+// /auth/reset-password). ttl bounds a token's life (0 = DefaultPasswordResetTTL).
+// The routes mount only when this AND a PasswordCredentialStore are both wired
+// (the reset must SetPassword on success). Nil ⇒ byte-identical to a build
+// without the flow. The resolver + sender (below) are also required for
+// forgot-password to actually resolve + deliver — without them the endpoint
+// still returns 200 (anti-enumeration) but does nothing.
+func WithPasswordResetStore(store PasswordResetStore, ttl time.Duration) Option {
+	return func(srv *Server) {
+		srv.passwordResetStore = store
+		if ttl > 0 {
+			srv.passwordResetTTL = ttl
+		}
+	}
+}
+
+// WithPasswordResetResolver wires the operator seam mapping a submitted login
+// identifier (username/email) to the stable userID. Deployment-specific (same
+// mapping the login authenticator does); no default.
+func WithPasswordResetResolver(fn spi.PasswordResetResolver) Option {
+	return func(srv *Server) { srv.passwordResetResolver = fn }
+}
+
+// WithPasswordResetDeliveryResolver wires the operator seam mapping a resolved
+// userID to the out-of-band delivery target (email/phone) the reset token is
+// sent to.
+func WithPasswordResetDeliveryResolver(fn spi.PasswordResetDeliveryResolver) Option {
+	return func(srv *Server) { srv.passwordResetDeliveryResolver = fn }
+}
+
+// WithPasswordResetSender wires the out-of-band delivery of the reset token
+// (email link, SMS code). Required for forgot-password to deliver anything.
+func WithPasswordResetSender(sender spi.PasswordResetSender) Option {
+	return func(srv *Server) { srv.passwordResetSender = sender }
+}
+
 // WithMFAEnrollmentStore wires a store for the self-service MFA management
 // endpoints (GET /me/mfa to list registered factors, DELETE /me/mfa/:id to
 // unbind one). An operator implements it over their concrete factor backends
@@ -2123,6 +2170,13 @@ func (s *Server) Mount() {
 	s.router.POST(PathMFAComplete, s.handleMFAComplete)
 	s.router.POST(PathSendCode, s.handleSendCode)
 	s.router.GET(PathCallback, s.handleCallback)
+	// Unauthenticated forgot-password flow. Requires the reset-token store AND
+	// the credential store (reset must SetPassword on success) — byte-identical
+	// without both.
+	if s.passwordResetStore != nil && s.passwordCredentialStore != nil {
+		s.router.POST(PathForgotPassword, s.handleForgotPassword)
+		s.router.POST(PathResetPassword, s.handleResetPassword)
+	}
 	s.router.POST(PathToken, s.handleToken)
 	s.router.POST(PathIntrospect, s.handleIntrospect)
 	s.router.POST(PathRevoke, s.handleRevoke)

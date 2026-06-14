@@ -114,6 +114,23 @@ const (
 	// error — the specifics live here.
 	EventWebAuthnAttestationDenied EventType = "webauthn_attestation_denied"
 
+	// EventPasswordResetRequested — POST /auth/forgot-password reached the
+	// delivery stage. Outcome=success always (the endpoint always 200s,
+	// anti-enumeration). ActorID is NOT set (unauthenticated; the identifier is
+	// PII and recording it would defeat anti-enumeration). Metadata
+	// "delivery_ok" = whether SendResetToken returned nil. The token + the
+	// identifier + the delivery target are NEVER recorded.
+	EventPasswordResetRequested EventType = "password_reset_requested"
+	// EventPasswordResetCompleted — a reset token was consumed and the new
+	// password set. Outcome=success; ActorID = the userID (now known). Metadata
+	// "sessions_revoked". The token + new password are NEVER recorded.
+	EventPasswordResetCompleted EventType = "password_reset_completed"
+	// EventPasswordResetFailed — POST /auth/reset-password failed (invalid /
+	// expired / consumed token, user gone, or SetPassword error). Outcome=failure;
+	// Metadata "reason" carries the operator-side cause while the wire response
+	// is always the single reset_invalid.
+	EventPasswordResetFailed EventType = "password_reset_failed"
+
 	// EventTOTPEnrolled — a user completed self-service TOTP enrollment
 	// (POST /me/mfa/totp/confirm proved possession of the new secret).
 	// Outcome=success; ActorID = the subject; Metadata "factor_id" carries
