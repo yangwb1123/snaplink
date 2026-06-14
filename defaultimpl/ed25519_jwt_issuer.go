@@ -523,6 +523,7 @@ type ed25519IDPayload struct {
 	Iat      int64             `json:"iat,omitempty"`
 	Nonce    string            `json:"nonce,omitempty"`
 	AtHash   string            `json:"at_hash,omitempty"`
+	DsHash   string            `json:"ds_hash,omitempty"`
 	AuthTime int64             `json:"auth_time,omitempty"`
 	AMR      []string          `json:"amr,omitempty"`
 	ACR      string            `json:"acr,omitempty"`
@@ -831,6 +832,9 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	}
 	// OIDC Core §3.1.3.6: bind the id_token to its companion access_token.
 	payload.AtHash = accessTokenHash(jwtAlgEdDSA, req.AccessToken)
+	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret, same
+	// left-half-hash construction as at_hash. Empty secret omits the claim.
+	payload.DsHash = accessTokenHash(jwtAlgEdDSA, req.DeviceSecret)
 	signingInput, err := idTokenSigningInput(header, payload)
 	if err != nil {
 		return "", err

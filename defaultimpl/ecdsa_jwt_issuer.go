@@ -642,6 +642,8 @@ func (j *ECDSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequ
 	}
 	// OIDC Core §3.1.3.6: bind the id_token to its companion access_token.
 	payload.AtHash = accessTokenHash(jwtAlgES256, req.AccessToken)
+	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret.
+	payload.DsHash = accessTokenHash(jwtAlgES256, req.DeviceSecret)
 	signingInput, err := ecdsaIDSigningInput(header, payload)
 	if err != nil {
 		return "", err

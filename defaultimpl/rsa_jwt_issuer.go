@@ -634,6 +634,8 @@ func (j *RSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenReques
 	// OIDC Core §3.1.3.6: bind the id_token to its companion access_token.
 	// j.alg is RS256 or PS256 — both hash with SHA-256.
 	payload.AtHash = accessTokenHash(j.alg, req.AccessToken)
+	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret.
+	payload.DsHash = accessTokenHash(j.alg, req.DeviceSecret)
 	signingInput, err := rsaIDSigningInput(header, payload)
 	if err != nil {
 		return "", err

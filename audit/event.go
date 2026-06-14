@@ -301,6 +301,18 @@ const (
 	// cluster Bus. Outcome=success; Metadata carries "outcome" discriminating
 	// "deferred", "extended", "adopted_only", or "noop".
 	EventSigningKeyRotationCoordinated EventType = "signing_key_rotation_coordinated"
+
+	// EventNativeSSOExchange — OpenID Connect Native SSO 1.0 §3.2: a second
+	// native app exchanged an id_token + device_secret for its own tokens.
+	// Outcome=success; ActorID=subject; ClientID=requesting client; Metadata
+	// "original_client" carries the device_secret's originating client.
+	EventNativeSSOExchange EventType = "native_sso_exchange"
+
+	// EventNativeSSOExchangeFailure — a device-secret exchange was rejected.
+	// The cause (ds_hash mismatch, consumed/unknown secret, binding mismatch)
+	// is in Reason for SIEM use; the WIRE response is always invalid_grant
+	// (oracle-safe — no cause leaks externally).
+	EventNativeSSOExchangeFailure EventType = "native_sso_exchange_failure"
 )
 
 // Outcome distinguishes successful events from attempted/failed ones.

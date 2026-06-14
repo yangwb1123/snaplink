@@ -110,10 +110,11 @@ func GrantedScopes(requested []string, client *core.Client) ([]string, error) {
 		allowed[a] = struct{}{}
 	}
 
-	// Rule 3 (+ rule 1): validate every requested scope; openid bypasses
-	// the allowlist as the OIDC trigger.
+	// Rule 3 (+ rule 1): validate every requested scope; openid and device_sso
+	// bypass the allowlist as protocol triggers (OIDC / Native SSO 1.0), not
+	// resource scopes.
 	for _, s := range req {
-		if s == core.ScopeOpenID {
+		if s == core.ScopeOpenID || s == core.ScopeDeviceSSO {
 			continue
 		}
 		if _, ok := allowed[s]; !ok {

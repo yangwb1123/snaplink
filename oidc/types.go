@@ -39,6 +39,13 @@ type IDTokenRequest struct {
 	// invalidation (vs the coarser "kill every session for this
 	// sub" fallback). Empty omits the claim.
 	SID string
+
+	// DeviceSecret, when non-empty, makes the issuer stamp a `ds_hash`
+	// claim (OpenID Connect Native SSO 1.0 §3.1) — the base64url left-half
+	// hash of the device_secret value, same construction as at_hash per the
+	// id_token signing alg. The raw secret is passed here ONLY to compute the
+	// hash; it MUST NOT appear in the token. Empty omits the claim.
+	DeviceSecret string
 }
 
 // IDTokenIssuer mints OIDC ID Tokens. Optional SPI — when the server

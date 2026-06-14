@@ -265,6 +265,13 @@ const (
 	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
 	KeyIDToken = "id_token"
 
+	// KeyDeviceSecret is the /token response key carrying the Native SSO
+	// device secret (OpenID Connect Native SSO 1.0 §3.1).
+	KeyDeviceSecret = "device_secret"
+	// KeyDsHash is the id_token claim binding the device_secret — the
+	// base64url left-half hash of the secret, same construction as at_hash.
+	KeyDsHash = "ds_hash"
+
 	// MFA orchestration response keys. KeyMFAChallengeID is the opaque
 	// challenge token returned by /auth/login + accepted by /auth/mfa.
 	// KeyMFAMethods is the array of supported factor names; SPAs render
@@ -300,6 +307,12 @@ const (
 	// ScopeOpenID triggers OIDC ID Token issuance when an oidc.IDTokenIssuer
 	// is wired (OIDC Core §3.1.2.1).
 	ScopeOpenID = "openid"
+
+	// ScopeDeviceSSO triggers a device_secret in the /token response (and a
+	// ds_hash claim in the id_token) for OpenID Connect Native SSO 1.0. Like
+	// openid it is a protocol trigger, not a resource scope — it bypasses the
+	// per-client AllowedScopes gate.
+	ScopeDeviceSSO = "device_sso"
 )
 
 // Stable error code strings returned to API callers.
@@ -392,6 +405,10 @@ const (
 	ErrInvalidTarget             = "invalid_target" // RFC 8707 §2
 	ErrPARNotConfigured          = "par_not_configured"
 	ErrInvalidRequestURI         = "invalid_request_uri" // RFC 9126 §2.2
+
+	// ErrDeviceSecretNotConfigured is returned on /token when the device_sso
+	// scope is requested but no DeviceSecretStore is wired (Native SSO 1.0).
+	ErrDeviceSecretNotConfigured = "device_secret_not_configured"
 
 	// RFC 8628 device authorization grant errors.
 	ErrDeviceCodeNotConfigured = "device_code_not_configured"
@@ -495,6 +512,9 @@ const (
 	TokenTypeIDToken      = "urn:ietf:params:oauth:token-type:id_token"
 	TokenTypeSAML2        = "urn:ietf:params:oauth:token-type:saml2"
 	TokenTypeJWT          = "urn:ietf:params:oauth:token-type:jwt"
+	// TokenTypeDeviceSecret is the actor_token_type for the OpenID Connect
+	// Native SSO 1.0 device-secret token exchange (§3.2).
+	TokenTypeDeviceSecret = "urn:openid:params:token-type:device-secret"
 )
 
 // AMR (RFC 8176) value placed on a token minted from an accepted SPIFFE
@@ -575,6 +595,8 @@ const (
 	DefaultDeviceCodeTTL   = 10 * time.Minute
 	DefaultDevicePollMin   = 5 * time.Second
 	DefaultIssuer          = "snaplink-sso"
+	// DefaultDeviceSecretTTL bounds a Native SSO device_secret's validity.
+	DefaultDeviceSecretTTL = 15 * time.Minute
 )
 
 // SupportedGrants is the canonical list returned for unsupported_grant_type errors.

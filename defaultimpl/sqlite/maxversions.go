@@ -76,3 +76,7 @@ func IPFailureCounterMaxVersion() int { return 1 }
 // RecentLoginMaxVersion returns the highest migration version declared
 // for the recent_login store.
 func RecentLoginMaxVersion() int { return 1 }
+
+// DeviceSecretsMaxVersion returns the highest migration version declared
+// for the device_secrets store (Native SSO 1.0).
+func DeviceSecretsMaxVersion() int { return 1 }
