@@ -243,6 +243,7 @@ recover from them, just surface to operations.
 | `session_manager_not_configured`  | 500  | Login succeeded auth but no SessionManager exists            |
 | `client_store_not_configured`     | 500  | Login attempted but no ClientStore exists                    |
 | `no_token_strategy`               | 500  | Client's `token_strategy` doesn't match any registered issuer |
+| `not_supported`                   | 501  | SDK-exported code (`sso.ErrNotSupported`) for a feature an embedder's handler chooses not to implement; the stock server never emits it |
 
 ---
 
