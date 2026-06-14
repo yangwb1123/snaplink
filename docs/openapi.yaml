@@ -1274,6 +1274,82 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /me/email/change:
+    post:
+      tags: [self-service]
+      summary: Begin a verified email change.
+      description: |
+        Mints a single-use token bound to (subject, new_email) and sends it to
+        the NEW address (proving the user controls it) — the verification flow
+        PATCH /me routes email edits through. Returns 200 {status:"sent"}.
+        Mounted only when an email-change store + sender + UserProvider are
+        wired. `Cache-Control: no-store`.
+      operationId: changeMyEmail
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_email]
+              properties:
+                new_email: { type: string, format: email }
+      responses:
+        "200":
+          description: Verification token sent to the new address.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: sent }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/email/verify:
+    post:
+      tags: [self-service]
+      summary: Complete a verified email change.
+      description: |
+        Consumes the single-use token, checks it belongs to the authenticated
+        caller, and commits the new email. Oracle-safe: unknown / expired /
+        consumed token, or one for a different user, ALL collapse to
+        email_change_invalid (400). `Cache-Control: no-store`.
+      operationId: verifyMyEmail
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: Email committed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  email: { type: string }
+        "400":
+          description: email_change_invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /me/account/erase:
     post:
       tags: [self-service]

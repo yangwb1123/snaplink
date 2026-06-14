@@ -190,6 +190,14 @@ const (
 	// via GET /me/data-export (GDPR Art. 15 self-service). Outcome=success;
 	// ActorID = the subject. The exported bundle is NOT recorded.
 	EventSubjectDataExported EventType = "subject_data_exported"
+	// EventEmailChangeRequested — POST /me/email/change minted + delivered a
+	// verification token to a new address. Outcome=success; ActorID = subject.
+	// The token + the new email are NOT recorded.
+	EventEmailChangeRequested EventType = "email_change_requested"
+	// EventEmailChanged — POST /me/email/verify consumed a token and committed
+	// the new email. Outcome=success; ActorID = subject.
+	EventEmailChanged EventType = "email_changed"
+
 	// EventSubjectSelfErased — an authenticated user erased THEIR OWN account
 	// via POST /me/account/erase (GDPR Art. 17 self-service). ActorID = the
 	// subject; Metadata "dry_run" + per-step counts. A failure carries

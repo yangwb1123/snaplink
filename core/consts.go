@@ -63,6 +63,13 @@ const (
 	PathMyMFA     = "/me/mfa"
 	PathMyMFAByID = "/me/mfa/:id"
 
+	// PathMyEmailChange begins a verified email change (POST {new_email}): a
+	// token is sent to the NEW address. PathMyEmailVerify completes it (POST
+	// {token}): the token is consumed and the email committed. Both authenticated
+	// — the verification flow PATCH /me routes email edits through.
+	PathMyEmailChange = "/me/email/change"
+	PathMyEmailVerify = "/me/email/verify"
+
 	// PathMyDataExport is the authenticated GDPR Art. 15 self-service data
 	// export: the bearer downloads a portable bundle of their OWN data (GET).
 	// The admin-gated /api/v1/compliance path exports an arbitrary subject;
@@ -465,6 +472,10 @@ const (
 	// confirmation field is missing or does not match the bearer's subject —
 	// a guard against accidental / CSRF-driven irreversible self-deletion.
 	ErrConfirmationRequired = "confirmation_required"
+	// ErrEmailChangeInvalid is the single oracle-safe response for every
+	// POST /me/email/verify failure (unknown / expired / consumed token, or a
+	// token belonging to a different user) — cause only in the audit event.
+	ErrEmailChangeInvalid = "email_change_invalid"
 	// ErrTOTPInvalidCode is the single oracle-safe response for every TOTP
 	// enrollment-confirm failure (bad base32 secret, wrong/expired code) so a
 	// caller cannot tell which input was at fault. ErrTOTPEnrollmentNotSupported
@@ -682,6 +693,8 @@ const (
 	// DefaultPasswordResetTTL bounds a forgot-password reset token's validity.
 	// Short by design — a reset token is a credential-takeover primitive.
 	DefaultPasswordResetTTL = 15 * time.Minute
+	// DefaultEmailChangeTTL bounds a verified-email-change token's validity.
+	DefaultEmailChangeTTL = 15 * time.Minute
 )
 
 // SupportedGrants is the canonical list returned for unsupported_grant_type errors.

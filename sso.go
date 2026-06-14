@@ -431,6 +431,12 @@ type Server struct {
 	// deliberate operator choice, not always desirable for managed accounts).
 	accountEraser *compliance.Eraser
 
+	// Verified email change (POST /me/email/change + /me/email/verify). Mounts
+	// only when the store + sender + a UserProvider are all wired.
+	emailChangeStore  EmailChangeStore
+	emailChangeTTL    time.Duration
+	emailChangeSender spi.EmailChangeSender
+
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
@@ -1999,6 +2005,25 @@ func WithSelfServiceAccountErasure(e *compliance.Eraser) Option {
 	return func(srv *Server) { srv.accountEraser = e }
 }
 
+// WithEmailChangeStore wires the single-use token store for verified email
+// change (POST /me/email/change + /me/email/verify). ttl bounds a token's life
+// (0 = DefaultEmailChangeTTL). The routes mount only when this AND an
+// EmailChangeSender AND a UserProvider are all wired. Nil ⇒ byte-identical.
+func WithEmailChangeStore(store EmailChangeStore, ttl time.Duration) Option {
+	return func(srv *Server) {
+		srv.emailChangeStore = store
+		if ttl > 0 {
+			srv.emailChangeTTL = ttl
+		}
+	}
+}
+
+// WithEmailChangeSender wires delivery of the email-change verification token to
+// the user's NEW address (proving they control it). Required for the flow.
+func WithEmailChangeSender(sender spi.EmailChangeSender) Option {
+	return func(srv *Server) { srv.emailChangeSender = sender }
+}
+
 // WithMFAEnrollmentStore wires a store for the self-service MFA management
 // endpoints (GET /me/mfa to list registered factors, DELETE /me/mfa/:id to
 // unbind one). An operator implements it over their concrete factor backends
@@ -2273,6 +2298,12 @@ func (s *Server) Mount() {
 	// GDPR Art. 17 self-service account erasure (opt-in, irreversible).
 	if s.accountEraser != nil {
 		s.router.POST(PathMyAccountErase, s.handleMyAccountErase)
+	}
+	// Verified email change. Needs the token store + sender (deliver to the new
+	// address) + a UserProvider (commit the new email). Byte-identical without.
+	if s.emailChangeStore != nil && s.emailChangeSender != nil && s.userProvider != nil {
+		s.router.POST(PathMyEmailChange, s.handleMyEmailChange)
+		s.router.POST(PathMyEmailVerify, s.handleMyEmailVerify)
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to
