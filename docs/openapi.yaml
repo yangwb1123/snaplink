@@ -3970,6 +3970,66 @@ paths:
                 $ref: "#/components/schemas/ScimListResponse"
         "401": { $ref: "#/components/responses/ScimUnauthorized" }
 
+  /api/v1/scim/v2/Bulk:
+    post:
+      tags: [scim]
+      summary: SCIM bulk operations (RFC 7644 §3.7).
+      description: |
+        Applies many resource operations (POST/PUT/PATCH/DELETE on Users +
+        Groups) in one request. Each operation is replayed through the
+        per-resource handlers, so the same validation/uniqueness/audit rules
+        apply. A POST operation MUST carry a `bulkId`; later operations may
+        reference a just-created resource via `bulkId:<id>` in their `path` or
+        `data`. `failOnErrors` stops after N errored operations. Limits
+        (`maxOperations`, `maxPayloadSize`) are advertised in
+        ServiceProviderConfig. Admin-gated — `admin:write`. Response is
+        `application/scim+json`; the overall status is 200 and each operation
+        carries its own `status`.
+      operationId: scimBulk
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              type: object
+              required: [schemas, Operations]
+              properties:
+                schemas:
+                  type: array
+                  items: { type: string }
+                failOnErrors: { type: integer }
+                Operations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      method: { type: string, enum: [POST, PUT, PATCH, DELETE] }
+                      bulkId: { type: string }
+                      path: { type: string }
+                      data: { type: object }
+      responses:
+        "200":
+          description: Bulk response; each operation carries its own status.
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "400":
+          description: Malformed BulkRequest or empty Operations.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "413":
+          description: Operation count or payload exceeds the advertised limits.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+
   /api/v1/scim/v2/Users:
     get:
       tags: [scim]

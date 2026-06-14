@@ -1,0 +1,237 @@
+package scim
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// bulkCapture is a minimal in-memory http.ResponseWriter used to replay a bulk
+// operation through the handler's own dispatch and capture its status + body
+// instead of writing to the client. Avoids importing net/http/httptest into
+// non-test code.
+type bulkCapture struct {
+	hdr  http.Header
+	code int
+	body bytes.Buffer
+}
+
+func (c *bulkCapture) Header() http.Header {
+	if c.hdr == nil {
+		c.hdr = http.Header{}
+	}
+	return c.hdr
+}
+func (c *bulkCapture) WriteHeader(code int) {
+	if c.code == 0 {
+		c.code = code
+	}
+}
+func (c *bulkCapture) Write(b []byte) (int, error) {
+	if c.code == 0 {
+		c.code = http.StatusOK
+	}
+	return c.body.Write(b)
+}
+
+// SCIM Bulk schema URNs (RFC 7644 §3.7).
+const (
+	SchemaBulkRequest  = "urn:ietf:params:scim:api:messages:2.0:BulkRequest"
+	SchemaBulkResponse = "urn:ietf:params:scim:api:messages:2.0:BulkResponse"
+)
+
+// pathBulk is the SCIM-relative Bulk route.
+const pathBulk = "/Bulk"
+
+// Bulk limits advertised in ServiceProviderConfig and enforced by the handler.
+// Conservative defaults — an operator fronting a huge directory can raise them
+// by forking, but unbounded bulk is a memory-amplification vector.
+const (
+	bulkMaxOperations  = 1000
+	bulkMaxPayloadSize = 1 << 20 // 1 MiB
+)
+
+// BulkRequest is the POST /Bulk envelope (RFC 7644 §3.7).
+type BulkRequest struct {
+	Schemas []string `json:"schemas"`
+	// FailOnErrors: stop processing after this many errored operations.
+	// nil/absent or <=0 means process every operation (RFC 7644 §3.7).
+	FailOnErrors *int            `json:"failOnErrors,omitempty"`
+	Operations   []BulkOperation `json:"Operations"`
+}
+
+// BulkOperation is one entry of a BulkRequest/BulkResponse. Request entries
+// carry method/bulkId/path/data; response entries carry method/bulkId/
+// location/status/response. One struct with omitempty serves both (matching
+// the RFC examples).
+type BulkOperation struct {
+	Method   string          `json:"method"`
+	BulkID   string          `json:"bulkId,omitempty"`
+	Path     string          `json:"path,omitempty"`
+	Data     json.RawMessage `json:"data,omitempty"`
+	Location string          `json:"location,omitempty"`
+	Status   string          `json:"status,omitempty"`
+	Response json.RawMessage `json:"response,omitempty"`
+}
+
+// BulkResponse is the POST /Bulk result envelope (RFC 7644 §3.7).
+type BulkResponse struct {
+	Schemas    []string        `json:"schemas"`
+	Operations []BulkOperation `json:"Operations"`
+}
+
+// bulk handles POST /Bulk (RFC 7644 §3.7). Each operation is replayed through
+// the handler's own dispatch (via an in-memory recorder), so every per-resource
+// rule — validation, uniqueness, audit, Groups — is reused with zero
+// duplication. POST results feed a bulkId->id map; subsequent operations'
+// "bulkId:<id>" references in their path and data are resolved before replay
+// (RFC 7644 §3.7.2), enabling create-then-reference within one request.
+func (h *Handler) bulk(w http.ResponseWriter, r *http.Request) {
+	// Bound the payload before reading it all into memory.
+	raw, err := io.ReadAll(io.LimitReader(r.Body, bulkMaxPayloadSize+1))
+	if err != nil {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidSyntax, "could not read bulk body"))
+		return
+	}
+	if len(raw) > bulkMaxPayloadSize {
+		h.writeError(w, newError(http.StatusRequestEntityTooLarge, "", "bulk payload exceeds maxPayloadSize"))
+		return
+	}
+	var req BulkRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidSyntax, "malformed BulkRequest"))
+		return
+	}
+	if len(req.Operations) == 0 {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "BulkRequest.Operations is required and non-empty"))
+		return
+	}
+	if len(req.Operations) > bulkMaxOperations {
+		h.writeError(w, newError(http.StatusRequestEntityTooLarge, "", "bulk operation count exceeds maxOperations"))
+		return
+	}
+
+	failOnErrors := 0
+	if req.FailOnErrors != nil && *req.FailOnErrors > 0 {
+		failOnErrors = *req.FailOnErrors
+	}
+
+	bulkIDs := map[string]string{} // client bulkId -> server-assigned resource id
+	respOps := make([]BulkOperation, 0, len(req.Operations))
+	errCount := 0
+
+	for _, op := range req.Operations {
+		method := strings.ToUpper(strings.TrimSpace(op.Method))
+		rop := BulkOperation{Method: op.Method, BulkID: op.BulkID}
+
+		// RFC 7644 §3.7.2: a POST operation MUST carry a bulkId.
+		if method == http.MethodPost && op.BulkID == "" {
+			rop.Status = strconv.Itoa(http.StatusBadRequest)
+			rop.Response = marshalErr(newError(http.StatusBadRequest, scimTypeInvalidValue, "POST bulk operation requires a bulkId"))
+			respOps = append(respOps, rop)
+			errCount++
+			if failOnErrors > 0 && errCount >= failOnErrors {
+				break
+			}
+			continue
+		}
+
+		// Resolve "bulkId:<id>" references (path + data) against prior POSTs.
+		path := resolveBulkRefs(op.Path, bulkIDs)
+		data := op.Data
+		if len(data) > 0 {
+			data = json.RawMessage(resolveBulkRefs(string(data), bulkIDs))
+		}
+
+		// Replay the operation through the handler's own dispatch.
+		sreq, err := http.NewRequestWithContext(r.Context(), method, h.basePath+path, bytes.NewReader(data))
+		if err != nil {
+			rop.Status = strconv.Itoa(http.StatusBadRequest)
+			rop.Response = marshalErr(newError(http.StatusBadRequest, scimTypeInvalidValue, "invalid operation method or path"))
+			respOps = append(respOps, rop)
+			errCount++
+			if failOnErrors > 0 && errCount >= failOnErrors {
+				break
+			}
+			continue
+		}
+		sreq.Header.Set("Content-Type", contentTypeSCIM)
+		rec := &bulkCapture{}
+		h.ServeHTTP(rec, sreq)
+
+		rop.Status = strconv.Itoa(rec.code)
+		if rec.code >= 200 && rec.code < 300 {
+			id, loc := createdIDAndLocation(rec.body.Bytes())
+			if loc != "" {
+				rop.Location = loc
+			}
+			// Map the bulkId so later operations can reference the new resource.
+			if method == http.MethodPost && op.BulkID != "" && id != "" {
+				bulkIDs[op.BulkID] = id
+			}
+			// Success bodies are omitted from the BulkResponse (RFC 7644 §3.7
+			// examples carry a body only on error); the location suffices.
+		} else {
+			rop.Response = append(json.RawMessage(nil), rec.body.Bytes()...)
+			errCount++
+		}
+		respOps = append(respOps, rop)
+
+		if failOnErrors > 0 && errCount >= failOnErrors {
+			break
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, BulkResponse{
+		Schemas:    []string{SchemaBulkResponse},
+		Operations: respOps,
+	})
+}
+
+// resolveBulkRefs replaces every "bulkId:<key>" token with the resolved
+// resource id for each known bulkId. Keys are applied longest-first so a
+// bulkId that is a prefix of another (e.g. "a" vs "ab") can't corrupt the
+// longer token.
+func resolveBulkRefs(s string, bulkIDs map[string]string) string {
+	if s == "" || len(bulkIDs) == 0 || !strings.Contains(s, "bulkId:") {
+		return s
+	}
+	keys := make([]string, 0, len(bulkIDs))
+	for k := range bulkIDs {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	for _, k := range keys {
+		s = strings.ReplaceAll(s, "bulkId:"+k, bulkIDs[k])
+	}
+	return s
+}
+
+// createdIDAndLocation extracts the id + meta.location from a create/replace
+// response body so Bulk can report the location and resolve bulkId references.
+func createdIDAndLocation(body []byte) (id, location string) {
+	var r struct {
+		ID   string `json:"id"`
+		Meta struct {
+			Location string `json:"location"`
+		} `json:"meta"`
+	}
+	if json.Unmarshal(body, &r) != nil {
+		return "", ""
+	}
+	return r.ID, r.Meta.Location
+}
+
+// marshalErr renders a SCIM ErrorResponse as a raw JSON message for embedding
+// in a BulkResponse operation.
+func marshalErr(e ErrorResponse) json.RawMessage {
+	b, err := json.Marshal(e)
+	if err != nil {
+		return json.RawMessage(`{"detail":"internal error"}`)
+	}
+	return b
+}

@@ -13,7 +13,7 @@ type supportedFeature struct {
 	Supported bool `json:"supported"`
 }
 
-// bulkFeature adds the bulk size limits (always supported:false here).
+// bulkFeature advertises Bulk support + its size limits (RFC 7644 §3.7).
 type bulkFeature struct {
 	Supported      bool `json:"supported"`
 	MaxOperations  int  `json:"maxOperations"`
@@ -58,7 +58,10 @@ func serviceProviderConfig() ServiceProviderConfig {
 		// add/replace/remove op model, including the active=false
 		// deprovision path Azure AD / Okta drive.
 		Patch: supportedFeature{Supported: true},
-		Bulk:  bulkFeature{Supported: false},
+		// Bulk is implemented for Users + Groups (RFC 7644 §3.7): POST /Bulk
+		// replays each operation through the per-resource handlers and resolves
+		// bulkId cross-references. Limits below are enforced by the handler.
+		Bulk: bulkFeature{Supported: true, MaxOperations: bulkMaxOperations, MaxPayloadSize: bulkMaxPayloadSize},
 		// Filtering is implemented for GET /Users + /Groups (RFC 7644
 		// §3.4.2.2): the comparison/logical/grouping subset connectors use
 		// to reconcile a single resource. maxResults bounds a filtered page

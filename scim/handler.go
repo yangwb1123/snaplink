@@ -139,6 +139,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			schemas = append(schemas, groupSchema())
 		}
 		h.writeJSON(w, http.StatusOK, schemasListResponse(schemas))
+	case rel == pathBulk && r.Method == http.MethodPost:
+		h.bulk(w, r)
 	case rel == pathUsers || rel == pathUsers+"/":
 		switch r.Method {
 		case http.MethodPost:

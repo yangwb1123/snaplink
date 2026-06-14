@@ -392,9 +392,8 @@ func TestServiceProviderConfig(t *testing.T) {
 	if len(cfg.Schemas) != 1 || cfg.Schemas[0] != SchemaServiceProviderConfig {
 		t.Errorf("schemas = %v", cfg.Schemas)
 	}
-	// PATCH (RFC 7644 §3.5.2) and filtering (RFC 7644 §3.4.2.2) are
-	// implemented so both MUST advertise true; bulk remains unimplemented
-	// and MUST advertise false so connectors don't attempt it.
+	// PATCH (RFC 7644 §3.5.2), filtering (§3.4.2.2), and bulk (§3.7) are all
+	// implemented so each MUST advertise true.
 	if !cfg.Patch.Supported {
 		t.Error("patch advertised unsupported, want supported (RFC 7644 §3.5.2 implemented)")
 	}
@@ -404,8 +403,11 @@ func TestServiceProviderConfig(t *testing.T) {
 	if cfg.Filter.MaxResults != filterMaxResults {
 		t.Errorf("filter.maxResults = %d, want %d", cfg.Filter.MaxResults, filterMaxResults)
 	}
-	if cfg.Bulk.Supported {
-		t.Errorf("advertised unsupported feature: bulk=%v", cfg.Bulk.Supported)
+	if !cfg.Bulk.Supported {
+		t.Error("bulk advertised unsupported, want supported (RFC 7644 §3.7 implemented)")
+	}
+	if cfg.Bulk.MaxOperations != bulkMaxOperations || cfg.Bulk.MaxPayloadSize != bulkMaxPayloadSize {
+		t.Errorf("bulk limits = %d/%d, want %d/%d", cfg.Bulk.MaxOperations, cfg.Bulk.MaxPayloadSize, bulkMaxOperations, bulkMaxPayloadSize)
 	}
 	if len(cfg.AuthenticationSchemes) == 0 {
 		t.Error("no authentication schemes advertised")
