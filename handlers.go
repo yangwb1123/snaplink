@@ -3102,13 +3102,13 @@ func (s *Server) handleTenantUsage(ctx HandlerContext) {
 func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok bool) {
 	tokenString := bearerToken(ctx.Request())
 	if tokenString == "" {
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
 		return "", false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
 	if err != nil {
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return "", false
 	}

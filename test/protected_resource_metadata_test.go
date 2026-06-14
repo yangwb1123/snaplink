@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,43 @@ func TestPRM_Overrides(t *testing.T) {
 	}
 	if body["resource_name"] != "Acme MCP API" {
 		t.Errorf("resource_name=%v", body["resource_name"])
+	}
+}
+
+// TestPRM_ChallengeOnResource401: a 401 from a protected resource (/me) carries
+// the RFC 9728 §5.1 resource_metadata parameter pointing at the PRM document
+// when PRM is enabled, so a client can discover the AS from the challenge.
+func TestPRM_ChallengeOnResource401(t *testing.T) {
+	srv := newPRMServer(t, true, sso.ProtectedResourceMetadata{})
+	// /me requires a UserProvider (wired) — an unauthenticated GET 401s.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/me", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /me: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401", resp.StatusCode)
+	}
+	wa := resp.Header.Get("WWW-Authenticate")
+	wantURL := srv.URL + "/.well-known/oauth-protected-resource"
+	if !strings.Contains(wa, `resource_metadata=`) || !strings.Contains(wa, wantURL) {
+		t.Errorf("WWW-Authenticate = %q, want resource_metadata pointing at %s", wa, wantURL)
+	}
+}
+
+// TestPRM_NoChallengeParamWhenDisabled: without PRM, the 401 challenge carries
+// no resource_metadata parameter (byte-identical to before).
+func TestPRM_NoChallengeParamWhenDisabled(t *testing.T) {
+	srv := newPRMServer(t, false, sso.ProtectedResourceMetadata{})
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/me", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /me: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if wa := resp.Header.Get("WWW-Authenticate"); strings.Contains(wa, "resource_metadata") {
+		t.Errorf("WWW-Authenticate = %q, want no resource_metadata when PRM disabled", wa)
 	}
 }
 

@@ -1850,6 +1850,24 @@ func tokenNoStoreHeaders(ctx HandlerContext) { middleware.TokenNoStoreHeaders(ct
 // failed validation). Description values are quoted-string escaped
 // per RFC 7235 §2.2 so untrusted upstream values can't break out
 // and inject additional auth-params.
+// setResourceBearerChallenge stamps the RFC 6750 challenge and, when RFC 9728
+// Protected Resource Metadata is enabled, appends the §5.1 resource_metadata
+// parameter pointing at the PRM document — so a client (e.g. an MCP / AI-agent
+// client) hitting a 401 on a protected resource can discover this resource's
+// authorization server. Used ONLY on protected-RESOURCE endpoints (/userinfo,
+// /me*), not the AS credential endpoints (those use invalid_client, not a
+// bearer-resource challenge).
+func (s *Server) setResourceBearerChallenge(ctx HandlerContext, realm, errorCode, errorDescription string) {
+	setBearerChallenge(ctx, realm, errorCode, errorDescription)
+	if s.protectedResourceMetadata == nil {
+		return
+	}
+	h := ctx.ResponseWriter().Header()
+	existing := h.Get("WWW-Authenticate")
+	url := requestBaseURL(ctx.Request()) + PathProtectedResourceMetadata
+	h.Set("WWW-Authenticate", existing+", resource_metadata="+security.QuoteAuthParam(url))
+}
+
 func setBearerChallenge(ctx HandlerContext, realm, errorCode, errorDescription string) {
 	if realm == "" {
 		realm = "sso"

@@ -1937,7 +1937,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		// a WWW-Authenticate challenge naming the scheme + realm.
 		// The "no credentials" case omits error parameters per §3.1
 		// (the request didn't try to authenticate).
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
 		return
 	}
@@ -1947,7 +1947,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		// RFC 6750 §3.1: token-validation failures carry
 		// error="invalid_token" in the challenge so the RP can
 		// distinguish "I need to refresh" from "I forgot to send".
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
@@ -1966,12 +1966,12 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 		// pattern it already implements for bearer failures.
 		if errors.Is(err, ErrDPoPNonceRequired) {
 			s.stampDPoPNonce(ctx)
-			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
+			s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
 			ctx.JSON(http.StatusUnauthorized, errorBody(ErrUseDPoPNonce))
 			return
 		}
 		s.logErrorCtx(ctx, "dpop bearer verification failed", "error", err, "subject", claims.Subject)
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
@@ -1981,7 +1981,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// shape collapse to invalid_token.
 	if err := s.verifyMTLSBearer(ctx, claims); err != nil {
 		s.logErrorCtx(ctx, "mtls bearer verification failed", "error", err, "subject", claims.Subject)
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
@@ -2010,7 +2010,7 @@ func (s *Server) handleUserInfo(ctx HandlerContext) {
 	lookupSub, perr := s.resolveLocalSubject(ctx.Request().Context(), claims.Subject)
 	if perr != nil {
 		s.logger.Error("pairwise resolve failed at /userinfo", "error", perr, "subject", claims.Subject)
-		setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Subject mapping unavailable")
+		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "Subject mapping unavailable")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return
 	}
