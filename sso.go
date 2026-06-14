@@ -2298,6 +2298,9 @@ func (s *Server) Mount() {
 	if s.passwordCredentialStore != nil {
 		api.POST(PathAdminUserPassword, s.handleAdminResetUserPassword)
 	}
+	if s.deviceSecretStore != nil {
+		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
+	}
 }
 
 // Handler returns the http.Handler for the server.

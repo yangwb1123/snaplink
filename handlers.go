@@ -3242,6 +3242,31 @@ func (s *Server) handleAdminResetUserPassword(ctx HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// handleAdminRevokeUserDeviceSecrets serves DELETE /api/v1/admin/users/:id/device-secrets
+// — revoke all of a user's Native SSO device-secret bindings (lost/compromised
+// device lockout). admin:write. 501 when the wired DeviceSecretStore can't
+// revoke by subject; emits admin_device_secrets_revoked with the count.
+func (s *Server) handleAdminRevokeUserDeviceSecrets(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	revoker, ok := s.deviceSecretStore.(core.DeviceSecretRevoker)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(core.ErrNotFound))
+		return
+	}
+	n, err := revoker.RevokeBySubject(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin revoke device secrets failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminDeviceSecretsRevoked, userID, "revoked", fmt.Sprintf("%d", n))
+	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
+}
+
 // meSubjectOrChallenge extracts the bearer subject for /sessions/me and
 // /consents/me. Unlike authenticatedSubject, it stamps the RFC 6750 §3
 // WWW-Authenticate challenge header BEFORE writing the 401 body, so these

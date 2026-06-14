@@ -121,4 +121,18 @@ func (s *DeviceSecretStore) Consume(ctx context.Context, secret string) (*core.D
 	return ds, nil
 }
 
-var _ core.DeviceSecretStore = (*DeviceSecretStore)(nil)
+// RevokeBySubject deletes every binding for subject (admin lockout of a lost or
+// compromised device's Native SSO access) and returns the count removed.
+func (s *DeviceSecretStore) RevokeBySubject(ctx context.Context, subject string) (int, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM device_secrets WHERE subject = ?`, subject)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: revoke device_secrets by subject: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+var (
+	_ core.DeviceSecretStore   = (*DeviceSecretStore)(nil)
+	_ core.DeviceSecretRevoker = (*DeviceSecretStore)(nil)
+)

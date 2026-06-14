@@ -136,6 +136,12 @@ const (
 	// when a PasswordCredentialStore is wired.
 	PathAdminUserPassword = "/admin/users/:id/password"
 
+	// PathAdminUserDeviceSecrets revokes ALL of a user's Native SSO device-secret
+	// bindings (DELETE, admin:write) — the "lost/compromised device, cut off
+	// Native SSO token minting now" lockout. Group-relative. Mounted only when a
+	// DeviceSecretStore that implements DeviceSecretRevoker is wired.
+	PathAdminUserDeviceSecrets = "/admin/users/:id/device-secrets"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

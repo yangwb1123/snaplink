@@ -42,3 +42,19 @@ type DeviceSecretStore interface {
 // missing, expired, or already consumed. Callers MUST collapse all three to a
 // single invalid_grant wire response.
 var ErrDeviceSecretNotFound = errors.New("sso: device secret not found or expired")
+
+// DeviceSecretRevoker is an OPTIONAL extension a DeviceSecretStore MAY also
+// implement to support admin/helpdesk revocation of ALL of a user's outstanding
+// Native SSO device-secret bindings — the "a user's device was lost/compromised,
+// cut off Native SSO token minting NOW (don't wait the ~15min for the secrets to
+// expire)" flow, completing the account-lockout toolkit alongside session/token/
+// consent/MFA/password admin controls. Admin session revocation alone does NOT
+// cover this: the device-secret exchange validates a (stateless) id_token, so a
+// still-unexpired id_token + a live device secret can mint fresh tokens after a
+// session is revoked. The admin endpoint type-asserts this; absent → 501.
+// Additive — existing DeviceSecretStore implementers compile unchanged.
+type DeviceSecretRevoker interface {
+	// RevokeBySubject deletes every device-secret binding for subject and
+	// returns the count removed. Idempotent (returns 0 when none exist).
+	RevokeBySubject(ctx context.Context, subject string) (int, error)
+}

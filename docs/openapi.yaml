@@ -4118,6 +4118,42 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/users/{id}/device-secrets:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [admin]
+      summary: Revoke a user's Native SSO device secrets (lost-device lockout).
+      description: |
+        Revokes ALL of the user's outstanding Native SSO device-secret bindings
+        — the "lost/compromised device, cut off Native SSO token minting now"
+        lockout (admin session/token revocation does not reach these, since the
+        device-secret exchange validates a stateless id_token). admin:write;
+        emits admin_device_secrets_revoked. Mounted only when a DeviceSecretStore
+        that supports revoke-by-subject is wired (else 501).
+      operationId: adminUserRevokeDeviceSecrets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Number of device-secret bindings revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501":
+          description: The wired DeviceSecretStore cannot revoke by subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/tokens/sessions:
     get:
       tags: [admin]

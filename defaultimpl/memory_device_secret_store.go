@@ -45,4 +45,22 @@ func (m *MemoryDeviceSecretStore) Consume(_ context.Context, secret string) (*co
 	return ds, nil
 }
 
-var _ core.DeviceSecretStore = (*MemoryDeviceSecretStore)(nil)
+// RevokeBySubject deletes every binding for subject (admin lockout of a lost or
+// compromised device's Native SSO access). Returns the count removed.
+func (m *MemoryDeviceSecretStore) RevokeBySubject(_ context.Context, subject string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, ds := range m.secrets {
+		if ds.Subject == subject {
+			delete(m.secrets, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
+var (
+	_ core.DeviceSecretStore   = (*MemoryDeviceSecretStore)(nil)
+	_ core.DeviceSecretRevoker = (*MemoryDeviceSecretStore)(nil)
+)

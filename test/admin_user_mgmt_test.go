@@ -137,6 +137,36 @@ func TestAdminUserPassword_Reset(t *testing.T) {
 	}
 }
 
+func TestAdminUserDeviceSecrets_Revoke(t *testing.T) {
+	ctx := context.Background()
+	ds := defaultimpl.NewMemoryDeviceSecretStore()
+	_ = ds.Issue(ctx, &sso.DeviceSecret{Secret: "s1", Subject: "u-alice", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour)})
+	_ = ds.Issue(ctx, &sso.DeviceSecret{Secret: "s2", Subject: "u-alice", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour)})
+	_ = ds.Issue(ctx, &sso.DeviceSecret{Secret: "s3", Subject: "u-bob", ClientID: "a", ExpiresAt: time.Now().Add(time.Hour)})
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithDeviceSecretStore(ds, time.Hour),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	code, body := doReq(t, hs, http.MethodDelete, "/api/v1/admin/users/u-alice/device-secrets", "")
+	if code != http.StatusOK {
+		t.Fatalf("revoke status=%d body=%v", code, body)
+	}
+	if got, _ := body["revoked"].(float64); int(got) != 2 {
+		t.Errorf("revoked = %v, want 2", body["revoked"])
+	}
+	// Alice's bindings are gone; Bob's is untouched.
+	if _, err := ds.Consume(ctx, "s1"); err == nil {
+		t.Error("alice's device secret s1 still present after admin revoke")
+	}
+	if _, err := ds.Consume(ctx, "s3"); err != nil {
+		t.Errorf("bob's device secret wrongly revoked: %v", err)
+	}
+}
+
 // TestAdminUserMgmt_NotMountedWithoutStores confirms the routes are absent when
 // the backing stores aren't wired (byte-identical off).
 func TestAdminUserMgmt_NotMountedWithoutStores(t *testing.T) {
