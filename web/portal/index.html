@@ -171,8 +171,10 @@ function loadSessions() {
     var list = (d && d.sessions) || [];
     if (!list.length) { $("sessions").innerHTML = '<div class="empty">No active sessions.</div>'; return; }
     $("sessions").innerHTML = list.map(function (s) {
+      var meta = s.created_at ? ("since " + esc(String(s.created_at).slice(0, 10))) : "";
+      if (s.expires_at) meta += (meta ? " · " : "") + "expires " + esc(String(s.expires_at).slice(0, 10));
       return '<div class="row"><div><div class="name">' + esc(s.id) + '</div>' +
-        '<div class="meta">' + esc(s.user_agent || s.ip || "") + "</div></div>" +
+        '<div class="meta">' + meta + "</div></div>" +
         '<button class="btn btn-danger btn-sm" data-sid="' + esc(s.id) + '">Revoke</button></div>';
     }).join("");
     Array.prototype.forEach.call($("sessions").querySelectorAll("button[data-sid]"), function (b) {

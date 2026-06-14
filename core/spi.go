@@ -177,10 +177,10 @@ type TokenMeta struct {
 // a set of scopes. The grant is per-(user, client) pair; each call to
 // RecordConsent REPLACES the prior grant for that pair.
 type ConsentGrant struct {
-	UserID    string
-	ClientID  string
-	Scopes    []string // sorted, deduplicated
-	GrantedAt time.Time
+	UserID    string    `json:"user_id"`
+	ClientID  string    `json:"client_id"`
+	Scopes    []string  `json:"scopes"` // sorted, deduplicated
+	GrantedAt time.Time `json:"granted_at"`
 }
 
 // ConsentStore persists end-user consent decisions. Callers are the
