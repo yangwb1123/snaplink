@@ -3209,8 +3209,37 @@ func (s *Server) recordAdminUserAction(ctx HandlerContext, evtType audit.EventTy
 		ActorIP: audit.ClientIP(ctx.Request()),
 	}
 	audit.SetMeta(evt, "target_user", targetUser)
-	audit.SetMeta(evt, metaKey, metaVal)
+	if metaKey != "" {
+		audit.SetMeta(evt, metaKey, metaVal)
+	}
 	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// handleAdminResetUserPassword serves POST /api/v1/admin/users/:id/password —
+// a helpdesk/admin sets a user's password on their behalf. admin:write. Body:
+// {new_password}. Emits admin_password_reset (never the password). The new
+// password takes effect on the user's next login (the same credential the
+// self-service /me/password change writes).
+func (s *Server) handleAdminResetUserPassword(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	var req struct {
+		NewPassword string `json:"new_password"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil || req.NewPassword == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := s.passwordCredentialStore.SetPassword(ctx.Request().Context(), userID, req.NewPassword); err != nil {
+		s.logger.Error("admin set password failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminPasswordReset, userID, "", "")
+	ctx.JSON(http.StatusNoContent, nil)
 }
 
 // meSubjectOrChallenge extracts the bearer subject for /sessions/me and

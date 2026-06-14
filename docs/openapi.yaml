@@ -3992,6 +3992,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/users/{id}/password:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Set a user's password (helpdesk reset).
+      description: |
+        Sets the user's password on their behalf — the helpdesk "reset this
+        user's password" flow. admin:write; emits admin_password_reset (never
+        the password). Writes the same credential the self-service
+        /me/password change does, so it takes effect on the user's next login.
+        Mounted only when a PasswordCredentialStore is wired.
+      operationId: adminUserResetPassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                new_password: { type: string }
+      responses:
+        "204": { description: Password set. }
+        "400":
+          description: Missing new_password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/tokens/sessions:
     get:
       tags: [admin]

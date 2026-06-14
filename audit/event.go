@@ -145,6 +145,10 @@ const (
 	// ADMIN; Metadata "target_user" + the revoked client_id / factor_id.
 	EventAdminConsentRevoked   EventType = "admin_consent_revoked"
 	EventAdminMFAFactorRemoved EventType = "admin_mfa_factor_removed"
+	// EventAdminPasswordReset — a helpdesk/admin set a user's password on their
+	// behalf. Outcome=success; ActorID = the admin; Metadata "target_user".
+	// The password itself is NEVER recorded.
+	EventAdminPasswordReset EventType = "admin_password_reset"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"

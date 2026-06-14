@@ -1,7 +1,9 @@
 package ssotest
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -88,6 +90,50 @@ func TestAdminUserMFA_ListAndRemove(t *testing.T) {
 	nc, _ := doReq(t, srv, http.MethodDelete, "/api/v1/admin/users/u-alice/mfa/no-such", "")
 	if nc != http.StatusNotFound {
 		t.Errorf("remove missing = %d, want 404", nc)
+	}
+}
+
+func TestAdminUserPassword_Reset(t *testing.T) {
+	ctx := context.Background()
+	pw := defaultimpl.NewMemoryPasswordCredentialStore()
+	_ = pw.SetPassword(ctx, "u-alice", "old-pass")
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithPasswordCredentialStore(pw),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	raw, _ := json.Marshal(map[string]any{"new_password": "new-pass"})
+	req, _ := http.NewRequest(http.MethodPost, hs.URL+"/api/v1/admin/users/u-alice/password", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d, want 204", resp.StatusCode)
+	}
+
+	// The new password verifies; the old one no longer does.
+	if err := pw.VerifyPassword(ctx, "u-alice", "new-pass"); err != nil {
+		t.Errorf("new password does not verify after admin reset: %v", err)
+	}
+	if err := pw.VerifyPassword(ctx, "u-alice", "old-pass"); err == nil {
+		t.Error("old password still verifies after admin reset")
+	}
+
+	// Missing new_password → 400.
+	req2, _ := http.NewRequest(http.MethodPost, hs.URL+"/api/v1/admin/users/u-alice/password", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("post empty: %v", err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("empty body status=%d, want 400", resp2.StatusCode)
 	}
 }
 

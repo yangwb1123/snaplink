@@ -122,6 +122,12 @@ const (
 	PathAdminUserMFA         = "/admin/users/:id/mfa"
 	PathAdminUserMFAByID     = "/admin/users/:id/mfa/:factor_id"
 
+	// PathAdminUserPassword sets a user's password on their behalf (POST,
+	// admin:write) — the helpdesk "reset this user's password" flow. Body:
+	// {new_password}. Group-relative; gated by AdminMiddleware. Mounted only
+	// when a PasswordCredentialStore is wired.
+	PathAdminUserPassword = "/admin/users/:id/password"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

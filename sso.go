@@ -2271,6 +2271,9 @@ func (s *Server) Mount() {
 		api.GET(PathAdminUserMFA, s.handleAdminListUserMFA)
 		api.DELETE(PathAdminUserMFAByID, s.handleAdminRemoveUserMFA)
 	}
+	if s.passwordCredentialStore != nil {
+		api.POST(PathAdminUserPassword, s.handleAdminResetUserPassword)
+	}
 }
 
 // Handler returns the http.Handler for the server.

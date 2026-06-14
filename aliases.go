@@ -274,6 +274,7 @@ const PathAdminUserConsents = core.PathAdminUserConsents
 const PathAdminUserConsentByID = core.PathAdminUserConsentByID
 const PathAdminUserMFA = core.PathAdminUserMFA
 const PathAdminUserMFAByID = core.PathAdminUserMFAByID
+const PathAdminUserPassword = core.PathAdminUserPassword
 const PathSSFReceive = core.PathSSFReceive
 const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathFederationFetch = core.PathFederationFetch
