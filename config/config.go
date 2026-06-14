@@ -186,6 +186,11 @@ type SelfServiceConfig struct {
 	// compliance.Exporter the admin route uses, scoped to the caller). Opt-in
 	// because it surfaces a user's full data bundle to that user.
 	DataExport bool `yaml:"data_export"`
+	// AccountDeletion mounts POST /me/account/erase — the GDPR Art. 17
+	// self-service erasure of the authenticated user's OWN account (sessions +
+	// refresh tokens + user record). Opt-in + IRREVERSIBLE: leave it off for
+	// org-managed accounts where only an admin should delete a user.
+	AccountDeletion bool `yaml:"account_deletion"`
 	// PasswordReset backs the UNAUTHENTICATED forgot-password flow
 	// (/auth/forgot-password + /auth/reset-password). Enabling it (backend set)
 	// wires the single-use reset-token store + a default identifier resolver

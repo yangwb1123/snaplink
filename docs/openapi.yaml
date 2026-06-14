@@ -1274,6 +1274,52 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /me/account/erase:
+    post:
+      tags: [self-service]
+      summary: Erase the authenticated user's own account (GDPR Art. 17).
+      description: |
+        IRREVERSIBLE self-service deletion of the bearer's OWN account
+        (sessions + refresh tokens + user record), scoped to the caller's
+        subject. The caller MUST echo their own subject in `confirm` to
+        authorize the delete (accidental/CSRF guard); `dry_run` previews
+        without mutating. Best-effort per step. Opt-in + default-off (often
+        undesirable for org-managed accounts). `Cache-Control: no-store`.
+      operationId: eraseMyAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: string, description: Must equal the caller's subject (required unless dry_run). }
+                dry_run: { type: boolean }
+      responses:
+        "200":
+          description: Erasure report (or dry-run preview).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string }
+                  dry_run: { type: boolean }
+                  refresh_tokens_deleted: { type: integer }
+                  sessions_destroyed: { type: integer }
+                  user_deleted: { type: boolean }
+                  skipped: { type: array, items: { type: string } }
+        "400":
+          description: confirmation_required (confirm missing or mismatched).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /me/password:
     post:
       tags: [self-service]

@@ -190,6 +190,11 @@ const (
 	// via GET /me/data-export (GDPR Art. 15 self-service). Outcome=success;
 	// ActorID = the subject. The exported bundle is NOT recorded.
 	EventSubjectDataExported EventType = "subject_data_exported"
+	// EventSubjectSelfErased — an authenticated user erased THEIR OWN account
+	// via POST /me/account/erase (GDPR Art. 17 self-service). ActorID = the
+	// subject; Metadata "dry_run" + per-step counts. A failure carries
+	// Outcome=failure with the joined step errors in Reason.
+	EventSubjectSelfErased EventType = "subject_self_erased"
 
 	// Bootstrap framework events — one per Step run/skip on first boot
 	// (or whenever a new Step is added later).

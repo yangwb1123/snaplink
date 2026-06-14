@@ -21,6 +21,15 @@ func selfServiceDataExportOption(users core.UserProvider, sessions core.SessionM
 	return sso.WithSelfServiceDataExport(&compliance.Exporter{Users: users, Sessions: sessions})
 }
 
+// selfServiceAccountEraseOption wires POST /me/account/erase (GDPR Art. 17
+// self-service) with a COMPLETE eraser (incl. refresh-token revocation across
+// clients) so a self-deletion also cuts off the user's tokens.
+func selfServiceAccountEraseOption(users core.UserProvider, sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore) sso.Option {
+	return sso.WithSelfServiceAccountErasure(&compliance.Eraser{
+		Users: users, Sessions: sessions, Refresh: refresh, Clients: clients,
+	})
+}
+
 // Compliance route prefixes. Mounted on the SSO router (so they share its
 // middleware stack) and gated by AdminMiddleware via IsProtectedPath's
 // /api/v1/compliance/ entry: GET export needs admin:read, POST erase

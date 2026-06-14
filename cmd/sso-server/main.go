@@ -3706,6 +3706,19 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			logger.Info("refresh rotation grace enabled", "window", cfg.OAuth.RefreshToken.RotationGraceWindow)
 		}
 	}
+	// GDPR Art. 17 self-service account erasure (/me/account/erase). Wired with
+	// a complete eraser (incl. refresh-token revocation via the subject index
+	// when the store supports it) so a self-deletion also cuts off tokens.
+	// Opt-in + irreversible.
+	if cfg.SelfService.AccountDeletion && userProvider != nil {
+		var refreshIdx oauth.RefreshTokenSubjectIndex
+		if idx, ok := refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
+			refreshIdx = idx
+		}
+		opts = append(opts, selfServiceAccountEraseOption(userProvider, sessionMgr, refreshIdx, clientStore))
+		logger.Info("self-service account erasure enabled (/me/account/erase)")
+	}
+
 	if cfg.OAuth.DeviceCode.Enabled {
 		store, err := buildDeviceCodeStore(cfg.OAuth)
 		if err != nil {

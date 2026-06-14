@@ -315,6 +315,7 @@ const PathMyMFATOTPConfirm = core.PathMyMFATOTPConfirm
 const PathForgotPassword = core.PathForgotPassword
 const PathResetPassword = core.PathResetPassword
 const PathMyDataExport = core.PathMyDataExport
+const PathMyAccountErase = core.PathMyAccountErase
 const PathMyWebAuthnRegisterBegin = core.PathMyWebAuthnRegisterBegin
 const PathMyWebAuthnRegisterFinish = core.PathMyWebAuthnRegisterFinish
 const PathMeshExtAuthz = core.PathMeshExtAuthz

@@ -425,6 +425,12 @@ type Server struct {
 	// of the bearer's OWN data (WithSelfServiceDataExport). Nil ⇒ not mounted.
 	dataExporter *compliance.Exporter
 
+	// accountEraser backs POST /me/account/erase — GDPR Art. 17 self-service
+	// erasure of the bearer's OWN account (WithSelfServiceAccountErasure).
+	// Irreversible; nil ⇒ not mounted (default-off — self-deletion is a
+	// deliberate operator choice, not always desirable for managed accounts).
+	accountEraser *compliance.Eraser
+
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
@@ -1982,6 +1988,17 @@ func WithSelfServiceDataExport(e *compliance.Exporter) Option {
 	return func(srv *Server) { srv.dataExporter = e }
 }
 
+// WithSelfServiceAccountErasure mounts POST /me/account/erase — the GDPR
+// Art. 17 self-service erasure of the authenticated bearer's OWN account
+// (sessions + refresh tokens + user record), assembled by the supplied
+// compliance.Eraser scoped to the caller's subject. IRREVERSIBLE and
+// default-off: self-deletion is a deliberate operator choice (often undesirable
+// for org-managed accounts). The handler requires a confirmation matching the
+// subject before erasing. Nil ⇒ not mounted, byte-identical.
+func WithSelfServiceAccountErasure(e *compliance.Eraser) Option {
+	return func(srv *Server) { srv.accountEraser = e }
+}
+
 // WithMFAEnrollmentStore wires a store for the self-service MFA management
 // endpoints (GET /me/mfa to list registered factors, DELETE /me/mfa/:id to
 // unbind one). An operator implements it over their concrete factor backends
@@ -2252,6 +2269,10 @@ func (s *Server) Mount() {
 	// GDPR Art. 15 self-service data export of the bearer's own data.
 	if s.dataExporter != nil {
 		s.router.GET(PathMyDataExport, s.handleMyDataExport)
+	}
+	// GDPR Art. 17 self-service account erasure (opt-in, irreversible).
+	if s.accountEraser != nil {
+		s.router.POST(PathMyAccountErase, s.handleMyAccountErase)
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to

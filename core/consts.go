@@ -69,6 +69,12 @@ const (
 	// this one is scoped to the caller. Mounted only when an exporter is wired.
 	PathMyDataExport = "/me/data-export"
 
+	// PathMyAccountErase is the authenticated GDPR Art. 17 self-service erasure
+	// (POST): the bearer deletes their OWN account (sessions + refresh tokens +
+	// user record). Requires a confirmation matching the subject; supports
+	// {dry_run} to preview. Opt-in + irreversible. Mounted only when wired.
+	PathMyAccountErase = "/me/account/erase"
+
 	// PathMyMFATOTPBegin mints a fresh TOTP secret + otpauth URI (POST);
 	// PathMyMFATOTPConfirm verifies a code against that secret and commits the
 	// factor (POST). Self-service TOTP enrollment — the write-half of /me/mfa.
@@ -455,6 +461,10 @@ const (
 	// /auth/reset-password failure (unknown / expired / consumed token, user
 	// gone, set-password error) — the cause lives only in the audit event.
 	ErrResetInvalid = "reset_invalid"
+	// ErrConfirmationRequired is returned by POST /me/account/erase when the
+	// confirmation field is missing or does not match the bearer's subject —
+	// a guard against accidental / CSRF-driven irreversible self-deletion.
+	ErrConfirmationRequired = "confirmation_required"
 	// ErrTOTPInvalidCode is the single oracle-safe response for every TOTP
 	// enrollment-confirm failure (bad base32 secret, wrong/expired code) so a
 	// caller cannot tell which input was at fault. ErrTOTPEnrollmentNotSupported
