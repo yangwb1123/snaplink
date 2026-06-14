@@ -14,6 +14,13 @@ import (
 	"github.com/snaplink/sso/oauth"
 )
 
+// selfServiceDataExportOption wires GET /me/data-export (GDPR Art. 15 self-
+// service) from the same stores the admin compliance export uses — scoped at
+// request time to the authenticated bearer's own subject by the handler.
+func selfServiceDataExportOption(users core.UserProvider, sessions core.SessionManager) sso.Option {
+	return sso.WithSelfServiceDataExport(&compliance.Exporter{Users: users, Sessions: sessions})
+}
+
 // Compliance route prefixes. Mounted on the SSO router (so they share its
 // middleware stack) and gated by AdminMiddleware via IsProtectedPath's
 // /api/v1/compliance/ entry: GET export needs admin:read, POST erase

@@ -63,6 +63,12 @@ const (
 	PathMyMFA     = "/me/mfa"
 	PathMyMFAByID = "/me/mfa/:id"
 
+	// PathMyDataExport is the authenticated GDPR Art. 15 self-service data
+	// export: the bearer downloads a portable bundle of their OWN data (GET).
+	// The admin-gated /api/v1/compliance path exports an arbitrary subject;
+	// this one is scoped to the caller. Mounted only when an exporter is wired.
+	PathMyDataExport = "/me/data-export"
+
 	// PathMyMFATOTPBegin mints a fresh TOTP secret + otpauth URI (POST);
 	// PathMyMFATOTPConfirm verifies a code against that secret and commits the
 	// factor (POST). Self-service TOTP enrollment — the write-half of /me/mfa.

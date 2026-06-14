@@ -186,6 +186,10 @@ const (
 	EventAdminDomainDeleted       EventType = "admin_domain_deleted"
 	EventAdminSubjectExported     EventType = "admin_subject_exported"
 	EventAdminSubjectErased       EventType = "admin_subject_erased"
+	// EventSubjectDataExported — an authenticated user exported THEIR OWN data
+	// via GET /me/data-export (GDPR Art. 15 self-service). Outcome=success;
+	// ActorID = the subject. The exported bundle is NOT recorded.
+	EventSubjectDataExported EventType = "subject_data_exported"
 
 	// Bootstrap framework events — one per Step run/skip on first boot
 	// (or whenever a new Step is added later).

@@ -181,6 +181,11 @@ type SelfServiceConfig struct {
 	// hash) and login is served from it, so a password changed via /me/password
 	// takes effect on the next login.
 	Password SelfServiceStoreConfig `yaml:"password"`
+	// DataExport mounts GET /me/data-export — the GDPR Art. 15 self-service
+	// export of the authenticated user's OWN data (assembled by the same
+	// compliance.Exporter the admin route uses, scoped to the caller). Opt-in
+	// because it surfaces a user's full data bundle to that user.
+	DataExport bool `yaml:"data_export"`
 	// PasswordReset backs the UNAUTHENTICATED forgot-password flow
 	// (/auth/forgot-password + /auth/reset-password). Enabling it (backend set)
 	// wires the single-use reset-token store + a default identifier resolver

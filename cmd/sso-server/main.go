@@ -3409,6 +3409,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			"backend", cfg.SelfService.PasswordReset.Backend)
 	}
 
+	// GDPR Art. 15 self-service data export (/me/data-export), reusing the same
+	// exporter stores as the admin compliance route. Opt-in.
+	if cfg.SelfService.DataExport && userProvider != nil {
+		opts = append(opts, selfServiceDataExportOption(userProvider, sessionMgr))
+		logger.Info("self-service data export enabled (/me/data-export)")
+	}
+
 	geoProvider, err := buildGeoProvider(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("geo provider: %w", err)

@@ -24,6 +24,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/compliance"
 	"github.com/snaplink/sso/connections"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/fapi"
@@ -419,6 +420,10 @@ type Server struct {
 	passwordResetResolver         spi.PasswordResetResolver
 	passwordResetDeliveryResolver spi.PasswordResetDeliveryResolver
 	passwordResetSender           spi.PasswordResetSender
+
+	// dataExporter backs GET /me/data-export — GDPR Art. 15 self-service export
+	// of the bearer's OWN data (WithSelfServiceDataExport). Nil ⇒ not mounted.
+	dataExporter *compliance.Exporter
 
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
@@ -1969,6 +1974,14 @@ func WithPasswordResetSender(sender spi.PasswordResetSender) Option {
 	return func(srv *Server) { srv.passwordResetSender = sender }
 }
 
+// WithSelfServiceDataExport mounts GET /me/data-export — the GDPR Art. 15
+// self-service export of the authenticated bearer's OWN data, assembled by the
+// supplied compliance.Exporter (the same one the admin /api/v1/compliance route
+// uses, but scoped to the caller's subject). Nil ⇒ not mounted, byte-identical.
+func WithSelfServiceDataExport(e *compliance.Exporter) Option {
+	return func(srv *Server) { srv.dataExporter = e }
+}
+
 // WithMFAEnrollmentStore wires a store for the self-service MFA management
 // endpoints (GET /me/mfa to list registered factors, DELETE /me/mfa/:id to
 // unbind one). An operator implements it over their concrete factor backends
@@ -2235,6 +2248,10 @@ func (s *Server) Mount() {
 	if s.webauthnRegistrar != nil {
 		s.router.POST(PathMyWebAuthnRegisterBegin, s.handleMyWebAuthnRegisterBegin)
 		s.router.POST(PathMyWebAuthnRegisterFinish, s.handleMyWebAuthnRegisterFinish)
+	}
+	// GDPR Art. 15 self-service data export of the bearer's own data.
+	if s.dataExporter != nil {
+		s.router.GET(PathMyDataExport, s.handleMyDataExport)
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to
