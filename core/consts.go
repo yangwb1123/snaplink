@@ -309,7 +309,6 @@ const (
 	ErrAccountLocked             = "account_locked"
 	ErrInvalidToken              = "invalid_token"
 	ErrInvalidClient             = "invalid_client"
-	ErrInvalidClientSecret       = "invalid_client_secret"
 	ErrInvalidCallback           = "invalid_callback"
 	ErrCallbackFailed            = "callback_failed"
 	ErrUnsupportedProvider       = "unsupported_provider"

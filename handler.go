@@ -1397,7 +1397,12 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	// the secret. RFC 7521 §4.2 prohibits requiring BOTH proofs.
 	if req.ClientAssertion == "" {
 		if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
-			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClientSecret))
+			// RFC 6749 §5.2: all client-authentication failures return
+			// invalid_client. Collapsing wrong-secret into the same code as
+			// unknown-client (above) is also oracle-safe — a distinct
+			// invalid_client_secret would let an attacker enumerate valid
+			// client_ids by the error code alone.
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
 			return
 		}
 	}

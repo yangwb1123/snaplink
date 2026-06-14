@@ -152,7 +152,6 @@ const ErrInteractionRequired = core.ErrInteractionRequired
 const ErrInternal = core.ErrInternal
 const ErrInvalidCallback = core.ErrInvalidCallback
 const ErrInvalidClient = core.ErrInvalidClient
-const ErrInvalidClientSecret = core.ErrInvalidClientSecret
 const ErrInvalidCredentials = core.ErrInvalidCredentials
 const ErrInvalidDPoPProof = core.ErrInvalidDPoPProof
 const ErrInvalidGrant = core.ErrInvalidGrant

@@ -131,7 +131,9 @@ func HandlePAR(d PARDeps, ctx core.HandlerContext) {
 	// proved client identity (RFC 7521 §4.2 forbids requiring both).
 	if req.ClientAssertion == "" {
 		if err := clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClientSecret))
+			// RFC 6749 §5.2: client-auth failure is invalid_client (same code
+			// as unknown-client above — oracle-safe, no client_id enumeration).
+			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
 			return
 		}
 	}

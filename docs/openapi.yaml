@@ -531,8 +531,9 @@ paths:
           description: |
             Client authentication failed — wrong `client_id` /
             `client_secret`, missing / bad `client_assertion`,
-            unknown registered client. Wire code:
-            `invalid_client` / `invalid_client_secret`.
+            unknown registered client. Wire code: `invalid_client`
+            (RFC 6749 §5.2 — one code for every client-auth failure, so
+            the response never reveals which `client_id`s exist).
           content:
             application/json:
               schema:

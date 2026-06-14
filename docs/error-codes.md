@@ -29,8 +29,7 @@ exact emission site.
 | `missing_client_id`                   | 400  | `client_id` omitted from a request that requires it                | Include `client_id`                        |
 | `invalid_credentials`                 | 401  | Username/password mismatch, code mismatch, or other auth failure   | Re-prompt for credentials                  |
 | `invalid_password`                    | 400  | `POST /me/password`: the current password did not match            | Re-prompt for the current password         |
-| `invalid_client`                      | 401  | `client_id` does not resolve in the client store                   | Check the configured client                |
-| `invalid_client_secret`               | 401  | Token endpoint received a bad client secret                        | Rotate or correct the secret               |
+| `invalid_client`                      | 401  | Any client-authentication failure on `/token`, `/par`, `/backchannel-authentication`: unknown `client_id` OR bad secret (RFC 6749 §5.2 — one code for both, so the error never reveals which `client_id`s exist) | Check the client id + secret |
 | `inactive_client`                     | 403  | Client exists but `Active: false` in config                        | Operator re-enables the client             |
 | `tenant_mismatch`                     | 403  | Client is bound to a tenant the request didn't resolve to          | Use the right hostname / tenant context    |
 | `region_not_allowed`                  | 403  | Serving region is outside the tenant's data-residency `AllowedRegions` | Route the request to an allowed region |

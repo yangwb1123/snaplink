@@ -116,8 +116,12 @@ func TestToken_BadSecret_401(t *testing.T) {
 	if code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", code)
 	}
-	if body["error"] != "invalid_client_secret" {
-		t.Errorf("error = %v", body["error"])
+	// RFC 6749 §5.2: a bad secret is a client-auth failure -> invalid_client,
+	// the SAME code an unknown client_id returns (see TestToken above). Equal
+	// codes are required for conformance AND to keep the endpoint from leaking
+	// which client_ids exist (enumeration oracle).
+	if body["error"] != "invalid_client" {
+		t.Errorf("error = %v, want invalid_client", body["error"])
 	}
 }
 
