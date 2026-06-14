@@ -103,7 +103,12 @@ const (
 	// Returns aggregated login / token-issuance / active-user / MFA counts
 	// for the tenant over the requested period. Gated by AdminMiddleware
 	// (admin:read). Only mounted when WithTenantUsageAggregator is wired.
-	PathTenantUsage = "/api/v1/admin/tenants/:id/usage"
+	//
+	// Group-relative: mounted on the /api/v1 router group, so the leading
+	// segment is the group prefix (NOT repeated here). A full "/api/v1/..."
+	// value would double-prefix to /api/v1/api/v1/... — unreachable at the
+	// documented path AND outside the AdminMiddleware /api/v1/admin/ gate.
+	PathTenantUsage = "/admin/tenants/:id/usage"
 
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
