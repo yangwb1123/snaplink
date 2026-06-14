@@ -108,6 +108,7 @@ type PasswordCredentialStore = core.PasswordCredentialStore
 type PasswordHashImporter = core.PasswordHashImporter
 type MFAEnrollmentStore = core.MFAEnrollmentStore
 type MFAEnrolledFactor = core.MFAEnrolledFactor
+type TOTPEnrollmentWriter = core.TOTPEnrollmentWriter
 type DeviceSecretStore = core.DeviceSecretStore
 type DeviceSecret = core.DeviceSecret
 type TokenMeta = core.TokenMeta

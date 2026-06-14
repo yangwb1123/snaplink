@@ -265,3 +265,20 @@ type MFAEnrollmentStore interface {
 	// 404, never a silent removal of someone else's factor.
 	RemoveFactor(ctx context.Context, userID, factorID string) error
 }
+
+// TOTPEnrollmentWriter is an OPTIONAL extension a MFAEnrollmentStore MAY also
+// implement to support TOTP self-service enrollment (POST /me/mfa/totp/confirm).
+// The enrollment confirm handler type-asserts the wired MFAEnrollmentStore to
+// this interface; when absent the route is not mounted (byte-identical to a
+// build without it) and the existing MFAEnrollmentStore implementers compile
+// unchanged — this is purely additive.
+//
+// AddTOTPFactor persists secret so it is BOTH usable at login-time TOTP
+// verification (the same store backs the TOTP authenticator's secret reads)
+// AND listed by ListFactors as factorID. Because TOTP verification keys on the
+// user (one shared secret per user), a second enrollment for the same user
+// REPLACES the prior TOTP factor + secret rather than accumulating an
+// unverifiable second secret.
+type TOTPEnrollmentWriter interface {
+	AddTOTPFactor(ctx context.Context, userID, factorID, label string, secret []byte) error
+}

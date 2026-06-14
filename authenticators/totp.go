@@ -173,6 +173,15 @@ func (t *TOTPAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (*
 	return nil, errors.New("totp: callback not supported")
 }
 
+// VerifyCode reports whether code is a valid TOTP for secret at the current
+// time, honoring the authenticator's configured skew window. It does NOT touch
+// the store — it exists for the self-service enrollment confirm step, which
+// must prove possession of a freshly generated (not-yet-persisted) secret
+// before it is committed. Login-time verification stays on Authenticate.
+func (t *TOTPAuthenticator) VerifyCode(secret []byte, code string) bool {
+	return t.verifyCodeWithSkew(secret, strings.TrimSpace(code), time.Now())
+}
+
 // verifyCodeWithSkew checks the supplied 6-digit code against the
 // expected TOTP for `now`, including ±skewSteps of clock drift.
 // Constant-time comparison on every candidate so a code that

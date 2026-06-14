@@ -127,6 +127,25 @@ func TestTOTPAuthenticator_StrictSkewRejectsDrift(t *testing.T) {
 	}
 }
 
+func TestTOTPAuthenticator_VerifyCode(t *testing.T) {
+	// VerifyCode is the enrollment-confirm path: it checks a code against a
+	// caller-supplied secret WITHOUT consulting the store.
+	secret, _ := GenerateTOTPSecret()
+	auth := NewTOTPAuthenticator(NewMemoryTOTPStore())
+
+	code := hotp(secret, time.Now().Unix()/30, 6)
+	if !auth.VerifyCode(secret, code) {
+		t.Error("VerifyCode rejected a valid current code")
+	}
+	if auth.VerifyCode(secret, "000000") {
+		t.Error("VerifyCode accepted a wrong code")
+	}
+	// Surrounding whitespace is trimmed (UIs often pad the entry).
+	if !auth.VerifyCode(secret, "  "+code+" ") {
+		t.Error("VerifyCode should trim surrounding whitespace")
+	}
+}
+
 func TestOTPAuthURL_RenderableShape(t *testing.T) {
 	secret := []byte("12345678901234567890")
 	url := OTPAuthURL("Acme Corp", "alice@example.com", secret)
