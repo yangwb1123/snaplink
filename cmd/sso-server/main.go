@@ -3348,14 +3348,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	for _, ath := range auths {
 		opts = append(opts, sso.WithAuthenticator(ath))
 	}
-	// Self-service MFA management + TOTP enrollment ride the SAME store the TOTP
-	// authenticator reads, so a factor enrolled via /me/mfa/totp/confirm is
-	// immediately usable at login. Only wired when TOTP is enabled.
-	if totpEnrollStore != nil {
-		opts = append(opts, sso.WithMFAEnrollmentStore(totpEnrollStore))
-		opts = append(opts, sso.WithTOTPEnroller(authenticators.NewTOTPEnroller(totpAuth)))
-		logger.Info("self-service MFA enabled (/me/mfa list+unbind, /me/mfa/totp enrollment)")
-	}
+	// Self-service MFA enrollment-store wiring is deferred until after the
+	// WebAuthn store is built (below) so /me/mfa can compose TOTP secrets AND
+	// WebAuthn passkeys into one view. The TOTP enroller is wired there too.
 	if passwordStore != nil {
 		opts = append(opts, sso.WithPasswordCredentialStore(passwordStore))
 		logger.Info("self-service password change enabled", "backend", cfg.SelfService.Password.Backend)
@@ -3430,6 +3425,30 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	opts = appendReadyCheck(opts, "sqlite-webauthn-sessions", webauthnSessions)
 	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-webauthn-users", webauthnUsers)
 	storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-webauthn-sessions", webauthnSessions)
+
+	// Self-service MFA management (/me/mfa). Compose every available factor
+	// source into ONE MFAEnrollmentStore so the list/unbind view covers TOTP
+	// secrets AND WebAuthn passkeys. The composite forwards TOTPEnrollmentWriter
+	// so /me/mfa/totp enrollment stays mounted; the TOTP enroller (when TOTP is
+	// enabled) is wired alongside. Byte-identical when neither source exists.
+	var mfaEnrollStores []sso.MFAEnrollmentStore
+	if totpEnrollStore != nil {
+		mfaEnrollStores = append(mfaEnrollStores, totpEnrollStore)
+	}
+	if webauthnUsers != nil {
+		mfaEnrollStores = append(mfaEnrollStores, defaultimpl.NewWebAuthnMFAEnrollmentAdapter(webauthnUsers))
+	}
+	if n := len(mfaEnrollStores); n > 0 {
+		store := mfaEnrollStores[0]
+		if n > 1 {
+			store = defaultimpl.NewCompositeMFAEnrollmentStore(mfaEnrollStores...)
+		}
+		opts = append(opts, sso.WithMFAEnrollmentStore(store))
+		if totpEnrollStore != nil {
+			opts = append(opts, sso.WithTOTPEnroller(authenticators.NewTOTPEnroller(totpAuth)))
+		}
+		logger.Info("self-service MFA management enabled (/me/mfa)", "factor_sources", n)
+	}
 
 	// MFA orchestration wired AFTER the risk scorer so the wire-up
 	// order matches the runtime gating order (Risk emits
