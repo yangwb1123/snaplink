@@ -3093,6 +3093,126 @@ func (s *Server) handleTenantUsage(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, u)
 }
 
+// handleAdminListUserConsents serves GET /api/v1/admin/users/:id/consents — an
+// operator/helpdesk views which apps a user has authorized. admin:read (gated
+// by AdminMiddleware via the /api/v1/admin/ prefix).
+func (s *Server) handleAdminListUserConsents(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	grants, err := s.consentStore.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin list consents failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if grants == nil {
+		grants = []core.ConsentGrant{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"consents": grants})
+}
+
+// handleAdminRevokeUserConsent serves DELETE /api/v1/admin/users/:id/consents/:client_id
+// — revoke a user's grant for an app on their behalf. admin:write. A missing
+// grant is a 404 so the caller knows it wasn't there; emits admin_consent_revoked.
+func (s *Server) handleAdminRevokeUserConsent(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	clientID := ctx.Param("client_id")
+	if userID == "" || clientID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if _, err := s.consentStore.GetConsent(ctx.Request().Context(), userID, clientID); err != nil {
+		if errors.Is(err, core.ErrNoConsentGrant) {
+			ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+			return
+		}
+		s.logger.Error("admin get consent failed", "user_id", userID, "client_id", clientID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if err := s.consentStore.RevokeConsent(ctx.Request().Context(), userID, clientID); err != nil {
+		s.logger.Error("admin revoke consent failed", "user_id", userID, "client_id", clientID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminConsentRevoked, userID, KeyClientID, clientID)
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// handleAdminListUserMFA serves GET /api/v1/admin/users/:id/mfa — an
+// operator/helpdesk views a user's registered second factors. admin:read.
+func (s *Server) handleAdminListUserMFA(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	factors, err := s.mfaEnrollmentStore.ListFactors(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin list mfa factors failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if factors == nil {
+		factors = []core.MFAEnrolledFactor{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"factors": factors})
+}
+
+// handleAdminRemoveUserMFA serves DELETE /api/v1/admin/users/:id/mfa/:factor_id
+// — unbind a user's second factor on their behalf (helpdesk "lost phone, reset
+// MFA"). admin:write. A factor the user doesn't have is a 404 (ownership is
+// enforced via the user-scoped list, same as the self-service path); emits
+// admin_mfa_factor_removed.
+func (s *Server) handleAdminRemoveUserMFA(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	factorID := ctx.Param("factor_id")
+	if userID == "" || factorID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	factors, err := s.mfaEnrollmentStore.ListFactors(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin list mfa factors failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if !slices.ContainsFunc(factors, func(f core.MFAEnrolledFactor) bool { return f.ID == factorID }) {
+		ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+		return
+	}
+	if err := s.mfaEnrollmentStore.RemoveFactor(ctx.Request().Context(), userID, factorID); err != nil {
+		s.logger.Error("admin remove mfa factor failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminMFAFactorRemoved, userID, "factor_id", factorID)
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// recordAdminUserAction emits an admin_* audit event for a helpdesk action on a
+// user's self-service state. ActorID is the acting ADMIN (from the
+// AdminMiddleware-stamped context); the target user + the affected
+// client_id/factor_id ride in metadata.
+func (s *Server) recordAdminUserAction(ctx HandlerContext, evtType audit.EventType, targetUser, metaKey, metaVal string) {
+	if s.auditor == nil {
+		return
+	}
+	actor, _, _ := AdminActorFromContext(ctx.Request().Context())
+	evt := &audit.Event{
+		Type:    evtType,
+		Outcome: audit.OutcomeSuccess,
+		ActorID: actor,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, "target_user", targetUser)
+	audit.SetMeta(evt, metaKey, metaVal)
+	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
 // meSubjectOrChallenge extracts the bearer subject for /sessions/me and
 // /consents/me. Unlike authenticatedSubject, it stamps the RFC 6750 §3
 // WWW-Authenticate challenge header BEFORE writing the 401 body, so these

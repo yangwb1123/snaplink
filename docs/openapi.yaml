@@ -3863,6 +3863,135 @@ paths:
                 $ref: "#/components/schemas/ListUserSessionsResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/users/{id}/consents:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a user's consent grants (helpdesk).
+      description: |
+        Which applications the user has authorized. admin:read. Reuses the same
+        ConsentStore the user's own /consents/me reads, so admin + user see one
+        consistent view. Mounted only when a ConsentStore is wired.
+      operationId: adminUserListConsents
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's consent grants.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  consents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id: { type: string }
+                        client_id: { type: string }
+                        scopes: { type: array, items: { type: string } }
+                        granted_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/users/{id}/consents/{client_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: client_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [admin]
+      summary: Revoke a user's consent for an app (helpdesk).
+      description: |
+        Removes the user's authorization for the given client on their behalf.
+        admin:write; emits admin_consent_revoked. A missing grant returns 404.
+      operationId: adminUserRevokeConsent
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Grant revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such grant for this user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/users/{id}/mfa:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a user's registered second factors (helpdesk).
+      description: |
+        admin:read. Reuses the same MFAEnrollmentStore the user's own /me/mfa
+        reads. Mounted only when an MFAEnrollmentStore is wired.
+      operationId: adminUserListMFA
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's second factors.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        method: { type: string }
+                        label: { type: string }
+                        added_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/users/{id}/mfa/{factor_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: factor_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [admin]
+      summary: Unbind a user's second factor (helpdesk MFA reset).
+      description: |
+        Removes a factor on the user's behalf — the "user lost their phone,
+        reset their MFA" flow. admin:write; emits admin_mfa_factor_removed. A
+        factor the user doesn't have returns 404 (ownership enforced via the
+        user-scoped list).
+      operationId: adminUserRemoveMFA
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Factor unbound. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such factor for this user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/tokens/sessions:
     get:
       tags: [admin]

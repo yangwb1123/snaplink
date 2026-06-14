@@ -2257,6 +2257,20 @@ func (s *Server) Mount() {
 	if s.usageAggregator != nil {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
 	}
+
+	// Admin/helpdesk management of a user's self-service state. Gated by
+	// AdminMiddleware via the /api/v1/admin/ prefix (GET admin:read, DELETE
+	// admin:write). Mounted only when the backing store is wired — reusing the
+	// SAME consent / MFA-enrollment stores the user's own /me endpoints use, so
+	// an admin and the user see one consistent view. Byte-identical without them.
+	if s.consentStore != nil {
+		api.GET(PathAdminUserConsents, s.handleAdminListUserConsents)
+		api.DELETE(PathAdminUserConsentByID, s.handleAdminRevokeUserConsent)
+	}
+	if s.mfaEnrollmentStore != nil {
+		api.GET(PathAdminUserMFA, s.handleAdminListUserMFA)
+		api.DELETE(PathAdminUserMFAByID, s.handleAdminRemoveUserMFA)
+	}
 }
 
 // Handler returns the http.Handler for the server.

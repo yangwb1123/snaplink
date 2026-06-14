@@ -110,6 +110,18 @@ const (
 	// documented path AND outside the AdminMiddleware /api/v1/admin/ gate.
 	PathTenantUsage = "/admin/tenants/:id/usage"
 
+	// Admin/helpdesk management of a user's self-service state. All
+	// group-relative (mounted on /api/v1, gated by AdminMiddleware via the
+	// /api/v1/admin/ prefix: GET = admin:read, DELETE = admin:write).
+	// PathAdminUserConsents lists a user's app authorizations; PathAdminUserConsentByID
+	// revokes one (helpdesk "remove this user's access to app X").
+	// PathAdminUserMFA lists a user's second factors; PathAdminUserMFAByID
+	// unbinds one (helpdesk "user lost their phone — reset their MFA").
+	PathAdminUserConsents    = "/admin/users/:id/consents"
+	PathAdminUserConsentByID = "/admin/users/:id/consents/:client_id"
+	PathAdminUserMFA         = "/admin/users/:id/mfa"
+	PathAdminUserMFAByID     = "/admin/users/:id/mfa/:factor_id"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

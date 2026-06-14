@@ -139,6 +139,13 @@ const (
 	EventAdminUserDeleted         EventType = "admin_user_deleted"
 	EventAdminTokenRevoked        EventType = "admin_token_revoked"
 	EventAdminTempTokenIssued     EventType = "admin_temp_token_issued"
+	// EventAdminConsentRevoked / EventAdminMFAFactorRemoved — a helpdesk/admin
+	// acted on a user's self-service state on their behalf (revoke an app
+	// authorization / unbind a second factor). Outcome=success; ActorID = the
+	// ADMIN; Metadata "target_user" + the revoked client_id / factor_id.
+	EventAdminConsentRevoked   EventType = "admin_consent_revoked"
+	EventAdminMFAFactorRemoved EventType = "admin_mfa_factor_removed"
+
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"
 	EventAdminRoleRemoved         EventType = "admin_role_removed"
