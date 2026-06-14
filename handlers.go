@@ -3212,6 +3212,57 @@ func (s *Server) handleMe(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, out)
 }
 
+// handlePatchMe serves PATCH /me — the authenticated user edits their own
+// profile. Body: {name?, attributes?}. The display name is always editable (an
+// empty/omitted name leaves it unchanged); attributes are applied ONLY for
+// keys in the operator's self-editable allowlist (WithSelfEditableProfileAttributes)
+// — every other key is silently dropped, so a user can never escalate by
+// writing an authz-relevant attribute the operator keeps alongside presentation
+// data. Identity-critical fields (id, external_id, provider, email, timestamps)
+// are never self-editable: email in particular needs a verification flow that
+// lives outside self-service. Credential-adjacent: no-store headers.
+func (s *Server) handlePatchMe(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name       string            `json:"name"`
+		Attributes map[string]string `json:"attributes"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	u, err := s.userProvider.GetByID(ctx.Request().Context(), userID)
+	if err != nil || u == nil {
+		// The caller authenticated, so their record should exist; collapse a
+		// lookup miss/outage into 404 rather than leak store internals.
+		ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+		return
+	}
+	if req.Name != "" {
+		u.Name = req.Name
+	}
+	if len(req.Attributes) > 0 && len(s.selfEditableAttrs) > 0 {
+		if u.Attributes == nil {
+			u.Attributes = make(map[string]string, len(req.Attributes))
+		}
+		for k, v := range req.Attributes {
+			if _, allowed := s.selfEditableAttrs[k]; allowed {
+				u.Attributes[k] = v
+			}
+		}
+	}
+	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), u); err != nil {
+		s.logger.Error("update profile failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"user": u, KeyIss: s.resolveIssuer(ctx)})
+}
+
 // handleChangeMyPassword serves POST /me/password — the authenticated user
 // changes their own password. Body: {current_password, new_password}. Verifies
 // the current password against the credential store, then sets the new one.

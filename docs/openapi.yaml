@@ -1120,6 +1120,60 @@ paths:
                   granted_apps: { type: integer }
         "401":
           $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [self-service]
+      summary: Authenticated self-service profile update.
+      description: |
+        Edits the bearer's own profile. The display `name` is always editable
+        (an empty/omitted value leaves it unchanged). `attributes` are applied
+        only for keys in the operator's self-editable allowlist
+        (`WithSelfEditableProfileAttributes`); any other key is silently
+        dropped, so a user can never set an authorization-relevant attribute.
+        Identity-critical fields (`id`, `external_id`, `provider`, `email`,
+        timestamps) are never self-editable — email changes need a verification
+        flow outside self-service. Mounted with a `UserProvider`;
+        `Cache-Control: no-store`.
+      operationId: patchMe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: New display name. Empty/omitted = unchanged.
+                attributes:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Presentation attributes; only allowlisted keys are applied.
+      responses:
+        "200":
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  iss: { type: string }
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No profile record for the authenticated subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /me/password:
     post:

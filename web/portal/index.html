@@ -79,6 +79,10 @@ input:focus { outline: none; border-color: var(--brand-primary); box-shadow: 0 0
   <div class="card">
     <h2>Profile</h2>
     <div id="profile"></div>
+    <div class="edit-name">
+      <input type="text" id="name-input" placeholder="Display name" autocomplete="off">
+      <button class="btn btn-primary btn-sm" id="save-name-btn">Save name</button>
+    </div>
   </div>
 
   <div class="card">
@@ -162,7 +166,22 @@ function render(me) {
   $("profile").innerHTML = rows.filter(function (r) { return r[1] != null && r[1] !== ""; })
     .map(function (r) { return '<div class="kv"><span class="k">' + esc(r[0]) + '</span><span>' + esc(r[1]) + "</span></div>"; })
     .join("") || '<div class="empty">No profile data.</div>';
+  $("name-input").value = u.name || "";
 }
+
+// Self-service display-name edit (PATCH /me). An empty input leaves the name
+// unchanged server-side, so this never clears a name by accident.
+(function () {
+  var btn = $("save-name-btn");
+  if (!btn) return;
+  btn.onclick = function () {
+    api("/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("name-input").value }),
+    }).then(function () { loadAll(); });
+  };
+})();
 
 function loadAll() { loadSessions(); loadConsents(); loadMFA(); }
 

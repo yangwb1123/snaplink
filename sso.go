@@ -414,6 +414,14 @@ type Server struct {
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
 
+	// selfEditableAttrs is the operator allowlist of User.Attributes keys a
+	// user MAY change via PATCH /me (WithSelfEditableProfileAttributes). Empty
+	// (the default) ⇒ PATCH /me may edit the display name only; any attributes
+	// in the request are ignored. The allowlist is the escalation guard: it
+	// keeps users from writing authz-relevant attribute keys (roles, tenant,
+	// risk flags) the operator stores alongside presentation data.
+	selfEditableAttrs map[string]struct{}
+
 	// consentChallengeMu guards consentChallenges.
 	consentChallengeMu sync.Mutex
 	// consentChallenges holds server-issued single-use consent challenge tokens.
@@ -1990,6 +1998,27 @@ func WithSelfServicePortalFS(portalFS fs.FS) Option {
 	return func(s *Server) { s.portalFS = portalFS }
 }
 
+// WithSelfEditableProfileAttributes allowlists the User.Attributes keys an
+// end user MAY change through PATCH /me. The display name is always self-
+// editable; this option additionally permits the named presentation
+// attributes (e.g. "locale", "zoneinfo", "picture"). Keys NOT in the list are
+// silently ignored on PATCH, so a user can never set an attribute the operator
+// uses for authorization (roles, tenant, entitlements). Empty/unset ⇒ name
+// only. Identity-critical fields (id, external_id, provider, email) are never
+// self-editable regardless of this list — email changes need a verification
+// flow that lives outside self-service.
+func WithSelfEditableProfileAttributes(keys ...string) Option {
+	return func(s *Server) {
+		if len(keys) == 0 {
+			return
+		}
+		s.selfEditableAttrs = make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			s.selfEditableAttrs[k] = struct{}{}
+		}
+	}
+}
+
 // RegisterAuthenticator adds an authenticator at runtime.
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
@@ -2092,6 +2121,7 @@ func (s *Server) Mount() {
 	// profile is its core); byte-identical without one.
 	if s.userProvider != nil {
 		s.router.GET(PathMe, s.handleMe)
+		s.router.PATCH(PathMe, s.handlePatchMe)
 	}
 	// Self-service password change. Mounted only with a password credential
 	// store; byte-identical without one.
