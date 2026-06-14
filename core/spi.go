@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
 
@@ -281,6 +282,31 @@ type MFAEnrollmentStore interface {
 // unverifiable second secret.
 type TOTPEnrollmentWriter interface {
 	AddTOTPFactor(ctx context.Context, userID, factorID, label string, secret []byte) error
+}
+
+// WebAuthnRegistrar is the server-side seam for AUTHENTICATED self-service
+// passkey registration (POST /me/mfa/webauthn/{begin,finish}). It inverts a
+// dependency: the WebAuthn ceremony Helper lives in authenticators/webauthn,
+// which imports the server package — so the server calls through this interface
+// and webauthn.NewRegistrar adapts the Helper to it.
+//
+// SECURITY: the server passes the BEARER SUBJECT as the registration user to
+// BeginRegistration (NEVER request input), and FinishRegistration binds the new
+// credential to whatever user the begin session encoded. So a passkey can only
+// ever be added to the caller's OWN authenticated account — the existing
+// signup ceremony (username from the request body, unauthenticated) is NOT safe
+// for "add a passkey to my account" and must not be reused for it.
+type WebAuthnRegistrar interface {
+	// BeginRegistration starts a ceremony for userID, returning the
+	// CredentialCreation options (marshaled JSON for the browser) + an opaque
+	// session id the client returns to FinishRegistration. displayName is
+	// cosmetic (shown in the authenticator); empty is fine.
+	BeginRegistration(ctx context.Context, userID, displayName string) (optionsJSON []byte, sessionID string, err error)
+	// FinishRegistration verifies the attestation in r against the session and
+	// persists the credential against the session's user, returning the new
+	// credential id (base64url). The session — not request input — determines
+	// the owning user.
+	FinishRegistration(ctx context.Context, sessionID string, r *http.Request) (credentialID string, err error)
 }
 
 // TOTPEnroller is the server-side seam the self-service TOTP enrollment handlers

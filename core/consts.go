@@ -67,6 +67,14 @@ const (
 	PathMyMFATOTPBegin   = "/me/mfa/totp/begin"
 	PathMyMFATOTPConfirm = "/me/mfa/totp/confirm"
 
+	// PathMyWebAuthnRegisterBegin / Finish are AUTHENTICATED self-service passkey
+	// registration (POST). Unlike the signup ceremony (/webauthn/registration/*,
+	// username from the body), these bind the new credential to the BEARER
+	// subject — so a user can only add a passkey to their OWN account. The
+	// registered passkey then appears in GET /me/mfa via the WebAuthn adapter.
+	PathMyWebAuthnRegisterBegin  = "/me/mfa/webauthn/begin"
+	PathMyWebAuthnRegisterFinish = "/me/mfa/webauthn/finish"
+
 	// PathMeshExtAuthz is the default mount point for the opt-in
 	// Envoy/Istio ext_authz HTTP-mode authorization endpoint (cluster C1
 	// mesh data-plane, the HTTP variant). A mesh sidecar calls it per
@@ -436,17 +444,21 @@ const (
 	// (or no TOTP authenticator is wired for confirm verification).
 	ErrTOTPInvalidCode            = "totp_invalid_code"
 	ErrTOTPEnrollmentNotSupported = "totp_enrollment_not_supported"
-	ErrInvalidGrant               = "invalid_grant"
-	ErrInvalidRedirectURI         = "invalid_redirect_uri"
-	ErrAuthCodeNotConfigured      = "authorization_code_not_configured"
-	ErrUnsupportedResponseType    = "unsupported_response_type"
-	ErrRefreshTokenNotConfigured  = "refresh_token_not_configured"
-	ErrInvalidScope               = "invalid_scope"
-	ErrInvalidPKCEMethod          = "invalid_pkce_method"
-	ErrPKCERequired               = "pkce_required"
-	ErrInvalidTarget              = "invalid_target" // RFC 8707 §2
-	ErrPARNotConfigured           = "par_not_configured"
-	ErrInvalidRequestURI          = "invalid_request_uri" // RFC 9126 §2.2
+	// ErrWebAuthnRegistration is the generic failure for self-service passkey
+	// registration confirm (expired/unknown session, bad attestation, parse
+	// error) — the operator-side cause lives in logs/audit, not the wire.
+	ErrWebAuthnRegistration      = "webauthn_registration_failed"
+	ErrInvalidGrant              = "invalid_grant"
+	ErrInvalidRedirectURI        = "invalid_redirect_uri"
+	ErrAuthCodeNotConfigured     = "authorization_code_not_configured"
+	ErrUnsupportedResponseType   = "unsupported_response_type"
+	ErrRefreshTokenNotConfigured = "refresh_token_not_configured"
+	ErrInvalidScope              = "invalid_scope"
+	ErrInvalidPKCEMethod         = "invalid_pkce_method"
+	ErrPKCERequired              = "pkce_required"
+	ErrInvalidTarget             = "invalid_target" // RFC 8707 §2
+	ErrPARNotConfigured          = "par_not_configured"
+	ErrInvalidRequestURI         = "invalid_request_uri" // RFC 9126 §2.2
 
 	// ErrDeviceSecretNotConfigured is returned on /token when the device_sso
 	// scope is requested but no DeviceSecretStore is wired (Native SSO 1.0).

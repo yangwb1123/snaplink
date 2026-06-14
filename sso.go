@@ -419,6 +419,11 @@ type Server struct {
 	// implements TOTPEnrollmentWriter are both wired — byte-identical off.
 	totpEnroller TOTPEnroller
 
+	// webauthnRegistrar backs POST /me/mfa/webauthn/{begin,finish} (authenticated
+	// self-service passkey registration, WithWebAuthnRegistrar). Nil ⇒ routes
+	// not mounted (byte-identical off).
+	webauthnRegistrar WebAuthnRegistrar
+
 	// selfEditableAttrs is the operator allowlist of User.Attributes keys a
 	// user MAY change via PATCH /me (WithSelfEditableProfileAttributes). Empty
 	// (the default) ⇒ PATCH /me may edit the display name only; any attributes
@@ -1938,6 +1943,17 @@ func WithTOTPEnroller(e TOTPEnroller) Option {
 	return func(srv *Server) { srv.totpEnroller = e }
 }
 
+// WithWebAuthnRegistrar wires AUTHENTICATED self-service passkey registration
+// (POST /me/mfa/webauthn/{begin,finish}). Use webauthn.NewRegistrar(helper)
+// with the SAME Helper backing the /webauthn/* ceremony so the registered
+// passkey shares one store and surfaces in GET /me/mfa. The registration binds
+// to the BEARER subject (not request input), so a user can only add a passkey
+// to their own account — unlike the unauthenticated signup ceremony. Nil (the
+// default) leaves the routes unmounted — byte-identical to a build without it.
+func WithWebAuthnRegistrar(r WebAuthnRegistrar) Option {
+	return func(srv *Server) { srv.webauthnRegistrar = r }
+}
+
 // WithTenantUsageAggregator wires the per-tenant metering Aggregator and
 // mounts GET /api/v1/admin/tenants/:id/usage (admin:read). The endpoint
 // returns aggregated login / token-issuance / active-user / MFA-challenge
@@ -2157,6 +2173,14 @@ func (s *Server) Mount() {
 			s.router.POST(PathMyMFATOTPBegin, s.handleTOTPEnrollBegin)
 			s.router.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
 		}
+	}
+	// Self-service passkey registration (authenticated, bearer-bound). Mounts
+	// independently of the enrollment store: the registered credential lands in
+	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the
+	// WebAuthn adapter. Byte-identical when no registrar is wired.
+	if s.webauthnRegistrar != nil {
+		s.router.POST(PathMyWebAuthnRegisterBegin, s.handleMyWebAuthnRegisterBegin)
+		s.router.POST(PathMyWebAuthnRegisterFinish, s.handleMyWebAuthnRegisterFinish)
 	}
 	// Public per-host branding lookup for the hosted login SPA. Only mounted
 	// with a tenant store (Domain.Branding is its source) — byte-identical to
