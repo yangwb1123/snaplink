@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/snaplink/sso/defaultimpl"
 )
 
 func decodeBulk(t *testing.T, body []byte) BulkResponse {
@@ -141,6 +143,55 @@ func TestBulk_EmptyOperationsRejected(t *testing.T) {
 	rec := do(t, h, http.MethodPost, "/Bulk", `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],"Operations":[]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status=%d want 400 for empty Operations", rec.Code)
+	}
+}
+
+// meHandler builds a handler whose meResolver always returns the given id, so
+// /Me dispatches to that user's own resource.
+func meHandler(t *testing.T, id string) (*Handler, *defaultimpl.MemoryUserProvider) {
+	t.Helper()
+	h, users, _ := newTestHandler(t)
+	WithMeResolver(func(_ *http.Request) (string, bool) { return id, id != "" })(h)
+	return h, users
+}
+
+// TestMe_ResolvesToSubject: GET/PATCH/DELETE /Me operate on the resolved
+// subject's own resource.
+func TestMe_ResolvesToSubject(t *testing.T) {
+	h, _ := meHandler(t, "id-1")
+	// Create the user the resolver points at.
+	if rec := do(t, h, http.MethodPost, "/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"self@example.com"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("seed create: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := do(t, h, http.MethodGet, "/Me", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /Me status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	res := decodeResource(t, rec)
+	if res.ID != "id-1" || res.UserName != "self@example.com" {
+		t.Errorf("/Me resolved to %s/%s, want id-1/self@example.com", res.ID, res.UserName)
+	}
+	// DELETE /Me removes the subject's own resource.
+	if rec := do(t, h, http.MethodDelete, "/Me", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("DELETE /Me status=%d", rec.Code)
+	}
+}
+
+// TestMe_NotEnabledWithoutResolver: /Me is 501 when no resolver is wired.
+func TestMe_NotEnabledWithoutResolver(t *testing.T) {
+	h, _, _ := newTestHandler(t) // no WithMeResolver
+	rec := do(t, h, http.MethodGet, "/Me", "")
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("GET /Me status=%d, want 501 without a resolver", rec.Code)
+	}
+}
+
+// TestMe_NoSubject: /Me is 401 when the resolver yields no subject.
+func TestMe_NoSubject(t *testing.T) {
+	h, _ := meHandler(t, "") // resolver returns ok=false
+	rec := do(t, h, http.MethodGet, "/Me", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("GET /Me status=%d, want 401 with no subject", rec.Code)
 	}
 }
 

@@ -56,6 +56,12 @@ type Handler struct {
 	// nil the /Groups routes 404 (groups aren't provisioned) — the User
 	// surface keeps working independently.
 	groups *groupRole
+	// meResolver maps an incoming request to the authenticated subject's user
+	// id for the /Me alias (RFC 7644 §3.11). Nil leaves /Me returning 501 —
+	// the handler can't know who the caller is without the embedder wiring its
+	// auth context in. Kept as a plain func so scim stays decoupled from the
+	// auth middleware package.
+	meResolver func(*http.Request) (string, bool)
 }
 
 // Option configures a Handler.
@@ -104,6 +110,20 @@ func WithGroups(perms permissions.Provider, clientID string) Option {
 	}
 }
 
+// WithMeResolver enables the SCIM /Me alias (RFC 7644 §3.11) by supplying a
+// function that extracts the authenticated subject's user id from the request
+// (e.g. reading the auth middleware's actor from the request context). /Me then
+// dispatches GET/PUT/PATCH/DELETE against that user's own resource. Omit this
+// option (the default) to leave /Me returning 501 — the handler cannot resolve
+// "the caller" on its own.
+func WithMeResolver(resolve func(*http.Request) (string, bool)) Option {
+	return func(h *Handler) {
+		if resolve != nil {
+			h.meResolver = resolve
+		}
+	}
+}
+
 // NewHandler builds a SCIM Handler over users. basePath is the absolute
 // URL prefix the handler is mounted under (used to strip the route prefix
 // and to render meta.location); pass "" if mounting at the root.
@@ -141,6 +161,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusOK, schemasListResponse(schemas))
 	case rel == pathBulk && r.Method == http.MethodPost:
 		h.bulk(w, r)
+	case rel == pathMe:
+		h.me(w, r)
 	case rel == pathUsers || rel == pathUsers+"/":
 		switch r.Method {
 		case http.MethodPost:

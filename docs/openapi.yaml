@@ -4030,6 +4030,103 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScimError"
 
+  /api/v1/scim/v2/Me:
+    get:
+      tags: [scim]
+      summary: The authenticated subject's own SCIM User resource (RFC 7644 §3.11).
+      description: |
+        Alias that resolves to the bearer's own user resource — GET reads it,
+        PUT replaces, PATCH modifies, DELETE removes. The server derives the
+        subject from the authenticated request; clients send no id. Returns 501
+        when the deployment hasn't wired subject resolution. Admin-gated like
+        the rest of SCIM. Response is `application/scim+json`.
+      operationId: scimMeGet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's User resource.
+          content:
+            application/scim+json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "404":
+          description: The caller has no provisioned User resource.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+        "501":
+          description: /Me subject resolution not enabled on this deployment.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    put:
+      tags: [scim]
+      summary: Replace the authenticated subject's own SCIM User (RFC 7644 §3.11).
+      operationId: scimMePut
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Updated User resource.
+          content:
+            application/scim+json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "501":
+          description: /Me subject resolution not enabled.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    patch:
+      tags: [scim]
+      summary: Modify the authenticated subject's own SCIM User (RFC 7644 §3.11).
+      operationId: scimMePatch
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Updated User resource.
+          content:
+            application/scim+json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "501":
+          description: /Me subject resolution not enabled.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+    delete:
+      tags: [scim]
+      summary: Delete the authenticated subject's own SCIM User (RFC 7644 §3.11).
+      operationId: scimMeDelete
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted.
+        "401": { $ref: "#/components/responses/ScimUnauthorized" }
+        "501":
+          description: /Me subject resolution not enabled.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimError"
+
   /api/v1/scim/v2/Users:
     get:
       tags: [scim]

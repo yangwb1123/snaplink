@@ -45,6 +45,7 @@ const (
 	pathGroups                = "/Groups"
 	pathServiceProviderConfig = "/ServiceProviderConfig"
 	pathSchemas               = "/Schemas"
+	pathMe                    = "/Me"
 )
 
 // queryFilter is the ?filter= query-parameter name carrying a SCIM filter

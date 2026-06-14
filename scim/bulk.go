@@ -192,6 +192,35 @@ func (h *Handler) bulk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// me handles the SCIM /Me alias (RFC 7644 §3.11): it resolves the request to
+// the authenticated subject's user id (via the wired meResolver) and dispatches
+// GET/PUT/PATCH/DELETE against that user's OWN resource, reusing the per-user
+// handlers. Without a resolver wired, /Me is 501 (the handler can't know the
+// caller); without a resolvable subject it is 401.
+func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
+	if h.meResolver == nil {
+		h.writeError(w, newError(http.StatusNotImplemented, "", "/Me is not enabled on this deployment"))
+		return
+	}
+	id, ok := h.meResolver(r)
+	if !ok || id == "" {
+		h.writeError(w, newError(http.StatusUnauthorized, "", "no authenticated subject for /Me"))
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		h.getUser(w, r, id)
+	case http.MethodPut:
+		h.replaceUser(w, r, id)
+	case http.MethodPatch:
+		h.patchUser(w, r, id)
+	case http.MethodDelete:
+		h.deleteUser(w, r, id)
+	default:
+		h.writeError(w, newError(http.StatusMethodNotAllowed, "", "method not allowed on /Me"))
+	}
+}
+
 // resolveBulkRefs replaces every "bulkId:<key>" token with the resolved
 // resource id for each known bulkId. Keys are applied longest-first so a
 // bulkId that is a prefix of another (e.g. "a" vs "ab") can't corrupt the

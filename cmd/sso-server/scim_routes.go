@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/admin"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/permissions"
@@ -37,7 +38,16 @@ func mountSCIMRoutes(srv *sso.Server, users core.UserProvider, recorder *audit.R
 	if srv == nil || users == nil {
 		return nil
 	}
-	opts := []scim.Option{scim.WithRecorder(recorder)}
+	opts := []scim.Option{
+		scim.WithRecorder(recorder),
+		// /Me resolves to the bearer's own user resource. The AdminMiddleware
+		// that gates SCIM records the authenticated actor in the request
+		// context; ActorFromContext recovers its user id.
+		scim.WithMeResolver(func(r *http.Request) (string, bool) {
+			userID, _, ok := admin.ActorFromContext(r.Context())
+			return userID, ok
+		}),
+	}
 	groupsEnabled := groups != nil && groups.provider != nil
 	if groupsEnabled {
 		opts = append(opts, scim.WithGroups(groups.provider, groups.clientID))
@@ -62,6 +72,13 @@ func mountSCIMRoutes(srv *sso.Server, users core.UserProvider, recorder *audit.R
 		{http.MethodPut, scimBasePath + "/Users/:id"},
 		{http.MethodPatch, scimBasePath + "/Users/:id"},
 		{http.MethodDelete, scimBasePath + "/Users/:id"},
+		// Bulk (RFC 7644 §3.7).
+		{http.MethodPost, scimBasePath + "/Bulk"},
+		// /Me alias (RFC 7644 §3.11) — the bearer's own resource.
+		{http.MethodGet, scimBasePath + "/Me"},
+		{http.MethodPut, scimBasePath + "/Me"},
+		{http.MethodPatch, scimBasePath + "/Me"},
+		{http.MethodDelete, scimBasePath + "/Me"},
 	}
 	if groupsEnabled {
 		routes = append(routes,

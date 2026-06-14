@@ -79,6 +79,36 @@ func TestSCIMRoutesMounted(t *testing.T) {
 	}
 }
 
+// TestSCIMBulkRouteMounted proves POST /Bulk reaches the handler through the
+// real cmd router (a 200 bulk envelope, not a 404-at-router).
+func TestSCIMBulkRouteMounted(t *testing.T) {
+	h, users, _ := scimTestServer(t)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+	  "Operations":[{"method":"POST","bulkId":"a","path":"/Users","data":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"bulkuser@example.com"}}]}`
+	rec := scimReq(t, h, http.MethodPost, "/Bulk", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /Bulk status = %d, want 200 (route not mounted?); body=%s", rec.Code, rec.Body.String())
+	}
+	all, _ := users.List(context.Background())
+	if len(all) != 1 {
+		t.Errorf("bulk create did not persist: users=%d want 1", len(all))
+	}
+}
+
+// TestSCIMMeRouteMounted proves the /Me route reaches the handler. This bare
+// server has no admin middleware, so the meResolver finds no actor and returns
+// 401 — which (not 404) confirms the route is registered and dispatches to /Me.
+func TestSCIMMeRouteMounted(t *testing.T) {
+	h, _, _ := scimTestServer(t)
+	rec := scimReq(t, h, http.MethodGet, "/Me", "")
+	if rec.Code == http.StatusNotFound {
+		t.Fatalf("GET /Me returned 404 — route not mounted")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /Me status = %d, want 401 (no actor in bare server)", rec.Code)
+	}
+}
+
 func TestSCIMDiscoveryRoutesMounted(t *testing.T) {
 	h, _, _ := scimTestServer(t)
 	for _, p := range []string{"/ServiceProviderConfig", "/Schemas"} {
