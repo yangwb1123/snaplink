@@ -545,3 +545,14 @@ func (s *Server) RecordTenantLoginAttempt(ctx HandlerContext, clientID, outcome 
 func (s *Server) RecordTenantTokenIssued(ctx HandlerContext, clientID, strategy string) {
 	s.recordTenantTokenIssued(ctx, clientID, strategy)
 }
+
+// TenantMetricsEnabled returns whether tenant-level metrics are enabled.
+func (s *Server) TenantMetricsEnabled() bool { return s.tenantMetricsEnabled }
+
+// TenantLabel returns the tenant label for the given client.
+func (s *Server) TenantLabel(ctx HandlerContext, clientID string) string {
+	return s.tenantLabel(ctx, clientID)
+}
+
+// TenantMetricsAllowlist returns the tenant metrics allowlist.
+func (s *Server) TenantMetricsAllowlist() []string { return s.tenantMetricsAllowlist }
