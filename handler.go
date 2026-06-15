@@ -738,6 +738,12 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		}
 	}
 
+	// JIT org-membership provisioning (opt-in): a user logging in through a
+	// tenant-bound client who isn't yet on that org's roster is auto-added as a
+	// member, so federated users appear in their org without manual invitation.
+	// Fail-open + best-effort — never blocks login.
+	s.ensureJITMembership(ctx, client, result.UserID)
+
 	// OAuth 2.0 authorization_code branch: instead of minting a token
 	// here, persist a short-lived code bound to (user, client, redirect_uri)
 	// and return it so the relying party can exchange it via /token.
@@ -2459,6 +2465,33 @@ func (s *Server) recordConsentEvent(ctx HandlerContext, evtType audit.EventType,
 		audit.SetMeta(evt, "scopes", strings.Join(scopes, " "))
 	}
 	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// ensureJITMembership auto-provisions org membership on login when enabled: a
+// user authenticating through a tenant-bound client who has no membership in
+// that tenant is added as a member, so federated users appear in their org
+// roster without a manual invite. Opt-in (WithJITMembership), best-effort
+// (errors logged, never block login), only fires for clients with a TenantID,
+// and idempotent — an existing member keeps their current role untouched.
+func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID string) {
+	if !s.jitMembership || s.tenantUserStore == nil || client == nil || client.TenantID == "" {
+		return
+	}
+	rctx := ctx.Request().Context()
+	if _, err := s.tenantUserStore.Get(rctx, client.TenantID, userID); err == nil {
+		return // already a member — preserve their role
+	}
+	if err := s.tenantUserStore.Add(rctx, &TenantMembership{
+		TenantID: client.TenantID, UserID: userID, Role: TenantRoleMember, CreatedAt: time.Now(),
+	}); err != nil {
+		s.logger.Error("jit membership provisioning failed", "tenant", client.TenantID, "user", userID, "error", err)
+		return
+	}
+	if s.auditor != nil {
+		evt := &audit.Event{Type: audit.EventOrgMemberAutoProvisioned, Outcome: audit.OutcomeSuccess, ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+		audit.SetMeta(evt, KeyTenantID, client.TenantID)
+		s.auditor.Record(rctx, evt)
+	}
 }
 
 // createSession mints a session for the authenticated user, capturing the

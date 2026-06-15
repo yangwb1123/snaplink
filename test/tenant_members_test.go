@@ -140,3 +140,72 @@ func TestTenantMembers_NotMountedWithoutStore(t *testing.T) {
 		t.Errorf("unmounted roster status=%d, want 404", code)
 	}
 }
+
+// TestTenantMembers_JITProvisioning verifies a user logging in via a
+// tenant-bound client is auto-added to that tenant's roster when
+// WithJITMembership is enabled — and is NOT when it's off.
+func TestTenantMembers_JITProvisioning(t *testing.T) {
+	ctx := context.Background()
+	build := func(jit bool) (sso.TenantUserStore, func() string, *httptest.Server) {
+		users := defaultimpl.NewMemoryUserProvider()
+		_ = users.CreateOrUpdate(ctx, &sso.User{ID: "u-alice"})
+		clients := defaultimpl.NewMemoryClientStore()
+		clients.AddSeed(&sso.Client{
+			ID: "acme-app", Secret: "s", Active: true, TenantID: "acme",
+			AllowedAuthenticators: []string{authenticators.MethodPassword},
+			TokenStrategy:         "jwt",
+		})
+		pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+			func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
+				return &sso.AuthResult{UserID: "u-alice"}, nil
+			},
+		))
+		store := defaultimpl.NewMemoryTenantUserStore()
+		opts := []sso.Option{
+			sso.WithIssuer("https://sso.example"),
+			sso.WithUserProvider(users),
+			sso.WithClientStore(clients),
+			sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+			sso.WithAuthenticator(pw),
+			sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))),
+			sso.WithDefaultTokenStrategy("jwt"),
+			sso.WithTenantUserStore(store),
+		}
+		if jit {
+			opts = append(opts, sso.WithJITMembership())
+		}
+		hs := httptest.NewServer(sso.NewServer(opts...).Handler())
+		t.Cleanup(hs.Close)
+		login := func() string {
+			body, _ := json.Marshal(map[string]any{
+				"provider": "password", "client_id": "acme-app",
+				"credential": map[string]string{"username": "alice", "password": "x"},
+			})
+			resp, _ := http.Post(hs.URL+"/auth/login", "application/json", bytes.NewReader(body))
+			defer func() { _ = resp.Body.Close() }()
+			raw, _ := io.ReadAll(resp.Body)
+			var out map[string]any
+			_ = json.Unmarshal(raw, &out)
+			tok, _ := out["access_token"].(string)
+			return tok
+		}
+		return store, login, hs
+	}
+
+	// JIT on: login auto-provisions membership in the client's tenant.
+	store, login, _ := build(true)
+	if tok := login(); tok == "" {
+		t.Fatal("login failed")
+	}
+	m, err := store.Get(ctx, "acme", "u-alice")
+	if err != nil || m == nil || m.Role != sso.TenantRoleMember {
+		t.Fatalf("JIT did not provision membership: %+v, %v", m, err)
+	}
+
+	// JIT off: no membership created.
+	store2, login2, _ := build(false)
+	_ = login2()
+	if _, err := store2.Get(ctx, "acme", "u-alice"); !errors.Is(err, sso.ErrNoMembership) {
+		t.Errorf("JIT off must not provision; got err=%v", err)
+	}
+}

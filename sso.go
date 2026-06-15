@@ -418,6 +418,11 @@ type Server struct {
 	// mounted — byte-identical to a build without it.
 	tenantUserStore TenantUserStore
 
+	// jitMembership opts into auto-provisioning org membership on login
+	// (WithJITMembership): a user logging in via a tenant-bound client who isn't
+	// yet on that tenant's roster is added as a member. Requires tenantUserStore.
+	jitMembership bool
+
 	// passwordCredentialStore backs POST /me/password (WithPasswordCredentialStore).
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	passwordCredentialStore PasswordCredentialStore
@@ -1972,6 +1977,15 @@ func WithScopeDescriptions(d map[string]string) Option {
 // = none of those routes are mounted (byte-identical).
 func WithTenantUserStore(store TenantUserStore) Option {
 	return func(s *Server) { s.tenantUserStore = store }
+}
+
+// WithJITMembership auto-provisions org membership on login: a user
+// authenticating through a tenant-bound client (Client.TenantID set) who isn't
+// yet on that tenant's roster is added as a member. Requires WithTenantUserStore.
+// Best-effort + idempotent (existing members keep their role); never blocks
+// login. Off by default (byte-identical).
+func WithJITMembership() Option {
+	return func(s *Server) { s.jitMembership = true }
 }
 
 // WithPasswordCredentialStore wires a per-user password store and mounts the

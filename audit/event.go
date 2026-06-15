@@ -199,6 +199,10 @@ const (
 	// DELETE /me/organizations/:tenant_id. Outcome=success; ActorID = the subject;
 	// Metadata "tenant_id".
 	EventOrgLeft EventType = "org_left"
+	// EventOrgMemberAutoProvisioned — a user was auto-added to an org's roster on
+	// login via JIT membership provisioning (WithJITMembership). Outcome=success;
+	// ActorID = the subject; Metadata "tenant_id".
+	EventOrgMemberAutoProvisioned EventType = "org_member_auto_provisioned"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"
