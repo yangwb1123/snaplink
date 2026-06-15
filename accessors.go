@@ -22,6 +22,7 @@ import (
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
 	"github.com/snaplink/sso/connections"
+	"github.com/snaplink/sso/cluster"
 )
 
 // AuthCodeStore returns the wired AuthCodeStore (nil when not configured).
@@ -556,3 +557,9 @@ func (s *Server) TenantLabel(ctx HandlerContext, clientID string) string {
 
 // TenantMetricsAllowlist returns the tenant metrics allowlist.
 func (s *Server) TenantMetricsAllowlist() map[string]struct{} { return s.tenantMetricsAllowlist }
+
+// CrossReplicaRevocationEnabled returns whether cross-replica revocation is enabled.
+func (s *Server) CrossReplicaRevocationEnabled() bool { return s.crossReplicaRevocation }
+
+// InvalidationBus returns the invalidation bus (nil when not configured).
+func (s *Server) InvalidationBus() cluster.Bus { return s.invalidationBus }
