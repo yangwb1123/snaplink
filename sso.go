@@ -413,6 +413,11 @@ type Server struct {
 	// instead of the raw name. Nil/empty ⇒ no descriptions emitted.
 	scopeDescriptions map[string]string
 
+	// tenantUserStore persists explicit B2B org membership (WithTenantUserStore).
+	// Nil ⇒ the admin roster + self-service /me/organizations endpoints are NOT
+	// mounted — byte-identical to a build without it.
+	tenantUserStore TenantUserStore
+
 	// passwordCredentialStore backs POST /me/password (WithPasswordCredentialStore).
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	passwordCredentialStore PasswordCredentialStore
@@ -1960,6 +1965,15 @@ func WithScopeDescriptions(d map[string]string) Option {
 	return func(s *Server) { s.scopeDescriptions = d }
 }
 
+// WithTenantUserStore wires explicit B2B org membership (core.TenantUserStore)
+// and mounts the admin roster endpoints (/api/v1/admin/tenants/:id/members) plus
+// the self-service /me/organizations list + leave. Membership is independent of
+// SCIM groups (which model client-scoped app roles, not org belonging). Nil/unset
+// = none of those routes are mounted (byte-identical).
+func WithTenantUserStore(store TenantUserStore) Option {
+	return func(s *Server) { s.tenantUserStore = store }
+}
+
 // WithPasswordCredentialStore wires a per-user password store and mounts the
 // self-service POST /me/password endpoint. The store is keyed by UserID, so an
 // operator can also build their login authenticator over it (resolve username
@@ -2297,6 +2311,11 @@ func (s *Server) Mount() {
 		s.router.GET(PathMyConsents, s.handleMyConsents)
 		s.router.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
 	}
+	// Self-service B2B org membership: list my orgs + leave one.
+	if s.tenantUserStore != nil {
+		s.router.GET(PathMyOrganizations, s.handleMyOrganizations)
+		s.router.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
+	}
 	// Self-service account overview. Mounted with a user directory (the
 	// profile is its core); byte-identical without one.
 	if s.userProvider != nil {
@@ -2481,6 +2500,11 @@ func (s *Server) Mount() {
 		api.POST(PathAdminConnections, s.handleAdminUpsertConnection)
 		api.GET(PathAdminConnectionByID, s.handleAdminGetConnection)
 		api.DELETE(PathAdminConnectionByID, s.handleAdminDeleteConnection)
+	}
+	if s.tenantUserStore != nil {
+		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)
+		api.PUT(PathAdminTenantMemberByID, s.handleAdminPutTenantMember)
+		api.DELETE(PathAdminTenantMemberByID, s.handleAdminRemoveTenantMember)
 	}
 }
 

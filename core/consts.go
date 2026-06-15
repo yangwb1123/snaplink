@@ -199,6 +199,19 @@ const (
 	PathAdminConnections    = "/admin/connections"
 	PathAdminConnectionByID = "/admin/connections/:id"
 
+	// PathAdminTenantMembers / PathAdminTenantMemberByID manage a tenant's org
+	// roster (B2B membership, distinct from SCIM app roles). GET lists the roster
+	// (admin:read); PUT upserts a member's role + DELETE removes (admin:write).
+	// Mounted only when a TenantUserStore is wired.
+	PathAdminTenantMembers    = "/admin/tenants/:id/members"
+	PathAdminTenantMemberByID = "/admin/tenants/:id/members/:user_id"
+
+	// PathMyOrganizations / PathMyOrganizationByID are the self-service org views:
+	// GET lists the orgs the bearer subject belongs to; DELETE leaves one. Mounted
+	// only when a TenantUserStore is wired.
+	PathMyOrganizations    = "/me/organizations"
+	PathMyOrganizationByID = "/me/organizations/:tenant_id"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

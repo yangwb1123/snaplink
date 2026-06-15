@@ -95,6 +95,9 @@ type Session = core.Session
 type SessionManager = core.SessionManager
 type SessionMeta = core.SessionMeta
 type SessionMetaCreator = core.SessionMetaCreator
+type TenantUserStore = core.TenantUserStore
+type TenantMembership = core.TenantMembership
+type TenantRole = core.TenantRole
 type StdRoute = core.StdRoute
 type StdRouter = core.StdRouter
 type Subject = core.Subject
@@ -293,6 +296,10 @@ const PathAdminUserEmail = core.PathAdminUserEmail
 const PathAdminAccountLockoutClear = core.PathAdminAccountLockoutClear
 const PathAdminConnections = core.PathAdminConnections
 const PathAdminConnectionByID = core.PathAdminConnectionByID
+const PathAdminTenantMembers = core.PathAdminTenantMembers
+const PathAdminTenantMemberByID = core.PathAdminTenantMemberByID
+const PathMyOrganizations = core.PathMyOrganizations
+const PathMyOrganizationByID = core.PathMyOrganizationByID
 const PathSSFReceive = core.PathSSFReceive
 const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathFederationFetch = core.PathFederationFetch
@@ -389,6 +396,15 @@ const TokenTypeSAML2 = core.TokenTypeSAML2
 var SupportedGrants = core.SupportedGrants
 var ErrClientExists = core.ErrClientExists
 var ErrNoConsentGrant = core.ErrNoConsentGrant
+var ErrNoMembership = core.ErrNoMembership
+
+// TenantRole values (B2B org membership standing).
+const (
+	TenantRoleMember = core.TenantRoleMember
+	TenantRoleAdmin  = core.TenantRoleAdmin
+	TenantRoleGuest  = core.TenantRoleGuest
+)
+
 var ErrPasswordMismatch = core.ErrPasswordMismatch
 var ErrNoSuchClient = core.ErrNoSuchClient
 var ErrNoSuchUser = core.ErrNoSuchUser

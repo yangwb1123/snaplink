@@ -4599,6 +4599,125 @@ paths:
         "204": { description: Connection deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/tenants/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a tenant's org roster (B2B membership).
+      description: |
+        Lists the org membership roster for a tenant — explicit (tenant, user)
+        edges with an org role, distinct from SCIM app-role groups. admin:read.
+        Mounted only when a TenantUserStore is wired.
+      operationId: adminListTenantMembers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The org roster.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/TenantMembership" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tenants/{id}/members/{user_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin]
+      summary: Add a user to an org or change their org role.
+      description: |
+        Upserts a user's org membership (member|admin|guest; defaults to member).
+        admin:write. Idempotent. Emits admin_tenant_member_added.
+      operationId: adminPutTenantMember
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [member, admin, guest] }
+      responses:
+        "200": { description: Membership upserted. }
+        "400":
+          description: Missing ids or invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [admin]
+      summary: Remove a user from an org.
+      description: |
+        Removes the user's org membership. admin:write. Idempotent. Emits
+        admin_tenant_member_removed.
+      operationId: adminRemoveTenantMember
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Membership removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/organizations:
+    get:
+      tags: [self-service]
+      summary: List the orgs the authenticated user belongs to.
+      description: |
+        Returns the bearer subject's org memberships (B2B). `Cache-Control:
+        no-store`. Mounted only when a TenantUserStore is wired.
+      operationId: listMyOrganizations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's org memberships.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organizations:
+                    type: array
+                    items: { $ref: "#/components/schemas/TenantMembership" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/organizations/{tenant_id}:
+    delete:
+      tags: [self-service]
+      summary: Leave an organization (self-service).
+      description: |
+        The authenticated user leaves an org without admin intervention.
+        Idempotent. `Cache-Control: no-store`. Emits org_left.
+      operationId: leaveMyOrganization
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Left the organization. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
       - name: id
@@ -7450,6 +7569,15 @@ components:
         error_description:
           type: string
           description: Optional human-readable detail.
+
+    TenantMembership:
+      type: object
+      description: An explicit (tenant, user) org-membership edge (B2B), distinct from SCIM app-role groups.
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: string }
+        role: { type: string, enum: [member, admin, guest] }
+        created_at: { type: string, format: date-time }
 
     Connection:
       type: object

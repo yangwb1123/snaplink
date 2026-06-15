@@ -190,6 +190,15 @@ const (
 	// Outcome=success; ActorID = the admin; Metadata "connection_id" + "tenant_id".
 	EventAdminConnectionUpserted EventType = "admin_connection_upserted"
 	EventAdminConnectionDeleted  EventType = "admin_connection_deleted"
+	// EventAdminTenantMemberAdded / EventAdminTenantMemberRemoved — an operator
+	// added/updated or removed a user's org membership. Outcome=success; ActorID =
+	// the admin; Metadata "tenant_id" + "target_user".
+	EventAdminTenantMemberAdded   EventType = "admin_tenant_member_added"
+	EventAdminTenantMemberRemoved EventType = "admin_tenant_member_removed"
+	// EventOrgLeft — a user left an org via the self-service
+	// DELETE /me/organizations/:tenant_id. Outcome=success; ActorID = the subject;
+	// Metadata "tenant_id".
+	EventOrgLeft EventType = "org_left"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"

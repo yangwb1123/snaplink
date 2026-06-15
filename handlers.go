@@ -3427,6 +3427,144 @@ func (s *Server) handleAdminDeleteConnection(ctx HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// membershipJSON is the wire shape for B2B org membership.
+type membershipJSON struct {
+	TenantID  string    `json:"tenant_id"`
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func membershipToJSON(m *core.TenantMembership) membershipJSON {
+	return membershipJSON{TenantID: m.TenantID, UserID: m.UserID, Role: string(m.Role), CreatedAt: m.CreatedAt}
+}
+
+func validTenantRole(r core.TenantRole) bool {
+	return r == core.TenantRoleMember || r == core.TenantRoleAdmin || r == core.TenantRoleGuest
+}
+
+// handleAdminListTenantMembers serves GET /api/v1/admin/tenants/:id/members —
+// the org roster. admin:read.
+func (s *Server) handleAdminListTenantMembers(ctx HandlerContext) {
+	tenantID := ctx.Param("id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	members, err := s.tenantUserStore.ListByTenant(ctx.Request().Context(), tenantID)
+	if err != nil {
+		s.logger.Error("admin list tenant members failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	out := make([]membershipJSON, 0, len(members))
+	for _, m := range members {
+		out = append(out, membershipToJSON(m))
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"members": out})
+}
+
+// handleAdminPutTenantMember serves PUT /api/v1/admin/tenants/:id/members/:user_id
+// — add a user to an org or change their org role. admin:write. Body: {role}
+// (member|admin|guest; defaults to member). Idempotent (upsert). Emits
+// admin_tenant_member_added.
+func (s *Server) handleAdminPutTenantMember(ctx HandlerContext) {
+	tenantID := ctx.Param("id")
+	userID := ctx.Param("user_id")
+	if tenantID == "" || userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	var req struct {
+		Role string `json:"role"`
+	}
+	_ = bindOAuthParams(ctx, &req)
+	role := core.TenantRole(req.Role)
+	if role == "" {
+		role = core.TenantRoleMember
+	}
+	if !validTenantRole(role) {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := s.tenantUserStore.Add(ctx.Request().Context(), &core.TenantMembership{
+		TenantID: tenantID, UserID: userID, Role: role, CreatedAt: time.Now(),
+	}); err != nil {
+		s.logger.Error("admin add tenant member failed", "tenant_id", tenantID, "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminTenantMemberAdded, userID, KeyTenantID, tenantID)
+	ctx.JSON(http.StatusOK, map[string]any{"tenant_id": tenantID, "user_id": userID, "role": string(role)})
+}
+
+// handleAdminRemoveTenantMember serves DELETE /api/v1/admin/tenants/:id/members/:user_id
+// — remove a user from an org. admin:write. Idempotent. Emits
+// admin_tenant_member_removed.
+func (s *Server) handleAdminRemoveTenantMember(ctx HandlerContext) {
+	tenantID := ctx.Param("id")
+	userID := ctx.Param("user_id")
+	if tenantID == "" || userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := s.tenantUserStore.Remove(ctx.Request().Context(), tenantID, userID); err != nil {
+		s.logger.Error("admin remove tenant member failed", "tenant_id", tenantID, "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminTenantMemberRemoved, userID, KeyTenantID, tenantID)
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// handleMyOrganizations serves GET /me/organizations — the orgs the bearer
+// subject belongs to. Credential-adjacent: no-store headers.
+func (s *Server) handleMyOrganizations(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	members, err := s.tenantUserStore.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("list my organizations failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	out := make([]membershipJSON, 0, len(members))
+	for _, m := range members {
+		out = append(out, membershipToJSON(m))
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"organizations": out})
+}
+
+// handleLeaveMyOrganization serves DELETE /me/organizations/:tenant_id — the
+// authenticated user leaves an org without admin intervention. Idempotent
+// (leaving a non-member org succeeds). Emits org_left.
+func (s *Server) handleLeaveMyOrganization(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	tenantID := ctx.Param("tenant_id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := s.tenantUserStore.Remove(ctx.Request().Context(), tenantID, userID); err != nil {
+		s.logger.Error("leave organization failed", "user_id", userID, "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if s.auditor != nil {
+		evt := &audit.Event{Type: audit.EventOrgLeft, Outcome: audit.OutcomeSuccess, ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+		audit.SetMeta(evt, KeyTenantID, tenantID)
+		s.auditor.Record(ctx.Request().Context(), evt)
+	}
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
 // handleAdminRevokeUserDeviceSecrets serves DELETE /api/v1/admin/users/:id/device-secrets
 // — revoke all of a user's Native SSO device-secret bindings (lost/compromised
 // device lockout). admin:write. 501 when the wired DeviceSecretStore can't
