@@ -39,6 +39,7 @@ EXEMPT_FUNCS=(
   "verifyDPoPProof" "checkTenantResidency" "checkTenantNotSuspended"
   "MeshAuthorize" "handleLogout" "handleCIBATokenGrant"
   "handleDeviceTokenGrant" "handleDeviceCode" "handleUserInfo"
+  "handleRefreshTokenGrant"
   "computeDiscoverySnapshot" "fanOutBackchannelLogout" "handleDeviceVerify"
   # oidc
   "HandleSilentRenewal" "HandleEndSession" "MaybeSignUserInfo" "HandleJWKS"
