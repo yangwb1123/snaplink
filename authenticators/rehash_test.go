@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	sso "github.com/snaplink/sso"
 	"golang.org/x/crypto/bcrypt"
@@ -135,8 +136,10 @@ func TestLazyRehashVerifier_FailOpenOnRehashError(t *testing.T) {
 		t.Errorf("UserID = %q, want user-3", result.UserID)
 	}
 
-	// Wait for the goroutine to finish — this also drains any pending Logger
-	// send so the channel write happens-before the receive below.
+	// Wait for the goroutine to run Updater. Logger.Error is called AFTER Updater
+	// returns (see LazyRehashVerifier.Verify), so updaterDone unblocking does NOT
+	// imply the log send has happened — block on logErrCh with a timeout rather
+	// than a non-blocking check that would race the goroutine under load.
 	<-updaterDone
 
 	select {
@@ -144,7 +147,7 @@ func TestLazyRehashVerifier_FailOpenOnRehashError(t *testing.T) {
 		if msg == "" {
 			t.Error("Logger.Error called with empty message")
 		}
-	default:
+	case <-time.After(2 * time.Second):
 		t.Error("expected Logger.Error to be called on Updater failure")
 	}
 }
