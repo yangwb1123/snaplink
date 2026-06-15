@@ -191,6 +191,14 @@ const (
 	// not the userID. Mounted only when an AccountLockout is wired.
 	PathAdminAccountLockoutClear = "/admin/account-lockout/clear"
 
+	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
+	// connections at runtime (list/get/upsert/delete) so operators can onboard a
+	// new org's upstream IdP without a redeploy (config seeding only runs at
+	// boot). GET ?tenant_id= lists a tenant's connections; admin:read for GET,
+	// admin:write for POST/DELETE. Mounted only when a connection store is wired.
+	PathAdminConnections    = "/admin/connections"
+	PathAdminConnectionByID = "/admin/connections/:id"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream
@@ -351,6 +359,7 @@ const (
 	KeyIat       = "iat"
 	KeyNbf       = "nbf"
 	KeyClientID  = "client_id"
+	KeyTenantID  = "tenant_id"
 	KeyStrategy  = "token_strategy_used"
 
 	// RFC 9068 §2.2 access-token claim keys also surfaced on

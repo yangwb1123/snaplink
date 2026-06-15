@@ -2458,6 +2458,12 @@ func (s *Server) Mount() {
 	if s.accountLockout != nil {
 		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
 	}
+	if s.connectionStore != nil {
+		api.GET(PathAdminConnections, s.handleAdminListConnections)
+		api.POST(PathAdminConnections, s.handleAdminUpsertConnection)
+		api.GET(PathAdminConnectionByID, s.handleAdminGetConnection)
+		api.DELETE(PathAdminConnectionByID, s.handleAdminDeleteConnection)
+	}
 }
 
 // Handler returns the http.Handler for the server.

@@ -16,6 +16,7 @@ import (
 	"github.com/snaplink/sso/anomaly"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/connections"
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/metering"
@@ -3304,6 +3305,125 @@ func (s *Server) handleAdminClearAccountLockout(ctx HandlerContext) {
 		return
 	}
 	s.recordAdminUserAction(ctx, audit.EventAdminAccountUnlocked, req.Identifier, KeyClientID, req.ClientID)
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// connectionJSON is the wire shape for admin enterprise-connection management.
+type connectionJSON struct {
+	ID          string            `json:"id"`
+	TenantID    string            `json:"tenant_id"`
+	Type        string            `json:"type"`
+	DisplayName string            `json:"display_name"`
+	Domains     []string          `json:"domains"`
+	Enabled     bool              `json:"enabled"`
+	Config      map[string]string `json:"config,omitempty"`
+}
+
+func connectionToJSON(c *connections.Connection) connectionJSON {
+	return connectionJSON{
+		ID: c.ID, TenantID: c.TenantID, Type: string(c.Type),
+		DisplayName: c.DisplayName, Domains: c.Domains, Enabled: c.Enabled, Config: c.Config,
+	}
+}
+
+// recordAdminConnectionAction emits a connection-mutation audit event keyed on
+// the acting admin, with connection_id + tenant_id metadata.
+func (s *Server) recordAdminConnectionAction(ctx HandlerContext, evtType audit.EventType, connID, tenantID string) {
+	if s.auditor == nil {
+		return
+	}
+	actor, _, _ := AdminActorFromContext(ctx.Request().Context())
+	evt := &audit.Event{Type: evtType, Outcome: audit.OutcomeSuccess, ActorID: actor, ActorIP: audit.ClientIP(ctx.Request())}
+	audit.SetMeta(evt, "connection_id", connID)
+	audit.SetMeta(evt, KeyTenantID, tenantID)
+	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// handleAdminListConnections serves GET /api/v1/admin/connections?tenant_id=
+// — lists a tenant's B2B enterprise connections. admin:read. tenant_id is
+// required (the store indexes by tenant; there is no cross-tenant list).
+func (s *Server) handleAdminListConnections(ctx HandlerContext) {
+	tenantID := ctx.Request().URL.Query().Get(KeyTenantID)
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	conns, err := s.connectionStore.ByTenant(ctx.Request().Context(), tenantID)
+	if err != nil {
+		s.logger.Error("admin list connections failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	out := make([]connectionJSON, 0, len(conns))
+	for _, c := range conns {
+		out = append(out, connectionToJSON(c))
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"connections": out})
+}
+
+// handleAdminGetConnection serves GET /api/v1/admin/connections/:id. admin:read.
+// A missing connection is a 404.
+func (s *Server) handleAdminGetConnection(ctx HandlerContext) {
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	c, err := s.connectionStore.Get(ctx.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, connections.ErrNoConnection) {
+			ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+			return
+		}
+		s.logger.Error("admin get connection failed", "id", id, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, connectionToJSON(c))
+}
+
+// handleAdminUpsertConnection serves POST /api/v1/admin/connections — create or
+// replace a connection (and its domain routing). admin:write. Requires id +
+// tenant_id; type must be oidc or saml. Emits admin_connection_upserted.
+func (s *Server) handleAdminUpsertConnection(ctx HandlerContext) {
+	var req connectionJSON
+	if err := bindOAuthParams(ctx, &req); err != nil || req.ID == "" || req.TenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	ct := connections.ConnectionType(req.Type)
+	if ct != connections.TypeOIDC && ct != connections.TypeSAML {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	conn := &connections.Connection{
+		ID: req.ID, TenantID: req.TenantID, Type: ct,
+		DisplayName: req.DisplayName, Domains: req.Domains, Enabled: req.Enabled, Config: req.Config,
+	}
+	if err := s.connectionStore.Upsert(ctx.Request().Context(), conn); err != nil {
+		s.logger.Error("admin upsert connection failed", "id", req.ID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminConnectionAction(ctx, audit.EventAdminConnectionUpserted, req.ID, req.TenantID)
+	ctx.JSON(http.StatusOK, connectionToJSON(conn))
+}
+
+// handleAdminDeleteConnection serves DELETE /api/v1/admin/connections/:id.
+// admin:write. Idempotent (the store contract makes Delete a no-op on a missing
+// id). Emits admin_connection_deleted.
+func (s *Server) handleAdminDeleteConnection(ctx HandlerContext) {
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := s.connectionStore.Delete(ctx.Request().Context(), id); err != nil {
+		s.logger.Error("admin delete connection failed", "id", id, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminConnectionAction(ctx, audit.EventAdminConnectionDeleted, id, "")
 	ctx.JSON(http.StatusNoContent, nil)
 }
 

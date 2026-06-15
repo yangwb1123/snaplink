@@ -4501,6 +4501,104 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/connections:
+    get:
+      tags: [admin]
+      summary: List a tenant's B2B enterprise connections.
+      description: |
+        Lists the enterprise connections for `tenant_id` (required — the store
+        indexes by tenant; there is no cross-tenant list). admin:read. Mounted
+        only when a connection store is wired.
+      operationId: adminListConnections
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The tenant's connections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections:
+                    type: array
+                    items: { $ref: "#/components/schemas/Connection" }
+        "400": { description: Missing tenant_id. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Create or replace a B2B enterprise connection.
+      description: |
+        Upserts a connection (and its email-domain routing) at runtime so an
+        operator can onboard a new org's upstream IdP without a redeploy.
+        admin:write. Requires id + tenant_id; type must be `oidc` or `saml`.
+        Emits admin_connection_upserted. Mounted only when a connection store is
+        wired.
+      operationId: adminUpsertConnection
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Connection" }
+      responses:
+        "200":
+          description: The upserted connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Connection" }
+        "400":
+          description: Missing id/tenant_id or invalid type.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/connections/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get a B2B enterprise connection by id.
+      operationId: adminGetConnection
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Connection" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [admin]
+      summary: Delete a B2B enterprise connection.
+      description: |
+        Removes the connection (and its domain routing). admin:write. Idempotent
+        (a missing id succeeds). Emits admin_connection_deleted.
+      operationId: adminDeleteConnection
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Connection deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
       - name: id
@@ -7287,6 +7385,25 @@ components:
         error_description:
           type: string
           description: Optional human-readable detail.
+
+    Connection:
+      type: object
+      description: A B2B enterprise connection (email-domain → upstream IdP routing).
+      required: [id, tenant_id, type]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        type: { type: string, enum: [oidc, saml] }
+        display_name: { type: string }
+        domains:
+          type: array
+          items: { type: string }
+          description: Email domains routed to this connection (home-realm discovery).
+        enabled: { type: boolean }
+        config:
+          type: object
+          additionalProperties: { type: string }
+          description: Opaque protocol-specific settings (e.g. oidc_issuer, oidc_client_id).
 
     ErasureReport:
       type: object

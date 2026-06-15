@@ -185,6 +185,11 @@ const (
 	// lockout. Outcome=success; ActorID = the admin; Metadata "target_user" (the
 	// locked identifier) + "client_id".
 	EventAdminAccountUnlocked EventType = "admin_account_unlocked"
+	// EventAdminConnectionUpserted / EventAdminConnectionDeleted — an operator
+	// created/updated or removed a B2B enterprise connection at runtime.
+	// Outcome=success; ActorID = the admin; Metadata "connection_id" + "tenant_id".
+	EventAdminConnectionUpserted EventType = "admin_connection_upserted"
+	EventAdminConnectionDeleted  EventType = "admin_connection_deleted"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"
