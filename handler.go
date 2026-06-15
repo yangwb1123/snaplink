@@ -853,7 +853,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrSessionMgrNotConfigured))
 		return
 	}
-	session, err := s.sessionMgr.Create(ctx.Request().Context(), result.UserID)
+	session, err := s.createSession(ctx, result.UserID)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
@@ -1298,7 +1298,7 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 		}
 	}
 
-	session, err := s.sessionMgr.Create(ctx.Request().Context(), result.UserID)
+	session, err := s.createSession(ctx, result.UserID)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
@@ -2459,6 +2459,21 @@ func (s *Server) recordConsentEvent(ctx HandlerContext, evtType audit.EventType,
 		audit.SetMeta(evt, "scopes", strings.Join(scopes, " "))
 	}
 	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// createSession mints a session for the authenticated user, capturing the
+// request's device/location context (IP + user-agent) when the wired
+// SessionManager implements SessionMetaCreator (memory + sqlite do). The IP
+// honors the same first-hop X-Forwarded-For trust model as the rest of the
+// server. A manager without the extension falls back to the plain Create.
+func (s *Server) createSession(ctx HandlerContext, userID string) (*Session, error) {
+	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
+		return mc.CreateWithMeta(ctx.Request().Context(), userID, SessionMeta{
+			IP:        audit.ClientIP(ctx.Request()),
+			UserAgent: ctx.Request().UserAgent(),
+		})
+	}
+	return s.sessionMgr.Create(ctx.Request().Context(), userID)
 }
 
 // describeScopes pairs each requested scope with its operator-defined human

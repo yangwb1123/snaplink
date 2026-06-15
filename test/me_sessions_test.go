@@ -211,6 +211,25 @@ func TestGetMySessions_HappyPath(t *testing.T) {
 	}
 }
 
+// TestGetMySessions_CapturesDeviceContext verifies the login flow records the
+// request IP on the new session (device/location context), surfaced in
+// /sessions/me. The httptest client connects from loopback.
+func TestGetMySessions_CapturesDeviceContext(t *testing.T) {
+	srv, _, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+
+	_, body := doReq(t, srv, http.MethodGet, "/sessions/me", tok)
+	list, _ := body["sessions"].([]any)
+	if len(list) == 0 {
+		t.Fatalf("expected a session, got %v", body)
+	}
+	first, _ := list[0].(map[string]any)
+	ip, _ := first["ip"].(string)
+	if !strings.Contains(ip, "127.0.0.1") && !strings.Contains(ip, "::1") {
+		t.Errorf("session ip = %q, want loopback (device context not captured)", ip)
+	}
+}
+
 func TestGetMySessions_NoBearer(t *testing.T) {
 	srv, _, _ := newMeSessionsHarness(t)
 	code, body := doReq(t, srv, http.MethodGet, "/sessions/me", "")

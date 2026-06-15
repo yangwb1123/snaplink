@@ -166,3 +166,23 @@ func TestMemorySessionManager_ConcurrentCreates(t *testing.T) {
 		t.Errorf("got %d sessions, want %d", len(got), n)
 	}
 }
+
+func TestMemorySessionManager_CreateWithMeta(t *testing.T) {
+	mgr := NewMemorySessionManager(time.Hour)
+	ctx := context.Background()
+	s, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{IP: "10.0.0.1", UserAgent: "UA/1"})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+	if s.IP != "10.0.0.1" || s.UserAgent != "UA/1" {
+		t.Fatalf("created meta = %q / %q", s.IP, s.UserAgent)
+	}
+	got, _ := mgr.Get(ctx, s.ID)
+	if got.IP != "10.0.0.1" || got.UserAgent != "UA/1" {
+		t.Errorf("Get meta = %q / %q", got.IP, got.UserAgent)
+	}
+	plain, _ := mgr.Create(ctx, "bob")
+	if plain.IP != "" || plain.UserAgent != "" {
+		t.Errorf("plain Create meta should be empty, got %q / %q", plain.IP, plain.UserAgent)
+	}
+}

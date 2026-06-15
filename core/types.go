@@ -529,6 +529,16 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Revoked   bool      `json:"revoked"`
+
+	// IP and UserAgent are the device/location context captured at session
+	// creation, surfaced in the self-service session list (/sessions/me) so a
+	// user can recognize and revoke unfamiliar sessions. Best-effort: populated
+	// only when the SessionManager implements SessionMetaCreator AND the login
+	// flow had a request to read them from (empty otherwise — never security
+	// load-bearing). The IP honors the same first-hop X-Forwarded-For trust model
+	// as the rest of the server (safe only behind a trusted edge).
+	IP        string `json:"ip,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
 }
 
 // IsExpired checks if the session has expired.

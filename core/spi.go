@@ -130,6 +130,23 @@ type SessionManager interface {
 	ListAll(ctx context.Context) ([]*Session, error)
 }
 
+// SessionMeta is the optional device/location context captured at session
+// creation for the self-service session list.
+type SessionMeta struct {
+	IP        string
+	UserAgent string
+}
+
+// SessionMetaCreator is the OPTIONAL extension a SessionManager implements to
+// persist device/location context (IP, user-agent) on a new session. The login
+// flow type-asserts it and calls CreateWithMeta when available, falling back to
+// the plain Create otherwise — so a manager that doesn't implement it (e.g. a
+// scale-layer backend) keeps working with empty metadata. memory + sqlite peers
+// implement it.
+type SessionMetaCreator interface {
+	CreateWithMeta(ctx context.Context, userID string, meta SessionMeta) (*Session, error)
+}
+
 // TokenIssuer handles token lifecycle: issuance, validation, and revocation.
 type TokenIssuer interface {
 	Issue(ctx context.Context, subject *Subject, scopes []string) (*Token, error)

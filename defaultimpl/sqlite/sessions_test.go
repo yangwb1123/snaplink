@@ -2,12 +2,14 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/migrate"
 )
 
 func newSessionManagerForTest(t *testing.T) *SessionManager {
@@ -273,4 +275,90 @@ func TestSessionManager_CrossInstanceSharing(t *testing.T) {
 	if got.UserID != "alice" || got.ID != created.ID {
 		t.Fatalf("cross-instance session mismatch: got %#v want %#v", got, created)
 	}
+}
+
+func TestSessionManager_CreateWithMeta_RoundTrips(t *testing.T) {
+	mgr := newSessionManagerForTest(t)
+	ctx := context.Background()
+
+	created, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{IP: "203.0.113.7", UserAgent: "Mozilla/5.0 Chrome/120"})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+	if created.IP != "203.0.113.7" || created.UserAgent != "Mozilla/5.0 Chrome/120" {
+		t.Fatalf("created meta = %q / %q", created.IP, created.UserAgent)
+	}
+	// Get round-trips the metadata.
+	got, err := mgr.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.IP != "203.0.113.7" || got.UserAgent != "Mozilla/5.0 Chrome/120" {
+		t.Errorf("Get meta = %q / %q, want 203.0.113.7 / Mozilla...", got.IP, got.UserAgent)
+	}
+	// ListByUser carries it too; Refresh preserves it.
+	list, _ := mgr.ListByUser(ctx, "alice")
+	if len(list) != 1 || list[0].IP != "203.0.113.7" {
+		t.Errorf("ListByUser meta lost: %+v", list)
+	}
+	ref, _ := mgr.Refresh(ctx, created.ID)
+	if ref == nil || ref.IP != "203.0.113.7" || ref.UserAgent != "Mozilla/5.0 Chrome/120" {
+		t.Errorf("Refresh dropped meta: %+v", ref)
+	}
+	// Plain Create leaves them empty (no request context).
+	plain, _ := mgr.Create(ctx, "bob")
+	if plain.IP != "" || plain.UserAgent != "" {
+		t.Errorf("plain Create should have empty meta, got %q / %q", plain.IP, plain.UserAgent)
+	}
+}
+
+// TestSessionManager_MigrationFromV1 verifies the v2 ALTER applies cleanly to a
+// DB created at v1 (sessions without the device-context columns).
+func TestSessionManager_MigrationFromV1(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "v1.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
+	// Stand up a v1-only sessions DB (baseline schema, no ip/user_agent).
+	db, err := openV1Sessions(t, dsn)
+	if err != nil {
+		t.Fatalf("v1 setup: %v", err)
+	}
+	_ = db.Close()
+	// Reopen through the real constructor → runs v2.
+	mgr, err := NewSessionManager(dsn, time.Hour)
+	if err != nil {
+		t.Fatalf("NewSessionManager (migrate v1->v2): %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	if v := SessionsMaxVersion(); v < 2 {
+		t.Fatalf("SessionsMaxVersion = %d, want >=2", v)
+	}
+	// The new columns exist and round-trip.
+	s, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{IP: "198.51.100.9"})
+	if err != nil {
+		t.Fatalf("CreateWithMeta after migration: %v", err)
+	}
+	if got, _ := mgr.Get(ctx, s.ID); got.IP != "198.51.100.9" {
+		t.Errorf("ip not persisted after migration: %q", got.IP)
+	}
+}
+
+// openV1Sessions creates a sessions DB at schema v1 only (no device-context
+// columns), simulating a deployment that predates the v2 migration.
+func openV1Sessions(t *testing.T, dsn string) (*sql.DB, error) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// Apply ONLY v1 (baseline) so the columns added by v2 are absent.
+	if err := migrate.Run(context.Background(), db, "sessions", sessionMigrations[:1]); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }

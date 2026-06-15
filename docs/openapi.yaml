@@ -7104,6 +7104,12 @@ components:
         created_at_unix: { type: integer, format: int64 }
         expires_at_unix: { type: integer, format: int64 }
         revoked: { type: boolean }
+        ip:
+          type: string
+          description: Device/location context captured at session creation (best-effort; honors the first-hop X-Forwarded-For trust model). Omitted when not captured.
+        user_agent:
+          type: string
+          description: User-Agent captured at session creation (best-effort). Omitted when not captured.
 
     ListUsersResponse:
       type: object

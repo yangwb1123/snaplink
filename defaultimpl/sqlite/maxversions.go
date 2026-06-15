@@ -15,7 +15,7 @@ import "github.com/snaplink/sso/migrate"
 
 // SessionsMaxVersion returns the highest migration version declared for
 // the sessions store.
-func SessionsMaxVersion() int { return 1 }
+func SessionsMaxVersion() int { return migrate.MaxVersion(sessionMigrations) }
 
 // UsersMaxVersion returns the highest migration version declared for the
 // users store.

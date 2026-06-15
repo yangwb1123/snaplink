@@ -10,16 +10,29 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/migrate"
 )
 
 const sessionIDBytes = 32
 
-// sessionSchema covers TokenStrategySession opaque-token state. The
-// ID is an opaque hex string the client sees as its bearer token,
-// so this is effectively the access-token store for the session
-// strategy. Multi-replica deployments need this for any session
-// minted on replica A to be redeemable on replica B.
-const sessionSchema = `
+// sessionMigrations is the versioned schema history for the session store
+// (TokenStrategySession opaque-token state). The ID is an opaque hex string the
+// client sees as its bearer token, so this is effectively the access-token store
+// for the session strategy; multi-replica deployments need it so a session
+// minted on replica A is redeemable on replica B.
+//
+// v1: baseline (matches the original ensureSchema schema byte-for-byte, so a DB
+//
+//	already stamped v1 by ensureSchema is a no-op here).
+//
+// v2: ADD COLUMN ip + user_agent — best-effort device/location context for the
+//
+//	self-service session list. Default '' so existing rows are unaffected.
+var sessionMigrations = []migrate.Migration{
+	{
+		Version: 1,
+		Name:    "baseline",
+		SQL: `
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT    PRIMARY KEY,
     user_id    TEXT    NOT NULL,
@@ -32,7 +45,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id
     ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
     ON sessions(expires_at);
-`
+`,
+	},
+	{
+		Version: 2,
+		Name:    "session-device-context",
+		SQL: `
+ALTER TABLE sessions ADD COLUMN ip         TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';`,
+	},
+}
 
 // SessionManager is the SQLite-backed implementation of
 // [sso.SessionManager]. Suitable for multi-replica deployments and
@@ -55,7 +77,7 @@ func NewSessionManager(dsn string, ttl time.Duration) (*SessionManager, error) {
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
-	if err := ensureSchema(db, "sessions", sessionSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "sessions", sessionMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate sessions: %w", err)
 	}
@@ -68,7 +90,7 @@ func NewSessionManager(dsn string, ttl time.Duration) (*SessionManager, error) {
 // NewSessionManagerWithDB wraps an existing *sql.DB. Caller owns
 // the connection lifecycle (shared-pool deployments).
 func NewSessionManagerWithDB(db *sql.DB, ttl time.Duration) (*SessionManager, error) {
-	if err := ensureSchema(db, "sessions", sessionSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "sessions", sessionMigrations); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate sessions: %w", err)
 	}
 	if ttl <= 0 {
@@ -102,6 +124,13 @@ func (s *SessionManager) Ping(ctx context.Context) error {
 }
 
 func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Session, error) {
+	return s.CreateWithMeta(ctx, userID, sso.SessionMeta{})
+}
+
+// CreateWithMeta implements sso.SessionMetaCreator: it persists the device/
+// location context (IP, user-agent) on the new session for the self-service
+// session list.
+func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta sso.SessionMeta) (*sso.Session, error) {
 	id, err := randomSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: random session id: %w", err)
@@ -112,11 +141,14 @@ func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Sessio
 		UserID:    userID,
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.ttl),
+		IP:        meta.IP,
+		UserAgent: meta.UserAgent,
 	}
 	_, err = s.db.ExecContext(ctx, `
-        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked)
-        VALUES (?, ?, ?, ?, 0)`,
+        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent)
+        VALUES (?, ?, ?, ?, 0, ?, ?)`,
 		session.ID, session.UserID, session.CreatedAt.UnixNano(), session.ExpiresAt.UnixNano(),
+		session.IP, session.UserAgent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: insert session: %w", err)
@@ -126,7 +158,7 @@ func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Sessio
 
 func (s *SessionManager) Get(ctx context.Context, sessionID string) (*sso.Session, error) {
 	row := s.db.QueryRowContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent
           FROM sessions WHERE id = ?`, sessionID)
 	out, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -161,7 +193,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 	row := s.db.QueryRowContext(ctx, `
         UPDATE sessions SET expires_at = ?
           WHERE id = ? AND revoked = 0 AND expires_at > ?
-        RETURNING id, user_id, created_at, expires_at, revoked`,
+        RETURNING id, user_id, created_at, expires_at, revoked, ip, user_agent`,
 		now.Add(s.ttl).UnixNano(), sessionID, now.UnixNano(),
 	)
 	out, err := scanSession(row)
@@ -176,7 +208,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 
 func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent
           FROM sessions WHERE user_id = ?`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by user: %w", err)
@@ -187,7 +219,7 @@ func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.
 
 func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent
           FROM sessions`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list all: %w", err)
@@ -202,7 +234,7 @@ func scanSession(s scanner) (*sso.Session, error) {
 		createdAtUnixNs, expiresAtUnixNs int64
 		revokedInt                       int64
 	)
-	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt); err != nil {
+	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt, &out.IP, &out.UserAgent); err != nil {
 		return nil, err
 	}
 	out.CreatedAt = time.Unix(0, createdAtUnixNs).UTC()
@@ -234,4 +266,7 @@ func randomSessionID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-var _ sso.SessionManager = (*SessionManager)(nil)
+var (
+	_ sso.SessionManager     = (*SessionManager)(nil)
+	_ sso.SessionMetaCreator = (*SessionManager)(nil)
+)

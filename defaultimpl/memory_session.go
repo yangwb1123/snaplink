@@ -28,7 +28,14 @@ func NewMemorySessionManager(ttl ...time.Duration) *MemorySessionManager {
 	return &MemorySessionManager{ttl: d, sessions: make(map[string]*sso.Session)}
 }
 
-func (m *MemorySessionManager) Create(_ context.Context, userID string) (*sso.Session, error) {
+func (m *MemorySessionManager) Create(ctx context.Context, userID string) (*sso.Session, error) {
+	return m.CreateWithMeta(ctx, userID, sso.SessionMeta{})
+}
+
+// CreateWithMeta implements sso.SessionMetaCreator: it captures the device/
+// location context (IP, user-agent) on the new session for the self-service
+// session list.
+func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, meta sso.SessionMeta) (*sso.Session, error) {
 	id := randomHex(sessionIDBytes)
 	now := time.Now()
 	session := &sso.Session{
@@ -36,6 +43,8 @@ func (m *MemorySessionManager) Create(_ context.Context, userID string) (*sso.Se
 		UserID:    userID,
 		CreatedAt: now,
 		ExpiresAt: now.Add(m.ttl),
+		IP:        meta.IP,
+		UserAgent: meta.UserAgent,
 	}
 	m.mu.Lock()
 	m.sessions[id] = session
@@ -108,3 +117,8 @@ func randomHex(n int) string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+var (
+	_ sso.SessionManager     = (*MemorySessionManager)(nil)
+	_ sso.SessionMetaCreator = (*MemorySessionManager)(nil)
+)
