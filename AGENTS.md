@@ -525,6 +525,7 @@ Receiver endpoint from `Client.Attributes["caep_receiver_endpoint"]` (HTTPS, val
 - **Hexagonal extraction:** Handler bodies → `oauth/`/`oidc/` as `HandleX(deps Deps, ctx)` free functions. `*sso.Server` satisfies `Deps` via `accessors.go`. `oauth/` MUST NOT import `oidc/`.
 - **Error codes:** New `Err*` → update `docs/error-codes.md` in the same commit.
 - **API specs:** Documented endpoint change → update `docs/openapi.yaml` in the same commit.
+- **Maintainability gates** (`docs/maintainability-gates.md`): committed tests enforce a 500-line per-file budget (`maintainability_budget_test.go`) and import boundaries (`architecture_gate_test.go`), both ratcheting. When one fails, SPLIT the file / fix the import — do NOT grow the exemption list. Add new gates as committed tests (not Makefile/CI/hooks — `make harness` clobbers those).
 
 ### Don'ts
 - No `git reset --hard`, `push --force`, `branch -D` without explicit authorization.

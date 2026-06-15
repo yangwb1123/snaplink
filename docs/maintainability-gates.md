@@ -1,0 +1,85 @@
+# Maintainability gates
+
+Automated guardrails that keep this codebase maintainable over long, largely
+autonomous (AI-agent-driven) development — where the failure mode isn't a broken
+build but *silent erosion*: god-files, import cycles, leaf-package creep. The
+Go compiler and the per-**function** complexity linters don't catch these, so we
+encode the missing rules as **committed tests** that run inside the normal
+`go test ./...` / `make ci` gate.
+
+## Why tests (not Makefile / hooks / CI scripts)
+
+`make harness` generates a separate gate stack (`.check-*.sh`, `.githooks/`,
+`HARNESS.md`, `SKILLS/`) and historically also rewrites `Makefile` / `AGENTS.md`,
+so anything placed there is fragile and gets clobbered. A gate written as a
+committed Go test is **conflict-free**: it can't be regenerated away, it runs
+everywhere `go test` runs (CI's `go test -race`, `make race`, a developer's
+`go test ./...`), and it needs zero extra wiring. New gates should follow this
+pattern.
+
+> `make ci` is `fmt vet race build proto-lint ci-modules`. The file-size and
+> architecture gates ride the `race` step (`go test -race -count=1 ./...`).
+> Do **not** run `make harness` with uncommitted work — it pollutes the tree
+> (see the gitignore'd harness paths).
+
+## The gates
+
+### 1. Per-file size budget — `maintainability_budget_test.go`
+
+Fails any non-exempt, non-generated production `.go` file over **500 lines**.
+Files much larger than this are disproportionately expensive for humans and for
+agents to hold in context, and accrete into god-files. (This gate exists because
+a session grew `handlers.go` to 4405 lines unnoticed.)
+
+### 2. Architecture import boundaries — `architecture_gate_test.go`
+
+Enforces the dependency-direction invariants `AGENTS.md` declares (parsed via
+`go/parser`):
+
+- `oauth` MUST NOT import `oidc` — prevents the `oauth`↔`oidc` cycle.
+- `core` MUST import **no** internal package — it is the SPI/types/sentinels leaf.
+- `oidc` MUST NOT import `oauth` — *currently grandfathered* for two pre-existing
+  files (`handle_silent_renewal.go`, `handle_end_session.go`); one-way, so no
+  compile cycle. **Reconcile**: either drop those imports or update AGENTS.md §2.
+
+## The ratchet rule (important)
+
+Both gates carry an exemption list of the files that already violated the rule
+when the gate was introduced. **The list may only shrink.**
+
+- A **new** violation fails the build — fix it, don't add to the list.
+- The gate also flags **stale** exemptions (a file refactored back under budget,
+  or whose forbidden import was removed) so they get deleted. The backlog
+  therefore trends monotonically to zero.
+
+## When a gate fails — what to do
+
+| Failure | Do | Don't |
+|---|---|---|
+| File > 500 lines | Split cohesive groups into `*_<domain>.go` in the same package (see `handlers_admin.go` / `handlers_b2b.go` — pure relocation, `goimports -w`, build+test). | Add it to the exemption map. |
+| Forbidden import | Invert the dependency (move the shared type to `core`, or pass a dep via an interface). | Add it to `exempt`. |
+| Stale exemption flagged | Delete the entry. | Leave it. |
+
+## How to add a new gate
+
+Write a committed `*_test.go` in `package sso` at the repo root (or in `test/`),
+walking the tree with `filepath.WalkDir` (reuse `skipDirs`), and `t.Error` on
+violations with a ratcheting exemption map. Prove it both passes today **and**
+fails a deliberately-bad probe before committing.
+
+## Relationship to the existing gates
+
+- **golangci** (`.golangci.yml`, `make lint`): per-**function** complexity
+  (`funlen` 60/40, `gocyclo` 15, `gocognit` 20). Complements these per-**file**
+  / per-**package** gates. (Note: `lint` is a separate target — it is not part
+  of the committed `make ci` target; CI runs it as its own job.)
+
+## Roadmap (not yet built)
+
+- **Coverage floor**: a `tools/covercheck` + ratcheting `coverage_budget.json`
+  (per-package floors that only rise). Can't be a self-contained test — coverage
+  is finalized after the run — so it needs a CI step (a standalone
+  `.github/workflows/quality.yml`, not the harness-owned `ci.yml`).
+- **Latency budget**: an in-memory hot-path (`/auth/login`, `/token`) p95 test
+  with a generous catastrophe ceiling (rides `go test`), plus `benchstat`-vs-baseline
+  regression checking in CI for fine-grained SLOs.
