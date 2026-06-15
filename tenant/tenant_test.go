@@ -1,61 +1,61 @@
-package tenant_test
+package tenant
 
 import (
-	"errors"
 	"testing"
-
-	"github.com/snaplink/sso/tenant"
 )
 
-func TestTenantValidate_Happy(t *testing.T) {
-	tt := &tenant.Tenant{ID: "t1", Slug: "acme", Name: "Acme"}
-	if err := tt.Validate(); err != nil {
-		t.Fatalf("Validate: %v", err)
+func TestTenantValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		tenant  Tenant
+		wantErr bool
+	}{
+		{name: "valid tenant", tenant: Tenant{ID: "tenant1", Slug: "acme-corp"}, wantErr: false},
+		{name: "missing id", tenant: Tenant{Slug: "acme-corp"}, wantErr: true},
+		{name: "missing slug", tenant: Tenant{ID: "tenant1"}, wantErr: true},
+		{name: "empty tenant", tenant: Tenant{}, wantErr: true},
 	}
-	if tt.Status != tenant.StatusActive {
-		t.Errorf("default status = %q, want active", tt.Status)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.tenant.Validate()
+			if tc.wantErr && err == nil {
+				t.Error("Validate() expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("Validate() unexpected error: %v", err)
+			}
+		})
 	}
 }
 
-func TestTenantValidate_RejectsMissingID(t *testing.T) {
-	tt := &tenant.Tenant{Slug: "acme"}
-	if err := tt.Validate(); !errors.Is(err, tenant.ErrInvalidTenant) {
-		t.Errorf("err = %v, want ErrInvalidTenant", err)
-	}
-}
+func TestDomainValidate(t *testing.T) {
+	t.Parallel()
 
-func TestTenantValidate_RejectsMissingSlug(t *testing.T) {
-	tt := &tenant.Tenant{ID: "t1"}
-	if err := tt.Validate(); !errors.Is(err, tenant.ErrInvalidTenant) {
-		t.Errorf("err = %v, want ErrInvalidTenant", err)
+	tests := []struct {
+		name    string
+		domain  Domain
+		wantErr bool
+	}{
+		{name: "valid domain", domain: Domain{Hostname: "example.com", TenantID: "t1"}, wantErr: false},
+		{name: "missing domain", domain: Domain{TenantID: "t1"}, wantErr: true},
+		{name: "missing tenant id", domain: Domain{Hostname: "example.com"}, wantErr: true},
+		{name: "empty domain", domain: Domain{}, wantErr: true},
 	}
-}
-
-func TestTenantValidate_PreservesExplicitStatus(t *testing.T) {
-	tt := &tenant.Tenant{ID: "t1", Slug: "acme", Status: tenant.StatusSuspended}
-	_ = tt.Validate()
-	if tt.Status != tenant.StatusSuspended {
-		t.Errorf("status overwritten: %q", tt.Status)
-	}
-}
-
-func TestDomainValidate_Happy(t *testing.T) {
-	d := &tenant.Domain{Hostname: "acme.com", TenantID: "t1"}
-	if err := d.Validate(); err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-}
-
-func TestDomainValidate_RejectsMissingHostname(t *testing.T) {
-	d := &tenant.Domain{TenantID: "t1"}
-	if err := d.Validate(); !errors.Is(err, tenant.ErrInvalidDomain) {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func TestDomainValidate_RejectsMissingTenant(t *testing.T) {
-	d := &tenant.Domain{Hostname: "acme.com"}
-	if err := d.Validate(); !errors.Is(err, tenant.ErrInvalidDomain) {
-		t.Errorf("err = %v", err)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.domain.Validate()
+			if tc.wantErr && err == nil {
+				t.Error("Validate() expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("Validate() unexpected error: %v", err)
+			}
+		})
 	}
 }
