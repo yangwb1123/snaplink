@@ -547,7 +547,7 @@ func (s *Server) RecordTenantTokenIssued(ctx HandlerContext, clientID, strategy 
 }
 
 // TenantMetricsEnabled returns whether tenant-level metrics are enabled.
-func (s *Server) TenantMetricsEnabled() bool { return s.tenantMetricsEnabled }
+func (s *Server) TenantMetricsEnabled() bool { return s.tenantMetricsEnabled() }
 
 // TenantLabel returns the tenant label for the given client.
 func (s *Server) TenantLabel(ctx HandlerContext, clientID string) string {
@@ -555,4 +555,4 @@ func (s *Server) TenantLabel(ctx HandlerContext, clientID string) string {
 }
 
 // TenantMetricsAllowlist returns the tenant metrics allowlist.
-func (s *Server) TenantMetricsAllowlist() []string { return s.tenantMetricsAllowlist }
+func (s *Server) TenantMetricsAllowlist() map[string]struct{} { return s.tenantMetricsAllowlist }
