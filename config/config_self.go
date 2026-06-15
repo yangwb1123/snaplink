@@ -1,0 +1,68 @@
+package config
+
+import "time"
+
+type HostedLoginConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// SelfServiceConfig wires the end-user self-service stores the hosted login +
+// portal SPAs depend on. Each store is opt-in: an empty backend leaves its
+// routes unmounted and behavior byte-identical to a build without it. The
+// MFA-factor management store (/me/mfa) is intentionally not here — it is
+// operator-implemented over the concrete TOTP/WebAuthn backends, not a generic
+// memory|sqlite toggle. Self-service password change (/me/password) likewise
+// needs the operator's user-provisioning model and is wired by the embedder.
+type SelfServiceConfig struct {
+	// Consent backs the consent gate + records (/consents/me, consent_required).
+	// Enabling it turns ON consent enforcement at /auth/login.
+	Consent SelfServiceStoreConfig `yaml:"consent"`
+	// Password backs self-service password change (/me/password). When enabled,
+	// the YAML-seeded password users are imported into the store (by bcrypt
+	// hash) and login is served from it, so a password changed via /me/password
+	// takes effect on the next login.
+	Password SelfServiceStoreConfig `yaml:"password"`
+	// Signup enables the opt-in unauthenticated self-service registration
+	// endpoint POST /auth/register (creates a user + sets a password). DEFAULT
+	// OFF — open signup is an abuse surface most enterprise deployments don't
+	// want; they provision via SCIM/admin. Needs the password store enabled too.
+	Signup bool `yaml:"signup"`
+	// DataExport mounts GET /me/data-export — the GDPR Art. 15 self-service
+	// export of the authenticated user's OWN data (assembled by the same
+	// compliance.Exporter the admin route uses, scoped to the caller). Opt-in
+	// because it surfaces a user's full data bundle to that user.
+	DataExport bool `yaml:"data_export"`
+	// AccountDeletion mounts POST /me/account/erase — the GDPR Art. 17
+	// self-service erasure of the authenticated user's OWN account (sessions +
+	// refresh tokens + user record). Opt-in + IRREVERSIBLE: leave it off for
+	// org-managed accounts where only an admin should delete a user.
+	AccountDeletion bool `yaml:"account_deletion"`
+	// PasswordReset backs the UNAUTHENTICATED forgot-password flow
+	// (/auth/forgot-password + /auth/reset-password). Enabling it (backend set)
+	// wires the single-use reset-token store + a default identifier resolver
+	// (treats the identifier as the userID) + a delivery resolver (UserProvider
+	// email). The token DELIVERY mechanism (PasswordResetSender) needs operator
+	// email/SMS infra and is wired via the SDK — without it the endpoint stays
+	// anti-enumeration-safe but delivers nothing (a startup warning is logged).
+	PasswordReset PasswordResetConfig `yaml:"password_reset"`
+}
+
+// PasswordResetConfig wires the forgot-password reset-token store. Mirrors
+// NativeSSOConfig (Backend + SQLite + TTL). Empty backend = flow disabled.
+type PasswordResetConfig struct {
+	Backend string               `yaml:"backend"` // "" (disabled) | memory | sqlite
+	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
+	TTL     time.Duration        `yaml:"ttl"` // reset-token lifetime; 0 = SDK default (15m)
+}
+
+// SelfServiceStoreConfig selects a self-service store backend. Empty Backend =
+// disabled (routes unmounted). memory = dev/single-node; sqlite = durable.
+type SelfServiceStoreConfig struct {
+	Backend string               `yaml:"backend"` // "" | memory | sqlite
+	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
+}
+
+// MeshConfig opts into the service-mesh data-plane integrations
+// (cluster C1). Today it carries the ext_authz HTTP-mode authorization
+// endpoint (the gRPC ext_authz variant needs the go-control-plane proto
+// dep and lives in a separate operator module).
