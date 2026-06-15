@@ -427,3 +427,6 @@ var NewStdRouter = core.NewStdRouter
 var NewHMACNonceProvider = handler.NewHMACNonceProvider
 var NewHMACNonceProviderWithKey = handler.NewHMACNonceProviderWithKey
 type HMACNonceProvider = handler.HMACNonceProvider
+
+// StorageHealthSource re-exported from internal/handler.
+type StorageHealthSource = handler.StorageHealthSource

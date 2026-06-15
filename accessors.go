@@ -499,3 +499,8 @@ func (s *Server) AddReadyCheck(name string, check ReadyCheck) {
 	}
 	s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Check: check})
 }
+
+// StorageHealthSources returns the wired storage health sources.
+func (s *Server) StorageHealthSources() []StorageHealthSource {
+	return s.storageHealthSources
+}
