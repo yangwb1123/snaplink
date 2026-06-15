@@ -440,6 +440,8 @@ input:focus, select:focus {
   var selectedMFAMethod     = "";
   var savedLoginPayload     = null; // for consent re-submit
   var savedConsentChallengeID = ""; // server-issued challenge from consent_required response
+  var consentClientName     = ""; // server-provided app display name (consent_required)
+  var consentScopeDescriptions = {}; // server-provided scope -> description (consent_required)
 
   // --- Populate provider selector if >1 option ---
   var providerSel = $("provider");
@@ -623,6 +625,15 @@ input:focus, select:focus {
 
     if (code === "consent_required") {
       savedConsentChallengeID = data.consent_challenge_id || "";
+      // The server may enrich the response with the app's display name and
+      // per-scope descriptions so the screen reads better than raw IDs.
+      consentClientName = data.client_name || "";
+      consentScopeDescriptions = {};
+      if (Array.isArray(data.scopes)) {
+        data.scopes.forEach(function (s) {
+          if (s && s.scope && s.description) consentScopeDescriptions[s.scope] = s.description;
+        });
+      }
       renderConsentView();
       showView("consent");
       setError("login-error", "");
@@ -751,7 +762,7 @@ input:focus, select:focus {
 
   // --- Consent view ---
   function renderConsentView() {
-    $("consent-client").textContent = oauthParams.client_id || "This application";
+    $("consent-client").textContent = consentClientName || oauthParams.client_id || "This application";
     var list = $("consent-scopes");
     list.innerHTML = "";
     var scopes = oauthParams.scope.filter(function(s){ return s && s !== "openid"; });
@@ -764,6 +775,9 @@ input:focus, select:focus {
   }
 
   function scopeLabel(s) {
+    // Operator-provided description (from consent_required) wins; otherwise fall
+    // back to the built-in label for well-known scopes, then the raw name.
+    if (consentScopeDescriptions[s]) return consentScopeDescriptions[s];
     var labels = {
       openid:  "Verify your identity",
       profile: "View your profile information",

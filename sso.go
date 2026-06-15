@@ -407,6 +407,12 @@ type Server struct {
 	// to a build without the feature.
 	consentStore ConsentStore
 
+	// scopeDescriptions maps a scope name to an operator-defined human
+	// description (WithScopeDescriptions). Surfaced in the consent_required
+	// response so the consent UI can render meaningful text for custom scopes
+	// instead of the raw name. Nil/empty ⇒ no descriptions emitted.
+	scopeDescriptions map[string]string
+
 	// passwordCredentialStore backs POST /me/password (WithPasswordCredentialStore).
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	passwordCredentialStore PasswordCredentialStore
@@ -1942,6 +1948,16 @@ func WithRateLimit(p ratelimit.Policy) Option {
 // — behavior is byte-identical to a build without this feature.
 func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
+}
+
+// WithScopeDescriptions registers operator-defined human descriptions for OAuth
+// scopes (scope -> description). They are surfaced in the consent_required
+// response (alongside the client's display name) so a consent UI can show
+// meaningful text for custom scopes instead of the bare scope name. Purely
+// presentational — it does not affect scope authorization. Nil/empty (the
+// default) emits no descriptions (byte-identical).
+func WithScopeDescriptions(d map[string]string) Option {
+	return func(s *Server) { s.scopeDescriptions = d }
 }
 
 // WithPasswordCredentialStore wires a per-user password store and mounts the

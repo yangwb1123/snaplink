@@ -212,3 +212,73 @@ func TestConsentAudit_RevokedOnSelfService(t *testing.T) {
 		t.Errorf("client_id meta=%q want target-app", revoked[0].Metadata[sso.KeyClientID])
 	}
 }
+
+// TestConsent_RequiredResponseEnrichment verifies the consent_required response
+// carries the client display name and per-scope descriptions for the UI.
+func TestConsent_RequiredResponseEnrichment(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "u-ca"})
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: "ca-app", Secret: "s", Name: "Acme Console", Active: true,
+		AllowedScopes:         []string{"openid", "billing:read"},
+		AllowedAuthenticators: []string{authenticators.MethodPassword},
+		TokenStrategy:         "jwt",
+	})
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, _, p string) (*sso.AuthResult, error) {
+			if p != "pw" {
+				return nil, errors.New("bad")
+			}
+			return &sso.AuthResult{UserID: "u-ca"}, nil
+		},
+	))
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithClientStore(clients),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(5*time.Minute))),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithConsentStore(defaultimpl.NewMemoryConsentStore()),
+		sso.WithScopeDescriptions(map[string]string{"billing:read": "View your billing history"}),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"provider": authenticators.MethodPassword, "client_id": "ca-app",
+		"credential": map[string]string{"username": "u-ca", "password": "pw"},
+		"scope":      []string{"openid", "billing:read"},
+	})
+	resp, err := http.Post(hs.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out map[string]any
+	rb, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(rb, &out)
+
+	if out["error"] != sso.ErrConsentRequired {
+		t.Fatalf("want consent_required, got %v", out)
+	}
+	if out["client_name"] != "Acme Console" {
+		t.Errorf("client_name = %v, want Acme Console", out["client_name"])
+	}
+	scopes, ok := out["scopes"].([]any)
+	if !ok || len(scopes) != 2 {
+		t.Fatalf("scopes = %v, want 2 entries", out["scopes"])
+	}
+	// billing:read carries the operator description; openid has none (UI falls back).
+	var foundBilling bool
+	for _, s := range scopes {
+		m, _ := s.(map[string]any)
+		if m["scope"] == "billing:read" && m["description"] == "View your billing history" {
+			foundBilling = true
+		}
+	}
+	if !foundBilling {
+		t.Errorf("billing:read description missing from %v", scopes)
+	}
+}

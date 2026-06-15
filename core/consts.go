@@ -361,6 +361,10 @@ const (
 	KeyClientID  = "client_id"
 	KeyTenantID  = "tenant_id"
 	KeyStrategy  = "token_strategy_used"
+	// KeyClientName / KeyScopes are presentational fields in the consent_required
+	// response — the app's display name and the per-scope description list.
+	KeyClientName = "client_name"
+	KeyScopes     = "scopes"
 
 	// RFC 9068 §2.2 access-token claim keys also surfaced on
 	// introspection responses per RFC 7662 §2.2.

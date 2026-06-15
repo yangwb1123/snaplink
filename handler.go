@@ -2398,11 +2398,19 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 				s.recordConsentEvent(ctx, audit.EventConsentDenied, audit.OutcomeFailure, userID, clientID, scopes)
 			}
 			challengeID := s.issueConsentChallenge(userID, clientID, scopes)
-			ctx.JSON(http.StatusOK, map[string]any{
+			resp := map[string]any{
 				KeyError:              ErrConsentRequired,
 				KeyConsentChallengeID: challengeID,
 				KeyIss:                s.resolveIssuer(ctx),
-			})
+			}
+			// Presentational enrichment so the consent UI can render a meaningful
+			// screen (the app's display name + per-scope descriptions) instead of
+			// raw IDs. Additive — older clients ignore the extra fields.
+			if client.Name != "" {
+				resp[KeyClientName] = client.Name
+			}
+			resp[KeyScopes] = s.describeScopes(scopes)
+			ctx.JSON(http.StatusOK, resp)
 			return true
 		}
 		// Challenge validated and consumed: record the grant and continue.
@@ -2451,6 +2459,18 @@ func (s *Server) recordConsentEvent(ctx HandlerContext, evtType audit.EventType,
 		audit.SetMeta(evt, "scopes", strings.Join(scopes, " "))
 	}
 	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// describeScopes pairs each requested scope with its operator-defined human
+// description (WithScopeDescriptions) for the consent_required response. A scope
+// with no registered description carries an empty one — the consent UI falls
+// back to the scope name (or its own built-in label).
+func (s *Server) describeScopes(scopes []string) []map[string]string {
+	out := make([]map[string]string, 0, len(scopes))
+	for _, sc := range scopes {
+		out = append(out, map[string]string{"scope": sc, "description": s.scopeDescriptions[sc]})
+	}
+	return out
 }
 
 // issueConsentChallenge generates and stores a single-use consent challenge
