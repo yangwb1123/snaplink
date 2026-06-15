@@ -3242,6 +3242,40 @@ func (s *Server) handleAdminResetUserPassword(ctx HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// handleAdminSetUserEmail serves POST /api/v1/admin/users/:id/email — a
+// helpdesk/admin force-sets a user's email on their behalf (onboarding-typo
+// correction, domain migration), bypassing the user-facing verified
+// email-change flow (which requires the user to control the new address).
+// admin:write. Body: {email}. A missing user is a 404. Emits
+// admin_user_email_changed (never the email value — it's PII).
+func (s *Server) handleAdminSetUserEmail(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil || strings.TrimSpace(req.Email) == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	u, err := s.userProvider.GetByID(ctx.Request().Context(), userID)
+	if err != nil || u == nil {
+		ctx.JSON(http.StatusNotFound, errorBody(core.ErrNotFound))
+		return
+	}
+	u.Email = strings.TrimSpace(req.Email)
+	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), u); err != nil {
+		s.logger.Error("admin set email failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminUserEmailChanged, userID, "", "")
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
 // handleAdminRevokeUserDeviceSecrets serves DELETE /api/v1/admin/users/:id/device-secrets
 // — revoke all of a user's Native SSO device-secret bindings (lost/compromised
 // device lockout). admin:write. 501 when the wired DeviceSecretStore can't

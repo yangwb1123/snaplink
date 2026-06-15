@@ -4422,6 +4422,50 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/users/{id}/email:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Force-set a user's email (operational recovery).
+      description: |
+        Force-sets the user's email directly — the operational-recovery path
+        (onboarding typo, domain migration) that bypasses the user-facing
+        verified email-change flow (POST /me/email/change+verify), which requires
+        the user to prove control of the new address. admin:write; emits
+        admin_user_email_changed (never the email value — it is PII). A missing
+        user is a 404. Mounted only when a UserProvider is wired.
+      operationId: adminUserSetEmail
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+      responses:
+        "204": { description: Email set. }
+        "400":
+          description: Missing email.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
       - name: id

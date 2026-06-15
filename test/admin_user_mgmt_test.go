@@ -167,6 +167,56 @@ func TestAdminUserDeviceSecrets_Revoke(t *testing.T) {
 	}
 }
 
+func TestAdminUserEmail_ForceSet(t *testing.T) {
+	ctx := context.Background()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(ctx, &sso.User{ID: "u-alice", Email: "old@example.com"})
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithUserProvider(users),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	// Force-set the email.
+	raw, _ := json.Marshal(map[string]any{"email": "new@example.com"})
+	req, _ := http.NewRequest(http.MethodPost, hs.URL+"/api/v1/admin/users/u-alice/email", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status=%d, want 204", resp.StatusCode)
+	}
+	got, _ := users.GetByID(ctx, "u-alice")
+	if got.Email != "new@example.com" {
+		t.Errorf("email = %q, want new@example.com", got.Email)
+	}
+
+	// Empty email → 400.
+	raw2, _ := json.Marshal(map[string]any{"email": "  "})
+	req2, _ := http.NewRequest(http.MethodPost, hs.URL+"/api/v1/admin/users/u-alice/email", bytes.NewReader(raw2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, _ := http.DefaultClient.Do(req2)
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("empty email status=%d, want 400", resp2.StatusCode)
+	}
+
+	// Unknown user → 404.
+	raw3, _ := json.Marshal(map[string]any{"email": "x@example.com"})
+	req3, _ := http.NewRequest(http.MethodPost, hs.URL+"/api/v1/admin/users/ghost/email", bytes.NewReader(raw3))
+	req3.Header.Set("Content-Type", "application/json")
+	resp3, _ := http.DefaultClient.Do(req3)
+	_ = resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown user status=%d, want 404", resp3.StatusCode)
+	}
+}
+
 // TestAdminUserMgmt_NotMountedWithoutStores confirms the routes are absent when
 // the backing stores aren't wired (byte-identical off).
 func TestAdminUserMgmt_NotMountedWithoutStores(t *testing.T) {

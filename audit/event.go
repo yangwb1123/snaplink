@@ -176,6 +176,11 @@ const (
 	// Outcome=success; ActorID = the admin; Metadata "target_user" + "revoked".
 	EventAdminPasswordResetTokensRevoked EventType = "admin_password_reset_tokens_revoked"
 	EventAdminEmailChangeTokensRevoked   EventType = "admin_email_change_tokens_revoked"
+	// EventAdminUserEmailChanged — a helpdesk/admin force-set a user's email
+	// (operational recovery, bypassing the user-facing verified change).
+	// Outcome=success; ActorID = the admin; Metadata "target_user". The new
+	// email value is NOT recorded (it is PII; the change itself is the signal).
+	EventAdminUserEmailChanged EventType = "admin_user_email_changed"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"

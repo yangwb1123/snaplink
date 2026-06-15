@@ -178,6 +178,12 @@ const (
 	PathAdminUserPasswordResetTokens = "/admin/users/:id/password-reset-tokens"
 	PathAdminUserEmailChangeTokens   = "/admin/users/:id/email-change-tokens"
 
+	// PathAdminUserEmail force-sets a user's email (POST, admin:write) — the
+	// operational recovery path (onboarding typo, domain migration) that bypasses
+	// the user-facing verified email-change flow. Group-relative; gated by
+	// AdminMiddleware. Mounted only when a UserProvider is wired.
+	PathAdminUserEmail = "/admin/users/:id/email"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

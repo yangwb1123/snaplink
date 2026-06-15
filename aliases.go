@@ -284,6 +284,7 @@ const PathAdminUserPassword = core.PathAdminUserPassword
 const PathAdminUserDeviceSecrets = core.PathAdminUserDeviceSecrets
 const PathAdminUserPasswordResetTokens = core.PathAdminUserPasswordResetTokens
 const PathAdminUserEmailChangeTokens = core.PathAdminUserEmailChangeTokens
+const PathAdminUserEmail = core.PathAdminUserEmail
 const PathSSFReceive = core.PathSSFReceive
 const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathFederationFetch = core.PathFederationFetch

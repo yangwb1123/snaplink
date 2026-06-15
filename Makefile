@@ -7,7 +7,7 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint harness filesize complexity architecture coverage coverage-check evaluate
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
@@ -106,7 +106,36 @@ ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms
 	cd kerberos && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build proto-lint ci-modules ## Run the same checks CI runs.
+ci: harness fmt vet race build proto-lint lint ci-modules ## Run the same checks CI runs.
+
+# ───────────────────────────────────────────────
+# Harness Engineering — 参见 HARNESS.md
+# ───────────────────────────────────────────────
+
+harness: filesize complexity architecture ## Run the harness gate suite.
+
+filesize: ## GATE: 检查 .go 文件 ≤ 500 行。
+	@bash .check-filesize.sh
+
+complexity: ## GATE: 检查圈复杂度 ≤ 15。
+	@bash .check-complexity.sh
+
+architecture: ## GATE: 检查依赖方向。
+	@bash .check-architecture.sh
+
+# ───────────────────────────────────────────────
+# Evaluation Engineering — 参见 EVALUATION.md
+# ───────────────────────────────────────────────
+
+coverage: ## 生成覆盖率报告。
+	@mkdir -p $(BIN_DIR)
+	$(GO) test -count=1 -coverprofile=$(BIN_DIR)/coverage.out ./...
+	$(GO) tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
+
+coverage-check: ## GATE: 检查覆盖率。
+	@bash .check-coverage.sh
+
+evaluate: coverage coverage-check
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)

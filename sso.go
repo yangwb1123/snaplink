@@ -2443,6 +2443,9 @@ func (s *Server) Mount() {
 	if s.passwordCredentialStore != nil {
 		api.POST(PathAdminUserPassword, s.handleAdminResetUserPassword)
 	}
+	if s.userProvider != nil {
+		api.POST(PathAdminUserEmail, s.handleAdminSetUserEmail)
+	}
 	if s.deviceSecretStore != nil {
 		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
 	}
