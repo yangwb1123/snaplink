@@ -1,0 +1,46 @@
+# snaplink/sso — code ownership
+
+# Default: core team reviews everything
+* @snaplink/core
+
+# OAuth/OIDC core
+handler.go @snaplink/auth
+handlers.go @snaplink/auth
+oauth/ @snaplink/auth
+oidc/ @snaplink/auth
+
+# Security
+security/ @snaplink/security
+
+# Infrastructure
+deploy/ @snaplink/infra
+cmd/ @snaplink/infra
+
+# CI/CD
+.github/ @snaplink/infra
+Makefile @snaplink/infra
+
+# Documentation
+docs/ @snaplink/docs
+
+# KMS implementations
+kms/ @snaplink/infra
+
+# Federation
+federation/ @snaplink/auth
+
+# SAML / LDAP / Kerberos / RADIUS
+saml/ @snaplink/auth
+ldap/ @snaplink/auth
+kerberos/ @snaplink/auth
+radius/ @snaplink/auth
+
+# Engineering system
+.check-*.sh @snaplink/core
+.githooks/ @snaplink/core
+.prompts/ @snaplink/core
+skills/ @snaplink/core
+HARNESS.md @snaplink/core
+ARCHITECTURE.md @snaplink/core
+BOOTSTRAP.md @snaplink/core
+EVALUATION.md @snaplink/core

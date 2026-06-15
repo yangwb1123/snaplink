@@ -1,24 +1,28 @@
-package sso
+package handler
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/snaplink/sso/core"
+)
 
 // amrForResult returns the RFC 8176 Authentication Methods References for a
 // completed authentication. Authenticators record the methods they actually
-// used on AuthResult.AuthMethods (password -> ["pwd"], totp -> ["otp"],
+// used on core.AuthResult.AuthMethods (password -> ["pwd"], totp -> ["otp"],
 // certificate -> ["x509"], ...); this surfaces those into the token's amr
 // instead of collapsing the claim to the OAuth provider id. It falls back to
 // the provider id only when an authenticator recorded nothing, so amr is
 // never absent. The returned slice is a fresh copy — callers must not alias
 // result.AuthMethods.
-func amrForResult(result *AuthResult) []string {
-	return amrOrProvider(result.AuthMethods, result.Provider)
+func AmrForResult(result *core.AuthResult) []string {
+	return AmrOrProvider(result.AuthMethods, result.Provider)
 }
 
-// amrOrProvider returns methods when non-empty (a fresh copy), else the
+// AmrOrProvider returns methods when non-empty (a fresh copy), else the
 // provider id as a single-element fallback so amr is never absent. Shared
 // by the direct-login path (via amrForResult) and the authorization_code
 // exchange (which replays the AuthMethods captured on the AuthCode).
-func amrOrProvider(methods []string, provider string) []string {
+func AmrOrProvider(methods []string, provider string) []string {
 	if len(methods) > 0 {
 		return append([]string(nil), methods...)
 	}
@@ -40,7 +44,7 @@ var mfaMethodAMR = map[string]string{
 // order-preserving. Used on the /auth/mfa second leg so the minted tokens
 // carry the real multi-factor signal (e.g. ["pwd","otp","mfa"]) rather than
 // only the first-factor method.
-func withMFAMethod(existing []string, method string) []string {
+func WithMFAMethod(existing []string, method string) []string {
 	out := append([]string(nil), existing...)
 	add := func(v string) {
 		if v != "" && !slices.Contains(out, v) {

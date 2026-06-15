@@ -1,70 +1,48 @@
-# Dependabot keeps go modules, GitHub Actions, and the Dockerfile base
-# image patched without a human polling Renovate. Grouping rules keep
-# the PR firehose at one bundle per ecosystem per week.
-
 version: 2
-
 updates:
-  # Go module updates. Grouped so a typical "google.golang.org/* +
-  # buf.build/* + go.etcd.io/* minor bump" lands as ONE PR instead of
-  # twelve.
-  #
-  # `directories` (plural) names EVERY go.mod in the repo. The gomod
-  # ecosystem does NOT recurse into nested go.mod files from a parent
-  # directory, so each nested module (kms/*, redis, saml, ldap, kerberos,
-  # radius, extauthz) MUST be listed explicitly — otherwise their heavy,
-  # CVE-active deps (crewjam/saml XML/DSig, the cloud KMS SDKs, gokrb5)
-  # get ZERO automated update coverage. Dependabot opens one PR per
-  # affected module per run; the grouping rules keep each module's bundle
-  # to a single PR. Keep this list in sync with `make ci-modules` + the
-  # ci.yml `modules` matrix.
   - package-ecosystem: gomod
-    directories:
-      - "/"
-      - "/kms/awskms"
-      - "/kms/gcpkms"
-      - "/kms/azurekeyvault"
-      - "/kms/pkcs11"
-      - "/redis"
-      - "/saml"
-      - "/ldap"
-      - "/kerberos"
-      - "/radius"
-      - "/extauthz"
+    directory: "/"
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: UTC
+      timezone: Asia/Shanghai
     open-pull-requests-limit: 5
-    groups:
-      go-minor-and-patch:
-        update-types: [minor, patch]
-      # Majors come as individual PRs — they may carry breaking changes
-      # worth reviewing on their own.
+    labels:
+      - dependencies
+      - gomod
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
 
-  # GitHub Actions in .github/workflows/. Bumping setup-go / checkout /
-  # build-push-action lands here so CI stays on supported versions.
-  - package-ecosystem: github-actions
-    directory: "/"
+  - package-ecosystem: gomod
+    directory: "/kms/awskms"
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: UTC
+      timezone: Asia/Shanghai
     open-pull-requests-limit: 3
-    groups:
-      actions:
-        update-types: [minor, patch, major]
+    labels:
+      - dependencies
+      - awskms
 
-  # Dockerfile base image (golang:1.26-alpine builder + distroless
-  # runtime). Security patches in the base image land as a PR
-  # automatically.
+  - package-ecosystem: gomod
+    directory: "/kms/gcpkms"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - gcpkms
+
   - package-ecosystem: docker
-    directory: "/"
+    directory: "/deploy/compose"
     schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: UTC
-    open-pull-requests-limit: 3
+      interval: monthly
+    labels:
+      - docker

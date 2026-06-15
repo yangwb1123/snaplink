@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso/geo"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/tenant"
+	"github.com/snaplink/sso/internal/handler"
 )
 
 // FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
@@ -421,3 +422,8 @@ var ErrUserExists = core.ErrUserExists
 // --- Funcs ---
 var NewContext = core.NewContext
 var NewStdRouter = core.NewStdRouter
+
+// NewHMACNonceProvider re-exported from internal/handler.
+var NewHMACNonceProvider = handler.NewHMACNonceProvider
+var NewHMACNonceProviderWithKey = handler.NewHMACNonceProviderWithKey
+type HMACNonceProvider = handler.HMACNonceProvider

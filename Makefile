@@ -7,9 +7,8 @@ BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend
 
-help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
 		/^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -107,6 +106,54 @@ ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms
 	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
 ci: fmt vet race build proto-lint ci-modules ## Run the same checks CI runs.
+
+help: ## Show this help.
+	@bash .make-help.sh
+
+# Engineering System Gates
+
+generate-engineering: ## Generate all engineering scaffolding (regenerates gitignored files).
+	@bash docs/templates/engineering/generate-engineering.sh
+
+harness: generate-engineering filesize complexity architecture ## Run all engineering gates (auto-generates scaffolding first).
+
+filesize: generate-engineering
+	@bash .check-filesize.sh
+
+complexity: generate-engineering
+	@bash .check-complexity.sh
+
+architecture: generate-engineering
+	@bash .check-architecture.sh
+
+coverage:
+	@go test -count=1 -coverprofile=/tmp/cover.out ./... && go tool cover -func=/tmp/cover.out
+
+coverage-check: generate-engineering
+	@bash .check-coverage.sh
+
+evaluate: coverage coverage-check ## Run coverage evaluation.
+
+check-exemptions: generate-engineering
+	@bash .check-exemptions-sync.sh
+
+self-test: generate-engineering
+	@bash .check-harness-self-test.sh
+
+check-invariants: generate-engineering
+	@bash .check-invariants.sh
+
+review: generate-engineering
+	@cat docs/review-checklist.md
+
+health-report: generate-engineering
+	@bash .check-health-report.sh
+
+diagnose: generate-engineering
+	@bash scripts/diagnose.sh
+
+trend: generate-engineering
+	@bash scripts/trend.sh
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)

@@ -1,4 +1,4 @@
-package sso
+package handler
 
 import (
 	"sync"
@@ -19,7 +19,7 @@ import (
 // no entry and falls through to the family-reuse kill exactly as before. The
 // cached response is held at most `window` and the map is pruned lazily on each
 // access, so it stays bounded by rotation-rate × window.
-type refreshGraceCache struct {
+type RefreshGraceCache struct {
 	window time.Duration
 	mu     sync.Mutex
 	m      map[string]refreshGraceEntry
@@ -30,13 +30,13 @@ type refreshGraceEntry struct {
 	expires time.Time
 }
 
-func newRefreshGraceCache(window time.Duration) *refreshGraceCache {
-	return &refreshGraceCache{window: window, m: make(map[string]refreshGraceEntry)}
+func NewRefreshGraceCache(window time.Duration) *RefreshGraceCache {
+	return &RefreshGraceCache{window: window, m: make(map[string]refreshGraceEntry)}
 }
 
 // remember caches resp as the successor for the just-consumed token. resp is
 // cloned so a later caller mutation can't corrupt the cached copy.
-func (c *refreshGraceCache) remember(token string, resp map[string]any, now time.Time) {
+func (c *RefreshGraceCache) Remember(token string, resp map[string]any, now time.Time) {
 	if c == nil || token == "" {
 		return
 	}
@@ -53,7 +53,7 @@ func (c *refreshGraceCache) remember(token string, resp map[string]any, now time
 // lookup returns a COPY of the cached successor response for token if it was
 // rotated within the grace window (else nil,false). Expired-at-exactly-now is
 // treated as expired.
-func (c *refreshGraceCache) lookup(token string, now time.Time) (map[string]any, bool) {
+func (c *RefreshGraceCache) Lookup(token string, now time.Time) (map[string]any, bool) {
 	if c == nil || token == "" {
 		return nil, false
 	}
@@ -71,7 +71,7 @@ func (c *refreshGraceCache) lookup(token string, now time.Time) (map[string]any,
 }
 
 // pruneLocked drops every expired entry. Caller holds c.mu.
-func (c *refreshGraceCache) pruneLocked(now time.Time) {
+func (c *RefreshGraceCache) pruneLocked(now time.Time) {
 	for k, e := range c.m {
 		if !now.Before(e.expires) {
 			delete(c.m, k)

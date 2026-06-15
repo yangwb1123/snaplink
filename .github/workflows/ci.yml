@@ -51,6 +51,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+
+      - name: Install engineering tools
+        run: |
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+          go install github.com/uudashr/gocognit/cmd/gocognit@latest
+
+      - name: Engineering gates (harness)
+        run: make harness
       - name: gofmt
         # Fail loudly on unformatted files. `gofmt -l` prints offenders
         # and exits 0 regardless, so we test the output length ourselves.

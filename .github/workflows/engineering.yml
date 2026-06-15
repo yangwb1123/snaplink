@@ -1,0 +1,89 @@
+name: Engineering Gates
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+jobs:
+  harness:
+    name: Engineering Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      
+      - name: Install engineering tools
+        run: |
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+          go install github.com/uudashr/gocognit/cmd/gocognit@latest
+      
+      - name: Generate engineering scaffolding
+        run: make generate-engineering
+      
+      - name: Gate G1 — filesize
+        run: make filesize
+      
+      - name: Gate G2 — complexity
+        run: make complexity
+      
+      - name: Gate G4 — architecture
+        run: make architecture
+      
+      - name: Security invariants
+        run: make check-invariants
+      
+      - name: Exemption sync
+        run: make check-exemptions
+      
+      - name: Self-test (harness integrity)
+        run: make self-test
+
+  diagnose:
+    name: Codebase Health
+    runs-on: ubuntu-latest
+    needs: [harness]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Generate and diagnose
+        run: |
+          make generate-engineering
+          make diagnose
+      
+      - name: Upload trend snapshot
+        run: |
+          mkdir -p .trends
+          make trend
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trend-snapshot
+          path: .trends/
+
+  coverage:
+    name: Coverage Gates
+    runs-on: ubuntu-latest
+    needs: [harness]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Generate scaffolding
+        run: make generate-engineering
+      - name: Coverage check
+        run: make coverage-check
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: /tmp/cover.out
