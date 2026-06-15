@@ -2455,6 +2455,9 @@ func (s *Server) Mount() {
 	if s.emailChangeStore != nil {
 		api.DELETE(PathAdminUserEmailChangeTokens, s.handleAdminRevokeUserEmailChangeTokens)
 	}
+	if s.accountLockout != nil {
+		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
+	}
 }
 
 // Handler returns the http.Handler for the server.

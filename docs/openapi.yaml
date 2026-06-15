@@ -4466,6 +4466,41 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/account-lockout/clear:
+    post:
+      tags: [admin]
+      summary: Clear a brute-force account lockout (helpdesk unlock).
+      description: |
+        Clears an account lockout so a legitimately-locked user can retry
+        immediately, without waiting out the auto-unlock duration. admin:write;
+        emits admin_account_unlocked. The lockout is keyed on
+        `<client_id>:<identifier>` (the credential the user authenticates with),
+        NOT the userID — so both `client_id` and `identifier` are required.
+        Idempotent (clearing a non-locked key succeeds). Mounted only when an
+        AccountLockout is wired.
+      operationId: adminClearAccountLockout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id, identifier]
+              properties:
+                client_id: { type: string }
+                identifier: { type: string, description: "the locked login identifier (username/email/phone as used at login)" }
+      responses:
+        "204": { description: Lockout cleared. }
+        "400":
+          description: Missing client_id or identifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
       - name: id

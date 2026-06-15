@@ -184,6 +184,13 @@ const (
 	// AdminMiddleware. Mounted only when a UserProvider is wired.
 	PathAdminUserEmail = "/admin/users/:id/email"
 
+	// PathAdminAccountLockoutClear clears a brute-force account lockout (POST,
+	// admin:write) so a legitimately-locked user can retry before the auto-unlock
+	// duration elapses. Body: {client_id, identifier}. NOT under /users/:id — the
+	// lockout is keyed on <client_id>:<identifier> (the authenticated credential),
+	// not the userID. Mounted only when an AccountLockout is wired.
+	PathAdminAccountLockoutClear = "/admin/account-lockout/clear"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

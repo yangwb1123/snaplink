@@ -3276,6 +3276,37 @@ func (s *Server) handleAdminSetUserEmail(ctx HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// handleAdminClearAccountLockout serves POST /api/v1/admin/account-lockout/clear
+// — a helpdesk clears a brute-force lockout so a legitimately-locked user can
+// retry immediately, without waiting out the auto-unlock duration. admin:write.
+// Body: {client_id, identifier}. The lockout is keyed on
+// <client_id>:<identifier> (the credential the user authenticates with), NOT the
+// userID, so both are required. Reuses RegisterSuccess, which the AccountLockout
+// contract defines as resetting the failure counter AND any active lock for the
+// key — so this is idempotent (clearing a non-locked key succeeds). Emits
+// admin_account_unlocked.
+func (s *Server) handleAdminClearAccountLockout(ctx HandlerContext) {
+	var req struct {
+		ClientID   string `json:"client_id"`
+		Identifier string `json:"identifier"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil || req.ClientID == "" || req.Identifier == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	// Build the same key the login path uses (security.LockoutKey →
+	// "<client_id>:<identifier>"). The field name is immaterial — the key format
+	// is identical regardless of which credential field locked the account.
+	key := security.LockoutKey(req.ClientID, map[string]string{"username": req.Identifier})
+	if err := s.accountLockout.RegisterSuccess(ctx.Request().Context(), key); err != nil {
+		s.logger.Error("admin clear lockout failed", "client_id", req.ClientID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminAccountUnlocked, req.Identifier, KeyClientID, req.ClientID)
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
 // handleAdminRevokeUserDeviceSecrets serves DELETE /api/v1/admin/users/:id/device-secrets
 // — revoke all of a user's Native SSO device-secret bindings (lost/compromised
 // device lockout). admin:write. 501 when the wired DeviceSecretStore can't

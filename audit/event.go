@@ -181,6 +181,10 @@ const (
 	// Outcome=success; ActorID = the admin; Metadata "target_user". The new
 	// email value is NOT recorded (it is PII; the change itself is the signal).
 	EventAdminUserEmailChanged EventType = "admin_user_email_changed"
+	// EventAdminAccountUnlocked — a helpdesk/admin cleared a brute-force account
+	// lockout. Outcome=success; ActorID = the admin; Metadata "target_user" (the
+	// locked identifier) + "client_id".
+	EventAdminAccountUnlocked EventType = "admin_account_unlocked"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"

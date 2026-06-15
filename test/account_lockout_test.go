@@ -338,3 +338,55 @@ func TestLockout_OffByDefault(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 }
+
+// TestAdminClearAccountLockout_UnlocksLockedAccount drives a real lockout via
+// repeated bad logins, then clears it through the admin endpoint and confirms a
+// correct login succeeds again.
+func TestAdminClearAccountLockout_UnlocksLockedAccount(t *testing.T) {
+	h := newLockoutHarness(t) // MaxFailures=3
+	// Lock alice out.
+	for i := 0; i < 3; i++ {
+		_, _ = h.attempt(t, "alice", lkBadPass)
+	}
+	if l, _, _ := h.a.IsLocked(context.Background(), lkClient+":alice"); !l {
+		t.Fatal("alice should be locked after 3 failures")
+	}
+
+	// Admin clears the lockout.
+	body, _ := json.Marshal(map[string]any{"client_id": lkClient, "identifier": "alice"})
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/api/v1/admin/account-lockout/clear", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("admin clear: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("admin clear status=%d, want 204", resp.StatusCode)
+	}
+	if l, _, _ := h.a.IsLocked(context.Background(), lkClient+":alice"); l {
+		t.Fatal("alice should be unlocked after admin clear")
+	}
+
+	// A correct login now succeeds (the gate no longer blocks her).
+	status, b := h.attempt(t, "alice", lkGoodPass)
+	if status != http.StatusOK {
+		t.Fatalf("post-unlock login status=%d body=%v, want 200", status, b)
+	}
+
+	// The unlock was audited.
+	evs, _ := h.rec.Query(context.Background(), audit.Query{Type: audit.EventAdminAccountUnlocked})
+	if len(evs) != 1 {
+		t.Errorf("want 1 admin_account_unlocked event, got %d", len(evs))
+	}
+
+	// Missing fields → 400.
+	bad, _ := json.Marshal(map[string]any{"client_id": lkClient})
+	req2, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/api/v1/admin/account-lockout/clear", bytes.NewReader(bad))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, _ := http.DefaultClient.Do(req2)
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing identifier status=%d, want 400", resp2.StatusCode)
+	}
+}
