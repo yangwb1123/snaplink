@@ -13,7 +13,7 @@ import (
 func TestBuildAuthenticators_TOTPDisabledByDefault(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
 	for _, a := range auths {
 		if a.Name() == "totp" {
 			t.Fatal("totp authenticator registered without enabling it in config")
@@ -27,7 +27,7 @@ func TestBuildAuthenticators_TOTPDisabledByDefault(t *testing.T) {
 func TestBuildAuthenticators_TOTPEnabled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "totp" {
@@ -47,13 +47,13 @@ func TestBuildAuthenticators_TOTPEnabled(t *testing.T) {
 func TestBuildAuthenticators_TOTPSurfacesEnrollmentStore(t *testing.T) {
 	enabled := &config.Config{}
 	enabled.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
-	if _, _, _, store, _ := buildAuthenticators(enabled, quietLogger(), nil); store == nil {
+	if _, _, _, store, _ := buildAuthenticators(enabled, quietLogger(), nil, nil); store == nil {
 		t.Fatal("TOTP enabled but no MFAEnrollmentStore surfaced for self-service enrollment")
 	}
 
 	off := &config.Config{}
 	off.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	if _, _, _, store, _ := buildAuthenticators(off, quietLogger(), nil); store != nil {
+	if _, _, _, store, _ := buildAuthenticators(off, quietLogger(), nil, nil); store != nil {
 		t.Fatal("MFAEnrollmentStore surfaced without TOTP enabled (should be nil)")
 	}
 }
@@ -66,7 +66,7 @@ func TestBuildAuthenticators_TOTPSQLiteStore(t *testing.T) {
 		Enabled:   true,
 		SQLiteDSN: "file:totpcfg_" + t.Name() + "?mode=memory&cache=shared&_pragma=busy_timeout(5000)",
 	}
-	_, _, totpAuth, store, err := buildAuthenticators(cfg, quietLogger(), nil)
+	_, _, totpAuth, store, err := buildAuthenticators(cfg, quietLogger(), nil, nil)
 	if err != nil {
 		t.Fatalf("buildAuthenticators with sqlite_dsn: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestBuildAuthenticators_TOTPSQLiteStore(t *testing.T) {
 func TestBuildAuthenticators_TOTPSkewStepsApplied(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true, SkewSteps: 2}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
 	if len(auths) == 0 {
 		t.Fatal("no authenticators built with skew_steps override")
 	}

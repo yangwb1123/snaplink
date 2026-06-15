@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/defaultimpl"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -215,13 +217,88 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil)
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
 	for _, a := range auths {
 		if a.Name() == "password" {
 			return
 		}
 	}
 	t.Fatal("password authenticator not registered with empty users list")
+}
+
+// TestBuildAuthenticators_ImportedHashLogin proves the opt-in flag wires the
+// attribute-backed verifier so a user migrated via sso-import (argon2id hash on
+// User.Attributes) can authenticate through the built password authenticator —
+// the end-to-end path the import tool documents but that was previously inert.
+func TestBuildAuthenticators_ImportedHashLogin(t *testing.T) {
+	ctx := context.Background()
+	users := defaultimpl.NewMemoryUserProvider()
+	hash, err := authenticators.EncodeArgon2id("legacy-pw", 8192, 1, 1, 32)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	_ = users.CreateOrUpdate(ctx, &sso.User{
+		ID: "migrated-user",
+		Attributes: map[string]string{
+			authenticators.AttrPasswordHash:       hash,
+			authenticators.AttrPasswordHashFormat: authenticators.HashFormatArgon2id,
+		},
+	})
+
+	cfg := &config.Config{}
+	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true, ImportedHashLogin: true}
+	auths, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, users)
+	if err != nil {
+		t.Fatalf("buildAuthenticators: %v", err)
+	}
+	var pw sso.Authenticator
+	for _, a := range auths {
+		if a.Name() == "password" {
+			pw = a
+		}
+	}
+	if pw == nil {
+		t.Fatal("password authenticator not registered")
+	}
+	res, err := pw.Authenticate(ctx, &sso.AuthRequest{
+		Credential: map[string]string{"username": "migrated-user", "password": "legacy-pw"},
+	})
+	if err != nil {
+		t.Fatalf("imported user could not authenticate: %v", err)
+	}
+	if res.UserID != "migrated-user" {
+		t.Errorf("UserID = %q, want migrated-user", res.UserID)
+	}
+	// Wrong password still fails.
+	if _, err := pw.Authenticate(ctx, &sso.AuthRequest{
+		Credential: map[string]string{"username": "migrated-user", "password": "wrong"},
+	}); err == nil {
+		t.Error("wrong password must fail")
+	}
+}
+
+// TestBuildAuthenticators_ImportedHashLoginOffByDefault proves the verifier is
+// NOT chained when the flag is unset — byte-identical to prior behavior.
+func TestBuildAuthenticators_ImportedHashLoginOffByDefault(t *testing.T) {
+	ctx := context.Background()
+	users := defaultimpl.NewMemoryUserProvider()
+	hash, _ := authenticators.EncodeArgon2id("legacy-pw", 8192, 1, 1, 32)
+	_ = users.CreateOrUpdate(ctx, &sso.User{
+		ID:         "migrated-user",
+		Attributes: map[string]string{authenticators.AttrPasswordHash: hash, authenticators.AttrPasswordHashFormat: authenticators.HashFormatArgon2id},
+	})
+	cfg := &config.Config{}
+	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true} // flag off
+	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, users)
+	for _, a := range auths {
+		if a.Name() == "password" {
+			if _, err := a.Authenticate(ctx, &sso.AuthRequest{
+				Credential: map[string]string{"username": "migrated-user", "password": "legacy-pw"},
+			}); err == nil {
+				t.Fatal("imported user must NOT authenticate when ImportedHashLogin is off")
+			}
+		}
+	}
 }
 
 // TestBuildAuthenticators_PasswordHealthEnabled proves the optional
@@ -233,7 +310,7 @@ func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
 		Enabled: true,
 		Health:  &config.PasswordHealthConfig{Enabled: true},
 	}
-	_, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil)
+	_, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error wiring password health: %v", err)
 	}
@@ -251,7 +328,7 @@ func TestBuildAuthenticators_PasswordHealthMissingFileIsLoud(t *testing.T) {
 			WeakPasswordFile: filepath.Join(t.TempDir(), "missing.txt"),
 		},
 	}
-	if _, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil); err == nil {
+	if _, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, nil); err == nil {
 		t.Fatal("expected an error for a missing weak-password file, got nil")
 	}
 }

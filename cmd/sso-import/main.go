@@ -19,9 +19,11 @@
 // The tool writes one user per row into the "users" table via an upsert
 // (CREATE OR UPDATE semantics). Password hashes are stored in the
 // Attributes map under the key "password_hash" (the hash string) and
-// "password_hash_format" (the format tag). The server's LazyRehashVerifier
-// reads these attributes on first login to verify the legacy hash and
-// transparently upgrade it to bcrypt.
+// "password_hash_format" (the format tag). To let these users authenticate,
+// enable `authenticators.password.imported_hash_login: true` in the server
+// config — that chains an attribute-backed multi-format verifier wrapped in
+// LazyRehashVerifier, which reads these attributes on first login to verify the
+// legacy hash and transparently upgrade it to bcrypt.
 //
 // A --dry-run counts the records that would be imported and prints a sample
 // without touching the database.

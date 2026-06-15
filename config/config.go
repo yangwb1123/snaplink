@@ -2670,6 +2670,15 @@ type PasswordConfig struct {
 	Enabled bool                  `yaml:"enabled"`
 	Users   []PasswordUserConfig  `yaml:"users,omitempty"`
 	Health  *PasswordHealthConfig `yaml:"health,omitempty"`
+
+	// ImportedHashLogin enables login for users migrated via cmd/sso-import,
+	// whose credential hash (any of bcrypt / argon2id / PBKDF2) lives on the
+	// User record's Attributes. When true and a UserProvider is wired, an
+	// attribute-backed multi-format verifier is chained after the primary
+	// (YAML / store) verifier, wrapped in lazy bcrypt re-hashing so a migrated
+	// user is upgraded to bcrypt on first login. Default false — byte-identical
+	// (the import tool's output is otherwise inert: nothing reads those hashes).
+	ImportedHashLogin bool `yaml:"imported_hash_login,omitempty"`
 }
 
 // PasswordHealthConfig wires the optional login-time credential-health

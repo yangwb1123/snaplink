@@ -1,0 +1,136 @@
+package authenticators
+
+import (
+	"context"
+	"errors"
+	"maps"
+
+	"github.com/snaplink/sso"
+)
+
+// Attribute keys under which a migration tool (cmd/sso-import) persists a user's
+// imported credential hash on the User record. The verifier and the importer
+// MUST agree on these keys — they are the seam that lets a user migrated from a
+// legacy IdP authenticate without a forced password reset.
+const (
+	AttrPasswordHash       = "password_hash"
+	AttrPasswordHashFormat = "password_hash_format"
+)
+
+// errStoredHashInvalid is the single failure response for every miss (unknown
+// user, no stored hash, wrong password, unsupported format) — oracle-safe, the
+// caller collapses it to one login failure.
+var errStoredHashInvalid = errors.New("password: invalid credentials")
+
+// StoredHashVerifier authenticates against a credential hash stored on the User
+// record's Attributes (written by cmd/sso-import during a legacy-IdP migration).
+// It reads AttrPasswordHash + AttrPasswordHashFormat and checks the plaintext
+// with the multi-format VerifyHash, so users migrated with argon2id / PBKDF2
+// hashes can sign in. Pair with LazyRehashVerifier (see StoredHashRehashHooks)
+// to upgrade verified non-bcrypt hashes to bcrypt on first login.
+//
+// Without this verifier the import tool's output is inert: the server's other
+// password verifiers are bcrypt-only and never read these attributes, so
+// imported non-bcrypt users could not authenticate at all.
+//
+// Anti-enumeration: an unknown user (or one with no stored hash) still runs a
+// dummy bcrypt compare so the unknown-user and wrong-password paths take
+// comparable time, matching the password authenticator's enumeration contract.
+type StoredHashVerifier struct {
+	users     sso.UserProvider
+	dummyHash PasswordHash
+}
+
+// NewStoredHashVerifier returns a verifier that reads imported hashes from the
+// UserProvider. The login username is looked up via GetByID — migration tools
+// set the user ID to the login identifier (sanitized email / username).
+func NewStoredHashVerifier(users sso.UserProvider) *StoredHashVerifier {
+	// Precompute one dummy bcrypt hash for timing equalization on misses.
+	dummy, _ := HashPassword("stored-hash-verifier-dummy-timing-equalizer")
+	return &StoredHashVerifier{users: users, dummyHash: dummy}
+}
+
+// Verify implements PasswordVerifier.
+func (v *StoredHashVerifier) Verify(ctx context.Context, username, password string) (*sso.AuthResult, error) {
+	u, err := v.users.GetByID(ctx, username)
+	if err != nil || u == nil || u.Attributes == nil || u.Attributes[AttrPasswordHash] == "" {
+		_ = VerifyHash(ctx, v.dummyHash, password) // timing equalization on a miss
+		return nil, errStoredHashInvalid
+	}
+	format := u.Attributes[AttrPasswordHashFormat]
+	if format == "" {
+		format = HashFormatBcrypt
+	}
+	if err := VerifyHash(ctx, PasswordHash{Format: format, Hash: u.Attributes[AttrPasswordHash]}, password); err != nil {
+		return nil, errStoredHashInvalid
+	}
+	return &sso.AuthResult{UserID: u.ID, Provider: "password"}, nil
+}
+
+// StoredHashRehashHooks returns the NeedsRehash + Updater closures for a
+// LazyRehashVerifier wrapping a StoredHashVerifier. NeedsRehash reports true
+// when the stored format is non-bcrypt (an imported legacy hash); Updater
+// rewrites AttrPasswordHash + AttrPasswordHashFormat in place to the new bcrypt
+// hash so the user is migrated transparently on first login.
+func StoredHashRehashHooks(users sso.UserProvider) (
+	needsRehash func(ctx context.Context, username string) (bool, error),
+	updater func(ctx context.Context, username, newBcryptHash string) error,
+) {
+	needsRehash = func(ctx context.Context, username string) (bool, error) {
+		u, err := users.GetByID(ctx, username)
+		if err != nil || u == nil || u.Attributes == nil {
+			return false, err
+		}
+		f := u.Attributes[AttrPasswordHashFormat]
+		return f != "" && f != HashFormatBcrypt, nil
+	}
+	updater = func(ctx context.Context, username, newBcryptHash string) error {
+		u, err := users.GetByID(ctx, username)
+		if err != nil || u == nil {
+			return err
+		}
+		// Clone the user + Attributes before mutating: a UserProvider may return
+		// a shared pointer (the memory impl does), so an in-place map write would
+		// race concurrent readers (other logins, the StoredHashVerifier itself).
+		// CreateOrUpdate then swaps in the fresh map atomically under its lock.
+		cp := *u
+		cp.Attributes = make(map[string]string, len(u.Attributes)+2)
+		maps.Copy(cp.Attributes, u.Attributes)
+		cp.Attributes[AttrPasswordHash] = newBcryptHash
+		cp.Attributes[AttrPasswordHashFormat] = HashFormatBcrypt
+		return users.CreateOrUpdate(ctx, &cp)
+	}
+	return needsRehash, updater
+}
+
+// ChainPasswordVerifier tries each underlying verifier in order and returns the
+// first success, composing independent credential sources behind one password
+// authenticator (e.g. the self-service password store AND an imported-hash
+// store). Each underlying verifier owns its own anti-enumeration timing; the
+// chain itself adds no oracle — every verifier runs on a failed login.
+type ChainPasswordVerifier struct {
+	verifiers []PasswordVerifier
+}
+
+// NewChainPasswordVerifier composes verifiers in priority order.
+func NewChainPasswordVerifier(vs ...PasswordVerifier) *ChainPasswordVerifier {
+	return &ChainPasswordVerifier{verifiers: vs}
+}
+
+// Verify implements PasswordVerifier.
+func (c *ChainPasswordVerifier) Verify(ctx context.Context, username, password string) (*sso.AuthResult, error) {
+	lastErr := errStoredHashInvalid
+	for _, v := range c.verifiers {
+		res, err := v.Verify(ctx, username, password)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+var (
+	_ PasswordVerifier = (*StoredHashVerifier)(nil)
+	_ PasswordVerifier = (*ChainPasswordVerifier)(nil)
+)

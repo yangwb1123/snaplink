@@ -3361,7 +3361,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		return nil, fmt.Errorf("self_service password store: %w", err)
 	}
 
-	auths, tempStore, totpAuth, totpEnrollStore, err := buildAuthenticators(cfg, logger, passwordStore)
+	auths, tempStore, totpAuth, totpEnrollStore, err := buildAuthenticators(cfg, logger, passwordStore, userProvider)
 	if err != nil {
 		return nil, fmt.Errorf("authenticators: %w", err)
 	}
@@ -5066,7 +5066,7 @@ func buildPasswordHealthChecker(h *config.PasswordHealthConfig, logger spi.Logge
 // Returns an error when an authenticator's config is invalid (e.g. a
 // missing weak-password extension file) — a misconfigured authenticator
 // should fail the boot loudly, not silently degrade.
-func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
@@ -5091,6 +5091,23 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 			verifier, seeded = v, n
 		} else {
 			verifier, seeded = buildBcryptPasswordVerifier(a.Users, logger)
+		}
+		// Imported-user login: chain an attribute-backed multi-format verifier
+		// after the primary so users migrated via cmd/sso-import (whose hash
+		// lives on User.Attributes in bcrypt/argon2id/PBKDF2) can authenticate.
+		// Wrapped in lazy bcrypt re-hashing so a verified legacy hash is upgraded
+		// to bcrypt on first login. Inert (byte-identical) without both the
+		// opt-in flag and a UserProvider.
+		if a.ImportedHashLogin && userProvider != nil {
+			needs, update := authenticators.StoredHashRehashHooks(userProvider)
+			lazyStored := &authenticators.LazyRehashVerifier{
+				Underlying:  authenticators.NewStoredHashVerifier(userProvider),
+				NeedsRehash: needs,
+				Updater:     update,
+				Logger:      logger,
+			}
+			verifier = authenticators.NewChainPasswordVerifier(verifier, lazyStored)
+			logger.Info("imported-hash login enabled (sso-import users can authenticate)")
 		}
 		var pwOpts []authenticators.PasswordOption
 		if h := a.Health; h != nil && h.Enabled {
