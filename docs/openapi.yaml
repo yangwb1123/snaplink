@@ -4718,6 +4718,111 @@ paths:
         "204": { description: Left the organization. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/tenants/{id}/invitations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a tenant's pending org invitations (no token value).
+      description: |
+        Lists pending org invitations (email + role + expiry). admin:read. NEVER
+        returns the token value. Mounted only when an InvitationStore is wired.
+      operationId: adminListInvitations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending invitations (metadata only).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        email: { type: string }
+                        role: { type: string, enum: [member, admin, guest] }
+                        expires_at: { type: string, format: date-time }
+                        expired: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin]
+      summary: Send an org invitation.
+      description: |
+        Mints a single-use invitation token and delivers it to the invited email
+        via the configured InvitationSender. admin:write. Body: {email, role}
+        (role member|admin|guest; default member). The token is NEVER returned —
+        501 when no sender is wired. Emits invitation_sent.
+      operationId: adminSendInvitation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+                role: { type: string, enum: [member, admin, guest] }
+      responses:
+        "202": { description: Invitation sent. }
+        "400":
+          description: Missing email or invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501": { description: No InvitationSender is wired. }
+
+  /me/invitations/accept:
+    post:
+      tags: [self-service]
+      summary: Accept an org invitation (join the org).
+      description: |
+        The authenticated subject redeems a single-use invitation token and joins
+        the invited org at the invited role. `Cache-Control: no-store`. Oracle-safe:
+        unknown / expired / already-consumed token all collapse to one
+        `invitation_invalid`. Emits invitation_accepted. Mounted only when both an
+        InvitationStore and a TenantUserStore are wired.
+      operationId: acceptInvitation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: Joined the org.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string }
+                  role: { type: string }
+        "400":
+          description: invitation_invalid (any failure — oracle-safe).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
       - name: id

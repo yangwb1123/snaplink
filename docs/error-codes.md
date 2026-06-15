@@ -142,6 +142,7 @@ the attestation certificate.
 | `account_exists` | 409  | `POST /auth/register` (opt-in self-service signup) was called with a username that already exists — signup never overwrites an existing account | Choose a different username, or sign in / recover the password |
 | `confirmation_required` | 400  | `POST /me/account/erase` was called for a real (non dry-run) deletion without `confirm` matching the caller's own subject | Re-submit with `confirm` set to the subject |
 | `email_change_invalid`  | 400  | `POST /me/email/verify` got an unknown / expired / already-consumed token, or one belonging to a different user — all collapsed | Restart from `POST /me/email/change` |
+| `invitation_invalid`    | 400  | `POST /me/invitations/accept` got an unknown / expired / already-consumed org-invitation token — all collapsed (cause in logs) | Request a fresh invitation from an org admin |
 
 ### Authorization (`/auth/login`, `/par`)
 

@@ -98,6 +98,8 @@ type SessionMetaCreator = core.SessionMetaCreator
 type TenantUserStore = core.TenantUserStore
 type TenantMembership = core.TenantMembership
 type TenantRole = core.TenantRole
+type InvitationStore = core.InvitationStore
+type Invitation = core.Invitation
 type StdRoute = core.StdRoute
 type StdRouter = core.StdRouter
 type Subject = core.Subject
@@ -300,6 +302,8 @@ const PathAdminTenantMembers = core.PathAdminTenantMembers
 const PathAdminTenantMemberByID = core.PathAdminTenantMemberByID
 const PathMyOrganizations = core.PathMyOrganizations
 const PathMyOrganizationByID = core.PathMyOrganizationByID
+const PathAdminTenantInvitations = core.PathAdminTenantInvitations
+const PathMyInvitationAccept = core.PathMyInvitationAccept
 const PathSSFReceive = core.PathSSFReceive
 const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathFederationFetch = core.PathFederationFetch
@@ -397,6 +401,7 @@ var SupportedGrants = core.SupportedGrants
 var ErrClientExists = core.ErrClientExists
 var ErrNoConsentGrant = core.ErrNoConsentGrant
 var ErrNoMembership = core.ErrNoMembership
+var ErrInvitationNotFound = core.ErrInvitationNotFound
 
 // TenantRole values (B2B org membership standing).
 const (

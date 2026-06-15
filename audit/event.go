@@ -203,6 +203,12 @@ const (
 	// login via JIT membership provisioning (WithJITMembership). Outcome=success;
 	// ActorID = the subject; Metadata "tenant_id".
 	EventOrgMemberAutoProvisioned EventType = "org_member_auto_provisioned"
+	// EventInvitationSent — an admin/org-admin sent an org invitation. ActorID =
+	// the admin; Metadata "tenant_id". The token + invited email are NOT recorded.
+	EventInvitationSent EventType = "invitation_sent"
+	// EventInvitationAccepted — a user redeemed an org invitation and joined the
+	// tenant. ActorID = the subject; Metadata "tenant_id".
+	EventInvitationAccepted EventType = "invitation_accepted"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"

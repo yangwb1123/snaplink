@@ -3565,6 +3565,128 @@ func (s *Server) handleLeaveMyOrganization(ctx HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// invitationTTL bounds how long an org invitation token is valid.
+const invitationTTL = 7 * 24 * time.Hour
+
+// handleAdminSendInvitation serves POST /api/v1/admin/tenants/:id/invitations —
+// mint + deliver a single-use org invitation. admin:write. Body: {email, role}
+// (role member|admin|guest, default member). 501 when no InvitationSender is
+// wired (the token must never be returned in the response). Emits
+// invitation_sent (never the token/email). Returns 202.
+func (s *Server) handleAdminSendInvitation(ctx HandlerContext) {
+	tenantID := ctx.Param("id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+		Role  string `json:"role"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil || strings.TrimSpace(req.Email) == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	role := core.TenantRole(req.Role)
+	if role == "" {
+		role = core.TenantRoleMember
+	}
+	if !validTenantRole(role) {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	if s.invitationSender == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(core.ErrNotFound))
+		return
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(b[:])
+	rctx := ctx.Request().Context()
+	if err := s.invitationStore.Issue(rctx, &core.Invitation{
+		Token: token, TenantID: tenantID, Email: strings.TrimSpace(req.Email), Role: role,
+		ExpiresAt: time.Now().Add(invitationTTL),
+	}); err != nil {
+		s.logger.Error("issue invitation failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if err := s.invitationSender.SendInvitation(rctx, strings.TrimSpace(req.Email), tenantID, string(role), token); err != nil {
+		s.logger.Error("send invitation failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventInvitationSent, "", KeyTenantID, tenantID)
+	ctx.JSON(http.StatusAccepted, map[string]any{"status": "sent"})
+}
+
+// handleAdminListInvitations serves GET /api/v1/admin/tenants/:id/invitations —
+// pending org invitations. admin:read. NEVER returns the token value — only
+// email + role + expiry.
+func (s *Server) handleAdminListInvitations(ctx HandlerContext) {
+	tenantID := ctx.Param("id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	invs, err := s.invitationStore.ListByTenant(ctx.Request().Context(), tenantID)
+	if err != nil {
+		s.logger.Error("list invitations failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	out := make([]map[string]any, 0, len(invs))
+	for _, inv := range invs {
+		out = append(out, map[string]any{
+			"email": inv.Email, "role": string(inv.Role),
+			"expires_at": inv.ExpiresAt, "expired": inv.IsExpired(),
+		})
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"invitations": out})
+}
+
+// handleAcceptInvitation serves POST /me/invitations/accept — the authenticated
+// subject redeems an invitation token and joins the invited org at the invited
+// role. Body: {token}. Single-use (consumed). Oracle-safe: missing/expired/
+// consumed token all collapse to one invitation_invalid. Emits
+// invitation_accepted.
+func (s *Server) handleAcceptInvitation(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	userID, ok := s.meSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := bindOAuthParams(ctx, &req); err != nil || req.Token == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvitationInvalid))
+		return
+	}
+	rctx := ctx.Request().Context()
+	inv, err := s.invitationStore.Consume(rctx, req.Token)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvitationInvalid))
+		return
+	}
+	if err := s.tenantUserStore.Add(rctx, &core.TenantMembership{
+		TenantID: inv.TenantID, UserID: userID, Role: inv.Role, CreatedAt: time.Now(),
+	}); err != nil {
+		s.logger.Error("accept invitation: add membership failed", "tenant_id", inv.TenantID, "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if s.auditor != nil {
+		evt := &audit.Event{Type: audit.EventInvitationAccepted, Outcome: audit.OutcomeSuccess, ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+		audit.SetMeta(evt, KeyTenantID, inv.TenantID)
+		s.auditor.Record(rctx, evt)
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"tenant_id": inv.TenantID, "role": string(inv.Role)})
+}
+
 // handleAdminRevokeUserDeviceSecrets serves DELETE /api/v1/admin/users/:id/device-secrets
 // — revoke all of a user's Native SSO device-secret bindings (lost/compromised
 // device lockout). admin:write. 501 when the wired DeviceSecretStore can't

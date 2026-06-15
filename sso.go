@@ -423,6 +423,13 @@ type Server struct {
 	// yet on that tenant's roster is added as a member. Requires tenantUserStore.
 	jitMembership bool
 
+	// invitationStore persists single-use org-invitation tokens
+	// (WithInvitationStore); invitationSender delivers them (WithInvitationSender).
+	// The send + list endpoints mount only with the store; accept also requires a
+	// tenantUserStore (the redeemed invite grants membership). Nil ⇒ none mounted.
+	invitationStore  InvitationStore
+	invitationSender spi.InvitationSender
+
 	// passwordCredentialStore backs POST /me/password (WithPasswordCredentialStore).
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	passwordCredentialStore PasswordCredentialStore
@@ -1988,6 +1995,21 @@ func WithJITMembership() Option {
 	return func(s *Server) { s.jitMembership = true }
 }
 
+// WithInvitationStore persists single-use org-invitation tokens and mounts the
+// admin send/list endpoints plus the self-service POST /me/invitations/accept.
+// Accept grants membership, so it also requires WithTenantUserStore; send
+// requires WithInvitationSender to deliver the token. Nil/unset = none mounted.
+func WithInvitationStore(store InvitationStore) Option {
+	return func(s *Server) { s.invitationStore = store }
+}
+
+// WithInvitationSender wires delivery of the invitation token to the invited
+// email address. Without it, the admin send endpoint returns 501 (the token must
+// never be returned in the response). SDK-only — operators provide the transport.
+func WithInvitationSender(sender spi.InvitationSender) Option {
+	return func(s *Server) { s.invitationSender = sender }
+}
+
 // WithPasswordCredentialStore wires a per-user password store and mounts the
 // self-service POST /me/password endpoint. The store is keyed by UserID, so an
 // operator can also build their login authenticator over it (resolve username
@@ -2329,6 +2351,10 @@ func (s *Server) Mount() {
 	if s.tenantUserStore != nil {
 		s.router.GET(PathMyOrganizations, s.handleMyOrganizations)
 		s.router.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
+		// Accept an invitation (joins an org) — needs both stores.
+		if s.invitationStore != nil {
+			s.router.POST(PathMyInvitationAccept, s.handleAcceptInvitation)
+		}
 	}
 	// Self-service account overview. Mounted with a user directory (the
 	// profile is its core); byte-identical without one.
@@ -2519,6 +2545,10 @@ func (s *Server) Mount() {
 		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)
 		api.PUT(PathAdminTenantMemberByID, s.handleAdminPutTenantMember)
 		api.DELETE(PathAdminTenantMemberByID, s.handleAdminRemoveTenantMember)
+	}
+	if s.invitationStore != nil {
+		api.POST(PathAdminTenantInvitations, s.handleAdminSendInvitation)
+		api.GET(PathAdminTenantInvitations, s.handleAdminListInvitations)
 	}
 }
 

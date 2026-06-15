@@ -212,6 +212,16 @@ const (
 	PathMyOrganizations    = "/me/organizations"
 	PathMyOrganizationByID = "/me/organizations/:tenant_id"
 
+	// PathAdminTenantInvitations sends (POST {email, role}) + lists (GET) pending
+	// org invitations for a tenant. admin:write / admin:read. Mounted only when an
+	// InvitationStore is wired.
+	PathAdminTenantInvitations = "/admin/tenants/:id/invitations"
+
+	// PathMyInvitationAccept redeems an org invitation token (POST {token}): the
+	// authenticated subject joins the invited tenant at the invited role. Mounted
+	// only when an InvitationStore AND a TenantUserStore are wired.
+	PathMyInvitationAccept = "/me/invitations/accept"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream
@@ -533,6 +543,10 @@ const (
 	// ErrAccountExists is returned by POST /auth/register when the chosen
 	// username already exists (signup never overwrites an existing account).
 	ErrAccountExists = "account_exists"
+	// ErrInvitationInvalid is the single oracle-safe response for every
+	// POST /me/invitations/accept failure (unknown / expired / consumed token) —
+	// cause only in logs. Never reveals whether the token existed.
+	ErrInvitationInvalid = "invitation_invalid"
 	// ErrTOTPInvalidCode is the single oracle-safe response for every TOTP
 	// enrollment-confirm failure (bad base32 secret, wrong/expired code) so a
 	// caller cannot tell which input was at fault. ErrTOTPEnrollmentNotSupported
