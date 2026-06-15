@@ -446,24 +446,36 @@ All 5 original large files (13,830 lines) refactored into 39 focused files
 `docs/templates/engineering/`.
 
 ## SPLIT_NOW (filesize-exempted, structured)
-1. [ ] sso.go (677 lines) — Server struct + NewServer + jwksSingleFlight
-3. [ ] token_handler.go (622 lines) — handleToken (89 cyclo, exempted)
-4. [ ] me_handler.go (587 lines) — /me endpoint handlers
-5. [ ] config/config.go (~3000 lines) — config loader + types
-6. [ ] cmd/sso-server/main.go (~5500 lines) — CLI entry point
+1. [ ] sso.go (679 lines) — Server struct + NewServer + jwksSingleFlight
+2. [ ] signing_key_aggregation.go (776 lines) — JWKS aggregation
+3. [ ] cmd/sso-server/build_stores.go (4546 lines) — buildApp (2453 lines, exempted)
+4. [ ] config/config.go (2021 lines) — config loader + types
+5. [ ] defaultimpl/ed25519_jwt_issuer.go (1240 lines) — Ed25519 issuer
+
+## Files under 500 (recently split from exemptions)
+- [x] token_handler.go: 623 -> 449 lines
+- [x] me_handler.go: 587 -> 180 lines
+- [x] login_handler.go: 612 -> 483 lines
+- [x] handler.go: 2617 -> 38 lines
+- [x] handlers.go: 3675 -> 273 lines
+- [x] server_extensions.go: 3055 -> 483 lines
+- [x] cmd/sso-server/main.go: 5565 -> 704 lines
 
 ## Complexity Tech Debt
 Functions >15 cyclo (exempted in .check-complexity.sh):
 - handleLogin (97), handleToken (89), finishLogin (57), Mount (52)
-- handleTokenExchangeGrant (50), buildOIDCConfiguration (36)
+- buildApp (256), handleTokenExchangeGrant (50), buildOIDCConfiguration (36)
 - HandleSilentRenewal (30), HandleEndSession (28)
-- ~15 more in oidc/oauth/defaultimpl (16-24)
+- resolveLoginRequest (26), handleRefreshTokenGrant (25)
+- ~20 more in oidc/oauth/defaultimpl (16-24)
 
-## Test Coverage
-1. [ ] core/ -- 4 test files / 13 src (31%), 44.2% statement coverage
-2. [ ] oidc/ -- 5 test files / 10 src (50%), 21.3% statement coverage
-3. [ ] oauth/ -- 11 test files / 21 src (52%), 25.5% statement coverage
-4. [ ] security/ -- 1 test file, 52.7% coverage
+## Test Coverage (statement)
+1. [ ] core/: 44.2% (4 test files)
+2. [ ] oidc/: 21.3% (5 test files)
+3. [ ] oauth/: 27.7% (13 test files)
+4. [ ] security/: 59.9% (8 test files)
+5. [ ] middleware/: 54.1%
+6. [ ] defaultimpl/: 73.0%
 
 ## Infrastructure
 1. [x] Filesize gate (500-line budget)
