@@ -40,6 +40,7 @@ EXEMPT_FUNCS=(
   "MeshAuthorize" "handleLogout" "handleCIBATokenGrant"
   "handleDeviceTokenGrant" "handleDeviceCode" "handleUserInfo"
   "handleRefreshTokenGrant"
+  "resolveLoginRequest"
   "computeDiscoverySnapshot" "fanOutBackchannelLogout" "handleDeviceVerify"
   # oidc
   "HandleSilentRenewal" "HandleEndSession" "MaybeSignUserInfo" "HandleJWKS"
