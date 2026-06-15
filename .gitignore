@@ -41,4 +41,5 @@ coverage.out
 /EVALUATION.md
 /TODO.md
 /skills/
-/scripts/setup.sh
+/scripts/
+/.pi/
