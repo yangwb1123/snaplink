@@ -48,6 +48,8 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 			JWKS: []config.ClientJWK{
 				{Kty: "OKP", Crv: "Ed25519", Kid: "rp-1", X: "PUB-X-VAL"},
 			},
+			SkipConsent:            true,
+			ConsentRefreshInterval: 90 * 24 * time.Hour,
 		},
 	}
 
@@ -86,6 +88,8 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 		{"JWKS len", len(got.JWKS) == 1},
 		{"JWKS Kid", len(got.JWKS) == 1 && got.JWKS[0].Kid == "rp-1"},
 		{"JWKS X", len(got.JWKS) == 1 && got.JWKS[0].X == "PUB-X-VAL"},
+		{"SkipConsent", got.SkipConsent == true},
+		{"ConsentRefreshInterval", got.ConsentRefreshInterval == 90*24*time.Hour},
 	}
 	for _, c := range checks {
 		if !c.ok {

@@ -733,7 +733,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 	// will actually appear in the issued token — the grant we check and
 	// record is authoritative for exactly those scopes.
 	if s.consentStore != nil {
-		if s.handleConsentGate(ctx, result.UserID, client.ID, req.Scope, req.Prompt, req.ConsentChallengeID) {
+		if s.handleConsentGate(ctx, result.UserID, client, req.Scope, req.Prompt, req.ConsentChallengeID) {
 			return
 		}
 	}
@@ -2347,8 +2347,16 @@ const consentChallengeTTL = 5 * time.Minute
 // challenge — the challenge is bound to (userID, clientID, exact scopes) and
 // expires after consentChallengeTTL, so a client cannot fabricate an approval
 // or reuse a challenge for a different scope set.
-func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, scopes []string, prompt string, consentChallengeID string) (halted bool) {
+func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Client, scopes []string, prompt string, consentChallengeID string) (halted bool) {
 	requestCtx := ctx.Request().Context()
+	clientID := client.ID
+
+	// Per-client trust escape hatch: an operator-marked first-party client
+	// bypasses the consent flow entirely (no prompt, no grant recorded). This
+	// is operator policy, never DCR-settable — see Client.SkipConsent.
+	if client.SkipConsent {
+		return false
+	}
 
 	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
 
@@ -2369,6 +2377,12 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 	case !scopesSubsumed(grant.Scopes, scopes):
 		// Existing grant does not cover all the requested scopes — new scopes
 		// were added to the authorization request since the user last consented.
+		needsConsent = true
+	case client.ConsentRefreshInterval > 0 && time.Since(grant.GrantedAt) > client.ConsentRefreshInterval:
+		// Periodic re-consent: the grant still covers the scopes but is older
+		// than this client's refresh cadence (high-risk clients re-confirm
+		// authorization on a schedule). GrantedAt is refreshed on every
+		// approval, so the clock restarts each time the user re-consents.
 		needsConsent = true
 	}
 

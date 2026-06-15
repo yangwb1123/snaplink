@@ -283,6 +283,26 @@ type Client struct {
 	// request parameters return invalid_request_object.
 	JWKS []JWK `json:"jwks,omitempty" yaml:"jwks,omitempty"`
 
+	// SkipConsent bypasses the consent gate entirely for this client — the
+	// trusted-first-party escape hatch (internal service UIs, pre-approved
+	// integrations) where prompting the resource owner adds no security value.
+	// When true, the consent gate returns immediately without recording or
+	// requiring a grant. This is OPERATOR-provisioned policy only: it is NOT in
+	// the DCR registration request allowlist, so a self-registering client can
+	// never mark itself skip-consent (that would be a consent bypass). Default
+	// false — every client runs the normal consent flow when a ConsentStore is
+	// wired.
+	SkipConsent bool `json:"skip_consent,omitempty" yaml:"skip_consent,omitempty"`
+
+	// ConsentRefreshInterval, when > 0, forces periodic re-consent for this
+	// client: an existing grant OLDER than the interval re-triggers the consent
+	// screen even if its scopes still cover the request. The control for
+	// high-risk clients (payment, health) that must re-confirm authorization on
+	// a cadence. Zero (default) = a grant never expires by age — scope coverage
+	// is the only gate (prior behavior, byte-identical). Operator-provisioned;
+	// not DCR-settable.
+	ConsentRefreshInterval time.Duration `json:"consent_refresh_interval,omitempty" yaml:"consent_refresh_interval,omitempty"`
+
 	// Attributes is an open per-client extension bag for optional
 	// capabilities that don't warrant a first-class field. It carries
 	// REGISTERED, server-side configuration only — never request input.

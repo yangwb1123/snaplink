@@ -3094,6 +3094,8 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			FrontchannelLogoutURI:            c.FrontchannelLogoutURI,
 			JWKS:                             convertClientJWKs(c.JWKS),
 			Attributes:                       c.Attributes,
+			SkipConsent:                      c.SkipConsent,
+			ConsentRefreshInterval:           c.ConsentRefreshInterval,
 		}
 		// Validate the CAEP receiver endpoint (https) at boot — a
 		// non-https receiver would mean a SET (carrying a revocation

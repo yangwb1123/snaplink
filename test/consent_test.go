@@ -429,3 +429,98 @@ func TestConsent_ChallengeScopeBinding(t *testing.T) {
 		t.Errorf("{openid} challenge must not approve {openid,profile}; got %v", body2)
 	}
 }
+
+// newConsentServerCustomClient mirrors newConsentServer but lets the caller
+// mutate the seeded client (to set SkipConsent / ConsentRefreshInterval).
+func newConsentServerCustomClient(t *testing.T, cs sso.ConsentStore, mut func(*sso.Client)) *httptest.Server {
+	t.Helper()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: consentUser})
+
+	clients := defaultimpl.NewMemoryClientStore()
+	c := &sso.Client{
+		ID:                    consentClientID,
+		Secret:                consentSecret,
+		Active:                true,
+		AllowedScopes:         []string{"openid", "profile", "email"},
+		AllowedAuthenticators: []string{authenticators.MethodPassword},
+		TokenStrategy:         "jwt",
+	}
+	if mut != nil {
+		mut(c)
+	}
+	clients.AddSeed(c)
+
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, _, p string) (*sso.AuthResult, error) {
+			if p != consentPassword {
+				return nil, errors.New("bad credentials")
+			}
+			return &sso.AuthResult{UserID: consentUser, Provider: "password"}, nil
+		},
+	))
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(5 * time.Minute))
+
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithClientStore(clients),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithConsentStore(cs),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	return hs
+}
+
+// TestConsent_SkipConsentBypassesGate verifies a client marked SkipConsent
+// issues tokens on first login with no consent_required round-trip and records
+// no grant (the gate is bypassed entirely). Operator policy, not DCR-settable.
+func TestConsent_SkipConsentBypassesGate(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServerCustomClient(t, cs, func(c *sso.Client) { c.SkipConsent = true })
+
+	status, body := consentLogin(t, srv, []string{"openid", "profile"}, "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%v, want 200", status, body)
+	}
+	if _, ok := body["access_token"].(string); !ok {
+		t.Fatalf("skip-consent client must issue a token on first login, got %v", body)
+	}
+	if _, err := cs.GetConsent(context.Background(), consentUser, consentClientID); !errors.Is(err, sso.ErrNoConsentGrant) {
+		t.Errorf("skip-consent must not record a grant; GetConsent err=%v", err)
+	}
+}
+
+// TestConsent_RefreshIntervalForcesReconsent verifies a grant older than the
+// client's ConsentRefreshInterval re-triggers consent even though its scopes
+// still cover the request; a fresh grant passes through.
+func TestConsent_RefreshIntervalForcesReconsent(t *testing.T) {
+	cs := defaultimpl.NewMemoryConsentStore()
+	srv := newConsentServerCustomClient(t, cs, func(c *sso.Client) { c.ConsentRefreshInterval = time.Hour })
+
+	// Stale grant (granted 2h ago) still covering the scope -> re-consent forced.
+	_ = cs.RecordConsent(context.Background(), sso.ConsentGrant{
+		UserID: consentUser, ClientID: consentClientID,
+		Scopes: []string{"openid"}, GrantedAt: time.Now().Add(-2 * time.Hour),
+	})
+	_, body := consentLogin(t, srv, []string{"openid"}, "")
+	if body["error"] != sso.ErrConsentRequired {
+		t.Fatalf("stale grant past refresh interval must force re-consent, got %v", body)
+	}
+
+	// Fresh grant -> token issued without re-consent.
+	_ = cs.RecordConsent(context.Background(), sso.ConsentGrant{
+		UserID: consentUser, ClientID: consentClientID,
+		Scopes: []string{"openid"}, GrantedAt: time.Now(),
+	})
+	status2, body2 := consentLogin(t, srv, []string{"openid"}, "")
+	if status2 != http.StatusOK {
+		t.Fatalf("fresh grant status=%d body=%v", status2, body2)
+	}
+	if _, ok := body2["access_token"].(string); !ok {
+		t.Errorf("fresh grant within interval must issue token, got %v", body2)
+	}
+}

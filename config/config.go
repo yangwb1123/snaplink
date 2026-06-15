@@ -2590,6 +2590,13 @@ type ClientConfig struct {
 	FrontchannelLogoutURI            string        `yaml:"frontchannel_logout_uri,omitempty"`
 	JWKS                             []ClientJWK   `yaml:"jwks,omitempty"`
 
+	// Per-client consent policy (operator-provisioned; never DCR-settable).
+	// SkipConsent bypasses the consent gate for trusted first-party clients;
+	// ConsentRefreshInterval (>0) forces periodic re-consent even when scopes
+	// still match. Both default off (byte-identical to prior behavior).
+	SkipConsent            bool          `yaml:"skip_consent,omitempty"`
+	ConsentRefreshInterval time.Duration `yaml:"consent_refresh_interval,omitempty"`
+
 	// Attributes is the open per-client extension bag (mirrors
 	// sso.Client.Attributes). Carries server-side registered capabilities
 	// such as the OpenID Shared Signals / CAEP receiver:
