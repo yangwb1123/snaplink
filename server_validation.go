@@ -2,10 +2,8 @@ package sso
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"github.com/snaplink/sso/internal/handler"
 
 )
 func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
@@ -113,60 +111,10 @@ func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked
 // shapes as no-op; everything else is infra failure worth auditing.
 // When an issuer adopts a typed sentinel (e.g. ErrUnknownToken), add
 // it here.
-func isUnknownTokenErr(err error) bool {
-	if err == nil {
-		return true
-	}
-	msg := err.Error()
-	for _, needle := range []string{"not found", "unknown", "no such"} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
-	}
-	return false
-}
 
-// jwsHeaderAlg extracts the `alg` from a compact-JWS bearer's JOSE
-// header without verifying anything. Returns (alg, true) for a
-// well-formed three-segment token with a decodable JSON header
-// carrying a non-empty alg; (",", false) otherwise — opaque tokens,
-// malformed input, or a header missing alg all report "no JWS alg" so
-// the caller passes them through to the opaque/session issuers
-// untouched. The decode is intentionally lenient: this is a fast
-// pre-filter, NOT the authoritative parse (each issuer re-parses and
-// re-validates its own tokens).
-func jwsHeaderAlg(token string) (string, bool) {
-	first := strings.IndexByte(token, '.')
-	if first <= 0 {
-		return "", false
-	}
-	// Require exactly two dots (three segments) to look like a JWS.
-	if strings.Count(token, ".") != 2 {
-		return "", false
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(token[:first])
-	if err != nil {
-		return "", false
-	}
-	var h struct {
-		Alg string `json:"alg"`
-	}
-	if err := json.Unmarshal(raw, &h); err != nil || h.Alg == "" {
-		return "", false
-	}
-	return h.Alg, true
-}
-
-// algAllowed reports whether alg is in the allowlist (case-sensitive,
-// per RFC 7518 alg names).
-func algAllowed(alg string, allow []string) bool {
-	for _, a := range allow {
-		if a == alg {
-			return true
-		}
-	}
-	return false
-}
+func isUnknownTokenErr(err error) bool { return handler.IsUnknownTokenErr(err) }
+func jwsHeaderAlg(token string) (string, bool) { return handler.JWSHeaderAlg(token) }
+func algAllowed(alg string, allow []string) bool { return handler.AlgAllowed(alg, allow) }
 
 func (s *Server) requireDeps(deps ...string) error {
 	for _, d := range deps {

@@ -535,3 +535,13 @@ func (s *Server) UserProviderAccessor() core.UserProvider { return s.userProvide
 
 // DeviceSecretStore returns the device secret store (nil when not configured).
 func (s *Server) DeviceSecretStore() core.DeviceSecretStore { return s.deviceSecretStore }
+
+// RecordTenantLoginAttempt delegates to tenant metrics.
+func (s *Server) RecordTenantLoginAttempt(ctx HandlerContext, clientID, outcome string) {
+	s.recordTenantLoginAttempt(ctx, clientID, outcome)
+}
+
+// RecordTenantTokenIssued delegates to tenant metrics.
+func (s *Server) RecordTenantTokenIssued(ctx HandlerContext, clientID, strategy string) {
+	s.recordTenantTokenIssued(ctx, clientID, strategy)
+}

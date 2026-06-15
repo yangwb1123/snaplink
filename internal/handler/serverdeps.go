@@ -73,6 +73,12 @@ type ServerDeps interface {
 	ScopeDescriptions() map[string]string
 	AllowDynamicClientRegistration() bool
 	ConnectionStore() connections.Store
+
+	// RecordTenantLoginAttempt bumps the per-tenant login counter.
+	RecordTenantLoginAttempt(ctx HandlerContext, clientID, outcome string)
+
+	// RecordTenantTokenIssued bumps the per-tenant token-issue counter.
+	RecordTenantTokenIssued(ctx HandlerContext, clientID, strategy string)
 }
 
 // HandlerContext is an alias to keep handler signatures consistent.
@@ -89,3 +95,5 @@ type StorageHealthSource struct {
 type StorageHealthDeps interface {
 	StorageHealthSources() []StorageHealthSource
 }
+
+// RecordTenantLoginAttempt bumps the per-tenant login counter.
