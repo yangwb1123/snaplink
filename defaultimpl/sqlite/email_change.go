@@ -118,4 +118,19 @@ func (s *EmailChangeStore) Consume(ctx context.Context, token string) (*core.Ema
 	return tok, nil
 }
 
-var _ core.EmailChangeStore = (*EmailChangeStore)(nil)
+// RevokeByUser deletes all pending email-change tokens bound to userID
+// (admin-plane invalidation) and returns the count removed.
+func (s *EmailChangeStore) RevokeByUser(ctx context.Context, userID string) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM email_change_tokens WHERE user_id = ?`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: revoke email_change_tokens by user: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+var (
+	_ core.EmailChangeStore   = (*EmailChangeStore)(nil)
+	_ core.EmailChangeRevoker = (*EmailChangeStore)(nil)
+)

@@ -45,4 +45,22 @@ func (m *MemoryPasswordResetStore) Consume(_ context.Context, token string) (*co
 	return rt, nil
 }
 
-var _ core.PasswordResetStore = (*MemoryPasswordResetStore)(nil)
+// RevokeByUser deletes all pending reset tokens bound to userID (admin-plane
+// invalidation) and returns the count removed.
+func (m *MemoryPasswordResetStore) RevokeByUser(_ context.Context, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for tok, rt := range m.tokens {
+		if rt.UserID == userID {
+			delete(m.tokens, tok)
+			n++
+		}
+	}
+	return n, nil
+}
+
+var (
+	_ core.PasswordResetStore   = (*MemoryPasswordResetStore)(nil)
+	_ core.PasswordResetRevoker = (*MemoryPasswordResetStore)(nil)
+)

@@ -47,3 +47,22 @@ func TestSQLiteEmailChangeStore_MissingAndExpired(t *testing.T) {
 		t.Errorf("expired err = %v, want sentinel", err)
 	}
 }
+
+func TestSQLiteEmailChangeStore_RevokeByUser(t *testing.T) {
+	s := newEmailChangeStore(t)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Minute)
+	_ = s.Issue(ctx, &core.EmailChangeToken{Token: "a1", UserID: "alice", NewEmail: "a@n.com", ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.EmailChangeToken{Token: "b1", UserID: "bob", NewEmail: "b@n.com", ExpiresAt: exp})
+
+	n, err := s.RevokeByUser(ctx, "alice")
+	if err != nil || n != 1 {
+		t.Fatalf("RevokeByUser = %d, %v; want 1, nil", n, err)
+	}
+	if _, err := s.Consume(ctx, "a1"); !errors.Is(err, core.ErrEmailChangeTokenNotFound) {
+		t.Errorf("alice token survived revoke: %v", err)
+	}
+	if _, err := s.Consume(ctx, "b1"); err != nil {
+		t.Errorf("bob token wrongly revoked: %v", err)
+	}
+}

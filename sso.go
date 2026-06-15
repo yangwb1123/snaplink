@@ -2446,6 +2446,12 @@ func (s *Server) Mount() {
 	if s.deviceSecretStore != nil {
 		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
 	}
+	if s.passwordResetStore != nil {
+		api.DELETE(PathAdminUserPasswordResetTokens, s.handleAdminRevokeUserPasswordResetTokens)
+	}
+	if s.emailChangeStore != nil {
+		api.DELETE(PathAdminUserEmailChangeTokens, s.handleAdminRevokeUserEmailChangeTokens)
+	}
 }
 
 // Handler returns the http.Handler for the server.

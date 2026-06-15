@@ -35,6 +35,18 @@ type EmailChangeStore interface {
 	Consume(ctx context.Context, token string) (*EmailChangeToken, error)
 }
 
+// EmailChangeRevoker is the OPTIONAL admin-plane extension to EmailChangeStore
+// (mirrors PasswordResetRevoker). A store that implements it lets a helpdesk
+// invalidate every pending email-change token for a user — the recovery path
+// for a token sent to the wrong address or an email-ownership dispute. The admin
+// endpoint type-asserts this and returns 501 when unsupported. memory + sqlite
+// peers implement it.
+type EmailChangeRevoker interface {
+	// RevokeByUser deletes all pending email-change tokens bound to userID and
+	// returns the count removed. Idempotent: no pending tokens returns 0.
+	RevokeByUser(ctx context.Context, userID string) (int, error)
+}
+
 // ErrEmailChangeTokenNotFound is the sentinel Consume returns when a token is
 // missing, expired, or already consumed. Callers MUST collapse all three to a
 // single email_change_invalid wire response.

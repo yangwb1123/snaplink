@@ -169,6 +169,15 @@ const (
 	// DeviceSecretStore that implements DeviceSecretRevoker is wired.
 	PathAdminUserDeviceSecrets = "/admin/users/:id/device-secrets"
 
+	// PathAdminUserPasswordResetTokens / PathAdminUserEmailChangeTokens revoke
+	// ALL of a user's pending forgot-password / email-change verification tokens
+	// (DELETE, admin:write) — helpdesk invalidation when a token was sent to the
+	// wrong address, leaked, or is disputed. Group-relative; gated by
+	// AdminMiddleware. Mounted only when the respective store is wired; 501 when
+	// the wired store doesn't implement the Revoker extension.
+	PathAdminUserPasswordResetTokens = "/admin/users/:id/password-reset-tokens"
+	PathAdminUserEmailChangeTokens   = "/admin/users/:id/email-change-tokens"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream

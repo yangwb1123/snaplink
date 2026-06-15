@@ -48,3 +48,27 @@ func TestSQLitePasswordResetStore_MissingAndExpired(t *testing.T) {
 		t.Errorf("expired err = %v, want ErrResetTokenNotFound", err)
 	}
 }
+
+func TestSQLitePasswordResetStore_RevokeByUser(t *testing.T) {
+	s := newPasswordResetStore(t)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Minute)
+	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "a1", UserID: "alice", ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "a2", UserID: "alice", ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "b1", UserID: "bob", ExpiresAt: exp})
+
+	n, err := s.RevokeByUser(ctx, "alice")
+	if err != nil || n != 2 {
+		t.Fatalf("RevokeByUser = %d, %v; want 2, nil", n, err)
+	}
+	if _, err := s.Consume(ctx, "a1"); !errors.Is(err, core.ErrResetTokenNotFound) {
+		t.Errorf("alice token a1 survived revoke: %v", err)
+	}
+	if _, err := s.Consume(ctx, "b1"); err != nil {
+		t.Errorf("bob token wrongly revoked: %v", err)
+	}
+	// Idempotent.
+	if n, _ := s.RevokeByUser(ctx, "alice"); n != 0 {
+		t.Errorf("second RevokeByUser = %d, want 0", n)
+	}
+}

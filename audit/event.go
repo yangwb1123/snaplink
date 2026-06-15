@@ -170,6 +170,12 @@ const (
 	// Native SSO device-secret bindings (lost/compromised device lockout).
 	// Outcome=success; ActorID = the admin; Metadata "target_user" + "revoked".
 	EventAdminDeviceSecretsRevoked EventType = "admin_device_secrets_revoked"
+	// EventAdminPasswordResetTokensRevoked / EventAdminEmailChangeTokensRevoked —
+	// a helpdesk/admin invalidated all of a user's pending forgot-password /
+	// email-change verification tokens (wrong-address / leak / dispute recovery).
+	// Outcome=success; ActorID = the admin; Metadata "target_user" + "revoked".
+	EventAdminPasswordResetTokensRevoked EventType = "admin_password_reset_tokens_revoked"
+	EventAdminEmailChangeTokensRevoked   EventType = "admin_email_change_tokens_revoked"
 
 	EventAdminRoleAdded           EventType = "admin_role_added"
 	EventAdminRoleUpdated         EventType = "admin_role_updated"

@@ -45,4 +45,22 @@ func (m *MemoryEmailChangeStore) Consume(_ context.Context, token string) (*core
 	return tok, nil
 }
 
-var _ core.EmailChangeStore = (*MemoryEmailChangeStore)(nil)
+// RevokeByUser deletes all pending email-change tokens bound to userID
+// (admin-plane invalidation) and returns the count removed.
+func (m *MemoryEmailChangeStore) RevokeByUser(_ context.Context, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for tok, ec := range m.tokens {
+		if ec.UserID == userID {
+			delete(m.tokens, tok)
+			n++
+		}
+	}
+	return n, nil
+}
+
+var (
+	_ core.EmailChangeStore   = (*MemoryEmailChangeStore)(nil)
+	_ core.EmailChangeRevoker = (*MemoryEmailChangeStore)(nil)
+)

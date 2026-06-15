@@ -117,4 +117,19 @@ func (s *PasswordResetStore) Consume(ctx context.Context, token string) (*core.P
 	return rt, nil
 }
 
-var _ core.PasswordResetStore = (*PasswordResetStore)(nil)
+// RevokeByUser deletes all pending reset tokens bound to userID (admin-plane
+// invalidation) and returns the count removed.
+func (s *PasswordResetStore) RevokeByUser(ctx context.Context, userID string) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM password_reset_tokens WHERE user_id = ?`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: revoke password_reset_tokens by user: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+var (
+	_ core.PasswordResetStore   = (*PasswordResetStore)(nil)
+	_ core.PasswordResetRevoker = (*PasswordResetStore)(nil)
+)

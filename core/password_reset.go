@@ -35,6 +35,19 @@ type PasswordResetStore interface {
 	Consume(ctx context.Context, token string) (*PasswordResetToken, error)
 }
 
+// PasswordResetRevoker is the OPTIONAL admin-plane extension to
+// PasswordResetStore (mirrors DeviceSecretRevoker). A store that implements it
+// lets a helpdesk invalidate every outstanding reset token for a user without
+// waiting for TTL expiry — the recovery path when a token was sent to the wrong
+// address, leaked, or the user lost access to the delivery channel. The admin
+// endpoint type-asserts this and returns 501 when the wired store doesn't
+// support it. memory + sqlite peers implement it.
+type PasswordResetRevoker interface {
+	// RevokeByUser deletes all pending reset tokens bound to userID and returns
+	// the count removed. Idempotent: a user with no pending tokens returns 0.
+	RevokeByUser(ctx context.Context, userID string) (int, error)
+}
+
 // ErrResetTokenNotFound is the sentinel Consume returns when a token is missing,
 // expired, or already consumed. Callers MUST collapse all three to a single
 // reset_invalid wire response (anti-enumeration / oracle-safe).

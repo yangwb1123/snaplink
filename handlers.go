@@ -3267,6 +3267,58 @@ func (s *Server) handleAdminRevokeUserDeviceSecrets(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
 }
 
+// handleAdminRevokeUserPasswordResetTokens serves
+// DELETE /api/v1/admin/users/:id/password-reset-tokens — invalidate every
+// pending forgot-password token for a user (wrong-address / leak / lost-channel
+// recovery). admin:write. 501 when the wired PasswordResetStore can't revoke by
+// user; emits admin_password_reset_tokens_revoked with the count. Idempotent.
+func (s *Server) handleAdminRevokeUserPasswordResetTokens(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	revoker, ok := s.passwordResetStore.(core.PasswordResetRevoker)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(core.ErrNotFound))
+		return
+	}
+	n, err := revoker.RevokeByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin revoke password reset tokens failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminPasswordResetTokensRevoked, userID, "revoked", fmt.Sprintf("%d", n))
+	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
+}
+
+// handleAdminRevokeUserEmailChangeTokens serves
+// DELETE /api/v1/admin/users/:id/email-change-tokens — invalidate every pending
+// email-change verification token for a user (wrong-address / ownership-dispute
+// recovery). admin:write. 501 when the wired EmailChangeStore can't revoke by
+// user; emits admin_email_change_tokens_revoked with the count. Idempotent.
+func (s *Server) handleAdminRevokeUserEmailChangeTokens(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	revoker, ok := s.emailChangeStore.(core.EmailChangeRevoker)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(core.ErrNotFound))
+		return
+	}
+	n, err := revoker.RevokeByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin revoke email change tokens failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	s.recordAdminUserAction(ctx, audit.EventAdminEmailChangeTokensRevoked, userID, "revoked", fmt.Sprintf("%d", n))
+	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
+}
+
 // meSubjectOrChallenge extracts the bearer subject for /sessions/me and
 // /consents/me. Unlike authenticatedSubject, it stamps the RFC 6750 §3
 // WWW-Authenticate challenge header BEFORE writing the 401 body, so these
