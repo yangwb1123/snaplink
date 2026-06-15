@@ -24,6 +24,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,6 +56,8 @@ import (
 	clustermemory "github.com/snaplink/sso/cluster/memory"
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
+	"github.com/snaplink/sso/connections"
+	connectionssqlite "github.com/snaplink/sso/connections/sqlite"
 	"github.com/snaplink/sso/cors"
 	"github.com/snaplink/sso/defaultimpl"
 	"github.com/snaplink/sso/defaultimpl/cryptosigner"
@@ -301,6 +304,10 @@ type app struct {
 	// during shutdown so SQL backends release their connections.
 	tenantStore tenant.Store
 
+	// connectionStore holds per-organization enterprise connections for B2B
+	// home-realm discovery. Nil when disabled. Closed during shutdown.
+	connectionStore connections.Store
+
 	// regionResolver is the serving-region resolver (nil when region is
 	// unconfigured). Held so buildHTTPHandler can plumb it — together with
 	// the server's context-free ResidencyDecision seam — into webauthnDeps,
@@ -346,6 +353,10 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	}
 	if a.tenantStore != nil {
 		defer func() { _ = a.tenantStore.Close() }()
+	}
+	// connections.Store has no Close on the interface; the sqlite backend does.
+	if c, ok := a.connectionStore.(io.Closer); ok {
+		defer func() { _ = c.Close() }()
 	}
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
@@ -2816,6 +2827,55 @@ func buildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, erro
 	return store, nil
 }
 
+// buildConnectionStore materialises the connections.Store from
+// ConnectionsConfig and seeds it. Returns (nil, nil) when disabled — cmd then
+// skips sso.WithConnectionStore, so the /auth/home-realm endpoint is not mounted
+// (byte-identical). This is the only way the runnable binary can populate B2B
+// enterprise connections; without it the home-realm feature was SDK-only.
+func buildConnectionStore(cfg *config.Config, logger spi.Logger) (connections.Store, error) {
+	if !cfg.Connections.Enabled {
+		return nil, nil
+	}
+	var store connections.Store
+	switch strings.ToLower(cfg.Connections.Backend) {
+	case "", "memory":
+		store = connections.NewMemoryStore()
+		logger.Info("connection store: memory (in-process)")
+	case "sqlite":
+		if cfg.Connections.SQLite.DSN == "" {
+			return nil, errors.New("connections.sqlite.dsn required when connections.backend=sqlite")
+		}
+		s, err := connectionssqlite.New(cfg.Connections.SQLite.DSN)
+		if err != nil {
+			return nil, fmt.Errorf("connections sqlite: %w", err)
+		}
+		store = s
+		logger.Info("connection store: sqlite (cluster-shared)", "dsn", cfg.Connections.SQLite.DSN)
+	default:
+		return nil, fmt.Errorf("unknown connections.backend %q (supported: memory, sqlite)", cfg.Connections.Backend)
+	}
+
+	ctx := context.Background()
+	for _, c := range cfg.Connections.Connections {
+		if err := store.Upsert(ctx, &connections.Connection{
+			ID:          c.ID,
+			TenantID:    c.TenantID,
+			Type:        connections.ConnectionType(c.Type),
+			DisplayName: c.DisplayName,
+			Domains:     c.Domains,
+			Enabled:     c.Enabled,
+			Config:      c.Config,
+		}); err != nil {
+			if closer, ok := store.(io.Closer); ok {
+				_ = closer.Close()
+			}
+			return nil, fmt.Errorf("seed connection %q: %w", c.ID, err)
+		}
+	}
+	logger.Info("connection seed complete", "connections", len(cfg.Connections.Connections))
+	return store, nil
+}
+
 // buildGeoProvider materialises the geo.Provider from GeoConfig.
 // Returns nil when geo.enabled=false so cmd can pass the result to
 // sso.WithGeoProvider unconditionally (the option no-ops on nil).
@@ -3646,6 +3706,21 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 			opts = append(opts, sso.WithTenantUsageAggregator(agg))
 			logger.Info("tenant usage metering enabled", "backend", cfg.Tenant.UsageMetering.Backend)
 		}
+	}
+
+	// B2B enterprise connections + home-realm discovery (sso.WithConnectionStore
+	// → /auth/home-realm). Seeded from config; nil when disabled so the endpoint
+	// is not mounted (byte-identical).
+	connectionStore, err := buildConnectionStore(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("connection store: %w", err)
+	}
+	if connectionStore != nil {
+		opts = append(opts, sso.WithConnectionStore(connectionStore))
+		// SQLite-backed connections store implements Ping → /readyz; memory
+		// silently no-ops (appendReadyCheck only registers satisfying types).
+		opts = appendReadyCheck(opts, "sqlite-connections", connectionStore)
+		storageHealthSources = appendStorageHealthSource(storageHealthSources, "sqlite-connections", connectionStore)
 	}
 	// Opt-in per-login ClientStore metadata cache (identity.client_cache).
 	// TTL 0 falls back to sso.DefaultClientStoreCacheTTL inside the SDK.
@@ -4518,6 +4593,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		releaseRegistry:         releaseRegistry,
 		releaseStore:            releaseStore,
 		tenantStore:             tenantStore,
+		connectionStore:         connectionStore,
 		regionResolver:          regionResolver,
 		webauthnHelper:          webauthnHelper,
 		auditAsyncSink:          asyncSink,

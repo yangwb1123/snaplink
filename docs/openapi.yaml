@@ -457,6 +457,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /auth/home-realm:
+    post:
+      tags: [auth]
+      summary: B2B home-realm discovery — resolve an email domain to its IdP.
+      description: |
+        Maps a login identifier (email or bare domain) to the enterprise
+        connection serving that domain, so a B2B login UI can route the user to
+        their organization's upstream IdP. Accepts `login_hint` (or `identifier`)
+        as a query param, form field, or JSON body; GET is also accepted. A miss
+        returns `{"found": false}` — a routing decision (which IdP), NOT a
+        credential oracle (it never reveals whether an account exists). The
+        response carries only non-secret routing metadata. Mounted only when an
+        enterprise-connection store is configured (`connections.enabled`); a
+        build/config without it does not expose this endpoint.
+      operationId: homeRealmDiscovery
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login_hint: { type: string, example: "user@acme.com" }
+                identifier: { type: string }
+      responses:
+        "200":
+          description: Routing decision (found or not).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  found: { type: boolean }
+                  connection_id: { type: string }
+                  type: { type: string, enum: [oidc, saml] }
+                  tenant_id: { type: string }
+                  display_name: { type: string }
+
   /auth/callback:
     get:
       tags: [auth]

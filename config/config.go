@@ -39,6 +39,7 @@ type Config struct {
 	Geo                GeoConfig                       `yaml:"geo"`
 	Region             RegionConfig                    `yaml:"region"`
 	Tenant             TenantConfig                    `yaml:"tenant"`
+	Connections        ConnectionsConfig               `yaml:"connections"`
 	Security           SecurityConfig                  `yaml:"security"`
 	Metrics            MetricsConfig                   `yaml:"metrics"`
 	OAuth              OAuthConfig                     `yaml:"oauth"`
@@ -2147,6 +2148,36 @@ type TenantSeedConfig struct {
 	// tokens use that strategy instead of the server default. Empty = use the
 	// default strategy. Must name a registered strategy or boot fails loud.
 	TokenStrategy string `yaml:"token_strategy"`
+}
+
+// ConnectionsConfig wires per-organization enterprise connections for B2B
+// home-realm discovery (sso.WithConnectionStore) and seeds them. When disabled,
+// the /auth/home-realm endpoint is NOT mounted (byte-identical). Without this,
+// the runnable binary had no way to populate connections at all — the home-realm
+// feature was reachable only by SDK embedders calling Store.Upsert directly.
+type ConnectionsConfig struct {
+	Enabled     bool                    `yaml:"enabled"`
+	Backend     string                  `yaml:"backend"` // memory | sqlite
+	SQLite      ConnectionsSQLiteConfig `yaml:"sqlite"`
+	Connections []ConnectionSeedConfig  `yaml:"connections"`
+}
+
+// ConnectionsSQLiteConfig is the SQLite backend's DSN.
+type ConnectionsSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+// ConnectionSeedConfig declares one enterprise connection to Upsert on boot.
+// Config carries opaque protocol-specific settings (e.g. oidc_issuer,
+// oidc_client_id, saml_metadata_url) the consuming authenticator interprets.
+type ConnectionSeedConfig struct {
+	ID          string            `yaml:"id"`
+	TenantID    string            `yaml:"tenant_id"`
+	Type        string            `yaml:"type"` // oidc | saml
+	DisplayName string            `yaml:"display_name"`
+	Domains     []string          `yaml:"domains"`
+	Enabled     bool              `yaml:"enabled"`
+	Config      map[string]string `yaml:"config"`
 }
 
 // TenantDomainConfig declares a hostname → tenant mapping.
