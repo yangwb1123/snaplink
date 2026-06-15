@@ -447,7 +447,6 @@ All 5 original large files (13,830 lines) refactored into 39 focused files
 
 ## SPLIT_NOW (filesize-exempted, structured)
 1. [ ] sso.go (677 lines) — Server struct + NewServer + jwksSingleFlight
-2. [ ] login_handler.go (612 lines) — handleLogin (97 cyclo, exempted)
 3. [ ] token_handler.go (622 lines) — handleToken (89 cyclo, exempted)
 4. [ ] me_handler.go (587 lines) — /me endpoint handlers
 5. [ ] config/config.go (~3000 lines) — config loader + types

@@ -60,7 +60,6 @@ var fileSizeExemptions = map[string]bool{
 	"federation/registration.go":           true,
 	"federation/trust_chain.go":            true,
 	"federation/trust_marks.go":            true,
-	"login_handler.go":                     true,
 	"metrics/metrics.go":                   true,
 	"permissions/sqlite/sqlite.go":         true,
 	"scim/handler.go":                      true,

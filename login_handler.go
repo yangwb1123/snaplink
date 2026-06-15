@@ -1,11 +1,10 @@
 package sso
 
 import (
-	"encoding/json"
 	"net/http"
+	"time"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/fapi"
@@ -15,32 +14,6 @@ import (
 	"github.com/snaplink/sso/spi"
 	"github.com/snaplink/sso/oauth"
 )
-type loginRequest struct {
-	Provider             string            `json:"provider"`
-	Credential           map[string]string `json:"credential"`
-	ClientID             string            `json:"client_id"`
-	Scope                []string          `json:"scope"`
-	State                string            `json:"state"`
-	ResponseType         string            `json:"response_type"`         // "code" → return auth code instead of token
-	RedirectURI          string            `json:"redirect_uri"`          // required when response_type=code
-	Nonce                string            `json:"nonce"`                 // OIDC nonce (passed through to oauth.AuthCode)
-	CodeChallenge        string            `json:"code_challenge"`        // PKCE RFC 7636 §4.3
-	CodeChallengeMethod  string            `json:"code_challenge_method"` // "S256" | "plain" (default plain per §4.3)
-	Resource             []string          `json:"resource"`              // RFC 8707 resource indicators
-	RequestURI           string            `json:"request_uri"`           // RFC 9126 PAR
-	AuthorizationDetails json.RawMessage   `json:"authorization_details"` // RFC 9396
-	Request              string            `json:"request"`               // RFC 9101 JAR
-	Prompt               string            `json:"prompt"`                // OIDC Core §3.1.2.1: space-separated none|login|consent|select_account
-	IDTokenHint          string            `json:"id_token_hint"`         // OIDC Core §3.1.2.1: identifies the subject for prompt=none
-	MaxAge               *int64            `json:"max_age"`               // OIDC Core §3.1.2.1: max allowed auth age in seconds (pointer so 0 is distinguishable from absent)
-	LoginHint            string            `json:"login_hint"`            // OIDC Core §3.1.2.1: subject identifier hint for the End-User
-	ResponseMode         string            `json:"response_mode"`         // OIDC Core §3.1.2.1 + Form Post 1.0: query|fragment|form_post
-	ACRValues            string            `json:"acr_values"`            // OIDC Core §3.1.2.1: space-separated preferred ACR values
-	UILocales            string            `json:"ui_locales"`            // OIDC Core §3.1.2.1: space-separated BCP-47 language tags
-	Claims               json.RawMessage   `json:"claims"`                // OIDC Core §5.5: requested claims JSON object
-	ConsentChallengeID   string            `json:"consent_challenge_id"`  // server-issued challenge from a prior consent_required response
-}
-
 func (s *Server) handleLogin(ctx HandlerContext) {
 	// Stamp the request start time onto the context for the
 	// sso_login_duration_seconds histogram observation in
