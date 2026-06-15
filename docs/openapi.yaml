@@ -1865,7 +1865,9 @@ paths:
       summary: Revoke the authenticated user's consent for a client.
       description: |
         Removes the bearer subject's consent grant for the given client.
-        A missing grant returns 404. `Cache-Control: no-store`.
+        A missing grant returns 404. `Cache-Control: no-store`. Emits a
+        `consent_revoked` audit event keyed on the subject (the self-service
+        parallel to the admin-plane `admin_consent_revoked`).
       operationId: deleteMyConsent
       security:
         - bearerAuth: []

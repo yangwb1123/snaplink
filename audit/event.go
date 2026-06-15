@@ -210,6 +210,26 @@ const (
 	// Outcome=failure with the joined step errors in Reason.
 	EventSubjectSelfErased EventType = "subject_self_erased"
 
+	// Consent lifecycle (user-initiated, distinct from the admin-plane
+	// EventAdminConsentRevoked which is keyed on the operator). ActorID = the
+	// resource owner (subject); Metadata "client_id" + (for grant) "scopes".
+	//
+	// EventConsentGranted — the user actively approved an authorization at
+	// /auth/login by presenting a valid consent challenge (a new grant or a
+	// scope expansion). Silent grant refreshes on subsequent logins are NOT
+	// recorded — only the active approval. Outcome=success.
+	EventConsentGranted EventType = "consent_granted"
+	// EventConsentRevoked — the user self-service revoked a grant via
+	// DELETE /consents/me/:client_id. Outcome=success.
+	EventConsentRevoked EventType = "consent_revoked"
+	// EventConsentDenied — a consent challenge was presented at /auth/login but
+	// failed validation (expired, fabricated, replayed, or bound to a different
+	// scope set). The forensic parallel to EventDeviceCodeDenied / EventCIBADenied:
+	// surfaces consent-grinding and fabricated-approval attempts. A first-time
+	// consent_required (no challenge presented yet) is a prompt, not a denial,
+	// and is NOT recorded. Outcome=failure.
+	EventConsentDenied EventType = "consent_denied"
+
 	// Bootstrap framework events — one per Step run/skip on first boot
 	// (or whenever a new Step is added later).
 	EventBootstrapStepApplied EventType = "bootstrap_step_applied"

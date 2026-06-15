@@ -3844,5 +3844,6 @@ func (s *Server) handleDeleteMyConsent(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
 		return
 	}
+	s.recordConsentEvent(ctx, audit.EventConsentRevoked, audit.OutcomeSuccess, userID, clientID, nil)
 	ctx.JSON(http.StatusNoContent, nil)
 }

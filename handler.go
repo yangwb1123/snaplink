@@ -2377,6 +2377,12 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 		// consent_required response. A bare boolean would let any caller bypass
 		// the consent screen by fabricating the approval signal.
 		if consentChallengeID == "" || !s.consumeConsentChallenge(consentChallengeID, userID, clientID, scopes) {
+			// A presented-but-invalid challenge is a failed approval attempt
+			// (expired / fabricated / replayed / wrong scopes) — record it for
+			// forensics. A first-time prompt (empty challenge) is not a denial.
+			if consentChallengeID != "" {
+				s.recordConsentEvent(ctx, audit.EventConsentDenied, audit.OutcomeFailure, userID, clientID, scopes)
+			}
 			challengeID := s.issueConsentChallenge(userID, clientID, scopes)
 			ctx.JSON(http.StatusOK, map[string]any{
 				KeyError:              ErrConsentRequired,
@@ -2392,6 +2398,7 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 			Scopes:    scopes,
 			GrantedAt: time.Now(),
 		})
+		s.recordConsentEvent(ctx, audit.EventConsentGranted, audit.OutcomeSuccess, userID, clientID, scopes)
 		return false
 	}
 
@@ -2407,6 +2414,29 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID, clientID string, 
 		GrantedAt: time.Now(),
 	})
 	return false
+}
+
+// recordConsentEvent emits a user-initiated consent-lifecycle audit event
+// (granted / revoked / denied). No-op when no auditor is wired. The acting
+// subject is the resource owner (userID) — distinct from the admin-plane
+// EventAdminConsentRevoked which is keyed on the operator. Scopes are joined
+// into a single bounded metadata value (audit metadata is unbounded by design;
+// only metrics labels carry the cardinality constraint).
+func (s *Server) recordConsentEvent(ctx HandlerContext, evtType audit.EventType, outcome audit.Outcome, userID, clientID string, scopes []string) {
+	if s.auditor == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:    evtType,
+		Outcome: outcome,
+		ActorID: userID,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, KeyClientID, clientID)
+	if len(scopes) > 0 {
+		audit.SetMeta(evt, "scopes", strings.Join(scopes, " "))
+	}
+	s.auditor.Record(ctx.Request().Context(), evt)
 }
 
 // issueConsentChallenge generates and stores a single-use consent challenge
