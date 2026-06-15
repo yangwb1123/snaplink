@@ -83,6 +83,19 @@ input:focus { outline: none; border-color: var(--brand-primary); box-shadow: 0 0
       <input type="text" id="name-input" placeholder="Display name" autocomplete="off">
       <button class="btn btn-primary btn-sm" id="save-name-btn">Save name</button>
     </div>
+    <div id="attrs-section" style="display:none">
+      <h2 style="margin-top:20px">Custom attributes</h2>
+      <div id="attrs"></div>
+      <button class="btn btn-primary btn-sm" id="save-attrs-btn">Save attributes</button>
+      <div id="attrs-msg" class="msg"></div>
+    </div>
+  </div>
+
+  <div class="card" id="authz-card" style="display:none">
+    <h2>Roles and access</h2>
+    <div id="authz-roles"></div>
+    <div id="authz-perms"></div>
+    <div id="authz-menus"></div>
   </div>
 
   <div class="card">
@@ -122,12 +135,44 @@ input:focus { outline: none; border-color: var(--brand-primary); box-shadow: 0 0
     <button class="btn btn-primary" id="pw-btn">Update password</button>
     <div id="pw-msg" class="msg"></div>
   </div>
+
+  <div class="card">
+    <h2>Change email</h2>
+    <p class="sub" style="margin-bottom:16px">We send a verification code to the new address. Enter it below to confirm the change.</p>
+    <div class="field"><label for="new-email">New email</label><input type="text" id="new-email" autocomplete="off" placeholder="you@example.com"></div>
+    <button class="btn btn-primary" id="email-change-btn">Send verification code</button>
+    <div id="email-verify" style="display:none">
+      <div class="field" style="margin-top:14px"><label for="email-token">Verification code</label><input type="text" id="email-token" autocomplete="one-time-code" placeholder="Code from the email"></div>
+      <button class="btn btn-primary" id="email-verify-btn">Confirm new email</button>
+    </div>
+    <div id="email-msg" class="msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Download your data</h2>
+    <p class="sub" style="margin-bottom:16px">Export a copy of the data we hold about your account as a JSON file.</p>
+    <button class="btn btn-primary" id="export-btn">Download my data</button>
+    <div id="export-msg" class="msg"></div>
+  </div>
+
+  <div class="card" id="erase-card">
+    <h2>Delete your account</h2>
+    <p class="sub" style="margin-bottom:16px">This permanently removes your account, sessions and tokens. This cannot be undone.</p>
+    <button class="btn btn-danger" id="erase-preview-btn">Preview deletion (dry run)</button>
+    <div id="erase-preview"></div>
+    <div class="field" style="margin-top:14px"><label for="erase-confirm">Type your subject to confirm</label><input type="text" id="erase-confirm" autocomplete="off" placeholder=""></div>
+    <button class="btn btn-danger" id="erase-btn">Permanently delete my account</button>
+    <div id="erase-msg" class="msg"></div>
+  </div>
 </div>
 
 <script>
 "use strict";
 var $ = function (id) { return document.getElementById(id); };
 var token = "";
+// mySub holds the authenticated subject from /me. The account-deletion card
+// requires the user to echo it back as a confirmation guard.
+var mySub = "";
 
 // API paths are parent-relative: the SPA is served at /portal/, endpoints at the root.
 function api(path, opts) {
@@ -168,7 +213,9 @@ $("signout-btn").onclick = function () {
 
 // --- Render overview ---
 function render(me) {
+  mySub = me.sub || "";
   $("whoami").textContent = me.sub || "";
+  $("erase-confirm").placeholder = mySub;
   var u = me.user || {};
   var rows = [
     ["Subject", me.sub],
@@ -181,6 +228,21 @@ function render(me) {
     .map(function (r) { return '<div class="kv"><span class="k">' + esc(r[0]) + '</span><span>' + esc(r[1]) + "</span></div>"; })
     .join("") || '<div class="empty">No profile data.</div>';
   $("name-input").value = u.name || "";
+  renderAttrs(u.attributes);
+}
+
+// renderAttrs builds editable key/value rows for the custom attributes map.
+// The server enforces an allowlist, so a save may silently drop or reject some
+// keys; the section only appears when the user has at least one attribute.
+function renderAttrs(attrs) {
+  var section = $("attrs-section");
+  var keys = attrs ? Object.keys(attrs) : [];
+  if (!keys.length) { section.style.display = "none"; $("attrs").innerHTML = ""; return; }
+  $("attrs").innerHTML = keys.map(function (k) {
+    return '<div class="field"><label>' + esc(k) + '</label>' +
+      '<input type="text" data-attr="' + esc(k) + '" value="' + esc(attrs[k]) + '" autocomplete="off"></div>';
+  }).join("");
+  section.style.display = "block";
 }
 
 // Self-service display-name edit (PATCH /me). An empty input leaves the name
@@ -197,7 +259,39 @@ function render(me) {
   };
 })();
 
-function loadAll() { loadSessions(); loadConsents(); loadMFA(); }
+// Save custom attributes (PATCH /me {attributes}). The server applies only the
+// keys on its self-editable allowlist and may reject others, so we never assume
+// success: a non-200 surfaces as an error rather than a silent "saved".
+(function () {
+  var btn = $("save-attrs-btn");
+  if (!btn) return;
+  btn.onclick = function () {
+    var attrs = {};
+    Array.prototype.forEach.call($("attrs").querySelectorAll("input[data-attr]"), function (inp) {
+      attrs[inp.getAttribute("data-attr")] = inp.value;
+    });
+    api("/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attributes: attrs }),
+    }).then(function (r) {
+      if (r.status === 404) { showMsg($("attrs-msg"), "Profile editing is not available.", false); return; }
+      if (!r.ok) { showMsg($("attrs-msg"), "Some attributes could not be saved.", false); return; }
+      showMsg($("attrs-msg"), "Attributes saved.", true);
+      reloadProfile();
+    }).catch(function () { showMsg($("attrs-msg"), "Request failed.", false); });
+  };
+})();
+
+// reloadProfile re-fetches /me so the profile + attributes reflect the latest
+// server state (e.g. after the allowlist dropped a rejected key).
+function reloadProfile() {
+  api("/me").then(function (r) { return r.ok ? r.json() : null; }).then(function (me) {
+    if (me) render(me);
+  });
+}
+
+function loadAll() { loadSessions(); loadConsents(); loadMFA(); loadAuthz(); }
 
 // --- Sessions ---
 function loadSessions() {
@@ -259,8 +353,10 @@ function loadMFA() {
     var list = (d && d.factors) || [];
     if (!list.length) { $("mfa").innerHTML = '<div class="empty">No second factors registered.</div>'; return; }
     $("mfa").innerHTML = list.map(function (f) {
+      var meta = esc(f.method);
+      if (f.added_at) meta += " · added " + esc(String(f.added_at).slice(0, 10));
       return '<div class="row"><div><div class="name">' + esc(f.label || f.method) + '</div>' +
-        '<div class="meta">' + esc(f.method) + "</div></div>" +
+        '<div class="meta">' + meta + "</div></div>" +
         '<button class="btn btn-danger btn-sm" data-fid="' + esc(f.id) + '">Remove</button></div>';
     }).join("");
     Array.prototype.forEach.call($("mfa").querySelectorAll("button[data-fid]"), function (b) {
@@ -390,6 +486,172 @@ $("pw-btn").onclick = function () {
       showMsg($("pw-msg"), "Current password was not accepted.", false);
     }
   }).catch(function () { showMsg($("pw-msg"), "Request failed.", false); });
+};
+
+// --- Authorization disclosure (read-only). roles/permissions/menus are always
+// mounted but return 501 when no permission provider is wired; on 501 (or any
+// non-200) the section stays empty so the card only shows real data. The card
+// is hidden entirely when nothing resolved. ---
+function loadAuthz() {
+  var card = $("authz-card");
+  var pending = 3, any = false;
+  function done() {
+    pending--;
+    if (pending === 0) { card.style.display = any ? "block" : "none"; }
+  }
+  function fetchSection(path, build, target) {
+    api(path).then(function (r) {
+      if (r.status !== 200) return null;
+      return r.json();
+    }).then(function (d) {
+      var html = d ? build(d) : "";
+      if (html) { any = true; $(target).innerHTML = html; }
+      else { $(target).innerHTML = ""; }
+      done();
+    }).catch(function () { $(target).innerHTML = ""; done(); });
+  }
+  fetchSection("/roles/me", function (d) {
+    var list = (d && d.roles) || [];
+    if (!list.length) return "";
+    return "<h2>Roles</h2>" + list.map(function (role) {
+      return '<div class="row"><div><div class="name">' + esc(role.name || role.code) + '</div>' +
+        '<div class="meta">' + esc(role.code) + "</div></div></div>";
+    }).join("");
+  }, "authz-roles");
+  fetchSection("/permissions/me", function (d) {
+    var list = (d && d.permissions) || [];
+    if (!list.length) return "";
+    return "<h2>Permissions</h2>" + list.map(function (p) {
+      var meta = p.resource ? esc(p.resource) : "";
+      return '<div class="row"><div><div class="name">' + esc(p.code) + '</div>' +
+        '<div class="meta">' + meta + "</div></div></div>";
+    }).join("");
+  }, "authz-perms");
+  fetchSection("/menus/me", function (d) {
+    var list = (d && d.menus) || [];
+    if (!list.length) return "";
+    return "<h2>Menu access</h2>" + list.map(function (m) {
+      var meta = m.path ? esc(m.path) : "";
+      return '<div class="row"><div><div class="name">' + esc(m.name || m.id) + '</div>' +
+        '<div class="meta">' + meta + "</div></div></div>";
+    }).join("");
+  }, "authz-menus");
+}
+
+// --- Email change (begin -> verify). Mirrors the TOTP two-leg pattern: leg 1
+// posts the new address and, on success, reveals leg 2 for the code delivered
+// to it. A 404 from either leg means the feature is not wired (POST is
+// side-effecting, so we cannot probe it on load — detect it on submit). ---
+$("email-change-btn").onclick = function () {
+  var newEmail = $("new-email").value.trim();
+  if (!newEmail) { showMsg($("email-msg"), "Enter a new email address.", false); return; }
+  api("/me/email/change", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_email: newEmail }),
+  }).then(function (r) {
+    if (r.status === 404) { showMsg($("email-msg"), "Email change is not enabled.", false); return; }
+    if (r.status === 200) {
+      showMsg($("email-msg"), "We sent a verification code to " + newEmail + ".", true);
+      $("email-verify").style.display = "block";
+      return;
+    }
+    showMsg($("email-msg"), "That email could not be used.", false);
+  }).catch(function () { showMsg($("email-msg"), "Request failed.", false); });
+};
+$("email-verify-btn").onclick = function () {
+  var t = $("email-token").value.trim();
+  if (!t) { showMsg($("email-msg"), "Enter the verification code.", false); return; }
+  api("/me/email/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: t }),
+  }).then(function (r) {
+    if (r.status === 404) { showMsg($("email-msg"), "Email change is not enabled.", false); return; }
+    if (r.status === 200) {
+      showMsg($("email-msg"), "Your email has been updated.", true);
+      $("email-verify").style.display = "none";
+      $("new-email").value = ""; $("email-token").value = "";
+      loadAll();
+      reloadProfile();
+      return;
+    }
+    showMsg($("email-msg"), "That code was not accepted.", false);
+  }).catch(function () { showMsg($("email-msg"), "Request failed.", false); });
+};
+
+// --- GDPR data export. GET /me/data-export returns the bundle as JSON; on 200
+// we turn it into a browser download. 404 means the feature is not wired. ---
+$("export-btn").onclick = function () {
+  showMsg($("export-msg"), "Preparing your export...", true);
+  api("/me/data-export").then(function (r) {
+    if (r.status === 404) { showMsg($("export-msg"), "Data export is not enabled.", false); return null; }
+    if (r.status !== 200) { showMsg($("export-msg"), "Export failed.", false); return null; }
+    return r.text();
+  }).then(function (body) {
+    if (body == null) return;
+    var blob = new Blob([body], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "my-data.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showMsg($("export-msg"), "Your data has been downloaded.", true);
+  }).catch(function () { showMsg($("export-msg"), "Request failed.", false); });
+};
+
+// --- Account deletion (GDPR Art. 17). A dry-run preview shows what would be
+// removed; the real delete requires the user to echo their own subject in
+// `confirm` (CSRF / accidental-deletion guard). 404 means the feature is not
+// wired (POST is side-effecting, so this is detected on submit). ---
+function eraseSummary(d) {
+  var parts = [];
+  parts.push("Refresh tokens: " + (d.refresh_tokens_deleted || 0));
+  parts.push("Sessions: " + (d.sessions_destroyed || 0));
+  parts.push("User record: " + (d.user_deleted ? "yes" : "no"));
+  if (d.skipped && d.skipped.length) parts.push("Skipped: " + d.skipped.join(", "));
+  return parts.join(" · ");
+}
+$("erase-preview-btn").onclick = function () {
+  api("/me/account/erase", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dry_run: true }),
+  }).then(function (r) {
+    if (r.status === 404) { showMsg($("erase-msg"), "Account deletion is not enabled.", false); return null; }
+    if (r.status !== 200) { showMsg($("erase-msg"), "Could not preview deletion.", false); return null; }
+    return r.json();
+  }).then(function (d) {
+    if (!d) return;
+    $("erase-preview").innerHTML = '<div class="meta" style="padding:10px 0">Would remove — ' + esc(eraseSummary(d)) + "</div>";
+    $("erase-msg").className = "msg";
+    $("erase-msg").textContent = "";
+  }).catch(function () { showMsg($("erase-msg"), "Request failed.", false); });
+};
+$("erase-btn").onclick = function () {
+  var confirm = $("erase-confirm").value.trim();
+  if (confirm !== mySub) { showMsg($("erase-msg"), "Type your subject exactly to confirm.", false); return; }
+  api("/me/account/erase", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation: confirm, confirm: confirm, dry_run: false }),
+  }).then(function (r) {
+    if (r.status === 404) { showMsg($("erase-msg"), "Account deletion is not enabled.", false); return null; }
+    if (r.status !== 200) { showMsg($("erase-msg"), "Deletion was not confirmed.", false); return null; }
+    return r.json();
+  }).then(function (d) {
+    if (!d) return;
+    // Account is gone — drop the token and return to the login screen.
+    sessionStorage.removeItem("sso_portal_token");
+    token = ""; mySub = "";
+    $("app").style.display = "none";
+    $("login-screen").style.display = "flex";
+    $("token-input").value = "";
+    showMsg($("login-msg"), "Your account has been deleted.", true);
+  }).catch(function () { showMsg($("erase-msg"), "Request failed.", false); });
 };
 
 // --- Resume a stored session ---

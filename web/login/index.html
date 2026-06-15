@@ -186,6 +186,44 @@ input:focus, select:focus {
 }
 .back-link:hover { color: #4f46e5; }
 
+/* Self-service entry points below the login form (forgot password / signup). */
+.self-service {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #f3f4f6;
+  text-align: center;
+  font-size: .875rem;
+  color: #6b7280;
+}
+.self-service-link {
+  color: #6366f1;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.self-service-link:hover { color: #4f46e5; }
+
+/* Inline panels revealed from the self-service links; reuse the form fields. */
+.panel { display: none; margin-top: 8px; }
+.panel.active { display: block; }
+.panel h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* Home-realm-discovery notice (B2B enterprise-connection routing). */
+.hr-notice {
+  display: none;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  color: #3730a3;
+  font-size: .875rem;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.hr-notice.visible { display: block; }
+
 .spinner {
   display: none;
   width: 18px;
@@ -215,6 +253,9 @@ input:focus, select:focus {
   <div id="view-login" class="view active">
     <h1>Sign in</h1>
     <div id="login-error" class="error-box"></div>
+    <!-- Home-realm discovery (B2B): shown when the provider probe resolves the
+         org's enterprise connection. Routes to the org IdP instead of password. -->
+    <div id="hr-notice" class="hr-notice"></div>
     <form id="login-form" autocomplete="on">
       <div class="field" id="field-provider" style="display:none">
         <label for="provider">Authentication method</label>
@@ -237,6 +278,61 @@ input:focus, select:focus {
         </button>
       </div>
     </form>
+
+    <!-- Self-service entry points. Both endpoints are optional on the backend;
+         the submit handlers detect 404 and disclose "not enabled" gracefully. -->
+    <div class="self-service">
+      <span class="self-service-link" id="forgot-link">Forgot password?</span>
+      &nbsp;·&nbsp;
+      <span class="self-service-link" id="signup-link">Create an account</span>
+    </div>
+
+    <!-- Forgot-password panel (POST /auth/forgot-password). -->
+    <div id="forgot-panel" class="panel">
+      <h2>Reset your password</h2>
+      <div id="forgot-error" class="error-box"></div>
+      <div id="forgot-success" class="success-box"></div>
+      <form id="forgot-form" autocomplete="on">
+        <div class="field">
+          <label for="forgot-identifier">Username or email</label>
+          <input type="text" id="forgot-identifier" name="identifier" autocomplete="username" required placeholder="you@example.com">
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary" id="forgot-btn">
+            <span class="btn-label">Send reset link</span>
+            <span class="spinner"></span>
+          </button>
+        </div>
+      </form>
+      <a class="back-link" id="forgot-back">Back to sign in</a>
+    </div>
+
+    <!-- Signup panel (POST /auth/register). -->
+    <div id="signup-panel" class="panel">
+      <h2>Create an account</h2>
+      <div id="signup-error" class="error-box"></div>
+      <form id="signup-form" autocomplete="on">
+        <div class="field">
+          <label for="signup-username">Username</label>
+          <input type="text" id="signup-username" name="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="signup-email">Email <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
+          <input type="email" id="signup-email" name="email" autocomplete="email" placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="signup-password">Password</label>
+          <input type="password" id="signup-password" name="password" autocomplete="new-password" required>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary" id="signup-btn">
+            <span class="btn-label">Create account</span>
+            <span class="spinner"></span>
+          </button>
+        </div>
+      </form>
+      <a class="back-link" id="signup-back">Back to sign in</a>
+    </div>
   </div>
 
   <!-- MFA view -->
@@ -335,6 +431,8 @@ input:focus, select:focus {
   var loginURL    = "../auth/login";
   var mfaURL      = "../auth/mfa";
   var brandingURL = "../branding";
+  var forgotURL   = "../auth/forgot-password";
+  var registerURL = "../auth/register";
 
   // --- State ---
   var currentMFAChallengeID = "";
@@ -398,6 +496,14 @@ input:focus, select:focus {
     })
     .then(function(r){ return r.json(); })
     .then(function(data) {
+      // Home-realm discovery (B2B, opt-in): the probe may resolve the caller's
+      // email domain to an enterprise connection and instruct the UI to route
+      // through that org's upstream IdP rather than offer the provider list. A
+      // normal response without connection_required falls through unchanged.
+      if (data && data.connection_required) {
+        showHomeRealm(data);
+        return;
+      }
       var providers = data.providers;
       if (!Array.isArray(providers) || providers.length === 0) return;
       // Rebuild the selector.
@@ -415,6 +521,35 @@ input:focus, select:focus {
     })
     .catch(function(){});
   })();
+
+  // --- Home-realm discovery notice (B2B) ---
+  // The org resolved to an enterprise connection; surface a notice that routes
+  // the user to their organization's identity provider. The actual upstream
+  // hand-off is server-side (the resolved connection drives the federated flow);
+  // here we only present the routing decision using the connection's metadata.
+  function showHomeRealm(data) {
+    var org = data.display_name || "your organization";
+    var notice = $("hr-notice");
+    notice.innerHTML = "";
+    var p = document.createElement("p");
+    p.style.marginBottom = "10px";
+    p.textContent = "Continue with " + org + "'s identity provider.";
+    notice.appendChild(p);
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-primary";
+    btn.textContent = "Continue with " + org;
+    btn.addEventListener("click", function() {
+      // Resolved-connection hand-off is performed by the server when the login
+      // payload carries the connection. Re-submitting the normal login form
+      // hits the same /auth/login the connection routing is wired into.
+      $("login-form").requestSubmit
+        ? $("login-form").requestSubmit()
+        : $("login-btn").click();
+    });
+    notice.appendChild(btn);
+    notice.classList.add("visible");
+  }
 
   // --- Build login payload ---
   function buildPayload(extra) {
@@ -674,6 +809,158 @@ input:focus, select:focus {
       showView("login");
     }
   });
+
+  // --- Self-service panels (forgot password / signup) ---
+  // Both panels live inside the login view; toggling them swaps the inline form
+  // for the panel without leaving the view. Each panel resets its state on open.
+  function togglePanel(panelId, open) {
+    $(panelId).classList.toggle("active", open);
+  }
+
+  function setSuccess(boxId, msg) {
+    var box = $(boxId);
+    if (msg) {
+      box.textContent = msg;
+      box.classList.add("visible");
+    } else {
+      box.textContent = "";
+      box.classList.remove("visible");
+    }
+  }
+
+  $("forgot-link").addEventListener("click", function() {
+    setError("forgot-error", "");
+    setSuccess("forgot-success", "");
+    $("forgot-identifier").value = $("username").value;
+    togglePanel("signup-panel", false);
+    togglePanel("forgot-panel", true);
+  });
+
+  $("forgot-back").addEventListener("click", function() {
+    togglePanel("forgot-panel", false);
+  });
+
+  $("signup-link").addEventListener("click", function() {
+    setError("signup-error", "");
+    // Clear any prior signup confirmation when re-opening the panel.
+    var prior = $("signup-confirm");
+    if (prior) prior.classList.remove("visible");
+    var form = $("signup-form");
+    if (form) form.style.display = "";
+    togglePanel("forgot-panel", false);
+    togglePanel("signup-panel", true);
+  });
+
+  $("signup-back").addEventListener("click", function() {
+    togglePanel("signup-panel", false);
+  });
+
+  // Forgot-password submit (POST /auth/forgot-password, body {identifier}).
+  // The endpoint is intentionally always-200 for anti-enumeration: on any 2xx
+  // we show the SAME generic message regardless of whether the account exists.
+  // A 404 means the feature is not mounted — disclose that and hide the form.
+  $("forgot-form").addEventListener("submit", function(e) {
+    e.preventDefault();
+    var btn = $("forgot-btn");
+    setError("forgot-error", "");
+    setSuccess("forgot-success", "");
+    var identifier = $("forgot-identifier").value.trim();
+    if (!identifier) {
+      setError("forgot-error", "Enter your username or email.");
+      return;
+    }
+    setLoading(btn, true);
+    fetch(forgotURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({identifier: identifier})
+    })
+    .then(function(r) {
+      setLoading(btn, false);
+      if (r.status === 404) {
+        $("forgot-form").style.display = "none";
+        setError("forgot-error", "Password reset is not enabled.");
+        return;
+      }
+      if (r.status >= 200 && r.status < 300) {
+        setSuccess("forgot-success", "If that account exists, a reset link has been sent.");
+        return;
+      }
+      setError("forgot-error", "Could not request a reset. Please try again.");
+    })
+    .catch(function() {
+      setLoading(btn, false);
+      setError("forgot-error", "Network error. Please try again.");
+    });
+  });
+
+  // Signup submit (POST /auth/register, body {username, password, email?}).
+  // 201 -> created (return to sign in). 409 -> account exists. 404 -> feature
+  // not mounted (disclose + hide form). Any other status -> generic error.
+  $("signup-form").addEventListener("submit", function(e) {
+    e.preventDefault();
+    var btn = $("signup-btn");
+    setError("signup-error", "");
+    var username = $("signup-username").value.trim();
+    var password = $("signup-password").value;
+    var email    = $("signup-email").value.trim();
+    if (!username || !password) {
+      setError("signup-error", "Enter a username and password.");
+      return;
+    }
+    var body = {username: username, password: password};
+    if (email) body.email = email;
+    setLoading(btn, true);
+    fetch(registerURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    })
+    .then(function(r) {
+      setLoading(btn, false);
+      if (r.status === 404) {
+        $("signup-form").style.display = "none";
+        setError("signup-error", "Self-service signup is not enabled.");
+        return;
+      }
+      if (r.status === 409) {
+        setError("signup-error", "That account already exists.");
+        return;
+      }
+      if (r.status >= 200 && r.status < 300) {
+        // Prefill the sign-in username, close the panel, and confirm in the
+        // login view. The confirmation reuses the success-box styling, surfaced
+        // in-place above the login form.
+        $("username").value = username;
+        $("signup-password").value = "";
+        togglePanel("signup-panel", false);
+        setError("login-error", "");
+        showSignupConfirmation();
+        return;
+      }
+      setError("signup-error", "Could not create the account. Please try again.");
+    })
+    .catch(function() {
+      setLoading(btn, false);
+      setError("signup-error", "Network error. Please try again.");
+    });
+  });
+
+  // Confirm a fresh signup in the login view. The login markup has no static
+  // success box, so we insert one once (idempotent) right after the login-error
+  // box and reuse the shared success-box styling.
+  function showSignupConfirmation() {
+    var note = $("signup-confirm");
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "signup-confirm";
+      note.className = "success-box";
+      var anchor = $("login-error");
+      anchor.parentNode.insertBefore(note, anchor.nextSibling);
+    }
+    note.textContent = "Account created — you can now sign in.";
+    note.classList.add("visible");
+  }
 })();
 </script>
 </body>
