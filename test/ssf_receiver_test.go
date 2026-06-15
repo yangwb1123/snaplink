@@ -203,7 +203,19 @@ func TestSSFReceiver_ValidSET_RevokesAndAcks(t *testing.T) {
 func TestSSFReceiver_ForgedSET_RejectedNoRevocation(t *testing.T) {
 	h := newSSFHarness(t)
 	good := h.signSET(t, ssfSessionRevokedSET(ssfLocalUser, "ssf-jti-forge"))
-	forged := good[:len(good)-4] + "AAAA"
+	// Flip a byte well inside the base64url signature (full-byte territory, not
+	// the bit-padded final char) to a guaranteed-different value, so the forgery
+	// is ALWAYS a genuine signature corruption. The old "replace last 4 chars
+	// with AAAA" could occasionally be a no-op (those chars already AAAA, or the
+	// last char's unused low bits), intermittently yielding a valid SET (202).
+	fb := []byte(good)
+	i := len(fb) - 10
+	if fb[i] == 'A' {
+		fb[i] = 'B'
+	} else {
+		fb[i] = 'A'
+	}
+	forged := string(fb)
 
 	resp := h.postSET(t, forged)
 	defer func() { _ = resp.Body.Close() }()
