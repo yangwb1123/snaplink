@@ -130,7 +130,29 @@ func (s *EmailChangeStore) RevokeByUser(ctx context.Context, userID string) (int
 	return int(n), nil
 }
 
+// ListByUser returns all pending email-change tokens bound to userID
+// (admin-plane read; the caller projects safe metadata only).
+func (s *EmailChangeStore) ListByUser(ctx context.Context, userID string) ([]*core.EmailChangeToken, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT token, new_email, expires_at FROM email_change_tokens WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list email_change_tokens by user: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*core.EmailChangeToken
+	for rows.Next() {
+		var token, newEmail string
+		var expNanos int64
+		if err := rows.Scan(&token, &newEmail, &expNanos); err != nil {
+			return nil, fmt.Errorf("sqlite: scan email_change_token: %w", err)
+		}
+		out = append(out, &core.EmailChangeToken{Token: token, UserID: userID, NewEmail: newEmail, ExpiresAt: time.Unix(0, expNanos)})
+	}
+	return out, rows.Err()
+}
+
 var (
 	_ core.EmailChangeStore   = (*EmailChangeStore)(nil)
 	_ core.EmailChangeRevoker = (*EmailChangeStore)(nil)
+	_ core.EmailChangeLister  = (*EmailChangeStore)(nil)
 )

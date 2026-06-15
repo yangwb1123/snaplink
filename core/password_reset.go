@@ -48,6 +48,18 @@ type PasswordResetRevoker interface {
 	RevokeByUser(ctx context.Context, userID string) (int, error)
 }
 
+// PasswordResetLister is the OPTIONAL admin-plane read extension: it lets a
+// helpdesk see whether a user has outstanding reset tokens and when they expire
+// (e.g. "I didn't get the reset email"), WITHOUT exposing token material — the
+// admin endpoint projects only expiry, never the token value. 501 when the wired
+// store doesn't implement it. memory + sqlite peers implement it.
+type PasswordResetLister interface {
+	// ListByUser returns all pending reset tokens bound to userID. Expired tokens
+	// MAY be included (the handler flags them); callers MUST NOT surface the
+	// token value.
+	ListByUser(ctx context.Context, userID string) ([]*PasswordResetToken, error)
+}
+
 // ErrResetTokenNotFound is the sentinel Consume returns when a token is missing,
 // expired, or already consumed. Callers MUST collapse all three to a single
 // reset_invalid wire response (anti-enumeration / oracle-safe).

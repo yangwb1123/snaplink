@@ -2,8 +2,10 @@ package ssotest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,4 +105,44 @@ func TestAdminTokenRevoke_NotMountedWithoutStores(t *testing.T) {
 			t.Errorf("%s status=%d, want 404 (unmounted)", p, code)
 		}
 	}
+}
+
+// TestAdminUserPasswordResetTokens_List verifies the helpdesk GET lists a user's
+// pending reset tokens with expiry — and NEVER leaks the token value.
+func TestAdminUserPasswordResetTokens_List(t *testing.T) {
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryPasswordResetStore()
+	exp := time.Now().Add(time.Hour)
+	_ = store.Issue(ctx, &core.PasswordResetToken{Token: "pr-secret-1", UserID: "u-alice", ExpiresAt: exp})
+	_ = store.Issue(ctx, &core.PasswordResetToken{Token: "pr-secret-2", UserID: "u-alice", ExpiresAt: exp})
+	_ = store.Issue(ctx, &core.PasswordResetToken{Token: "pr-secret-b", UserID: "u-bob", ExpiresAt: exp})
+
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithPasswordResetStore(store, time.Hour),
+		sso.WithPasswordCredentialStore(defaultimpl.NewMemoryPasswordCredentialStore()),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	code, body := doReq(t, hs, http.MethodGet, "/api/v1/admin/users/u-alice/password-reset-tokens", "")
+	if code != http.StatusOK {
+		t.Fatalf("list status=%d body=%v", code, body)
+	}
+	if got, _ := body["count"].(float64); int(got) != 2 {
+		t.Errorf("count=%v, want 2", body["count"])
+	}
+	// The token value must NOT appear anywhere in the response.
+	for _, secret := range []string{"pr-secret-1", "pr-secret-2"} {
+		if strings.Contains(toJSONString(t, body), secret) {
+			t.Errorf("response leaked token value %q", secret)
+		}
+	}
+}
+
+func toJSONString(t *testing.T, v any) string {
+	t.Helper()
+	b, _ := json.Marshal(v)
+	return string(b)
 }

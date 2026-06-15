@@ -60,7 +60,23 @@ func (m *MemoryEmailChangeStore) RevokeByUser(_ context.Context, userID string) 
 	return n, nil
 }
 
+// ListByUser returns all pending email-change tokens bound to userID
+// (admin-plane read; the caller projects safe metadata only).
+func (m *MemoryEmailChangeStore) ListByUser(_ context.Context, userID string) ([]*core.EmailChangeToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*core.EmailChangeToken
+	for _, ec := range m.tokens {
+		if ec.UserID == userID {
+			cp := *ec
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 var (
 	_ core.EmailChangeStore   = (*MemoryEmailChangeStore)(nil)
 	_ core.EmailChangeRevoker = (*MemoryEmailChangeStore)(nil)
+	_ core.EmailChangeLister  = (*MemoryEmailChangeStore)(nil)
 )

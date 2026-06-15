@@ -3504,6 +3504,65 @@ func (s *Server) handleAdminRevokeUserEmailChangeTokens(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
 }
 
+// handleAdminListUserPasswordResetTokens serves
+// GET /api/v1/admin/users/:id/password-reset-tokens — a helpdesk checks whether
+// a user has pending forgot-password tokens and when they expire ("I didn't get
+// the reset email"). admin:read. 501 when the wired store can't list. NEVER
+// returns the token value — only expiry + an expired flag (the token is a live
+// credential).
+func (s *Server) handleAdminListUserPasswordResetTokens(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	lister, ok := s.passwordResetStore.(core.PasswordResetLister)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(core.ErrNotFound))
+		return
+	}
+	toks, err := lister.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin list password reset tokens failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	out := make([]map[string]any, 0, len(toks))
+	for _, t := range toks {
+		out = append(out, map[string]any{"expires_at": t.ExpiresAt, "expired": t.IsExpired()})
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"tokens": out, "count": len(out)})
+}
+
+// handleAdminListUserEmailChangeTokens serves
+// GET /api/v1/admin/users/:id/email-change-tokens — a helpdesk checks a user's
+// pending email-change tokens (target address + expiry) for verification-loop
+// debugging. admin:read. 501 when the wired store can't list. NEVER returns the
+// token value.
+func (s *Server) handleAdminListUserEmailChangeTokens(ctx HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return
+	}
+	lister, ok := s.emailChangeStore.(core.EmailChangeLister)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, errorBody(core.ErrNotFound))
+		return
+	}
+	toks, err := lister.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("admin list email change tokens failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	out := make([]map[string]any, 0, len(toks))
+	for _, t := range toks {
+		out = append(out, map[string]any{"new_email": t.NewEmail, "expires_at": t.ExpiresAt, "expired": t.IsExpired()})
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"tokens": out, "count": len(out)})
+}
+
 // meSubjectOrChallenge extracts the bearer subject for /sessions/me and
 // /consents/me. Unlike authenticatedSubject, it stamps the RFC 6750 §3
 // WWW-Authenticate challenge header BEFORE writing the 401 body, so these

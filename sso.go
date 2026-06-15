@@ -2466,9 +2466,11 @@ func (s *Server) Mount() {
 		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
 	}
 	if s.passwordResetStore != nil {
+		api.GET(PathAdminUserPasswordResetTokens, s.handleAdminListUserPasswordResetTokens)
 		api.DELETE(PathAdminUserPasswordResetTokens, s.handleAdminRevokeUserPasswordResetTokens)
 	}
 	if s.emailChangeStore != nil {
+		api.GET(PathAdminUserEmailChangeTokens, s.handleAdminListUserEmailChangeTokens)
 		api.DELETE(PathAdminUserEmailChangeTokens, s.handleAdminRevokeUserEmailChangeTokens)
 	}
 	if s.accountLockout != nil {

@@ -72,3 +72,25 @@ func TestSQLitePasswordResetStore_RevokeByUser(t *testing.T) {
 		t.Errorf("second RevokeByUser = %d, want 0", n)
 	}
 }
+
+func TestSQLitePasswordResetStore_ListByUser(t *testing.T) {
+	s := newPasswordResetStore(t)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Minute)
+	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "a1", UserID: "alice", ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "a2", UserID: "alice", ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "b1", UserID: "bob", ExpiresAt: exp})
+
+	got, err := s.ListByUser(ctx, "alice")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("ListByUser = %d tokens, %v; want 2", len(got), err)
+	}
+	for _, tk := range got {
+		if tk.UserID != "alice" {
+			t.Errorf("token for wrong user: %+v", tk)
+		}
+	}
+	if other, _ := s.ListByUser(ctx, "carol"); len(other) != 0 {
+		t.Errorf("carol should have no tokens, got %d", len(other))
+	}
+}

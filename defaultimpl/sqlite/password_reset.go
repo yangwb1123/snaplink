@@ -129,7 +129,29 @@ func (s *PasswordResetStore) RevokeByUser(ctx context.Context, userID string) (i
 	return int(n), nil
 }
 
+// ListByUser returns all pending reset tokens bound to userID (admin-plane
+// read; the caller projects safe metadata only).
+func (s *PasswordResetStore) ListByUser(ctx context.Context, userID string) ([]*core.PasswordResetToken, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT token, expires_at FROM password_reset_tokens WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list password_reset_tokens by user: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*core.PasswordResetToken
+	for rows.Next() {
+		var token string
+		var expNanos int64
+		if err := rows.Scan(&token, &expNanos); err != nil {
+			return nil, fmt.Errorf("sqlite: scan password_reset_token: %w", err)
+		}
+		out = append(out, &core.PasswordResetToken{Token: token, UserID: userID, ExpiresAt: time.Unix(0, expNanos)})
+	}
+	return out, rows.Err()
+}
+
 var (
 	_ core.PasswordResetStore   = (*PasswordResetStore)(nil)
 	_ core.PasswordResetRevoker = (*PasswordResetStore)(nil)
+	_ core.PasswordResetLister  = (*PasswordResetStore)(nil)
 )

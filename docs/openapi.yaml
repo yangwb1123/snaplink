@@ -4641,6 +4641,35 @@ paths:
         in: path
         required: true
         schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a user's pending forgot-password tokens (no token value).
+      description: |
+        Lists the user's outstanding reset tokens with their expiry so a helpdesk
+        can check "I didn't get the reset email". admin:read. NEVER returns the
+        token value (it is a live credential) — only expires_at + an expired
+        flag. 501 when the wired store cannot list.
+      operationId: adminUserListPasswordResetTokens
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending reset tokens (metadata only).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        expires_at: { type: string, format: date-time }
+                        expired: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501": { description: The wired PasswordResetStore cannot list. }
     delete:
       tags: [admin]
       summary: Revoke a user's pending forgot-password tokens.
@@ -4678,6 +4707,36 @@ paths:
         in: path
         required: true
         schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a user's pending email-change tokens (no token value).
+      description: |
+        Lists the user's outstanding email-change tokens with their target
+        address + expiry for verification-loop debugging. admin:read. NEVER
+        returns the token value — only new_email, expires_at, and an expired
+        flag. 501 when the wired store cannot list.
+      operationId: adminUserListEmailChangeTokens
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending email-change tokens (metadata only).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        new_email: { type: string }
+                        expires_at: { type: string, format: date-time }
+                        expired: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501": { description: The wired EmailChangeStore cannot list. }
     delete:
       tags: [admin]
       summary: Revoke a user's pending email-change verification tokens.

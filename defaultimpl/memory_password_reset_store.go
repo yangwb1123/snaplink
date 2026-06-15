@@ -60,7 +60,23 @@ func (m *MemoryPasswordResetStore) RevokeByUser(_ context.Context, userID string
 	return n, nil
 }
 
+// ListByUser returns all pending reset tokens bound to userID (admin-plane
+// read; the caller projects safe metadata only).
+func (m *MemoryPasswordResetStore) ListByUser(_ context.Context, userID string) ([]*core.PasswordResetToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*core.PasswordResetToken
+	for _, rt := range m.tokens {
+		if rt.UserID == userID {
+			cp := *rt
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 var (
 	_ core.PasswordResetStore   = (*MemoryPasswordResetStore)(nil)
 	_ core.PasswordResetRevoker = (*MemoryPasswordResetStore)(nil)
+	_ core.PasswordResetLister  = (*MemoryPasswordResetStore)(nil)
 )

@@ -47,6 +47,16 @@ type EmailChangeRevoker interface {
 	RevokeByUser(ctx context.Context, userID string) (int, error)
 }
 
+// EmailChangeLister is the OPTIONAL admin-plane read extension (mirrors
+// PasswordResetLister): a helpdesk sees a user's pending email-change tokens and
+// their target address + expiry without exposing the token value. 501 when the
+// wired store doesn't implement it. memory + sqlite peers implement it.
+type EmailChangeLister interface {
+	// ListByUser returns all pending email-change tokens bound to userID. The
+	// handler surfaces only new_email + expiry, never the token value.
+	ListByUser(ctx context.Context, userID string) ([]*EmailChangeToken, error)
+}
+
 // ErrEmailChangeTokenNotFound is the sentinel Consume returns when a token is
 // missing, expired, or already consumed. Callers MUST collapse all three to a
 // single email_change_invalid wire response.

@@ -66,3 +66,19 @@ func TestSQLiteEmailChangeStore_RevokeByUser(t *testing.T) {
 		t.Errorf("bob token wrongly revoked: %v", err)
 	}
 }
+
+func TestSQLiteEmailChangeStore_ListByUser(t *testing.T) {
+	s := newEmailChangeStore(t)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Minute)
+	_ = s.Issue(ctx, &core.EmailChangeToken{Token: "a1", UserID: "alice", NewEmail: "a@n.com", ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.EmailChangeToken{Token: "b1", UserID: "bob", NewEmail: "b@n.com", ExpiresAt: exp})
+
+	got, err := s.ListByUser(ctx, "alice")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListByUser = %d, %v; want 1", len(got), err)
+	}
+	if got[0].NewEmail != "a@n.com" {
+		t.Errorf("new_email = %q", got[0].NewEmail)
+	}
+}
