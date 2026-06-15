@@ -67,7 +67,7 @@ type ServerDeps interface {
 
 	// Federation
 	FederationEntityConfig() *federation.Config
-	FederationSigner() oidc.MetadataSigner
+	FederationSigner() federation.JWTSigner
 
 	// Misc
 	ScopeDescriptions() map[string]string

@@ -21,6 +21,7 @@ import (
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/connections"
 )
 
 // AuthCodeStore returns the wired AuthCodeStore (nil when not configured).
@@ -504,3 +505,33 @@ func (s *Server) AddReadyCheck(name string, check ReadyCheck) {
 func (s *Server) StorageHealthSources() []StorageHealthSource {
 	return s.storageHealthSources
 }
+
+// AllowDynamicClientRegistration returns true if DCR is configured.
+func (s *Server) AllowDynamicClientRegistration() bool { return s.dcrPolicy != nil }
+
+// ConnectionStore returns the wired connections store (nil when not configured).
+func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+
+// ConsentStore returns the wired consent store (nil when not configured).
+func (s *Server) ConsentStore() core.ConsentStore { return s.consentStore }
+
+// FederationEntityConfig returns the federation entity configuration (nil when not wired).
+func (s *Server) FederationEntityConfig() *federation.Config { return s.federationEntity.Config() }
+
+// JTIReplayFailClosed returns whether JTI replay store errors reject the request.
+func (s *Server) JTIReplayFailClosed() bool { return s.jtiReplayFailClosed }
+
+// OAuth21Strict returns whether OAuth 2.1 strict mode is enabled.
+func (s *Server) OAuth21Strict() bool { return s.oauth21Strict }
+
+// ScopeDescriptions returns the scope description map.
+func (s *Server) ScopeDescriptions() map[string]string { return s.scopeDescriptions }
+
+// TenantUserStore returns the tenant user store (nil when not configured).
+func (s *Server) TenantUserStore() core.TenantUserStore { return s.tenantUserStore }
+
+// UserProviderAccessor returns the user provider.
+func (s *Server) UserProviderAccessor() core.UserProvider { return s.userProvider }
+
+// DeviceSecretStore returns the device secret store (nil when not configured).
+func (s *Server) DeviceSecretStore() core.DeviceSecretStore { return s.deviceSecretStore }
