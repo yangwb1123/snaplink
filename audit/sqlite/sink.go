@@ -528,6 +528,35 @@ func (s *Sink) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+// LastHash returns the Hash of the most recently recorded event so an
+// audit.Recorder constructed with audit.WithHashChain() can RESUME the
+// tamper-evident chain across a process restart instead of starting a
+// fresh genesis at every boot (which audit.VerifyChain would read as a
+// chain break at the restart seam). Returns "" on an empty table so the
+// chain seeds at genesis.
+//
+// "Most recent" is ts_unix_ns DESC tie-broken by rowid DESC: the chain
+// is stamped in Record order, and rowid is SQLite's monotonic insertion
+// counter, so the tie-break recovers true insertion order when two
+// events share a nanosecond (back-to-back records under a coarse clock).
+// Implements the optional audit.ChainTip extension.
+func (s *Sink) LastHash(ctx context.Context) (string, error) {
+	if s == nil || s.db == nil {
+		return "", errors.New("audit/sqlite: closed")
+	}
+	var hash sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT hash FROM audit_events ORDER BY ts_unix_ns DESC, rowid DESC LIMIT 1`,
+	).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("audit/sqlite: last hash: %w", err)
+	}
+	return hash.String, nil
+}
+
 // newEventID — same shape as audit.MemorySink uses, kept private
 // here so the sink package doesn't depend on an exported helper.
 func newEventID() string {
@@ -541,4 +570,5 @@ var (
 	_ audit.Sink         = (*Sink)(nil)
 	_ audit.FacetQuerier = (*Sink)(nil)
 	_ audit.BatchSink    = (*Sink)(nil)
+	_ audit.ChainTip     = (*Sink)(nil)
 )

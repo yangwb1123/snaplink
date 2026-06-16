@@ -316,6 +316,19 @@ func (a *AsyncSink) Facets(ctx context.Context, q Query) (*Facets, error) {
 	return fq.Facets(ctx, q)
 }
 
+// LastHash delegates to the inner sink when it implements the optional
+// ChainTip extension, mirroring Facets — this is a synchronous read of
+// the persisted chain head, so it bypasses the async write queue. An
+// inner sink without ChainTip yields genesis ("") so the chain seeds
+// fresh rather than failing the resume.
+func (a *AsyncSink) LastHash(ctx context.Context) (string, error) {
+	ct, ok := a.inner.(ChainTip)
+	if !ok {
+		return "", nil
+	}
+	return ct.LastHash(ctx)
+}
+
 // Close stops accepting new events and drains the in-flight queue.
 // Returns nil when the queue empties, or ctx.Err() if the supplied
 // deadline expires first. Idempotent.

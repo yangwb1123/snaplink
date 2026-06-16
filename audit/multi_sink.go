@@ -71,3 +71,19 @@ func (m *MultiSink) Facets(ctx context.Context, q Query) (*Facets, error) {
 	}
 	return nil, ErrFacetsUnsupported
 }
+
+// LastHash delegates to the first wrapped sink that implements the
+// optional ChainTip extension (the durable leaf), mirroring how Facets
+// picks the first capable sink. A fan-out with no durable leaf returns
+// genesis ("") so the chain seeds fresh — correct because none of the
+// composed sinks could have persisted a tip to resume from.
+func (m *MultiSink) LastHash(ctx context.Context) (string, error) {
+	for _, s := range m.sinks {
+		ct, ok := s.(ChainTip)
+		if !ok {
+			continue
+		}
+		return ct.LastHash(ctx)
+	}
+	return "", nil
+}

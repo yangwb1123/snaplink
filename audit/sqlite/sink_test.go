@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -332,6 +333,140 @@ func TestSink_PruneAfterCloseErrors(t *testing.T) {
 	_, err := s.Prune(context.Background(), time.Now())
 	if err == nil {
 		t.Fatal("Prune after Close: want error, got nil")
+	}
+}
+
+// allEventsOldestFirst reads every row from a sink and reverses the
+// newest-first Query result into chain order (oldest first) so the
+// slice can be handed straight to audit.VerifyChain.
+func allEventsOldestFirst(t *testing.T, s *Sink) []*audit.Event {
+	t.Helper()
+	newestFirst, err := s.Query(context.Background(), audit.Query{Limit: audit.MaxQueryLimit})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	oldestFirst := make([]*audit.Event, len(newestFirst))
+	for i, e := range newestFirst {
+		oldestFirst[len(newestFirst)-1-i] = e
+	}
+	return oldestFirst
+}
+
+// TestSink_LastHashEmptyStore proves the ChainTip seam returns genesis
+// ("") on a fresh table, so a first-boot Recorder seeds genesis exactly
+// as a non-resuming chainer would.
+func TestSink_LastHashEmptyStore(t *testing.T) {
+	s := newTestSink(t)
+	got, err := s.LastHash(context.Background())
+	if err != nil {
+		t.Fatalf("LastHash: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("LastHash on empty store = %q, want \"\" (genesis)", got)
+	}
+}
+
+// TestSink_LastHashAfterCloseErrors mirrors the other lifecycle guards:
+// a tip read on a closed sink reports an error rather than nil-derefing,
+// so the Recorder's best-effort resume falls back to genesis cleanly.
+func TestSink_LastHashAfterCloseErrors(t *testing.T) {
+	s := newTestSink(t)
+	_ = s.Close()
+	if _, err := s.LastHash(context.Background()); err == nil {
+		t.Fatal("LastHash after Close: want error, got nil")
+	}
+}
+
+// TestSink_HashChainResumesAcrossRestart is the core continuity proof.
+// It writes N chained events through a Recorder backed by a file-DB
+// sink, then DISCARDS that recorder + sink (the restart boundary) and
+// constructs a FRESH Recorder + Sink against the SAME DB. The resume
+// seam must make the first post-restart event's PrevHash equal the last
+// pre-restart Hash, so audit.VerifyChain accepts the combined sequence
+// as ONE unbroken chain — no spurious genesis at the seam.
+func TestSink_HashChainResumesAcrossRestart(t *testing.T) {
+	// File DB (not :memory:) so the second sink observes the rows the
+	// first wrote — a :memory: DSN is per-connection and would not
+	// share state across the simulated restart.
+	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db")
+
+	// Distinct, monotonic timestamps so chain order is unambiguous and
+	// the ts-DESC tip query resolves the true head.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tick := 0
+	clock := func() time.Time {
+		tick++
+		return base.Add(time.Duration(tick) * time.Second)
+	}
+
+	// --- pre-restart process: write N events through the chain. ---
+	sink1, err := New(dsn)
+	if err != nil {
+		t.Fatalf("open sink1: %v", err)
+	}
+	rec1 := audit.New(sink1, audit.WithHashChain(), audit.WithClock(clock))
+	const nBefore = 4
+	for i := 0; i < nBefore; i++ {
+		rec1.Record(context.Background(), &audit.Event{
+			Type:    audit.EventLogin,
+			Outcome: audit.OutcomeSuccess,
+			ActorID: "user",
+		})
+	}
+	preRestart := allEventsOldestFirst(t, sink1)
+	if len(preRestart) != nBefore {
+		t.Fatalf("pre-restart events = %d, want %d", len(preRestart), nBefore)
+	}
+	headBefore := preRestart[len(preRestart)-1].Hash
+	if headBefore == "" {
+		t.Fatal("pre-restart head Hash is empty")
+	}
+	if err := sink1.Close(); err != nil {
+		t.Fatalf("close sink1: %v", err)
+	}
+
+	// --- post-restart process: fresh sink + recorder, SAME DB. ---
+	sink2, err := New(dsn)
+	if err != nil {
+		t.Fatalf("open sink2: %v", err)
+	}
+	t.Cleanup(func() { _ = sink2.Close() })
+
+	// Resume must seed the chainer head from storage at construction.
+	tip, err := sink2.LastHash(context.Background())
+	if err != nil {
+		t.Fatalf("LastHash: %v", err)
+	}
+	if tip != headBefore {
+		t.Fatalf("resumed tip = %q, want pre-restart head %q", tip, headBefore)
+	}
+
+	rec2 := audit.New(sink2, audit.WithHashChain(), audit.WithClock(clock))
+	const nAfter = 3
+	for i := 0; i < nAfter; i++ {
+		rec2.Record(context.Background(), &audit.Event{
+			Type:    audit.EventLogout,
+			Outcome: audit.OutcomeSuccess,
+			ActorID: "user",
+		})
+	}
+
+	all := allEventsOldestFirst(t, sink2)
+	if len(all) != nBefore+nAfter {
+		t.Fatalf("combined events = %d, want %d", len(all), nBefore+nAfter)
+	}
+
+	// The seam: the first post-restart event must link to the last
+	// pre-restart event, not restart at genesis.
+	seam := all[nBefore]
+	if seam.PrevHash != headBefore {
+		t.Fatalf("restart seam broken: events[%d].PrevHash = %q, want %q",
+			nBefore, seam.PrevHash, headBefore)
+	}
+
+	// The whole sequence verifies as one chain across the restart.
+	if err := audit.VerifyChain(all); err != nil {
+		t.Fatalf("VerifyChain across restart seam: %v", err)
 	}
 }
 

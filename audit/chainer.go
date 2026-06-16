@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,11 +14,13 @@ import (
 // encoding + the previous event's Hash, so any tampering with a past
 // event breaks the recomputation of every subsequent Hash.
 //
-// Scope: in-process and in-memory. A restart starts a fresh chain
-// (genesis PrevHash = ""). Operators needing continuity across
-// restarts should persist prevHash to a durable store and seed the
-// chainer on boot — left as a v2 hook because the right store
-// (database vs etcd vs file) is deployment-specific.
+// Scope: in-process running state, seeded from durable storage on
+// construction. A fresh process resumes the chain from the last
+// persisted event's Hash (see [ChainTip] + [WithHashChain]) so the
+// first post-restart event's PrevHash equals the last pre-restart
+// Hash — no spurious genesis at the restart seam, which would
+// otherwise read as a chain break (or mask tampering) to
+// [VerifyChain]. An empty store seeds genesis (prevHash == "").
 //
 // Limitation: tampering with the LAST event isn't detectable from
 // the chain alone (no future hash to break). Detection requires
@@ -27,6 +30,35 @@ import (
 type chainer struct {
 	mu       sync.Mutex
 	prevHash string
+}
+
+// ChainTip is the optional [Sink] extension that lets a Recorder
+// resume a [WithHashChain] chain across process restarts. A durable
+// sink returns its most recently persisted event's Hash (chain head)
+// here; an empty store returns "" so the chain seeds at genesis. The
+// composing sinks (MultiSink, AsyncSink) forward this to their read-
+// capable leaf, mirroring how FacetQuerier is forwarded, so the seam
+// works through the standard Async -> Multi -> leaf pipeline.
+//
+// Memory-only sinks deliberately do NOT implement this — they lose
+// every event on restart, so there is no durable tip to resume from
+// and a fresh genesis is the correct (and only) behavior.
+type ChainTip interface {
+	// LastHash returns the Hash of the most recently recorded event,
+	// or "" when the store holds none. A non-nil error means the tip
+	// couldn't be read; the caller seeds genesis and continues (a
+	// failed resume must never block recording).
+	LastHash(ctx context.Context) (string, error)
+}
+
+// seed sets the chain head before any event is stamped. Called once
+// at Recorder construction, before the Recorder is shared with
+// request handlers, so it needs no extra synchronization beyond the
+// mutex the rest of the chainer already holds.
+func (c *chainer) seed(prev string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.prevHash = prev
 }
 
 // stamp populates e.PrevHash + e.Hash from the chainer state and

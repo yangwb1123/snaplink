@@ -57,12 +57,28 @@ func WithClock(now func() time.Time) Option {
 // from the sink (in chain order, oldest first — MemorySink returns
 // newest-first by default).
 //
-// Scope: in-process. A process restart resets the chain to a fresh
-// genesis. Cross-restart continuity needs a persistent prev-hash
-// store, which is deployment-specific and left for the operator to
-// wire — see chainer.go for the hook point.
+// Cross-restart continuity: when the configured sink implements
+// [ChainTip] (the SQLite sink does), the chain RESUMES from the last
+// persisted event's Hash on construction, so the first event a fresh
+// process records carries PrevHash == the last pre-restart Hash —
+// VerifyChain sees one unbroken chain across the restart seam rather
+// than a spurious second genesis. An empty store (or a memory-only
+// sink that can't resume) seeds genesis. A tip-read error is
+// best-effort: it seeds genesis and continues so a degraded sink
+// never blocks recording — the only visible effect is a single
+// chain break at this restart, identical to the pre-resume behavior.
 func WithHashChain() Option {
-	return func(r *Recorder) { r.chain = &chainer{} }
+	return func(r *Recorder) {
+		r.chain = &chainer{}
+		// Resume from durable storage before any event is stamped.
+		// Options run after r.sink is set in New, so the sink (and its
+		// optional ChainTip extension) is already in place here.
+		if tip, ok := r.sink.(ChainTip); ok {
+			if last, err := tip.LastHash(context.Background()); err == nil {
+				r.chain.seed(last)
+			}
+		}
+	}
 }
 
 func New(sink Sink, opts ...Option) *Recorder {
