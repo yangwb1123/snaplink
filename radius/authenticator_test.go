@@ -22,7 +22,7 @@ func newTestAuth(t *testing.T, fake *fakeExchanger, cfg Config) *Authenticator {
 	if cfg.SharedSecret == "" {
 		cfg.SharedSecret = "test-secret"
 	}
-	a, err := New(cfg, withExchanger(fake))
+	a, err := New(cfg, WithExchanger(fake))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -220,5 +220,66 @@ func TestNew_MissingSharedSecret_FailsClosed(t *testing.T) {
 	_, err := New(Config{Name: "x", Servers: []string{"h:1812"}})
 	if err == nil {
 		t.Fatal("New accepted a config with no shared secret — must fail closed")
+	}
+}
+
+// --- Public WithExchanger seam (the CHAP-extensibility contract) ------------
+
+// stubExchanger is a stand-in for an operator-supplied custom Exchanger (e.g. a
+// CHAP implementation). It is deliberately SEPARATE from fakeExchanger and
+// returns a sentinel attribute so the test can prove the verdict came from THIS
+// injected exchanger and not the stock PAP one. It owns no real transport — it
+// is just the narrow interface the module exposes.
+type stubExchanger struct {
+	called bool
+}
+
+func (s *stubExchanger) Exchange(_ context.Context, _, _ string) (bool, map[string]string, error) {
+	s.called = true
+	return true, map[string]string{"via": "custom-exchanger"}, nil
+}
+
+var _ Exchanger = (*stubExchanger)(nil)
+
+// The PUBLIC WithExchanger option must actually replace the stock exchanger so
+// Authenticate routes the verdict through the operator-supplied one. This is the
+// reachability config.go's CHAP rejection promises: a custom Exchanger wired via
+// the exported New(cfg, WithExchanger(...)) API is genuinely used.
+func TestNew_WithExchanger_Public_IsUsedByAuthenticate(t *testing.T) {
+	stub := &stubExchanger{}
+	a, err := New(Config{
+		Name:         "corp-nps",
+		Servers:      []string{"radius.example.com:1812"},
+		SharedSecret: "test-secret",
+	}, WithExchanger(stub))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := a.Authenticate(context.Background(), authReq("alice", "s3cret"))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !stub.called {
+		t.Fatal("custom Exchanger supplied via public WithExchanger was NOT invoked — the seam is unreachable")
+	}
+	if res.Attributes["via"] != "custom-exchanger" {
+		t.Errorf("verdict did not come from the injected exchanger: via = %q, want custom-exchanger", res.Attributes["via"])
+	}
+}
+
+// A nil Exchanger must be ignored (the stock one kept), so passing it cannot
+// accidentally disarm the authenticator.
+func TestNew_WithExchanger_Nil_KeepsStockExchanger(t *testing.T) {
+	a, err := New(Config{
+		Name:         "corp-nps",
+		Servers:      []string{"radius.example.com:1812"},
+		SharedSecret: "test-secret",
+	}, WithExchanger(nil))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, ok := a.exch.(*radiusExchanger); !ok {
+		t.Errorf("nil WithExchanger replaced the stock exchanger with %T, want the stock *radiusExchanger", a.exch)
 	}
 }

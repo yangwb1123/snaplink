@@ -45,7 +45,7 @@ const (
 
 // realExchanger constructs the PRODUCTION radiusExchanger from cfg (filling the
 // required Name/SharedSecret when the test left them blank). It deliberately
-// does NOT use withExchanger — this is the whole point: exercise the layeh path.
+// does NOT use WithExchanger — this is the whole point: exercise the layeh path.
 func realExchanger(t *testing.T, cfg Config) *radiusExchanger {
 	t.Helper()
 	if cfg.Name == "" {
@@ -73,7 +73,7 @@ func realAuthenticator(t *testing.T, cfg Config) *Authenticator {
 	if cfg.SharedSecret == "" {
 		cfg.SharedSecret = testSecret
 	}
-	a, err := New(cfg) // real radiusExchanger, NOT withExchanger
+	a, err := New(cfg) // real radiusExchanger, NOT WithExchanger
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

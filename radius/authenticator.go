@@ -121,11 +121,21 @@ func WithLogger(l logger) Option {
 	}
 }
 
-// withExchanger overrides the production layeh.com/radius exchanger with a test
-// fake. It is unexported: only tests in this package (which can construct the
-// in-process fake) use it. Production code always gets the real radiusExchanger.
-func withExchanger(e Exchanger) Option {
-	return func(a *Authenticator) { a.exch = e }
+// WithExchanger overrides the stock layeh.com/radius exchanger with an
+// operator-supplied one. This is the PUBLIC seam config.go's CHAP rejection
+// points at: the stock radiusExchanger implements only PAP, so an operator who
+// needs CHAP (or any other Access-Request construction) implements the narrow
+// Exchanger interface and injects it here — Authenticate then routes every
+// verdict through it instead of the built-in PAP path. A nil Exchanger is
+// ignored (the stock one is kept), so passing it cannot accidentally disarm the
+// authenticator. The tests in this package also use it to drive the in-process
+// fake, keeping the seam exercised without a real RADIUS server.
+func WithExchanger(e Exchanger) Option {
+	return func(a *Authenticator) {
+		if e != nil {
+			a.exch = e
+		}
+	}
 }
 
 // New validates cfg and returns the authenticator. A construction error fails
