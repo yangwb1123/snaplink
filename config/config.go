@@ -559,6 +559,17 @@ type PasswordConfig struct {
 	// user is upgraded to bcrypt on first login. Default false — byte-identical
 	// (the import tool's output is otherwise inert: nothing reads those hashes).
 	ImportedHashLogin bool `yaml:"imported_hash_login,omitempty"`
+
+	// ImportedHashDummyCost pins the bcrypt cost of the anti-enumeration dummy
+	// hash the imported-hash verifier runs on a miss. It MUST match the cost of
+	// the imported bcrypt corpus so an unknown-username login takes comparable
+	// time to a real one — a too-low dummy is a timing oracle that distinguishes
+	// known from unknown usernames. 0 (default) uses
+	// authenticators.DefaultStoredHashDummyCost (12, above bcrypt's cost-10
+	// default). Only consulted when imported_hash_login is true. A non-bcrypt
+	// imported corpus (argon2id / PBKDF2) can't be matched exactly — import at a
+	// uniform KDF for full timing parity.
+	ImportedHashDummyCost int `yaml:"imported_hash_dummy_cost,omitempty"`
 }
 
 // PasswordHealthConfig wires the optional login-time credential-health

@@ -436,8 +436,12 @@ func (s *Server) handleCIBATokenGrant(ctx HandlerContext, client *Client, authRe
 		KeyTokenStrategy: strategy,
 	}
 	if s.refreshTokenStore != nil {
+		// First-issue: pass "" so a fresh 256-bit family id is minted. The
+		// OIDC nonce belongs to the id_token only — reusing it as the family
+		// id would make the family key low-entropy/guessable and let an RP
+		// trigger a cross-flow DeleteFamily DoS by replaying a known nonce.
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
-			r.SubjectID, client.ID, provider, r.Scopes, nil, r.Nonce, r.Resources, nil, "", client.RefreshTokenTTL)
+			r.SubjectID, client.ID, provider, r.Scopes, nil, "", r.Resources, nil, "", client.RefreshTokenTTL)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err)
 		} else {
@@ -460,8 +464,11 @@ func (s *Server) handleCIBATokenGrant(ctx HandlerContext, client *Client, authRe
 			})
 			if err != nil {
 				s.logger.Error("id token issue failed", "error", err)
-			} else {
-				resp[KeyIDToken] = idToken
+			} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+				// Route through the JWE encrypter so a client with
+				// IDTokenEncryptedResponseAlg gets a JWE, matching every
+				// other id_token grant (login/device/auth_code/exchange).
+				resp[KeyIDToken] = enc
 				s.recordIDTokenIssued(ctx, client.ID, r.SubjectID)
 			}
 		}

@@ -210,6 +210,24 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 	}
 }
 
+// buildAuthenticatorReplayStore resolves the replay-defense store the keypair
+// (nonce) and TOTP (consumed-code) authenticators record against. Unlike the
+// DPoP/JAR/assertion jti store it is ALWAYS present: the keypair signature and
+// TOTP code each replay within their bounded skew/step window, so a shipped
+// binary that omits the store is replay-vulnerable by default. When the
+// operator already opted into jti replay protection we reuse that backend (so
+// sqlite stays cluster-shared and the defense doesn't fork across replicas);
+// otherwise we default to an in-memory store so the out-of-the-box binary is
+// safe on a single replica. Reuses the existing security.JTIReplayStore SPI —
+// a nonce / consumed (user, step) is just another "have I seen this before"
+// check. mode is for the boot log.
+func buildAuthenticatorReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
+	if cfg.Enabled {
+		return buildJTIReplayStore(cfg)
+	}
+	return defaultimpl.NewMemoryJTIReplayStore(), "memory (default; enable security.jti_replay for cluster-shared)", nil
+}
+
 // buildSPIFFEOption assembles the WithSPIFFEJWTSVID option from config,
 // loading the SPIRE trust-bundle JWKS from disk into a StaticJWKS. It
 // fails LOUD on any missing required field — there is no safe default for
@@ -4272,6 +4290,26 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 	var totpEnrollStore sso.MFAEnrollmentStore
 	codeStore := authenticators.NewMemoryCodeStore()
 
+	// Replay-defense store for the keypair (nonce) + TOTP (consumed-code)
+	// authenticators, built once and shared (their keys live in disjoint
+	// namespaces). Resolved lazily so a binary with neither authenticator
+	// enabled opens no extra backend. Reuses the jti-replay backend when the
+	// operator enabled it (cluster-shared sqlite) and otherwise defaults to a
+	// memory store so the shipped binary is replay-safe out of the box.
+	var replayStore security.JTIReplayStore
+	var replayMode string
+	authReplayStore := func() (security.JTIReplayStore, string, error) {
+		if replayStore != nil {
+			return replayStore, replayMode, nil
+		}
+		s, mode, err := buildAuthenticatorReplayStore(cfg.Security.JTIReplay)
+		if err != nil {
+			return nil, "", err
+		}
+		replayStore, replayMode = s, mode
+		return replayStore, replayMode, nil
+	}
+
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
 		var verifier authenticators.PasswordVerifier
 		var seeded int
@@ -4295,14 +4333,21 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 		// opt-in flag and a UserProvider.
 		if a.ImportedHashLogin && userProvider != nil {
 			needs, update := authenticators.StoredHashRehashHooks(userProvider)
+			// Match the miss-path dummy bcrypt cost to the imported corpus so an
+			// unknown-username login isn't measurably faster than a real verify
+			// (enumeration timing oracle). 0 = DefaultStoredHashDummyCost.
+			var shOpts []authenticators.StoredHashOption
+			if a.ImportedHashDummyCost > 0 {
+				shOpts = append(shOpts, authenticators.WithStoredHashDummyCost(a.ImportedHashDummyCost))
+			}
 			lazyStored := &authenticators.LazyRehashVerifier{
-				Underlying:  authenticators.NewStoredHashVerifier(userProvider),
+				Underlying:  authenticators.NewStoredHashVerifier(userProvider, shOpts...),
 				NeedsRehash: needs,
 				Updater:     update,
 				Logger:      logger,
 			}
 			verifier = authenticators.NewChainPasswordVerifier(verifier, lazyStored)
-			logger.Info("imported-hash login enabled (sso-import users can authenticate)")
+			logger.Info("imported-hash login enabled (sso-import users can authenticate)", "dummy_bcrypt_cost", a.ImportedHashDummyCost)
 		}
 		var pwOpts []authenticators.PasswordOption
 		if h := a.Health; h != nil && h.Enabled {
@@ -4366,8 +4411,17 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 			store.Register(k.KeyID, pub, &sso.Subject{ID: k.SubjectID})
 			seeded++
 		}
-		auths = append(auths, authenticators.NewKeyPairAuthenticator(store, a.MaxClockSkew))
-		logger.Info("keypair authenticator enabled", "seeded_keys", seeded)
+		// Nonce-replay defense: without it the SAME (key_id, nonce, timestamp)
+		// signature replays within the clock-skew window. Always wired so the
+		// shipped binary is not replay-vulnerable by default.
+		nonceStore, replayMode, err := authReplayStore()
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("keypair nonce store: %w", err)
+		}
+		auths = append(auths, authenticators.NewKeyPairAuthenticator(store, a.MaxClockSkew,
+			authenticators.WithKeyPairNonceStore(nonceStore),
+			authenticators.WithKeyPairLogger(logger)))
+		logger.Info("keypair authenticator enabled", "seeded_keys", seeded, "nonce_replay_store", replayMode)
 	}
 
 	if a := cfg.Authenticators.APIKey; a != nil && a.Enabled {
@@ -4424,6 +4478,17 @@ func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 		if a.SkewSteps > 0 {
 			totpOpts = append(totpOpts, authenticators.WithTOTPSkew(a.SkewSteps))
 		}
+		// Consumed-code defense: without it a captured 6-digit code replays for
+		// the rest of its step window. Always wired so the shipped binary
+		// enforces one-time-use by default.
+		consumedStore, replayMode, err := authReplayStore()
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("totp consumed store: %w", err)
+		}
+		totpOpts = append(totpOpts,
+			authenticators.WithTOTPConsumedStore(consumedStore),
+			authenticators.WithTOTPLogger(logger))
+		logger.Info("totp one-time-use enforcement enabled", "consumed_store", replayMode)
 		if a.SQLiteDSN != "" {
 			sqliteStore, err := sqlitestores.NewTOTPEnrollmentStore(a.SQLiteDSN)
 			if err != nil {

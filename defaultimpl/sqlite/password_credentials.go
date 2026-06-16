@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/snaplink/sso"
@@ -31,12 +32,19 @@ CREATE TABLE IF NOT EXISTS password_credentials (
 // in the shared file so replica B (and a restart) verifies against it too.
 //
 // Passwords are bcrypt-hashed at rest (bcrypt.DefaultCost). The dummy hash
-// is generated once at construction so the unknown-user path in
-// VerifyPassword spends a comparable amount of time as a real compare,
-// matching the memory peer's anti-enumeration timing parity.
+// is generated at construction so the unknown-user path in VerifyPassword
+// spends a comparable amount of time as a real compare, matching the memory
+// peer's anti-enumeration timing parity. When a higher-cost hash is imported
+// via SetPasswordHash the dummy is re-minted to that cost (raiseDummyCost) so
+// the miss path stays comparable to the SLOWEST stored hash — a cost-10 dummy
+// against a cost-12 imported hash would otherwise be a timing oracle. NOTE:
+// the dummy cost is process-local and resets to DefaultCost on restart; cmd
+// re-imports seeded hashes at boot, which re-raises it.
 type PasswordCredentialStore struct {
-	db    *sql.DB
-	dummy []byte // cost-matched dummy for unknown-user timing parity
+	db        *sql.DB
+	mu        sync.RWMutex
+	dummy     []byte // cost-matched dummy for unknown-user timing parity
+	dummyCost int    // bcrypt cost the current dummy was minted at
 }
 
 // newDummyHash builds the cost-matched dummy used on the unknown-user
@@ -44,6 +52,22 @@ type PasswordCredentialStore struct {
 func newDummyHash() []byte {
 	dummy, _ := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), bcrypt.DefaultCost)
 	return dummy
+}
+
+// raiseDummyCost re-mints the timing-equalization dummy at cost when cost
+// exceeds the current dummy cost, keeping the unknown-user path comparable to
+// the slowest stored hash. A GenerateFromPassword failure leaves the existing
+// dummy in place (best-effort timing parity).
+func (s *PasswordCredentialStore) raiseDummyCost(cost int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cost <= s.dummyCost || cost > bcrypt.MaxCost {
+		return
+	}
+	if d, err := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), cost); err == nil {
+		s.dummy = d
+		s.dummyCost = cost
+	}
 }
 
 // NewPasswordCredentialStore opens dsn, migrates the schema, and returns
@@ -62,7 +86,7 @@ func NewPasswordCredentialStore(dsn string) (*PasswordCredentialStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate password_credentials: %w", err)
 	}
-	return &PasswordCredentialStore{db: db, dummy: newDummyHash()}, nil
+	return &PasswordCredentialStore{db: db, dummy: newDummyHash(), dummyCost: bcrypt.DefaultCost}, nil
 }
 
 // NewPasswordCredentialStoreWithDB wraps an existing *sql.DB (shared-pool
@@ -71,7 +95,7 @@ func NewPasswordCredentialStoreWithDB(db *sql.DB) (*PasswordCredentialStore, err
 	if err := ensureSchema(db, "password_credentials", passwordCredentialsSchema); err != nil {
 		return nil, fmt.Errorf("sqlite: migrate password_credentials: %w", err)
 	}
-	return &PasswordCredentialStore{db: db, dummy: newDummyHash()}, nil
+	return &PasswordCredentialStore{db: db, dummy: newDummyHash(), dummyCost: bcrypt.DefaultCost}, nil
 }
 
 // Close releases the SQLite connection. Idempotent.
@@ -139,6 +163,12 @@ func (s *PasswordCredentialStore) SetPasswordHash(ctx context.Context, userID, b
 	if err != nil {
 		return fmt.Errorf("sqlite: upsert password_credential hash: %w", err)
 	}
+	// Keep the miss-path dummy as slow as the slowest imported hash so an
+	// unknown-username login isn't measurably faster (enumeration timing
+	// oracle). A malformed hash yields cost 0, a no-op against the dummy.
+	if cost, cerr := bcrypt.Cost([]byte(bcryptHash)); cerr == nil {
+		s.raiseDummyCost(cost)
+	}
 	return nil
 }
 
@@ -154,7 +184,10 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	if errors.Is(err, sql.ErrNoRows) {
 		// Unknown user: compare against the dummy so timing matches a real
 		// mismatch, then collapse to the same error (anti-enumeration).
-		_ = bcrypt.CompareHashAndPassword(s.dummy, []byte(plaintext))
+		s.mu.RLock()
+		dummy := s.dummy
+		s.mu.RUnlock()
+		_ = bcrypt.CompareHashAndPassword(dummy, []byte(plaintext))
 		return core.ErrPasswordMismatch
 	}
 	if err != nil {

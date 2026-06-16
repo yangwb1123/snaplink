@@ -6,7 +6,21 @@ import (
 	"maps"
 
 	"github.com/snaplink/sso"
+	"golang.org/x/crypto/bcrypt"
 )
+
+// DefaultStoredHashDummyCost is the bcrypt cost of the dummy hash used to
+// equalize timing on a miss when the operator does not pin one. It is set
+// ABOVE bcrypt.DefaultCost (10) because the imported hashes this verifier
+// serves are typically minted at a modern cost (12+) or are a non-bcrypt KDF;
+// a cost-10 dummy would finish measurably faster than a real verify, leaking
+// "this username is unknown" as a timing side channel. Operators whose
+// imported bcrypt hashes use a specific cost SHOULD pin it via
+// WithStoredHashDummyCost so the miss path matches the hit path. A non-bcrypt
+// imported corpus (argon2id / PBKDF2) cannot be matched exactly across formats
+// — the dummy is a bcrypt floor, narrowing but not eliminating the gap; the
+// only complete fix there is to import at a uniform KDF.
+const DefaultStoredHashDummyCost = 12
 
 // Attribute keys under which a migration tool (cmd/sso-import) persists a user's
 // imported credential hash on the User record. The verifier and the importer
@@ -41,13 +55,40 @@ type StoredHashVerifier struct {
 	dummyHash PasswordHash
 }
 
+// StoredHashOption tunes a StoredHashVerifier at construction.
+type StoredHashOption func(*storedHashConfig)
+
+type storedHashConfig struct {
+	dummyCost int
+}
+
+// WithStoredHashDummyCost pins the bcrypt cost of the miss-path dummy hash so
+// it matches the cost of the deployment's imported bcrypt hashes — the
+// unknown-user verify then takes comparable time to a real one, closing the
+// enumeration timing oracle. A cost outside bcrypt's accepted range, or <=0,
+// falls back to DefaultStoredHashDummyCost. Set this to the SAME cost the
+// imported bcrypt corpus uses; for a non-bcrypt corpus leave it at the default
+// (an exact cross-format match is infeasible — see DefaultStoredHashDummyCost).
+func WithStoredHashDummyCost(cost int) StoredHashOption {
+	return func(c *storedHashConfig) { c.dummyCost = cost }
+}
+
 // NewStoredHashVerifier returns a verifier that reads imported hashes from the
 // UserProvider. The login username is looked up via GetByID — migration tools
 // set the user ID to the login identifier (sanitized email / username).
-func NewStoredHashVerifier(users sso.UserProvider) *StoredHashVerifier {
-	// Precompute one dummy bcrypt hash for timing equalization on misses.
-	dummy, _ := HashPassword("stored-hash-verifier-dummy-timing-equalizer")
-	return &StoredHashVerifier{users: users, dummyHash: dummy}
+func NewStoredHashVerifier(users sso.UserProvider, opts ...StoredHashOption) *StoredHashVerifier {
+	cfg := storedHashConfig{dummyCost: DefaultStoredHashDummyCost}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if cfg.dummyCost < bcrypt.MinCost || cfg.dummyCost > bcrypt.MaxCost {
+		cfg.dummyCost = DefaultStoredHashDummyCost
+	}
+	// Precompute one dummy bcrypt hash at the configured cost for timing
+	// equalization on misses. Computed once at construction so the per-login
+	// miss path only runs the (cost-bounded) compare, not a fresh generate.
+	b, _ := bcrypt.GenerateFromPassword([]byte("stored-hash-verifier-dummy-timing-equalizer"), cfg.dummyCost)
+	return &StoredHashVerifier{users: users, dummyHash: PasswordHash{Format: HashFormatBcrypt, Hash: string(b)}}
 }
 
 // Verify implements PasswordVerifier.
