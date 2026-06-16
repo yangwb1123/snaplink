@@ -1,9 +1,9 @@
 package middleware
 
 import (
-	"net/http/httptest"
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/snaplink/sso/core"
