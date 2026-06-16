@@ -53,3 +53,23 @@ func TestGeoContextNilInfo(t *testing.T) {
 		t.Errorf("FromContext() = %v, want nil", got)
 	}
 }
+
+func TestGeoContextNilContext(t *testing.T) {
+	t.Parallel()
+
+	// FromContext must guard a nil ctx (callers chain unconditionally).
+	got, ok := FromContext(nil)
+	if ok || got != nil {
+		t.Errorf("FromContext(nil) = (%v, %v), want (nil, false)", got, ok)
+	}
+}
+
+func TestWithContext_NilInfoReturnsSameContext(t *testing.T) {
+	t.Parallel()
+
+	// Passing nil info returns ctx unchanged so callers can chain.
+	ctx := context.Background()
+	if got := WithContext(ctx, nil); got != ctx {
+		t.Error("WithContext(ctx, nil) returned a derived context, want ctx unchanged")
+	}
+}

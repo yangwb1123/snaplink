@@ -124,6 +124,28 @@ func TestRemove_MissingIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRemove_RejectsBadCIDR(t *testing.T) {
+	p := static.New()
+	if err := p.Remove("not-a-cidr"); err == nil {
+		t.Fatal("expected error for malformed CIDR")
+	}
+}
+
+func TestRemove_LeavesOtherEntries(t *testing.T) {
+	p := static.New()
+	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US"})
+	_ = p.Add("192.168.0.0/16", geo.GeoInfo{CountryCode: "US"})
+	if err := p.Remove("10.0.0.0/8"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if p.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", p.Len())
+	}
+	if _, err := p.Lookup(context.Background(), net.ParseIP("192.168.1.1")); err != nil {
+		t.Errorf("surviving entry lookup failed: %v", err)
+	}
+}
+
 func TestLookup_IPv6(t *testing.T) {
 	p := static.New()
 	_ = p.Add("2001:db8::/32", geo.GeoInfo{CountryCode: "DE", RecommendedLanguage: "de-DE"})
