@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -9,9 +10,12 @@ import (
 	"github.com/snaplink/sso/spi"
 )
 
-// UserinfoSignedAlgEdDSA is the only `userinfo_signed_response_alg`
-// value this server can satisfy today — matches the access-token /
-// id-token signing algorithm. Other alg values fall through to JSON.
+// UserinfoSignedAlgEdDSA is the EdDSA `userinfo_signed_response_alg`
+// value — the historical default. The server honors any alg in its live
+// signing-alg set (EdDSA / ES256 / RS256 / PS256), gated by
+// userinfoAlgSupported so an ES256/RS256/PS256 deployment signs userinfo in
+// its native alg rather than falling through to JSON; only an alg outside
+// the wired set falls through.
 const UserinfoSignedAlgEdDSA = "EdDSA"
 
 // ErrUserinfoServerError is the single wire `error` value /userinfo
@@ -37,6 +41,13 @@ type UserinfoSigningDeps interface {
 	IDTokenIssuerForClient(c *core.Client) (IDTokenIssuer, bool, error)
 	ClientStoreAccessor() core.ClientStore
 	SrvLogger() spi.Logger
+	// SigningAlgValues is the server's live signing-alg set — the SAME
+	// source the discovery doc advertises as
+	// userinfo_signing_alg_values_supported. Gating signed userinfo on
+	// this keeps the handler consistent with discovery: a client's
+	// userinfo_signed_response_alg is honored iff the server can actually
+	// produce it.
+	SigningAlgValues(ctx context.Context) []string
 	// JWEResponseEncrypter returns the wired response encrypter (nil
 	// when none) used to encrypt the /userinfo response when the client
 	// registered userinfo_encrypted_response_alg.
@@ -60,9 +71,9 @@ type UserinfoSigningDeps interface {
 // signature rather than falling back to the shared key (which would sign
 // this tenant's userinfo with another key, the opposite of isolation).
 //
-// Unsupported alg values (anything besides EdDSA) fall through to
-// JSON — the spec says the AS MUST honor the request OR return JSON
-// when it can't; we choose the latter to keep RPs working.
+// An alg the server can't produce (one outside its live signing-alg set)
+// falls through to JSON — the spec says the AS MUST honor the request OR
+// return JSON when it can't; we choose the latter to keep RPs working.
 func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID string, body map[string]any) bool {
 	clientStore := d.ClientStoreAccessor()
 	if clientStore == nil || clientID == "" {
@@ -97,7 +108,7 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 		// (encrypt path is unaffected — it keys off Client.JWKS, not the
 		// signer).
 		signer, ok := userinfoSignerForClient(d, client)
-		if ok && client.UserinfoSignedResponseAlg == UserinfoSignedAlgEdDSA {
+		if ok && userinfoAlgSupported(d, ctx, client.UserinfoSignedResponseAlg) {
 			jwt, serr := signer.SignUserInfo(reqCtx, client.ID, body)
 			if serr != nil {
 				d.SrvLogger().Error("userinfo sign failed", "error", serr, "client", client.ID)
@@ -174,6 +185,27 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 // that tenant's own key. Non-tenant clients get the shared issuer back
 // from IDTokenIssuerForClient itself, so this is byte-identical to the
 // previous `d.IDTokenIssuer().(UserinfoSigner)` for them.
+// userinfoAlgSupported reports whether the client's requested
+// userinfo_signed_response_alg is one this server can actually produce —
+// i.e. it appears in the server's live signing-alg set (the SAME set the
+// discovery doc advertises via userinfo_signing_alg_values_supported). The
+// resolved per-tenant signer signs userinfo with its own key's alg; gating
+// on the advertised set keeps the handler consistent with discovery, so an
+// ES256 / RS256 / PS256 deployment honors the client's request instead of
+// silently returning plain JSON (the prior EdDSA-only hardcode). An empty
+// or unwired alg falls through to JSON unchanged.
+func userinfoAlgSupported(d UserinfoSigningDeps, ctx core.HandlerContext, alg string) bool {
+	if alg == "" {
+		return false
+	}
+	for _, a := range d.SigningAlgValues(ctx.Request().Context()) {
+		if a == alg {
+			return true
+		}
+	}
+	return false
+}
+
 func userinfoSignerForClient(d UserinfoSigningDeps, client *core.Client) (UserinfoSigner, bool) {
 	idIssuer, emit, err := d.IDTokenIssuerForClient(client)
 	if err != nil {
