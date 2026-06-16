@@ -1,8 +1,8 @@
 package security
 
 import (
-	"testing"
 	"strings"
+	"testing"
 
 	"github.com/snaplink/sso/core"
 )
