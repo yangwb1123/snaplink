@@ -3,6 +3,7 @@ package federation_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -167,5 +168,63 @@ func TestDialWithSSRFCheck_BlocksInternalIPs(t *testing.T) {
 				t.Fatalf("DialWithSSRFCheck(%q): expected SSRF error, got nil", tc.addr)
 			}
 		})
+	}
+}
+
+// TestDialWithSSRFCheck_BlocksRebinding is the core DNS-rebinding regression: a
+// HOSTNAME (not a literal IP) that DNS-resolves to an internal address must be
+// blocked at dial time, AFTER the literal-IP fast path is bypassed and the real
+// LookupHost branch runs. "localhost" is the deterministic stand-in for the
+// attack ("evil.example.com → 127.0.0.1"): it is a non-literal host that every
+// resolver maps to loopback, so it exercises the resolved-IP rejection path
+// without depending on attacker-controlled DNS. The dial MUST fail with the
+// SSRF-guard marker, NOT a downstream connect error, proving the resolved IP
+// was inspected and rejected before any connection was attempted.
+func TestDialWithSSRFCheck_BlocksRebinding(t *testing.T) {
+	// A real listener on loopback so that, absent the guard, the dial WOULD
+	// succeed — the test would be vacuous if nothing were listening.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+
+	addr := net.JoinHostPort("localhost", port)
+	conn, err := federation.DialWithSSRFCheck(context.Background(), "tcp", addr)
+	if err == nil {
+		_ = conn.Close()
+		t.Fatalf("DialWithSSRFCheck(%q): expected SSRF rejection of resolved internal IP, got nil", addr)
+	}
+	// The error MUST come from the resolved-IP guard, not from a connect
+	// failure — otherwise the rebinding host slipped past the resolution check.
+	if !strings.Contains(err.Error(), "(SSRF guard)") {
+		t.Fatalf("DialWithSSRFCheck(%q): err = %v, want resolved-IP SSRF-guard rejection", addr, err)
+	}
+}
+
+// TestDialWithSSRFCheck_AllowsPublicAddress proves the guard does NOT break a
+// normal, public-looking flow: a non-internal target passes the SSRF check and
+// reaches the TCP-connect stage. TEST-NET-1 (192.0.2.0/24, RFC 5737) is a
+// documentation range that is NOT internal per the blocklist but is guaranteed
+// unroutable, so the dial fails at CONNECT (timeout/refused), never at the SSRF
+// gate. A guard-marker error here would mean a legitimate public host was being
+// wrongly blocked.
+func TestDialWithSSRFCheck_AllowsPublicAddress(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conn, err := federation.DialWithSSRFCheck(ctx, "tcp", "192.0.2.1:80")
+	if err == nil {
+		// A successful dial to a public address is not an SSRF failure — the
+		// guard let it through, which is the correct behavior.
+		_ = conn.Close()
+		return
+	}
+	if strings.Contains(err.Error(), "(SSRF guard)") {
+		t.Fatalf("DialWithSSRFCheck(public addr): wrongly blocked by SSRF guard: %v", err)
 	}
 }
