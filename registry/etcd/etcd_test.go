@@ -144,3 +144,81 @@ func TestTranslateEvent_Delete_NoPrevKV_StillSurfacesIDName(t *testing.T) {
 		t.Errorf("expected ID/Name parsed from key, got %+v", got.Service)
 	}
 }
+
+// TestNewWithClient_PrefixHandling covers both arms of NewWithClient's prefix
+// defaulting (empty → DefaultPrefix, explicit → preserved) and confirms it
+// initializes the lease/cancel bookkeeping maps so Register/Deregister never
+// nil-panic. A nil client is fine because the constructor never touches it.
+func TestNewWithClient_PrefixHandling(t *testing.T) {
+	r := NewWithClient(nil, "")
+	if r.prefix != DefaultPrefix {
+		t.Errorf("empty prefix = %q, want default %q", r.prefix, DefaultPrefix)
+	}
+	if r.leases == nil || r.cancel == nil {
+		t.Error("bookkeeping maps must be initialized")
+	}
+	if r2 := NewWithClient(nil, "/custom/reg"); r2.prefix != "/custom/reg" {
+		t.Errorf("explicit prefix = %q, want /custom/reg", r2.prefix)
+	}
+}
+
+// TestTranslateEvent_Put_GarbageYieldsEmpty covers the Put branch where the
+// stored value won't decode: translateEvent returns a zero Event (nil Service)
+// so the Watch loop skips it.
+func TestTranslateEvent_Put_GarbageYieldsEmpty(t *testing.T) {
+	ev := &clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   &mvccpb.KeyValue{Key: []byte("/p/n/x"), Value: []byte("not json"), ModRevision: 1},
+	}
+	if got := translateEvent(ev); got.Service != nil {
+		t.Errorf("undecodable PUT should yield nil Service, got %+v", got)
+	}
+}
+
+// TestTranslateEvent_Delete_GarbagePrevKVYieldsEmpty covers the Delete branch
+// where PrevKv is present but its value is corrupt: rather than emit a
+// half-formed Removed event, translateEvent drops it (nil Service).
+func TestTranslateEvent_Delete_GarbagePrevKVYieldsEmpty(t *testing.T) {
+	ev := &clientv3.Event{
+		Type:   mvccpb.DELETE,
+		Kv:     &mvccpb.KeyValue{Key: []byte("/p/n/x")},
+		PrevKv: &mvccpb.KeyValue{Key: []byte("/p/n/x"), Value: []byte("not json")},
+	}
+	if got := translateEvent(ev); got.Service != nil {
+		t.Errorf("undecodable PrevKv should yield nil Service, got %+v", got)
+	}
+}
+
+// TestTranslateEvent_UnknownTypeYieldsEmpty covers translateEvent's default
+// arm — an event type that is neither PUT nor DELETE is dropped.
+func TestTranslateEvent_UnknownTypeYieldsEmpty(t *testing.T) {
+	ev := &clientv3.Event{
+		Type: mvccpb.Event_EventType(99),
+		Kv:   &mvccpb.KeyValue{Key: []byte("/p/n/x")},
+	}
+	if got := translateEvent(ev); got.Service != nil || got.Type != "" {
+		t.Errorf("unknown event type should yield zero Event, got %+v", got)
+	}
+}
+
+// TestDrainKeepAlive_ExitsOnClosedChannel verifies drainKeepAlive returns once
+// its source channel closes — the mechanism that lets the etcd client tear down
+// a lease's KeepAlive without leaking the drain goroutine. No etcd server is
+// needed: we drive the channel directly.
+func TestDrainKeepAlive_ExitsOnClosedChannel(t *testing.T) {
+	ch := make(chan *clientv3.LeaseKeepAliveResponse, 2)
+	ch <- &clientv3.LeaseKeepAliveResponse{ID: 1}
+	ch <- nil
+	close(ch)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		drainKeepAlive(ch)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("drainKeepAlive did not return after channel close")
+	}
+}

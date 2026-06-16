@@ -124,6 +124,38 @@ func TestReplicaIDFromKey(t *testing.T) {
 	}
 }
 
+// TestReplicaKey covers the per-replica key derivation — the inverse of
+// replicaIDFromKey, joining prefix and replica id with the path separator.
+func TestReplicaKey(t *testing.T) {
+	r := &Registry{prefix: "/snaplink/signingkeys"}
+	if got := r.replicaKey("replica-7"); got != "/snaplink/signingkeys/replica-7" {
+		t.Errorf("replicaKey = %q", got)
+	}
+}
+
+// TestNamespace_TrailingSlashPreventsPrefixCollision covers the WATCH/List
+// namespace: the trailing slash is what keeps prefix "/snaplink/signingkeys"
+// from also matching "/snaplink/signingkeysX/...".
+func TestNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
+	r := &Registry{prefix: "/snaplink/signingkeys"}
+	if got := r.namespace(); got != "/snaplink/signingkeys/" {
+		t.Errorf("namespace = %q, want trailing slash", got)
+	}
+}
+
+// TestDecodeWatchEvent_SkipsUnknownType covers decodeWatchEvent's default arm —
+// an event type that is neither PUT nor DELETE is reported not-ok so the
+// Subscribe loop drops it.
+func TestDecodeWatchEvent_SkipsUnknownType(t *testing.T) {
+	ev := &clientv3.Event{
+		Type: mvccpb.Event_EventType(99),
+		Kv:   &mvccpb.KeyValue{Key: []byte("/snaplink/signingkeys/replica-7")},
+	}
+	if _, ok := decodeWatchEvent(DefaultPrefix, ev); ok {
+		t.Fatal("unknown event type should be skipped")
+	}
+}
+
 func TestDecodeWatchEvent_PutBecomesUpsert(t *testing.T) {
 	in := signingkeys.Announcement{ReplicaID: "replica-7", Keys: sampleKeys(), LeaseSeconds: 300}
 	body, _ := encodeAnnouncement(in)

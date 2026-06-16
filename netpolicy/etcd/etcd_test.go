@@ -150,3 +150,49 @@ func TestTranslateEvent_Delete_NoPrevKV(t *testing.T) {
 		t.Errorf("expected name from key, got %+v", got.Policy)
 	}
 }
+
+// TestNewWithClient_PrefixHandling covers both arms of NewWithClient's
+// prefix defaulting without dialing etcd: empty → DefaultPrefix, explicit
+// → preserved. A nil client is fine because the constructor never touches it.
+func TestNewWithClient_PrefixHandling(t *testing.T) {
+	if s := NewWithClient(nil, ""); s.prefix != DefaultPrefix {
+		t.Errorf("empty prefix = %q, want default %q", s.prefix, DefaultPrefix)
+	}
+	if s := NewWithClient(nil, "/custom/np"); s.prefix != "/custom/np" {
+		t.Errorf("explicit prefix = %q, want /custom/np", s.prefix)
+	}
+}
+
+// TestUnmarshalPolicy_RejectsGarbage covers the JSON-error arm of
+// unmarshalPolicy — a corrupt value surfaces a wrapped error rather than a
+// silent zero-value policy.
+func TestUnmarshalPolicy_RejectsGarbage(t *testing.T) {
+	if _, err := unmarshalPolicy([]byte("not json"), 7); err == nil {
+		t.Fatal("expected error for undecodable policy value")
+	}
+}
+
+// TestTranslateEvent_Put_GarbageYieldsEmpty covers the Put branch where the
+// stored value won't decode: translateEvent returns a zero Event (nil Policy)
+// so the Watch loop skips it rather than emitting a half-formed event.
+func TestTranslateEvent_Put_GarbageYieldsEmpty(t *testing.T) {
+	ev := &clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   &mvccpb.KeyValue{Key: []byte("/p/intranet"), Value: []byte("not json"), ModRevision: 3},
+	}
+	if got := translateEvent(ev); got.Policy != nil {
+		t.Errorf("undecodable PUT should yield nil Policy, got %+v", got)
+	}
+}
+
+// TestTranslateEvent_UnknownTypeYieldsEmpty covers translateEvent's default
+// arm — an event type that is neither PUT nor DELETE is dropped.
+func TestTranslateEvent_UnknownTypeYieldsEmpty(t *testing.T) {
+	ev := &clientv3.Event{
+		Type: mvccpb.Event_EventType(99),
+		Kv:   &mvccpb.KeyValue{Key: []byte("/p/intranet")},
+	}
+	if got := translateEvent(ev); got.Policy != nil || got.Type != "" {
+		t.Errorf("unknown event type should yield zero Event, got %+v", got)
+	}
+}
