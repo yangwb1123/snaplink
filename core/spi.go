@@ -135,6 +135,14 @@ type SessionManager interface {
 type SessionMeta struct {
 	IP        string
 	UserAgent string
+
+	// TenantID, when set, binds the session to the tenant that owns the
+	// authenticating client. It lets SessionTenantIndex.DeleteByTenant kill
+	// every session for a suspended tenant directly (one query) instead of
+	// walking the org roster. Optional + best-effort: empty when the login
+	// flow had no tenant in scope, and a manager that doesn't persist it stays
+	// byte-identical (tenant suspension then falls back to the roster path).
+	TenantID string
 }
 
 // SessionMetaCreator is the OPTIONAL extension a SessionManager implements to
@@ -145,6 +153,23 @@ type SessionMeta struct {
 // implement it.
 type SessionMetaCreator interface {
 	CreateWithMeta(ctx context.Context, userID string, meta SessionMeta) (*Session, error)
+}
+
+// SessionTenantIndex is the OPTIONAL extension a SessionManager MAY implement to
+// support bulk per-tenant revocation. When an admin suspends or deletes a tenant
+// the server kills that tenant's active sessions so a privilege-escape window
+// (a session minted while the tenant was Active surviving until natural expiry)
+// is closed proactively rather than waiting on the lazy suspension check.
+//
+// The pattern mirrors RefreshTokenClientPurger: callers type-assert before using,
+// so adding this interface never breaks an existing SessionManager. Backends that
+// can't enumerate by tenant simply don't implement it — the server falls back to
+// revoking sessions via the tenant's membership roster (TenantUserStore).
+//
+// DeleteByTenant only matches sessions whose TenantID was stamped at creation
+// (SessionMeta.TenantID); an empty tenantID MUST be a no-op, not a wildcard.
+type SessionTenantIndex interface {
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // TokenIssuer handles token lifecycle: issuance, validation, and revocation.

@@ -343,6 +343,101 @@ func TestSessionManager_MigrationFromV1(t *testing.T) {
 	}
 }
 
+// TestSessionManager_DeleteByTenant verifies the bulk-revocation seam used on
+// tenant suspension: DeleteByTenant removes only the target tenant's sessions
+// and leaves other tenants' (and untagged) sessions intact.
+func TestSessionManager_DeleteByTenant(t *testing.T) {
+	mgr := newSessionManagerForTest(t)
+	ctx := context.Background()
+	if _, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{TenantID: "acme"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := mgr.CreateWithMeta(ctx, "bob", sso.SessionMeta{TenantID: "acme"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	keepTenant, err := mgr.CreateWithMeta(ctx, "carol", sso.SessionMeta{TenantID: "globex"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	keepUntagged, err := mgr.Create(ctx, "dave")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	n, err := mgr.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("deleted %d, want 2", n)
+	}
+	if _, err := mgr.Get(ctx, keepTenant.ID); err != nil {
+		t.Errorf("globex session destroyed: %v", err)
+	}
+	if _, err := mgr.Get(ctx, keepUntagged.ID); err != nil {
+		t.Errorf("untagged session destroyed: %v", err)
+	}
+	all, _ := mgr.ListAll(ctx)
+	if len(all) != 2 {
+		t.Errorf("remaining sessions = %d, want 2", len(all))
+	}
+	// The tenant binding round-trips through the column.
+	if got, _ := mgr.Get(ctx, keepTenant.ID); got.TenantID != "globex" {
+		t.Errorf("tenant_id not persisted: %q", got.TenantID)
+	}
+	// Idempotent re-run + empty tenant must not wipe the store.
+	if n, _ := mgr.DeleteByTenant(ctx, "acme"); n != 0 {
+		t.Errorf("re-delete = %d, want 0", n)
+	}
+	if n, _ := mgr.DeleteByTenant(ctx, ""); n != 0 {
+		t.Errorf("empty tenant deleted %d, want 0 (no wildcard)", n)
+	}
+	all, _ = mgr.ListAll(ctx)
+	if len(all) != 2 {
+		t.Errorf("empty-tenant delete must not wipe store, remaining = %d", len(all))
+	}
+}
+
+// TestSessionManager_MigrationFromV2 verifies the v3 tenant_id ALTER applies
+// cleanly to a DB created at v2 (sessions without the tenant binding) and that
+// the new column round-trips.
+func TestSessionManager_MigrationFromV2(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "v2.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	// Apply ONLY v1+v2 so the tenant_id column added by v3 is absent.
+	if err := migrate.Run(ctx, db, "sessions", sessionMigrations[:2]); err != nil {
+		t.Fatalf("v2 setup: %v", err)
+	}
+	_ = db.Close()
+	// Reopen through the real constructor → runs v3.
+	mgr, err := NewSessionManager(dsn, time.Hour)
+	if err != nil {
+		t.Fatalf("NewSessionManager (migrate v2->v3): %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	if v := SessionsMaxVersion(); v < 3 {
+		t.Fatalf("SessionsMaxVersion = %d, want >=3", v)
+	}
+	s, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{TenantID: "acme"})
+	if err != nil {
+		t.Fatalf("CreateWithMeta after migration: %v", err)
+	}
+	if got, _ := mgr.Get(ctx, s.ID); got.TenantID != "acme" {
+		t.Errorf("tenant_id not persisted after migration: %q", got.TenantID)
+	}
+	if n, err := mgr.DeleteByTenant(ctx, "acme"); err != nil || n != 1 {
+		t.Errorf("DeleteByTenant after migration = (%d, %v), want (1, nil)", n, err)
+	}
+}
+
 // openV1Sessions creates a sessions DB at schema v1 only (no device-context
 // columns), simulating a deployment that predates the v2 migration.
 func openV1Sessions(t *testing.T, dsn string) (*sql.DB, error) {

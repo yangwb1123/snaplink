@@ -1,14 +1,10 @@
 package sso
 
-
-
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +13,9 @@ import (
 	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/middleware"
-	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/security"
 )
+
 // temporarily fails.
 // matching the JWT issuers' already-configurable skew.
 
@@ -269,77 +265,6 @@ func writeSSFError(ctx HandlerContext, code string) {
 		"err":         code,
 		"description": desc,
 	})
-}
-
-// RevokeTenantRefreshTokens purges every refresh token issued to any client
-// belonging to tenantID — the active-revocation companion to tenant
-// suspension. WithTenantSuspensionCheck only *lazily* rejects a tenant-bound
-// token on its next validate (and only when wired), and never touches
-// refresh tokens; this proactively deletes them so a suspended tenant's
-// sessions can't be resumed from a still-valid refresh token, and so the
-// tokens stay gone even after the tenant is later reactivated.
-//
-// Opt-in + best-effort: returns (0, nil) when the client store can't
-// enumerate by tenant (no TenantScopedClientStore) or the refresh store
-// can't purge by client (no oauth.RefreshTokenClientPurger) — wiring neither
-// yields no active revocation, identical to today's behavior. A per-client
-// purge failure is logged and collected but never aborts the remaining
-// clients, so one bad client can't strand the rest. Returns the total tokens
-// deleted plus any joined per-client errors.
-func (s *Server) RevokeTenantRefreshTokens(ctx context.Context, tenantID string) (int, error) {
-	if tenantID == "" {
-		return 0, nil
-	}
-	scoped, ok := s.clientStore.(TenantScopedClientStore)
-	if !ok {
-		return 0, nil
-	}
-	purger, ok := s.refreshTokenStore.(oauth.RefreshTokenClientPurger)
-	if !ok {
-		return 0, nil
-	}
-	clients, err := scoped.ListByTenant(ctx, tenantID)
-	if err != nil {
-		return 0, fmt.Errorf("sso: list tenant clients: %w", err)
-	}
-	var (
-		total int
-		errs  []error
-	)
-	for _, c := range clients {
-		n, derr := purger.DeleteAllForClient(ctx, c.ID)
-		if derr != nil {
-			if s.logger != nil {
-				s.logger.Error("revoke tenant refresh tokens: client purge failed",
-					"error", derr, "tenant", tenantID, "client", c.ID)
-			}
-			errs = append(errs, derr)
-			continue
-		}
-		total += n
-	}
-	s.auditTenantTokensRevoked(ctx, tenantID, total)
-	return total, errors.Join(errs...)
-}
-
-// auditTenantTokensRevoked records the active revocation a tenant suspension
-// triggered. Count is informational; a zero count still records so a SIEM
-// sees the suspension was enforced even when the tenant held no live tokens.
-// Safe with a nil Recorder; uses audit.SetMeta so geo + tenant enrichment
-// isn't clobbered. Takes a plain context (not HandlerContext) — this is an
-// SDK-level operation, not necessarily tied to an inbound HTTP request.
-func (s *Server) auditTenantTokensRevoked(ctx context.Context, tenantID string, count int) {
-	if s.auditor == nil {
-		return
-	}
-	e := &audit.Event{
-		Type:      audit.EventTenantTokensRevoked,
-		Outcome:   audit.OutcomeSuccess,
-		ActorID:   tenantID,
-		Timestamp: time.Now(),
-	}
-	audit.SetMeta(e, "refresh_tokens_revoked", strconv.Itoa(count))
-	s.auditor.Record(ctx, e)
 }
 
 // DefaultTenantSuspensionCacheTTL bounds how long a tenant's

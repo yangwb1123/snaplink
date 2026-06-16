@@ -186,3 +186,46 @@ func TestMemorySessionManager_CreateWithMeta(t *testing.T) {
 		t.Errorf("plain Create meta should be empty, got %q / %q", plain.IP, plain.UserAgent)
 	}
 }
+
+// TestMemorySessionManager_DeleteByTenant pins the bulk-revocation seam used on
+// tenant suspension: only the target tenant's sessions are removed, sessions of
+// other tenants (and untagged sessions) survive.
+func TestMemorySessionManager_DeleteByTenant(t *testing.T) {
+	m := NewMemorySessionManager(time.Hour)
+	ctx := context.Background()
+	// Two sessions for tenant acme, one for globex, one untagged.
+	_, _ = m.CreateWithMeta(ctx, "alice", sso.SessionMeta{TenantID: "acme"})
+	_, _ = m.CreateWithMeta(ctx, "bob", sso.SessionMeta{TenantID: "acme"})
+	keepTenant, _ := m.CreateWithMeta(ctx, "carol", sso.SessionMeta{TenantID: "globex"})
+	keepUntagged, _ := m.Create(ctx, "dave")
+
+	n, err := m.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("DeleteByTenant: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("deleted %d, want 2", n)
+	}
+	// Other tenant + untagged sessions survive.
+	if _, err := m.Get(ctx, keepTenant.ID); err != nil {
+		t.Errorf("globex session destroyed: %v", err)
+	}
+	if _, err := m.Get(ctx, keepUntagged.ID); err != nil {
+		t.Errorf("untagged session destroyed: %v", err)
+	}
+	all, _ := m.ListAll(ctx)
+	if len(all) != 2 {
+		t.Errorf("remaining sessions = %d, want 2", len(all))
+	}
+	// Idempotent re-run + empty tenant is a no-op (not a wildcard).
+	if n, _ := m.DeleteByTenant(ctx, "acme"); n != 0 {
+		t.Errorf("re-delete = %d, want 0", n)
+	}
+	if n, _ := m.DeleteByTenant(ctx, ""); n != 0 {
+		t.Errorf("empty tenant deleted %d, want 0 (no wildcard)", n)
+	}
+	all, _ = m.ListAll(ctx)
+	if len(all) != 2 {
+		t.Errorf("empty-tenant delete must not wipe store, remaining = %d", len(all))
+	}
+}

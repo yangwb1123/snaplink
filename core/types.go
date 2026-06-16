@@ -539,6 +539,15 @@ type Session struct {
 	// as the rest of the server (safe only behind a trusted edge).
 	IP        string `json:"ip,omitempty"`
 	UserAgent string `json:"user_agent,omitempty"`
+
+	// TenantID binds the session to the tenant that owns the authenticating
+	// client, enabling SessionTenantIndex.DeleteByTenant to revoke every
+	// session of a suspended/deleted tenant in one pass. Best-effort: empty
+	// when the login flow had no tenant in scope (single-tenant deployments)
+	// or when the SessionManager doesn't persist it — never security
+	// load-bearing on its own (the suspension check + roster-based revocation
+	// remain the enforcement floor).
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // IsExpired checks if the session has expired.

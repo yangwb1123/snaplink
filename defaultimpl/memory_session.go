@@ -45,11 +45,34 @@ func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, 
 		ExpiresAt: now.Add(m.ttl),
 		IP:        meta.IP,
 		UserAgent: meta.UserAgent,
+		TenantID:  meta.TenantID,
 	}
 	m.mu.Lock()
 	m.sessions[id] = session
 	m.mu.Unlock()
 	return session, nil
+}
+
+// DeleteByTenant implements sso.SessionTenantIndex: it removes every session
+// stamped with tenantID, returning the count deleted. Backs proactive
+// revocation on tenant suspension/deletion so a session minted while the
+// tenant was Active can't outlive the suspension. Empty tenantID is a no-op
+// (not a wildcard) — blanking the store on an empty argument would be a
+// footgun.
+func (m *MemorySessionManager) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int
+	for id, s := range m.sessions {
+		if s.TenantID == tenantID {
+			delete(m.sessions, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (m *MemorySessionManager) Get(_ context.Context, sessionID string) (*sso.Session, error) {
@@ -121,4 +144,5 @@ func randomHex(n int) string {
 var (
 	_ sso.SessionManager     = (*MemorySessionManager)(nil)
 	_ sso.SessionMetaCreator = (*MemorySessionManager)(nil)
+	_ sso.SessionTenantIndex = (*MemorySessionManager)(nil)
 )

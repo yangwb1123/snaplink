@@ -28,6 +28,12 @@ const sessionIDBytes = 32
 // v2: ADD COLUMN ip + user_agent — best-effort device/location context for the
 //
 //	self-service session list. Default '' so existing rows are unaffected.
+//
+// v3: ADD COLUMN tenant_id + index — binds a session to its owning tenant so
+//
+//	DeleteByTenant (sso.SessionTenantIndex) can revoke every session of a
+//	suspended/deleted tenant in one query. Default '' so existing rows are
+//	unaffected (they fall back to roster-based revocation).
 var sessionMigrations = []migrate.Migration{
 	{
 		Version: 1,
@@ -53,6 +59,14 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
 		SQL: `
 ALTER TABLE sessions ADD COLUMN ip         TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';`,
+	},
+	{
+		Version: 3,
+		Name:    "session-tenant-binding",
+		SQL: `
+ALTER TABLE sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id
+    ON sessions(tenant_id);`,
 	},
 }
 
@@ -143,12 +157,13 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 		ExpiresAt: now.Add(s.ttl),
 		IP:        meta.IP,
 		UserAgent: meta.UserAgent,
+		TenantID:  meta.TenantID,
 	}
 	_, err = s.db.ExecContext(ctx, `
-        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent)
-        VALUES (?, ?, ?, ?, 0, ?, ?)`,
+        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,
 		session.ID, session.UserID, session.CreatedAt.UnixNano(), session.ExpiresAt.UnixNano(),
-		session.IP, session.UserAgent,
+		session.IP, session.UserAgent, session.TenantID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: insert session: %w", err)
@@ -158,7 +173,7 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 
 func (s *SessionManager) Get(ctx context.Context, sessionID string) (*sso.Session, error) {
 	row := s.db.QueryRowContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
           FROM sessions WHERE id = ?`, sessionID)
 	out, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -193,7 +208,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 	row := s.db.QueryRowContext(ctx, `
         UPDATE sessions SET expires_at = ?
           WHERE id = ? AND revoked = 0 AND expires_at > ?
-        RETURNING id, user_id, created_at, expires_at, revoked, ip, user_agent`,
+        RETURNING id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id`,
 		now.Add(s.ttl).UnixNano(), sessionID, now.UnixNano(),
 	)
 	out, err := scanSession(row)
@@ -208,7 +223,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 
 func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
           FROM sessions WHERE user_id = ?`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by user: %w", err)
@@ -219,7 +234,7 @@ func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.
 
 func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
           FROM sessions`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list all: %w", err)
@@ -228,13 +243,30 @@ func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	return scanSessionList(rows)
 }
 
+// DeleteByTenant implements sso.SessionTenantIndex — removes every session
+// stamped with tenantID across all users, returning the count deleted. Backs
+// proactive revocation on tenant suspension/deletion so a session minted while
+// the tenant was Active can't outlive the suspension. Empty tenantID is a no-op
+// (not a wildcard) — wiping the table on an empty argument would be a footgun.
+func (s *SessionManager) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE tenant_id = ?`, tenantID)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: delete sessions by tenant: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func scanSession(s scanner) (*sso.Session, error) {
 	var (
 		out                              sso.Session
 		createdAtUnixNs, expiresAtUnixNs int64
 		revokedInt                       int64
 	)
-	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt, &out.IP, &out.UserAgent); err != nil {
+	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt, &out.IP, &out.UserAgent, &out.TenantID); err != nil {
 		return nil, err
 	}
 	out.CreatedAt = time.Unix(0, createdAtUnixNs).UTC()
@@ -269,4 +301,5 @@ func randomSessionID() (string, error) {
 var (
 	_ sso.SessionManager     = (*SessionManager)(nil)
 	_ sso.SessionMetaCreator = (*SessionManager)(nil)
+	_ sso.SessionTenantIndex = (*SessionManager)(nil)
 )

@@ -6,9 +6,9 @@ import (
 	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/tenant"
-	"github.com/snaplink/sso/internal/handler"
 )
 
 // FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
@@ -96,6 +96,7 @@ type Session = core.Session
 type SessionManager = core.SessionManager
 type SessionMeta = core.SessionMeta
 type SessionMetaCreator = core.SessionMetaCreator
+type SessionTenantIndex = core.SessionTenantIndex
 type TenantUserStore = core.TenantUserStore
 type TenantMembership = core.TenantMembership
 type TenantRole = core.TenantRole
@@ -426,6 +427,7 @@ var NewStdRouter = core.NewStdRouter
 // NewHMACNonceProvider re-exported from internal/handler.
 var NewHMACNonceProvider = handler.NewHMACNonceProvider
 var NewHMACNonceProviderWithKey = handler.NewHMACNonceProviderWithKey
+
 type HMACNonceProvider = handler.HMACNonceProvider
 
 // StorageHealthSource re-exported from internal/handler.

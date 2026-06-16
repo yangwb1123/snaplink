@@ -53,6 +53,15 @@ const (
 	// even on a zero count so a SIEM sees the suspension was enforced.
 	EventTenantTokensRevoked EventType = "tenant_tokens_revoked"
 
+	// EventTenantSessionsRevoked — a tenant suspension/deletion actively
+	// destroyed the active sessions of the tenant's members (the proactive
+	// companion to EventTenantTokensRevoked; closes the privilege-escape
+	// window where a session minted while the tenant was Active outlives the
+	// suspension). Outcome=success; ActorID is the tenant ID; Metadata
+	// "sessions_revoked" carries the count destroyed. Emitted even on a zero
+	// count so a SIEM sees the suspension was enforced.
+	EventTenantSessionsRevoked EventType = "tenant_sessions_revoked"
+
 	// EventAccountLocked — per-account lockout engaged or
 	// attempted-against-when-locked. Outcome=failure. ActorID
 	// is the lockout key (clientID:identifier so SIEMs can pivot
