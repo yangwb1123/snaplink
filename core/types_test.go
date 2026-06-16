@@ -81,7 +81,7 @@ func TestIsPostLogoutRedirectURIValid(t *testing.T) {
 		{
 			name: "post logout separate list",
 			client: &Client{
-				RedirectURIs:          []string{"https://example.com/callback"},
+				RedirectURIs:           []string{"https://example.com/callback"},
 				PostLogoutRedirectURIs: []string{"https://example.com/logged-out"},
 			},
 			uri:      "https://example.com/logged-out",
@@ -90,7 +90,7 @@ func TestIsPostLogoutRedirectURIValid(t *testing.T) {
 		{
 			name: "not in post logout list",
 			client: &Client{
-				RedirectURIs:          []string{"https://example.com/callback"},
+				RedirectURIs:           []string{"https://example.com/callback"},
 				PostLogoutRedirectURIs: []string{"https://example.com/logged-out"},
 			},
 			uri:      "https://example.com/callback",

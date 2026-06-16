@@ -49,8 +49,8 @@ func TestSentinelErrorMessages(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		err     error
-		prefix  string
+		err    error
+		prefix string
 	}{
 		{ErrClientExists, "sso: client already exists"},
 		{ErrNoSuchClient, "sso: client not found"},
