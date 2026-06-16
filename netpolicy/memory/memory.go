@@ -122,14 +122,18 @@ func (s *Store) Watch(ctx context.Context) (<-chan netpolicy.Event, error) {
 	s.watchersMu.Unlock()
 
 	// The watcher goroutine is the sole owner of ch's close. Close() signals
-	// shutdown via s.done; ctx cancellation does the same per-subscriber.
+	// shutdown via s.done; ctx cancellation does the same per-subscriber. The
+	// close happens inside detachWatcher UNDER watchersMu so it cannot race a
+	// concurrent broadcast send on the same channel — a send on a CLOSED
+	// channel panics regardless of the non-blocking select (the default: only
+	// guards a FULL channel). broadcast holds watchersMu across its sends, so
+	// detach+close and send are mutually exclusive.
 	go func() {
 		select {
 		case <-ctx.Done():
 		case <-s.done:
 		}
 		s.detachWatcher(ch)
-		close(ch)
 	}()
 	return ch, nil
 }
@@ -145,10 +149,13 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) broadcast(evt netpolicy.Event) {
+	// Hold watchersMu across BOTH the watcher lookup AND the sends so a send
+	// cannot race detachWatcher's close of the same channel (which also runs
+	// under watchersMu). The send is non-blocking, so a slow subscriber can't
+	// pin the lock.
 	s.watchersMu.Lock()
-	chans := append([]chan netpolicy.Event{}, s.watchers...)
-	s.watchersMu.Unlock()
-	for _, ch := range chans {
+	defer s.watchersMu.Unlock()
+	for _, ch := range s.watchers {
 		select {
 		case ch <- evt:
 		default:
@@ -158,14 +165,17 @@ func (s *Store) broadcast(evt netpolicy.Event) {
 	}
 }
 
-// detachWatcher removes ch from the watcher list. Closing is the caller's
-// responsibility; this method only removes the broadcast subscription.
+// detachWatcher removes ch from the watcher list and closes it, both under
+// watchersMu so the close is mutually exclusive with a concurrent broadcast
+// send. Each watcher's goroutine calls this exactly once, so closing inside
+// the found-branch can never double-close.
 func (s *Store) detachWatcher(ch chan netpolicy.Event) {
 	s.watchersMu.Lock()
 	defer s.watchersMu.Unlock()
 	for i, w := range s.watchers {
 		if w == ch {
 			s.watchers = append(s.watchers[:i], s.watchers[i+1:]...)
+			close(ch)
 			return
 		}
 	}

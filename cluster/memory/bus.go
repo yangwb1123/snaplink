@@ -37,14 +37,17 @@ func New() *Bus {
 // a subscriber whose buffer is full is skipped (it will fall back to its
 // cache TTL), never blocked on.
 func (b *Bus) Publish(_ context.Context, evt cluster.Event) error {
+	// Hold the read lock across BOTH the closed-check AND the sends. Close and
+	// removeSub close subscriber channels only under the write lock, so the
+	// read lock here makes "send on ch" mutually exclusive with "close(ch)" —
+	// without it, a non-blocking send racing a concurrent close panics (the
+	// default: only guards a FULL channel, never a CLOSED one).
 	b.mu.RLock()
+	defer b.mu.RUnlock()
 	if b.closed {
-		b.mu.RUnlock()
 		return ErrClosed
 	}
-	subs := append([]chan cluster.Event(nil), b.subs...)
-	b.mu.RUnlock()
-	for _, ch := range subs {
+	for _, ch := range b.subs {
 		select {
 		case ch <- evt:
 		default:

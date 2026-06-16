@@ -184,7 +184,16 @@ type Runner struct {
 	queue     chan *LoginEvent
 	wg        sync.WaitGroup
 	started   atomicBool
-	closed    atomicBool
+
+	// mu guards closed against queue sends. Dispatch holds the RLock across
+	// BOTH the closed-check AND the queue send; Close takes the write Lock
+	// before close(queue). This makes "send on queue" mutually exclusive with
+	// "close(queue)" — a standalone atomic closed-flag leaves a TOCTOU window
+	// where Dispatch can send on an already-closed channel and panic. Mirrors
+	// the coupling in audit.AsyncSink.
+	mu        sync.RWMutex
+	closed    bool
+	closeOnce sync.Once
 
 	// inspectTimeout bounds each per-event detector sweep — a detector
 	// querying a slow backend shouldn't pile up. Default 5s; tune via
@@ -361,7 +370,15 @@ func (r *Runner) Start() {
 // Returns immediately on closed runner — login path must never
 // block on a stopped detector subsystem.
 func (r *Runner) Dispatch(ctx context.Context, event *LoginEvent) {
-	if r == nil || r.closed.load() || event == nil {
+	if r == nil || event == nil {
+		return
+	}
+	// Hold the read lock across BOTH the closed-check AND the queue send so a
+	// concurrent Close (which takes the write lock before close(queue)) cannot
+	// close the channel between the check and the send — that race would panic.
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed {
 		return
 	}
 	// Count every event actually offered to the queue (the offered-load
@@ -392,10 +409,20 @@ func (r *Runner) Close(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	if !r.closed.compareAndSwap(false, true) {
+	closedNow := false
+	r.closeOnce.Do(func() {
+		// Take the write lock before flipping closed + close(queue) so any
+		// in-flight Dispatch (holding the read lock across its send) has fully
+		// returned first — closing the queue under a send would panic.
+		r.mu.Lock()
+		r.closed = true
+		close(r.queue)
+		r.mu.Unlock()
+		closedNow = true
+	})
+	if !closedNow {
 		return nil
 	}
-	close(r.queue)
 	done := make(chan struct{})
 	go func() { r.wg.Wait(); close(done) }()
 	select {
@@ -540,16 +567,12 @@ func setAnomalyMeta(e *audit.Event, k, v string) {
 
 // atomicBool is a tiny inline wrapper over sync/atomic.Bool — kept
 // local to avoid bumping the Go version requirement if/when this
-// file's import set shifts.
+// file's import set shifts. Only Start's once-only latch uses it now;
+// the closed flag moved to a sync.RWMutex so the closed-check and the
+// queue send share one lock (see Runner.mu).
 type atomicBool struct {
 	mu sync.Mutex
 	v  bool
-}
-
-func (a *atomicBool) load() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.v
 }
 
 func (a *atomicBool) compareAndSwap(old, new bool) bool {

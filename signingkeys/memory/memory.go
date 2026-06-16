@@ -55,17 +55,21 @@ func (r *Registry) Publish(_ context.Context, ann signingkeys.Announcement) erro
 	if ann.ReplicaID == "" {
 		return errors.New("signingkeys/memory: announcement replica_id required")
 	}
+	// Hold the lock across BOTH the upsert/closed-check AND the sends. Close
+	// and removeSub close subscriber channels only under this same write lock,
+	// so holding it here makes "send on ch" mutually exclusive with
+	// "close(ch)" — without it, a non-blocking send racing a concurrent close
+	// panics (the default: only guards a FULL channel, never a CLOSED one).
+	// The send is non-blocking, so a slow subscriber can't pin the lock.
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.closed {
-		r.mu.Unlock()
 		return ErrClosed
 	}
 	r.announcements[ann.ReplicaID] = cloneAnnouncement(ann)
-	subs := append([]chan signingkeys.Event(nil), r.subs...)
-	r.mu.Unlock()
 
 	evt := signingkeys.Event{Type: signingkeys.EventKeysUpserted, Announcement: cloneAnnouncement(ann)}
-	for _, ch := range subs {
+	for _, ch := range r.subs {
 		select {
 		case ch <- evt:
 		default:

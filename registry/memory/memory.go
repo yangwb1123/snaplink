@@ -162,10 +162,18 @@ func (r *Registry) Close() error {
 }
 
 func (r *Registry) broadcast(serviceName string, evt registry.Event) {
+	// Hold the read lock across BOTH the watcher lookup AND the sends. Close
+	// and removeWatcher close watcher channels only under the write lock, so
+	// the read lock here makes "send on ch" mutually exclusive with
+	// "close(ch)" — without it, a non-blocking send racing a concurrent close
+	// panics (the default: only guards a FULL channel, never a CLOSED one).
+	// Every broadcast caller (Register/Deregister/evictExpired) already
+	// released the write lock before calling, so re-acquiring the read lock
+	// here does not deadlock. The send is non-blocking, so a slow subscriber
+	// can't pin the lock.
 	r.mu.RLock()
-	chans := append([]chan registry.Event{}, r.watchers[serviceName]...)
-	r.mu.RUnlock()
-	for _, ch := range chans {
+	defer r.mu.RUnlock()
+	for _, ch := range r.watchers[serviceName] {
 		select {
 		case ch <- evt:
 		default:
