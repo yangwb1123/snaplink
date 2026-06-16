@@ -82,17 +82,24 @@ func TestParseKeycloak_RealmObject(t *testing.T) {
 }
 
 // TestParseKeycloak_BareArrayBranch exercises the bare-top-level-array
-// branch of parseKeycloak. After the leading '[' token is consumed the
-// decoder sits on the first element, so a follow-up Decode into a slice
-// fails — the branch surfaces that as a decode error rather than
-// panicking. This pins the tool's current behavior for partial exports
-// shaped as a bare array.
+// branch of parseKeycloak — the shape a Keycloak PARTIAL export produces.
+// The decoder consumes the leading '[' then decodes elements one-by-one,
+// so a bare array imports correctly (it previously failed with a decode
+// error because Decode was called expecting another '[').
 func TestParseKeycloak_BareArrayBranch(t *testing.T) {
 	in := `[
-		{"id":"kc-2","username":"bob","email":"b@kc.example"}
+		{"id":"kc-2","username":"bob","email":"b@kc.example"},
+		{"id":"kc-3","username":"carol","email":"c@kc.example"}
 	]`
-	if _, err := parseInput("keycloak", strings.NewReader(in)); err == nil {
-		t.Fatal("expected a decode error from the bare-array branch")
+	users, err := parseInput("keycloak", strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("parseKeycloak bare array: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("got %d users, want 2 (bare array import): %+v", len(users), users)
+	}
+	if users[0].Email != "b@kc.example" || users[1].Email != "c@kc.example" {
+		t.Errorf("unexpected users: %+v", users)
 	}
 }
 

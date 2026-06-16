@@ -264,12 +264,21 @@ func parseKeycloak(r io.Reader) ([]importedUser, error) {
 	switch t := tok.(type) {
 	case json.Delim:
 		if t == '[' {
-			// Bare array — wrap into the struct manually.
-			var users []keycloakUser
-			if err := dec.Decode(&users); err != nil {
+			// Bare array. dec.Token() already consumed the '[', so the
+			// decoder is positioned at the FIRST element — calling
+			// dec.Decode(&users) here would wrongly expect another '[' and
+			// fail. Decode elements one-by-one, mirroring
+			// decodeKeycloakObject, then consume the closing ']'.
+			for dec.More() {
+				var u keycloakUser
+				if err := dec.Decode(&u); err != nil {
+					return nil, fmt.Errorf("decode keycloak users array: %w", err)
+				}
+				realm.Users = append(realm.Users, u)
+			}
+			if _, err := dec.Token(); err != nil && !errors.Is(err, io.EOF) {
 				return nil, fmt.Errorf("decode keycloak users array: %w", err)
 			}
-			realm.Users = users
 		} else {
 			// Object — re-decode from scratch using a temp decoder.
 			// We already consumed the '{' delimiter; push it back by
