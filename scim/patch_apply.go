@@ -146,6 +146,9 @@ func applyUserPathOp(res *Resource, verb string, pp patchPath, raw json.RawMessa
 		return applyUserName(res, verb, pp, raw)
 
 	case pp.isAttr(pathAttrEmails):
+		if pp.filter != nil {
+			return applyUserEmailsFiltered(res, verb, pp, raw)
+		}
 		return applyUserEmails(res, verb, raw)
 	}
 	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path"), false
@@ -222,4 +225,115 @@ func applyUserEmails(res *Resource, verb string, raw json.RawMessage) (ErrorResp
 		res.Emails = emails
 	}
 	return ErrorResponse{}, true
+}
+
+// applyUserEmailsFiltered applies a value-path PATCH op to the emails
+// element(s) matching the path's value filter (RFC 7644 §3.5.2 —
+// "emails[type eq \"work\"].value"). The filter is evaluated against each
+// element; the op then acts on the matches:
+//   - remove (no sub): drop the matching elements.
+//   - remove (sub): clear that sub-attribute on the matching elements.
+//   - add/replace (sub): set that sub-attribute on the matching elements.
+//   - add/replace (no sub): overwrite the matching elements with the value
+//     object (the value is a single email object).
+//
+// A filter that matches no element is a noTarget error (RFC 7644 §3.5.2.3 /
+// Table 9): the client targeted an element that does not exist, which it
+// should learn rather than believe the op took.
+func applyUserEmailsFiltered(res *Resource, verb string, pp patchPath, raw json.RawMessage) (ErrorResponse, bool) {
+	matched := false
+	for i := range res.Emails {
+		if !pp.filter.match(emailElementAttrs(res.Emails[i])) {
+			continue
+		}
+		matched = true
+		if e, ok := applyEmailElementOp(&res.Emails[i], verb, pp.sub, raw); !ok {
+			return e, false
+		}
+	}
+	if verb == patchOpRemove && pp.sub == "" {
+		// Element-level remove: filter out the matched elements after the scan
+		// (mutating the slice mid-range would skip elements).
+		kept := res.Emails[:0]
+		for _, e := range res.Emails {
+			if !pp.filter.match(emailElementAttrs(e)) {
+				kept = append(kept, e)
+			}
+		}
+		res.Emails = kept
+	}
+	if !matched {
+		return newError(http.StatusBadRequest, scimTypeNoTarget, "no emails element matches the value filter"), false
+	}
+	return ErrorResponse{}, true
+}
+
+// applyEmailElementOp applies one op to a single matched email element. sub
+// is the lower-cased sub-attribute after the value filter (value|type|
+// primary), or "" to act on the whole element. The element-level remove is
+// handled by the caller (it drops the element entirely), so a remove reaching
+// here always carries a sub.
+func applyEmailElementOp(e *Email, verb, sub string, raw json.RawMessage) (ErrorResponse, bool) {
+	if sub == "" {
+		if verb == patchOpRemove {
+			return ErrorResponse{}, true // element drop handled by caller
+		}
+		// add/replace the whole element with the supplied object.
+		var ne Email
+		if err := json.Unmarshal(raw, &ne); err != nil {
+			return newError(http.StatusBadRequest, scimTypeInvalidValue, "emails element must be an object"), false
+		}
+		*e = ne
+		return ErrorResponse{}, true
+	}
+	switch sub {
+	case "value":
+		return setEmailStringSub(&e.Value, verb, raw, "emails value")
+	case "type":
+		return setEmailStringSub(&e.Type, verb, raw, "emails type")
+	case "primary":
+		if verb == patchOpRemove {
+			e.Primary = false
+			return ErrorResponse{}, true
+		}
+		var b bool
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return newError(http.StatusBadRequest, scimTypeInvalidValue, "emails primary must be a boolean"), false
+		}
+		e.Primary = b
+		return ErrorResponse{}, true
+	}
+	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported emails sub-attribute"), false
+}
+
+// setEmailStringSub sets/clears a string sub-attribute of an email element.
+func setEmailStringSub(dst *string, verb string, raw json.RawMessage, label string) (ErrorResponse, bool) {
+	if verb == patchOpRemove {
+		*dst = ""
+		return ErrorResponse{}, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return newError(http.StatusBadRequest, scimTypeInvalidValue, label+" must be a string"), false
+	}
+	*dst = s
+	return ErrorResponse{}, true
+}
+
+// emailElementAttrs builds the attrLookup for ONE email element so a
+// value-path filter ("type eq \"work\"") evaluates against that element's
+// sub-attributes (RFC 7644 §3.5.2: the filter inside [..] addresses the
+// multi-valued element's sub-attributes, not the whole resource).
+func emailElementAttrs(e Email) attrLookup {
+	return func(path string) ([]string, bool) {
+		switch path {
+		case "value":
+			return single(e.Value)
+		case "type":
+			return single(e.Type)
+		case "primary":
+			return []string{boolText(e.Primary)}, true
+		}
+		return nil, false
+	}
 }

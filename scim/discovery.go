@@ -2,10 +2,10 @@ package scim
 
 // Discovery documents (RFC 7643 §5 ServiceProviderConfig + §7 Schemas).
 // These advertise EXACTLY what this slice implements — PATCH (RFC 7644
-// §3.5.2) and filtering (RFC 7644 §3.4.2.2), but no bulk, no sort, no
-// ETag, no change-password — so a provisioning client negotiates correctly
-// instead of attempting unsupported operations. New capabilities flip the
-// relevant "supported" flag.
+// §3.5.2), filtering (RFC 7644 §3.4.2.2), bulk (§3.7), sort (§3.4.2.3), and
+// ETag/conditional-request versioning (§3.14), but no change-password — so a
+// provisioning client negotiates correctly instead of attempting unsupported
+// operations. New capabilities flip the relevant "supported" flag.
 
 // supportedFeature is the {supported:bool} shape ServiceProviderConfig
 // uses for several capability blocks (RFC 7643 §5).
@@ -68,8 +68,13 @@ func serviceProviderConfig() ServiceProviderConfig {
 		// (a filtered list still pages through paginationParams).
 		Filter:         filterFeature{Supported: true, MaxResults: filterMaxResults},
 		ChangePassword: supportedFeature{Supported: false},
-		Sort:           supportedFeature{Supported: false},
-		ETag:           supportedFeature{Supported: false},
+		// Sort is implemented for GET /Users + /Groups (RFC 7644 §3.4.2.3):
+		// stable sort by the requested attribute, ascending|descending.
+		Sort: supportedFeature{Supported: true},
+		// ETag/conditional requests are implemented for all resources
+		// (RFC 7644 §3.14): meta.version + ETag header, If-Match (412) on
+		// writes, If-None-Match (304) on reads.
+		ETag: supportedFeature{Supported: true},
 		AuthenticationSchemes: []authScheme{{
 			Type:        "oauthbearertoken",
 			Name:        "OAuth Bearer Token",

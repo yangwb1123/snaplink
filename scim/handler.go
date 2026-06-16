@@ -275,7 +275,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.EventAdminUserCreated, id)
-	h.writeJSON(w, http.StatusCreated, userToResource(u, h.location(id)))
+	h.writeUserResource(w, http.StatusCreated, userToResource(u, h.location(id)))
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request, id string) {
@@ -288,7 +288,18 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeError(w, h.storageError(err))
 		return
 	}
-	h.writeJSON(w, http.StatusOK, userToResource(u, h.location(id)))
+	res := userToResource(u, h.location(id))
+	version := stampUserVersion(&res)
+	// If-None-Match: a GET whose cached ETag still matches gets 304 with no
+	// body (RFC 7644 §3.14 / RFC 7232 §3.2), saving the client a re-parse.
+	if ifNoneMatchMatches(r, version) {
+		if version != "" {
+			w.Header().Set(headerETag, version)
+		}
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	h.writeUserResource(w, http.StatusOK, res)
 }
 
 func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string) {
@@ -301,6 +312,13 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 	}
 	if err != nil {
 		h.writeError(w, h.storageError(err))
+		return
+	}
+	// If-Match: reject a replace whose expected version is stale (a
+	// concurrent edit moved it on) BEFORE consuming the body (RFC 7644
+	// §3.14).
+	if !ifMatchSatisfied(r, currentUserVersion(existing, h.location(id))) {
+		h.writeError(w, preconditionFailed())
 		return
 	}
 	res, ok := h.decode(w, r)
@@ -336,7 +354,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	h.audit(r, audit.EventAdminUserUpdated, id)
-	h.writeJSON(w, http.StatusOK, userToResource(u, h.location(id)))
+	h.writeUserResource(w, http.StatusOK, userToResource(u, h.location(id)))
 }
 
 // patchUser applies a SCIM PATCH (RFC 7644 §3.5.2) to a stored user. WHY
@@ -353,6 +371,11 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if err != nil {
 		h.writeError(w, h.storageError(err))
+		return
+	}
+	// If-Match: reject a stale PATCH before applying any op (RFC 7644 §3.14).
+	if !ifMatchSatisfied(r, currentUserVersion(existing, h.location(id))) {
+		h.writeError(w, preconditionFailed())
 		return
 	}
 	ops, ok := h.decodePatch(w, r)
@@ -387,19 +410,27 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	h.audit(r, audit.EventAdminUserUpdated, id)
-	h.writeJSON(w, http.StatusOK, userToResource(u, h.location(id)))
+	h.writeUserResource(w, http.StatusOK, userToResource(u, h.location(id)))
 }
 
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request, id string) {
 	// Probe existence first: core.UserProvider.Delete is idempotent
 	// (missing id -> nil), but SCIM DELETE on an unknown resource MUST
 	// be 404 (RFC 7644 §3.6), so we can't blindly return 204.
-	if _, err := h.users.GetByID(r.Context(), id); err != nil {
+	existing, err := h.users.GetByID(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, core.ErrNoSuchUser) {
 			h.writeError(w, newError(http.StatusNotFound, "", "user not found"))
 			return
 		}
 		h.writeError(w, h.storageError(err))
+		return
+	}
+	// If-Match: a conditional DELETE only proceeds when the caller's version
+	// is current (RFC 7644 §3.14), guarding against deleting a resource that
+	// changed since the caller last read it.
+	if !ifMatchSatisfied(r, currentUserVersion(existing, h.location(id))) {
+		h.writeError(w, preconditionFailed())
 		return
 	}
 	if err := h.users.Delete(r.Context(), id); err != nil {
@@ -436,6 +467,9 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, *ferr)
 		return
 	}
+	// Sort the FILTERED set before paginating (RFC 7644 §3.4.2.3): the page
+	// must be a window into the fully ordered result.
+	sortUsers(resources, parseSortSpec(r))
 
 	total := len(resources)
 	// startIndex is 1-based (RFC 7644 §3.4.2.4). Translate to a 0-based

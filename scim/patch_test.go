@@ -167,13 +167,16 @@ func TestPatchUser_RemoveRequiredUserName(t *testing.T) {
 	}
 }
 
-// TestPatchUser_UnsupportedPath: a path the minimal parser can't honor
-// (a value filter) is 400 invalidPath, not a silent no-op.
+// TestPatchUser_UnsupportedPath: a path the parser still can't honor (a
+// schema-URN-qualified path) is 400 invalidPath, not a silent no-op. Note
+// that value-path filters ARE now supported (see
+// TestPatchUser_ValuePathFilter); a non-existent attribute behind a value
+// filter is what stays unsupported here.
 func TestPatchUser_UnsupportedPath(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"f@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
-		{"op":"replace","path":"emails[type eq \"work\"].value","value":"x@example.com"}
+		{"op":"replace","path":"urn:ietf:params:scim:schemas:core:2.0:User:active","value":false}
 	]}`
 	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, body)
 	if rec.Code != http.StatusBadRequest {
@@ -295,7 +298,16 @@ func TestParsePatchPath_TableDriven(t *testing.T) {
 		{"userName", true, "username", ""},
 		{"name.givenName", true, "name", "givenname"},
 		{"", false, "", ""},
-		{"emails[type eq \"work\"]", false, "", ""},
+		// Value-path filters are now accepted (RFC 7644 §3.5.2): the bracket
+		// selects multi-valued element(s); an optional ".<sub>" follows.
+		{"emails[type eq \"work\"]", true, "emails", ""},
+		{"emails[type eq \"work\"].value", true, "emails", "value"},
+		{"members[value eq \"u1\"]", true, "members", ""},
+		// Malformed value-paths stay rejected.
+		{"emails[]", false, "", ""},
+		{"emails[type eq \"work\"].", false, "", ""},
+		{"emails[type eq \"work\"]extra", false, "", ""},
+		{"[type eq \"work\"]", false, "", ""},
 		{"urn:ietf:params:scim:schemas:core:2.0:User:active", false, "", ""},
 		{"a.b.c", false, "", ""},
 		{"name.", false, "", ""},
@@ -309,5 +321,102 @@ func TestParsePatchPath_TableDriven(t *testing.T) {
 		if ok && (got.attr != tc.wantAttr || got.sub != tc.wantSub) {
 			t.Errorf("parsePatchPath(%q) = {%q,%q}, want {%q,%q}", tc.in, got.attr, got.sub, tc.wantAttr, tc.wantSub)
 		}
+	}
+}
+
+// seedTwoEmailUser creates a user with a work + home email and returns its id.
+func seedTwoEmailUser(t *testing.T, h *Handler) string {
+	t.Helper()
+	return seedUser(t, h, `{"userName":"vp@example.com","emails":[
+		{"value":"work@example.com","type":"work","primary":true},
+		{"value":"home@example.com","type":"home"}
+	]}`)
+}
+
+// emailByType returns the value of the first email of the given type.
+func emailByType(res Resource, typ string) string {
+	for _, e := range res.Emails {
+		if e.Type == typ {
+			return e.Value
+		}
+	}
+	return ""
+}
+
+// TestPatchUser_ValuePathFilter: a PATCH with a value-path filter sub-attr
+// ("emails[type eq \"work\"].value") sets ONLY the matching element's value
+// (RFC 7644 §3.5.2), leaving the non-matching element untouched.
+func TestPatchUser_ValuePathFilter(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	id := seedTwoEmailUser(t, h)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+		{"op":"replace","path":"emails[type eq \"work\"].value","value":"newwork@example.com"}
+	]}`
+	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	res := decodeResource(t, rec)
+	if got := emailByType(res, "work"); got != "newwork@example.com" {
+		t.Errorf("work email = %q, want newwork@example.com", got)
+	}
+	if got := emailByType(res, "home"); got != "home@example.com" {
+		t.Errorf("home email = %q, want untouched home@example.com", got)
+	}
+}
+
+// TestPatchUser_ValuePathReplaceElement: a value-path with NO sub-attribute
+// replaces the whole matching element with the supplied object.
+func TestPatchUser_ValuePathReplaceElement(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	id := seedTwoEmailUser(t, h)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+		{"op":"replace","path":"emails[type eq \"home\"]","value":{"value":"h2@example.com","type":"home"}}
+	]}`
+	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := emailByType(decodeResource(t, rec), "home"); got != "h2@example.com" {
+		t.Errorf("home email = %q, want h2@example.com", got)
+	}
+}
+
+// TestPatchUser_ValuePathRemoveElement: a value-path remove drops ONLY the
+// matching element (RFC 7644 §3.5.2).
+func TestPatchUser_ValuePathRemoveElement(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	id := seedTwoEmailUser(t, h)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+		{"op":"remove","path":"emails[type eq \"home\"]"}
+	]}`
+	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	res := decodeResource(t, rec)
+	if emailByType(res, "home") != "" {
+		t.Error("home email still present after value-path remove")
+	}
+	if emailByType(res, "work") != "work@example.com" {
+		t.Error("work email should survive a home-only remove")
+	}
+}
+
+// TestPatchUser_ValuePathNoTarget: a value-path filter matching no element is
+// a noTarget error (RFC 7644 §3.5.2 / Table 9), so the client learns nothing
+// was changed rather than believing the op took.
+func TestPatchUser_ValuePathNoTarget(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	id := seedTwoEmailUser(t, h)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+		{"op":"replace","path":"emails[type eq \"other\"].value","value":"x@example.com"}
+	]}`
+	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if e := decodeError(t, rec); e.ScimType != scimTypeNoTarget {
+		t.Errorf("scimType = %q, want %q", e.ScimType, scimTypeNoTarget)
 	}
 }

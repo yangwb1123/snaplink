@@ -51,7 +51,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.auditGroup(r, audit.EventAdminRoleAdded, id)
-	h.writeJSON(w, http.StatusCreated, roleToGroup(role, members, h.groupLocation(id)))
+	h.writeGroupResource(w, http.StatusCreated, roleToGroup(role, members, h.groupLocation(id)))
 }
 
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, id string) {
@@ -69,7 +69,17 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeError(w, h.storageError(err))
 		return
 	}
-	h.writeJSON(w, http.StatusOK, roleToGroup(role, members, h.groupLocation(id)))
+	g := roleToGroup(role, members, h.groupLocation(id))
+	version := stampGroupVersion(&g)
+	// If-None-Match: an unchanged group read returns 304 (RFC 7644 §3.14).
+	if ifNoneMatchMatches(r, version) {
+		if version != "" {
+			w.Header().Set(headerETag, version)
+		}
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	h.writeGroupResource(w, http.StatusOK, g)
 }
 
 func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +116,8 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, *ferr)
 		return
 	}
+	// Sort the filtered set before paginating (RFC 7644 §3.4.2.3).
+	sortGroups(resources, parseSortSpec(r))
 
 	total := len(resources)
 	lo := startIndex - 1
@@ -164,6 +176,10 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request, id string
 		h.writeError(w, newError(http.StatusNotFound, "", "group not found"))
 		return
 	}
+	if err := h.checkGroupIfMatch(r, role, id); err != nil {
+		h.writeError(w, *err)
+		return
+	}
 	g, ok := h.decodeGroup(w, r)
 	if !ok {
 		return
@@ -188,7 +204,7 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	h.auditGroup(r, audit.EventAdminRoleUpdated, id)
-	h.writeJSON(w, http.StatusOK, roleToGroup(role, desired, h.groupLocation(id)))
+	h.writeGroupResource(w, http.StatusOK, roleToGroup(role, desired, h.groupLocation(id)))
 }
 
 // patchGroup applies a SCIM PATCH (RFC 7644 §3.5.2) to a group:
@@ -204,6 +220,10 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 	}
 	if !found {
 		h.writeError(w, newError(http.StatusNotFound, "", "group not found"))
+		return
+	}
+	if err := h.checkGroupIfMatch(r, role, id); err != nil {
+		h.writeError(w, *err)
 		return
 	}
 	ops, ok := h.decodePatch(w, r)
@@ -251,10 +271,27 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	h.auditGroup(r, audit.EventAdminRoleUpdated, id)
-	h.writeJSON(w, http.StatusOK, roleToGroup(role, members, h.groupLocation(id)))
+	h.writeGroupResource(w, http.StatusOK, roleToGroup(role, members, h.groupLocation(id)))
 }
 
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, id string) {
+	// An If-Match on DELETE requires loading the current version first; with
+	// no precondition header this stays a single RemoveRole (RFC 7644 §3.14).
+	if strings.TrimSpace(r.Header.Get(headerIfMatch)) != "" {
+		role, found, err := h.groups.findRole(r.Context(), id)
+		if err != nil {
+			h.writeError(w, h.storageError(err))
+			return
+		}
+		if !found {
+			h.writeError(w, newError(http.StatusNotFound, "", "group not found"))
+			return
+		}
+		if perr := h.checkGroupIfMatch(r, role, id); perr != nil {
+			h.writeError(w, *perr)
+			return
+		}
+	}
 	if err := h.groups.perms.RemoveRole(r.Context(), h.groups.clientID, id); err != nil {
 		if errors.Is(err, permissions.ErrRoleNotFound) {
 			h.writeError(w, newError(http.StatusNotFound, "", "group not found"))
@@ -267,130 +304,21 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, id string)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// groupMemberMutation is one planned membership change (add or remove a
-// single member) or a full replace of the member set, deferred until the
-// whole PATCH op list has been validated.
-type groupMemberMutation struct {
-	// replace, when true, sets membership to exactly members; otherwise
-	// add/remove the single member in member.
-	replace bool
-	members []string
-	member  string
-	add     bool
-}
-
-// planGroupOp validates one PATCH op against the group schema and returns
-// the membership mutations + any displayName change it implies, WITHOUT
-// touching the store. ok=false carries the SCIM error to return.
-func planGroupOp(op PatchOperation) (e ErrorResponse, muts []groupMemberMutation, nameSet bool, name string, ok bool) {
-	verb := op.normalizedOp()
-	switch verb {
-	case patchOpAdd, patchOpReplace, patchOpRemove:
-	default:
-		return newError(http.StatusBadRequest, scimTypeInvalidValue, "unsupported PATCH op: "+op.Op), nil, false, "", false
-	}
-	if verb == patchOpRemove && op.Path == "" {
-		return newError(http.StatusBadRequest, scimTypeNoTarget, "remove requires a path"), nil, false, "", false
-	}
-
-	// Path-less add/replace: a {displayName: ..., members: [...]} object.
-	if op.Path == "" {
-		var obj map[string]json.RawMessage
-		if len(op.Value) == 0 {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "PATCH op missing value"), nil, false, "", false
-		}
-		if err := json.Unmarshal(op.Value, &obj); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidSyntax, "PATCH value is not an object"), nil, false, "", false
-		}
-		for key, v := range obj {
-			switch strings.ToLower(key) {
-			case strings.ToLower(pathAttrDisplayName):
-				var s string
-				if err := json.Unmarshal(v, &s); err != nil {
-					return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
-				}
-				nameSet, name = true, s
-			case strings.ToLower(pathAttrMembers):
-				vals, ferr := memberValuesFromRaw(v)
-				if ferr != nil {
-					return *ferr, nil, false, "", false
-				}
-				muts = append(muts, groupMemberMutation{replace: true, members: vals})
-			default:
-				return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+key), nil, false, "", false
-			}
-		}
-		return ErrorResponse{}, muts, nameSet, name, true
-	}
-
-	pp, pok := parsePatchPath(op.Path)
-	if !pok {
-		return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+op.Path), nil, false, "", false
-	}
-	switch {
-	case pp.isAttr(pathAttrDisplayName) && pp.sub == "":
-		if verb == patchOpRemove {
-			return ErrorResponse{}, nil, true, "", true // clear displayName
-		}
-		var s string
-		if err := json.Unmarshal(op.Value, &s); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
-		}
-		return ErrorResponse{}, nil, true, s, true
-
-	case pp.isAttr(pathAttrMembers) && pp.sub == "":
-		if verb == patchOpRemove {
-			// Unfiltered members remove drops the whole set (RFC 7644
-			// §3.5.2.2). A filtered remove ("members[value eq ...]") is
-			// rejected by parsePatchPath above as an unsupported path.
-			return ErrorResponse{}, []groupMemberMutation{{replace: true, members: nil}}, false, "", true
-		}
-		vals, ferr := memberValuesFromRaw(op.Value)
-		if ferr != nil {
-			return *ferr, nil, false, "", false
-		}
-		if verb == patchOpReplace {
-			return ErrorResponse{}, []groupMemberMutation{{replace: true, members: vals}}, false, "", true
-		}
-		// add: append each member individually (idempotent per member).
-		for _, v := range vals {
-			muts = append(muts, groupMemberMutation{member: v, add: true})
-		}
-		return ErrorResponse{}, muts, false, "", true
-	}
-	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+op.Path), nil, false, "", false
-}
-
-// memberValuesFromRaw decodes a PATCH members value (an array of member
-// objects) into the de-duplicated set of member ids. A malformed value
-// returns a SCIM error pointer.
-func memberValuesFromRaw(raw json.RawMessage) ([]string, *ErrorResponse) {
-	var members []GroupMember
-	if err := json.Unmarshal(raw, &members); err != nil {
-		e := newError(http.StatusBadRequest, scimTypeInvalidValue, "members must be an array of member objects")
-		return nil, &e
-	}
-	g := GroupResource{Members: members}
-	return g.memberValues(), nil
-}
-
-// runMemberMutation executes one planned membership mutation.
-func (h *Handler) runMemberMutation(ctx context.Context, roleCode string, m groupMemberMutation) *ErrorResponse {
-	if m.replace {
-		if err := h.reconcileMembers(ctx, roleCode, m.members); err != nil {
-			e := h.storageError(err)
-			return &e
-		}
+// checkGroupIfMatch enforces an If-Match precondition on a group write
+// (RFC 7644 §3.14). It resolves the group's current membership to compute
+// the same version a GET returns, then compares against the header. A nil
+// return means proceed; a non-nil pointer carries the SCIM error to write.
+func (h *Handler) checkGroupIfMatch(r *http.Request, role permissions.Role, id string) *ErrorResponse {
+	if strings.TrimSpace(r.Header.Get(headerIfMatch)) == "" {
 		return nil
 	}
-	var err error
-	if m.add {
-		err = h.groups.addMember(ctx, m.member, roleCode)
-	} else {
-		err = h.groups.removeMember(ctx, m.member, roleCode)
-	}
+	members, err := h.groups.members(r.Context(), id)
 	if err != nil {
 		e := h.storageError(err)
+		return &e
+	}
+	if !ifMatchSatisfied(r, currentGroupVersion(role, members, h.groupLocation(id))) {
+		e := preconditionFailed()
 		return &e
 	}
 	return nil

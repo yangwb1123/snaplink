@@ -409,6 +409,14 @@ func TestServiceProviderConfig(t *testing.T) {
 	if cfg.Bulk.MaxOperations != bulkMaxOperations || cfg.Bulk.MaxPayloadSize != bulkMaxPayloadSize {
 		t.Errorf("bulk limits = %d/%d, want %d/%d", cfg.Bulk.MaxOperations, cfg.Bulk.MaxPayloadSize, bulkMaxOperations, bulkMaxPayloadSize)
 	}
+	// Sort (RFC 7644 §3.4.2.3) and ETag/conditional requests (§3.14) are
+	// implemented so both MUST advertise true.
+	if !cfg.Sort.Supported {
+		t.Error("sort advertised unsupported, want supported (RFC 7644 §3.4.2.3 implemented)")
+	}
+	if !cfg.ETag.Supported {
+		t.Error("etag advertised unsupported, want supported (RFC 7644 §3.14 implemented)")
+	}
 	if len(cfg.AuthenticationSchemes) == 0 {
 		t.Error("no authentication schemes advertised")
 	}

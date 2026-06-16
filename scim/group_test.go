@@ -298,13 +298,34 @@ func TestReplaceGroup_ImmutableID(t *testing.T) {
 	}
 }
 
-// TestGroupPatch_UnsupportedPath: a member value-filter path is rejected,
-// not half-applied.
+// TestGroupPatch_MemberValuePathRemove: a members value-filter remove
+// (RFC 7644 §3.5.2 — the per-member delta Azure AD / Okta send) drops ONLY
+// the targeted member, leaving the rest of the membership intact.
+func TestGroupPatch_MemberValuePathRemove(t *testing.T) {
+	h, _, _ := newGroupHandler(t)
+	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"},{"value":"b"}]}`)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+		{"op":"remove","path":"members[value eq \"a\"]"}
+	]}`
+	rec := do(t, h, http.MethodPatch, pathGroups+"/"+id, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	g := decodeGroupResource(t, rec)
+	got := g.memberValues()
+	if len(got) != 1 || got[0] != "b" {
+		t.Errorf("members after value-path remove = %v, want [b]", got)
+	}
+}
+
+// TestGroupPatch_UnsupportedPath: a path that still can't be honored (a
+// schema-URN-qualified path) is 400 invalidPath, not half-applied. Value-path
+// filters themselves are supported (see TestGroupPatch_MemberValuePathRemove).
 func TestGroupPatch_UnsupportedPath(t *testing.T) {
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
-		{"op":"remove","path":"members[value eq \"a\"]"}
+		{"op":"replace","path":"urn:ietf:params:scim:schemas:core:2.0:Group:displayName","value":"X"}
 	]}`
 	rec := do(t, h, http.MethodPatch, pathGroups+"/"+id, body)
 	if rec.Code != http.StatusBadRequest {
