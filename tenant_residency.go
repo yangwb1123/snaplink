@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/tenant"
 )
+
 func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaims) error {
 	if !s.tenantSuspensionEnabled {
 		return nil
@@ -125,10 +126,15 @@ func (c *residencyCache) invalidate(tenantID string) {
 //
 // Coverage: checkTenantResidency backs BOTH a WRITE-side and a READ-side gate.
 //
-//   - WRITE side (residencyGateLogin): every token-MINTING exit of the
-//     interactive-login flow — the credential path's /auth/login direct/code
+//   - WRITE side: every token-MINTING path. residencyGateLogin gates the
+//     interactive-login mints — the credential path's /auth/login direct/code
 //     mint, the prompt=none silent-renewal branch, and the /auth/mfa second
-//     leg (handleLogin + handleMFAComplete). isWrite=true.
+//     leg (handleLogin + handleMFAComplete). residencyGateTokenGrant gates the
+//     /token grant endpoint (authorization_code exchange, refresh rotation,
+//     token-exchange, CIBA, device, client_credentials) at the post-client-auth
+//     choke point — that handler runs in the HandlerContext pipeline, so the
+//     live serving region is in scope without threading it through the
+//     bare-context issuance helpers. Both use isWrite=true.
 //   - READ side (residencyDeniedForAccess): the resource-ACCESS bearer
 //     endpoints that serve tenant data — /userinfo (403 region_not_allowed)
 //     and the mesh ext_authz endpoint (oracle-safe DENY) — so a still-valid
@@ -137,15 +143,11 @@ func (c *residencyCache) invalidate(tenantID string) {
 //     These HTTP handlers have the HandlerContext (hence the serving region)
 //     in scope.
 //
-// Still uncovered (documented follow-up): the /token grant-side issuance
-// (authorization_code exchange, refresh rotation, token-exchange, CIBA,
-// device) takes a bare context.Context with no HandlerContext, so the serving
-// region is not in scope there without threading it through every grant call
-// site. /token/introspect is deliberately NOT gated: it returns a token-status
-// answer to an authenticated RS client, not the data subject's tenant data,
-// and the calling RS's region is not the data-serving region — its own
-// {"active":false} anti-enumeration contract also makes a residency overlay a
-// poor fit. The interactive-login write-gate remains the primary control.
+// Deliberately NOT gated: /token/introspect returns a token-status answer to an
+// authenticated RS client, not the data subject's tenant data, and the calling
+// RS's region is not the data-serving region — its own {"active":false}
+// anti-enumeration contract also makes a residency overlay a poor fit. The
+// interactive-login write-gate remains the primary control.
 func WithTenantResidencyCheck(ttl time.Duration) Option {
 	return func(s *Server) {
 		if ttl <= 0 {

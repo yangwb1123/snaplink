@@ -1,8 +1,8 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/internal/handler"
 	"errors"
+	"github.com/snaplink/sso/internal/handler"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +13,7 @@ import (
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 )
+
 func (s *Server) handleToken(ctx HandlerContext) {
 	// RFC 6749 §5.1: token responses (successful AND error) MUST
 	// include Cache-Control: no-store + Pragma: no-cache so
@@ -128,6 +129,16 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	// the client. Empty allowlist disables enforcement (legacy compat).
 	if !client.AreResourcesAllowed(req.Resource) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		return
+	}
+
+	// Data-residency WRITE-gate for token issuance. The login flow already
+	// gates its mints; this closes the grant-side hole so a refresh rotation,
+	// token-exchange, CIBA, device, or code-exchange mint can't produce fresh
+	// credentials for a region-constrained tenant from a disallowed serving
+	// region. Checked once here, before the grant switch, so it applies to
+	// every minting grant uniformly. Byte-identical when residency is unwired.
+	if s.residencyGateTokenGrant(ctx, client) {
 		return
 	}
 
@@ -446,4 +457,3 @@ func (s *Server) handleToken(ctx HandlerContext) {
 		})
 	}
 }
-
