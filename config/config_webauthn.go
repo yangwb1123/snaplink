@@ -40,6 +40,14 @@ type WebAuthnConfig struct {
 	SessionTTL    time.Duration         `yaml:"session_ttl"`
 	Storage       WebAuthnStorageConfig `yaml:"storage"`
 
+	// RequireUserVerification makes the primary-login WebAuthn ceremony
+	// demand user verification (PIN/biometric), not just user presence (a
+	// tap). Default false leaves the library at its zero value (UV not
+	// enforced) — byte-identical to a pre-fix build. The WebAuthn MFA
+	// step-up factor ALWAYS requires user verification regardless of this
+	// flag (a second factor must verify the user).
+	RequireUserVerification bool `yaml:"require_user_verification"`
+
 	// Attestation opts into the WebAuthn attestation policy: a
 	// configurable conveyance preference + an operator AAGUID
 	// allowlist/denylist gating which authenticators may register. The

@@ -76,6 +76,13 @@ func (p *WebAuthnMFAProvider) SupportedMethods() []string {
 // the client passes to navigator.credentials.get) and the session
 // id flow back to the client via the mfa_required response's
 // mfa_method_data["webauthn"] bucket.
+//
+// The ceremony ALWAYS requires user verification (PIN/biometric),
+// independent of the Helper's primary-login RequireUserVerification
+// setting: a step-up second factor must actually verify the user, not be
+// satisfied by mere user-presence (a tap). go-webauthn enforces the UV bit
+// at Verify time because the stored session.UserVerification is pinned to
+// "required" here.
 func (p *WebAuthnMFAProvider) Begin(ctx context.Context, subjectID, method string) (map[string]string, error) {
 	if method != MethodWebAuthn {
 		return nil, ErrWebAuthnMFAUnsupportedMethod
@@ -83,7 +90,7 @@ func (p *WebAuthnMFAProvider) Begin(ctx context.Context, subjectID, method strin
 	if subjectID == "" {
 		return nil, ErrWebAuthnMFAMissingSubject
 	}
-	assertion, sessionID, err := p.helper.BeginLogin(ctx, subjectID)
+	assertion, sessionID, err := p.helper.beginLogin(ctx, subjectID, true)
 	if err != nil {
 		return nil, fmt.Errorf("webauthn_mfa: begin login: %w", err)
 	}

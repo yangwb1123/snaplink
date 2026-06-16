@@ -112,6 +112,23 @@ var ErrSessionUnknown = errors.New("webauthn: session unknown")
 // looked up.
 var ErrSessionExpired = errors.New("webauthn: session expired")
 
+// ErrClonedAuthenticator signals that the assertion's signature counter
+// did not advance past the stored value — the FIDO "cloned authenticator"
+// signal (a second copy of the credential private key being used in
+// parallel, e.g. an exfiltrated/duplicated credential). go-webauthn does
+// NOT error on a counter regression: [gw.Authenticator.UpdateCounter] sets
+// CloneWarning=true, leaves SignCount unchanged, and returns no error,
+// leaving the disposition to the Relying Party. [Helper.FinishLogin] reads
+// that flag and FAILS the ceremony with this error rather than re-persisting
+// a credential a clone just used. The library exempts the all-zero-counter
+// case (authData.signCount==0 AND stored==0), the common platform-passkey
+// posture, so a genuine zero-counter authenticator never trips this; the
+// flag is only set on a true non-zero regression. The wire collapses this
+// to the same generic login failure as any other assertion error
+// (anti-enumeration) — detail goes only to the audit/credential-health
+// signal the wiring layer emits.
+var ErrClonedAuthenticator = errors.New("webauthn: cloned authenticator detected (signature counter regression)")
+
 // Helper bundles a configured [gw.WebAuthn] + the two stores. All
 // four ceremony entry points (Begin/Finish × Register/Login) hang
 // off this type.
@@ -132,6 +149,16 @@ type Helper struct {
 	// FinishRegistration AFTER go-webauthn verifies the attestation
 	// statement. Nil / mode-off ⇒ no gating (byte-identical default).
 	attestationPolicy *AttestationPolicy
+
+	// requireUserVerification, when true, sets the user-verification
+	// requirement to "required" on every BeginLogin so go-webauthn's
+	// validateLogin enforces the UV bit (PIN/biometric), not mere
+	// user-presence (a tap). Without it the library leaves
+	// session.UserVerification == "" and shouldVerifyUser is always
+	// false — the UV bit is never checked. The [WebAuthnMFAProvider]
+	// always forces this on (a second factor MUST verify the user); the
+	// primary-login ceremony opts in via [Config.RequireUserVerification].
+	requireUserVerification bool
 }
 
 // Config is the operator-supplied configuration. RPID is the
@@ -167,6 +194,18 @@ type Config struct {
 	// REQUIRES AttestationConveyance direct|enterprise. Nil ⇒ no gating (the
 	// default — byte-identical to a pre-policy build).
 	AttestationPolicy *AttestationPolicy
+
+	// RequireUserVerification, when true, makes the primary-login ceremony
+	// demand user verification (PIN/biometric), not just user presence (a
+	// tap). It sets gw.Config.AuthenticatorSelection.UserVerification =
+	// VerificationRequired AND passes the per-ceremony WithUserVerification
+	// option at BeginLogin, so go-webauthn's validateLogin enforces the UV
+	// bit. Default false leaves the library at its zero value (UV not
+	// enforced) — byte-identical to a pre-fix build. NOTE: the WebAuthn MFA
+	// step-up factor ([WebAuthnMFAProvider]) ALWAYS requires user
+	// verification regardless of this flag — a real second factor must
+	// verify the user, not merely confirm presence.
+	RequireUserVerification bool
 
 	// MDS, when non-nil, is a FIDO Metadata Service provider set as
 	// gw.Config.MDS. With it, go-webauthn's VerifyAttestation validates the
@@ -219,7 +258,7 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 				"(got %q) — an attestation policy on an un-attested AAGUID is meaningless",
 			cfg.AttestationPolicy.Mode, conveyanceOrNone(cfg.AttestationConveyance))
 	}
-	core, err := gw.New(&gw.Config{
+	gwCfg := &gw.Config{
 		RPID:          cfg.RPID,
 		RPDisplayName: cfg.RPDisplayName,
 		RPOrigins:     cfg.RPOrigins,
@@ -229,7 +268,19 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		// field at go-webauthn's zero (no metadata validation), byte-identical
 		// to the pre-MDS ceremony.
 		MDS: cfg.MDS,
-	})
+	}
+	// Pin the user-verification requirement into the core config so the
+	// assertion options sent to the client AND go-webauthn's stored
+	// session.UserVerification both say "required" — without it
+	// validateLogin's shouldVerifyUser is always false and the UV bit goes
+	// unchecked (mere user-presence satisfies the ceremony). BeginLogin also
+	// passes the per-ceremony option as a belt-and-suspenders against a
+	// future library default change. Left at the zero value when the operator
+	// hasn't opted in — byte-identical to a pre-fix build.
+	if cfg.RequireUserVerification {
+		gwCfg.AuthenticatorSelection.UserVerification = protocol.VerificationRequired
+	}
+	core, err := gw.New(gwCfg)
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: configure: %w", err)
 	}
@@ -238,12 +289,13 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		ttl = 5 * time.Minute
 	}
 	return &Helper{
-		core:              core,
-		users:             users,
-		sessions:          sessions,
-		sessionTTL:        ttl,
-		conveyance:        conveyance,
-		attestationPolicy: cfg.AttestationPolicy,
+		core:                    core,
+		users:                   users,
+		sessions:                sessions,
+		sessionTTL:              ttl,
+		conveyance:              conveyance,
+		attestationPolicy:       cfg.AttestationPolicy,
+		requireUserVerification: cfg.RequireUserVerification,
 	}, nil
 }
 
@@ -404,13 +456,33 @@ func (h *Helper) checkAttestationPolicy(cred *gw.Credential) error {
 }
 
 // BeginLogin starts an authentication ceremony for name. Returns
-// the CredentialAssertion options + an opaque sessionID.
+// the CredentialAssertion options + an opaque sessionID. When the
+// Helper was built with RequireUserVerification, the assertion demands
+// user verification (PIN/biometric).
 func (h *Helper) BeginLogin(ctx context.Context, name string) (*protocol.CredentialAssertion, string, error) {
+	return h.beginLogin(ctx, name, h.requireUserVerification)
+}
+
+// beginLogin is the shared entry point behind [Helper.BeginLogin] and the
+// MFA provider's forced-UV ceremony. requireUV pins the assertion's
+// user-verification requirement to "required" so go-webauthn's validateLogin
+// enforces the UV bit; false leaves the library default. The MFA factor
+// passes requireUV=true unconditionally — a second factor MUST verify the
+// user, independent of the primary-login RequireUserVerification setting.
+func (h *Helper) beginLogin(ctx context.Context, name string, requireUV bool) (*protocol.CredentialAssertion, string, error) {
 	user, err := h.users.GetByName(ctx, name)
 	if err != nil {
 		return nil, "", err
 	}
-	assertion, session, err := h.core.BeginLogin(user)
+	var opts []gw.LoginOption
+	if requireUV {
+		// Belt-and-suspenders alongside the core-config AuthenticatorSelection:
+		// pin UV on this ceremony's options + session so the stored
+		// session.UserVerification is "required" regardless of any future
+		// library default for AuthenticatorSelection.
+		opts = append(opts, gw.WithUserVerification(protocol.VerificationRequired))
+	}
+	assertion, session, err := h.core.BeginLogin(user, opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("webauthn: begin login: %w", err)
 	}
@@ -423,9 +495,18 @@ func (h *Helper) BeginLogin(ctx context.Context, name string) (*protocol.Credent
 
 // FinishLogin completes the authentication ceremony. The signed
 // counter on the returned credential is updated in the user store
-// so the next FinishLogin sees the new value — a replayed assertion
-// (counter < stored counter) gets rejected by the library on the
-// subsequent ceremony.
+// so the next FinishLogin sees the new value.
+//
+// go-webauthn does NOT reject a signature-counter regression on its own:
+// its validateLogin calls Authenticator.UpdateCounter, which on
+// counter <= stored (and not the all-zero case) sets
+// Authenticator.CloneWarning=true, leaves SignCount unchanged, and returns
+// NO error — leaving the disposition to the Relying Party. This helper reads
+// that flag and FAILS the ceremony with [ErrClonedAuthenticator] BEFORE
+// persisting, so an assertion replayed/forged from a cloned or exfiltrated
+// credential (counter <= stored) is rejected rather than silently accepted
+// and re-persisted. The all-zero-counter platform-passkey case never trips
+// the flag (the library exempts it), so this is safe for passkeys.
 func (h *Helper) FinishLogin(ctx context.Context, sessionID string, r *http.Request) (*User, *gw.Credential, error) {
 	session, err := h.sessions.Take(ctx, sessionID)
 	if err != nil {
@@ -438,6 +519,13 @@ func (h *Helper) FinishLogin(ctx context.Context, sessionID string, r *http.Requ
 	cred, err := h.core.FinishLogin(user, *session, r)
 	if err != nil {
 		return nil, nil, fmt.Errorf("webauthn: finish login: %w", err)
+	}
+	// Cloned-authenticator gate. Reject (and DO NOT re-persist) when the
+	// counter did not advance — the credential may be cloned. Returning before
+	// UpdateCredential also avoids writing back the unchanged SignCount, which
+	// would mask the regression on the next ceremony.
+	if cred.Authenticator.CloneWarning {
+		return nil, nil, ErrClonedAuthenticator
 	}
 	if err := h.users.UpdateCredential(ctx, user.Name, cred); err != nil {
 		return nil, nil, fmt.Errorf("webauthn: persist updated credential: %w", err)

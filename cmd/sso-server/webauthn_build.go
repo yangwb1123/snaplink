@@ -53,13 +53,14 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 		return nil, nil, nil, fmt.Errorf("webauthn mds: %w", err)
 	}
 	h, err := webauthn.NewHelper(webauthn.Config{
-		RPID:                  cfg.RPID,
-		RPDisplayName:         cfg.RPDisplayName,
-		RPOrigins:             cfg.RPOrigins,
-		SessionTTL:            cfg.SessionTTL,
-		AttestationConveyance: cfg.Attestation.Conveyance,
-		AttestationPolicy:     policy,
-		MDS:                   mds,
+		RPID:                    cfg.RPID,
+		RPDisplayName:           cfg.RPDisplayName,
+		RPOrigins:               cfg.RPOrigins,
+		SessionTTL:              cfg.SessionTTL,
+		RequireUserVerification: cfg.RequireUserVerification,
+		AttestationConveyance:   cfg.Attestation.Conveyance,
+		AttestationPolicy:       policy,
+		MDS:                     mds,
 	}, users, sessions)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn helper: %w", err)
