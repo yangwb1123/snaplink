@@ -147,6 +147,13 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if !compareClientSecret(c.Secret, clientSecret) {
 		return errors.New("invalid client secret")
 	}
+	// Parity with MemoryClientStore.ValidateSecret: a deactivated
+	// confidential client MUST NOT mint tokens. The /token grant path
+	// relies solely on ValidateSecret for the active gate, and the
+	// invalid_client collapse at /token keeps this oracle-safe.
+	if !c.Active {
+		return errors.New("client is inactive")
+	}
 	return nil
 }
 

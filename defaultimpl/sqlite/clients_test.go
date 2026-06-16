@@ -250,6 +250,14 @@ func TestSQLiteClients_UpdateChangesFields(t *testing.T) {
 	if !strings.HasPrefix(out.Secret, "$2") {
 		t.Errorf("Secret not hashed after Update: %q", out.Secret)
 	}
+	// The update flipped Active to false; ValidateSecret rejects inactive
+	// clients (parity with memory), so re-activate to exercise the secret
+	// rotation independently of the active gate.
+	reactivated := *updated
+	reactivated.Active = true
+	if err := st.Update(ctx, &reactivated); err != nil {
+		t.Fatalf("re-activate Update: %v", err)
+	}
 	if err := st.ValidateSecret(ctx, "u", "s2"); err != nil {
 		t.Errorf("ValidateSecret with updated plaintext: %v", err)
 	}
@@ -503,5 +511,46 @@ func TestSQLiteClients_RotateSecretHashAtRest(t *testing.T) {
 	// The old plaintext must no longer work.
 	if err := st.ValidateSecret(ctx, "rot", "initial"); err == nil {
 		t.Error("old plaintext still accepted after rotate")
+	}
+}
+
+// TestSQLiteClients_ValidateSecretRejectsInactive proves the SQLite
+// backend mirrors MemoryClientStore: a deactivated confidential client
+// MUST NOT pass ValidateSecret even with the correct secret. The /token
+// grant path relies solely on this gate, so without it a deactivated
+// client kept exchanging client_credentials/refresh for fresh tokens.
+func TestSQLiteClients_ValidateSecretRejectsInactive(t *testing.T) {
+	ctx := context.Background()
+	st := newClientStore(t)
+
+	if err := st.Add(ctx, &sso.Client{ID: "deact", Secret: "shh", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	// While active, the correct secret validates.
+	if err := st.ValidateSecret(ctx, "deact", "shh"); err != nil {
+		t.Fatalf("ValidateSecret(active): %v", err)
+	}
+
+	// Deactivate.
+	cur, err := st.Get(ctx, "deact")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	cur.Active = false
+	if err := st.Update(ctx, cur); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Correct secret, inactive client → rejected for parity with memory.
+	if err := st.ValidateSecret(ctx, "deact", "shh"); err == nil {
+		t.Fatal("inactive client validated secret; deactivated client can still mint tokens")
+	} else if got := err.Error(); got != "client is inactive" {
+		t.Errorf("error = %q, want %q (parity with MemoryClientStore)", got, "client is inactive")
+	}
+
+	// A wrong secret on an inactive client still fails (secret-check first,
+	// matching the memory ordering).
+	if err := st.ValidateSecret(ctx, "deact", "nope"); err == nil {
+		t.Error("wrong secret on inactive client unexpectedly validated")
 	}
 }

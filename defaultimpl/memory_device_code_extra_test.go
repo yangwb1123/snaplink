@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -167,5 +168,90 @@ func TestGenerateDeviceAndUserCode(t *testing.T) {
 	uc2, _ := defaultimpl.GenerateUserCode()
 	if uc == uc2 {
 		t.Errorf("two user codes collided: %q", uc)
+	}
+}
+
+// TestMemoryDeviceCodeStore_GetReturnsIndependentCopy proves the getters
+// hand back a defensive copy, not the live map value. Previously a poller
+// holding the returned *oauth.DeviceCode read dc.Approved/UserID/Provider/
+// Attributes unlocked while Approve mutated the SAME pointer under lock —
+// a data race on the approval decision and the issued subject. Run under
+// -race; the concurrent reader must never observe Approve's writes through
+// its own (independent) copy, and its Attributes map must not be aliased.
+func TestMemoryDeviceCodeStore_GetReturnsIndependentCopy(t *testing.T) {
+	ctx := context.Background()
+	s := defaultimpl.NewMemoryDeviceCodeStore()
+
+	dc := &oauth.DeviceCode{
+		DeviceCode: "dc-race",
+		UserCode:   "RACE-CODE",
+		ClientID:   "client-a",
+		Scopes:     []string{"openid"},
+		Resources:  []string{"https://api.one"},
+		Interval:   5,
+		ExpiresAt:  time.Now().Add(time.Minute),
+	}
+	if err := s.Issue(ctx, dc); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	// The returned snapshot must be a different pointer than what a
+	// subsequent Approve mutates, and its slices/map must be independent.
+	got, err := s.GetByDeviceCode(ctx, "dc-race")
+	if err != nil {
+		t.Fatalf("GetByDeviceCode: %v", err)
+	}
+	if got == dc {
+		t.Fatal("getter returned the same pointer passed to Issue")
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	// Writer: approve via user code (mutates the live entry under lock).
+	go func() {
+		defer wg.Done()
+		_ = s.Approve(ctx, "RACE-CODE", "user-1", "password",
+			map[string]string{"email": "u@example.test"})
+	}()
+	// Reader: repeatedly read fields of an independently fetched copy.
+	go func() {
+		defer wg.Done()
+		for range 1000 {
+			snap, err := s.GetByDeviceCode(ctx, "dc-race")
+			if err != nil {
+				continue
+			}
+			_ = snap.Approved
+			_ = snap.UserID
+			_ = snap.Provider
+			for range snap.Attributes {
+			}
+		}
+	}()
+	wg.Wait()
+
+	// The earlier copy must be insulated from Approve's writes.
+	if got.Approved || got.UserID != "" || got.Provider != "" || got.Attributes != nil {
+		t.Errorf("earlier copy mutated by concurrent Approve: %+v", got)
+	}
+
+	// Mutating the caller's copy must not bleed into the store.
+	mine, err := s.GetByUserCode(ctx, "RACE-CODE")
+	if err != nil {
+		t.Fatalf("GetByUserCode: %v", err)
+	}
+	if mine.Attributes != nil {
+		mine.Attributes["email"] = "tampered"
+	}
+	mine.Scopes = append(mine.Scopes, "extra")
+	again, err := s.GetByUserCode(ctx, "RACE-CODE")
+	if err != nil {
+		t.Fatalf("GetByUserCode (re-read): %v", err)
+	}
+	if again.Attributes["email"] == "tampered" {
+		t.Error("caller mutation of copied Attributes leaked into store")
+	}
+	if len(again.Scopes) != 1 {
+		t.Errorf("caller mutation of copied Scopes leaked into store: %v", again.Scopes)
 	}
 }

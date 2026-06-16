@@ -65,21 +65,38 @@ func (m *MemoryDeviceCodeStore) Issue(_ context.Context, dc *oauth.DeviceCode) e
 func (m *MemoryDeviceCodeStore) GetByDeviceCode(_ context.Context, deviceCode string) (*oauth.DeviceCode, error) {
 	m.mu.Lock()
 	entry, ok := m.byDeviceCode[deviceCode]
-	m.mu.Unlock()
 	if !ok || entry.IsExpired() {
+		m.mu.Unlock()
 		return nil, oauth.ErrDeviceCodeNotFound
 	}
-	return entry, nil
+	cp := copyDeviceCode(entry)
+	m.mu.Unlock()
+	return cp, nil
 }
 
 func (m *MemoryDeviceCodeStore) GetByUserCode(_ context.Context, userCode string) (*oauth.DeviceCode, error) {
 	m.mu.Lock()
 	entry, ok := m.byUserCode[userCode]
-	m.mu.Unlock()
 	if !ok || entry.IsExpired() {
+		m.mu.Unlock()
 		return nil, oauth.ErrDeviceCodeNotFound
 	}
-	return entry, nil
+	cp := copyDeviceCode(entry)
+	m.mu.Unlock()
+	return cp, nil
+}
+
+// copyDeviceCode returns an independent snapshot of entry so callers
+// never alias the live map value that Approve/Deny/UpdateLastPoll mutate
+// in place under lock — without this, the device /token poll's unlocked
+// read of dc.Approved/UserID/Provider/Attributes races those writers.
+// Mirrors MemoryCIBAStore.Get's defensive-copy idiom.
+func copyDeviceCode(entry *oauth.DeviceCode) *oauth.DeviceCode {
+	cp := *entry
+	cp.Scopes = append([]string(nil), entry.Scopes...)
+	cp.Resources = append([]string(nil), entry.Resources...)
+	cp.Attributes = copyMap(entry.Attributes)
+	return &cp
 }
 
 func (m *MemoryDeviceCodeStore) Approve(_ context.Context, userCode, userID, provider string, attributes map[string]string) error {

@@ -218,7 +218,9 @@ func TestClientStore_Put_UpsertAndRehash(t *testing.T) {
 	st := newClientStore(t)
 	ctx := context.Background()
 
-	if err := st.Put(ctx, &sso.Client{ID: "p1", Secret: "plain", Name: "First"}); err != nil {
+	// Active: ValidateSecret rejects inactive clients (parity with memory),
+	// and this test asserts the secret-validation path, not the active gate.
+	if err := st.Put(ctx, &sso.Client{ID: "p1", Secret: "plain", Name: "First", Active: true}); err != nil {
 		t.Fatalf("Put (insert): %v", err)
 	}
 	got, err := st.Get(ctx, "p1")
@@ -232,7 +234,7 @@ func TestClientStore_Put_UpsertAndRehash(t *testing.T) {
 
 	// Re-Put with the bcrypt value: must NOT re-hash (validates against the
 	// same plaintext still), and Name update takes effect (overwrite).
-	if err := st.Put(ctx, &sso.Client{ID: "p1", Secret: hashed, Name: "Second"}); err != nil {
+	if err := st.Put(ctx, &sso.Client{ID: "p1", Secret: hashed, Name: "Second", Active: true}); err != nil {
 		t.Fatalf("Put (upsert): %v", err)
 	}
 	got2, err := st.Get(ctx, "p1")

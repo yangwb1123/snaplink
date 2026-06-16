@@ -220,13 +220,53 @@ func (r *Restorer) restoreClients(ctx context.Context, snap *Snapshot, opts Rest
 			if !errors.Is(err, sso.ErrClientExists) {
 				return c, fmt.Errorf("add %q: %w", cl.ID, err)
 			}
-			if err := r.Clients.Update(ctx, cl); err != nil {
+			// Client.Secret + RegistrationAccessToken are json:"-", so a
+			// serialized snapshot never carries them. A wholesale Update
+			// with the empty incoming values would destroy the live
+			// hashed credentials — preserve them from the existing record
+			// when the snapshot omits them.
+			upd, err := r.preserveClientSecrets(ctx, cl)
+			if err != nil {
+				return c, fmt.Errorf("update %q: %w", cl.ID, err)
+			}
+			if err := r.Clients.Update(ctx, upd); err != nil {
 				return c, fmt.Errorf("update %q: %w", cl.ID, err)
 			}
 			c.Updated++
 		}
 	}
 	return c, nil
+}
+
+// preserveClientSecrets returns cl with its Secret and
+// RegistrationAccessToken backfilled from the live store whenever the
+// incoming (snapshot-sourced) values are empty. Because both fields are
+// json:"-", a deserialized snapshot always omits them; restoring without
+// this would overwrite live credentials with empty strings. The returned
+// value is a copy so the snapshot's in-memory client is left untouched
+// (a caller may reuse the snapshot). When neither field needs
+// backfilling the original cl is returned unchanged.
+func (r *Restorer) preserveClientSecrets(ctx context.Context, cl *sso.Client) (*sso.Client, error) {
+	if cl == nil || (cl.Secret != "" && cl.RegistrationAccessToken != "") {
+		return cl, nil
+	}
+	existing, err := r.Clients.Get(ctx, cl.ID)
+	if err != nil {
+		// No live record to carry credentials from (e.g. deleted between
+		// the ErrClientExists probe and here): nothing to preserve.
+		if errors.Is(err, sso.ErrNoSuchClient) {
+			return cl, nil
+		}
+		return nil, err
+	}
+	out := *cl
+	if out.Secret == "" {
+		out.Secret = existing.Secret
+	}
+	if out.RegistrationAccessToken == "" {
+		out.RegistrationAccessToken = existing.RegistrationAccessToken
+	}
+	return &out, nil
 }
 
 func (r *Restorer) restoreUsers(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
