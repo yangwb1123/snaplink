@@ -3,10 +3,11 @@ package sso
 import (
 	"time"
 
-	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/anomaly"
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/metrics"
 )
+
 func (s *Server) observeLoginDuration(ctx HandlerContext, provider, outcome string) {
 	if s.metrics == nil {
 		return

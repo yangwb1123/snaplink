@@ -6,15 +6,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"slices"
-	"time"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/security"
 )
+
 // RFC 9101 — JWT-Secured Authorization Request (JAR).
 //
 // Lets a client wrap its authorization request parameters in a

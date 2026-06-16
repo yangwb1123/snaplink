@@ -6,6 +6,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/oauth"
 )
+
 // handleBackchannelAuth delegates to oauth.HandleBackchannelAuth —
 // see that file for the OIDC CIBA Core 1.0 poll-mode flow.
 func (s *Server) handleBackchannelAuth(ctx HandlerContext) { oauth.HandleBackchannelAuth(s, ctx) }

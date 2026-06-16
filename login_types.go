@@ -2,7 +2,6 @@ package sso
 
 import (
 	"encoding/json"
-
 )
 
 // loginRequest is the parsed /auth/login request body.

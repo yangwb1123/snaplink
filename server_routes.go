@@ -9,11 +9,12 @@ import (
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/ratelimit"
-	"github.com/snaplink/sso/tracing"
 	"github.com/snaplink/sso/region"
+	"github.com/snaplink/sso/tracing"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
 func (s *Server) RegisterAuthenticator(a Authenticator) {
 	s.authenticators[a.Name()] = a
 }

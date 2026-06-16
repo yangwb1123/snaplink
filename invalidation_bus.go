@@ -2,15 +2,16 @@ package sso
 
 import (
 	"context"
-	"time"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/oauth"
 )
+
 func (s *Server) InvalidateClientCache(clientID string) {
 	if s.clientStoreCacheRef != nil {
 		s.clientStoreCacheRef.evict(clientID)

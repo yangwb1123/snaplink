@@ -9,11 +9,11 @@ func TestBasicClientCreds(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		header       string
-		wantID       string
-		wantSecret   string
-		wantOK       bool
+		name       string
+		header     string
+		wantID     string
+		wantSecret string
+		wantOK     bool
 	}{
 		{name: "valid basic auth", header: "Basic Y2xpZW50MTpzZWNyZXQx", wantID: "client1", wantSecret: "secret1", wantOK: true},
 		{name: "no header", header: "", wantOK: false},

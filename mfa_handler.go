@@ -1,11 +1,11 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/internal/handler"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/snaplink/sso/internal/handler"
 	"net/http"
 	"slices"
 	"time"
@@ -13,6 +13,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/spi"
 )
+
 type mfaResumeState struct {
 	Result           *AuthResult       `json:"result"`
 	Request          loginRequest      `json:"request"`

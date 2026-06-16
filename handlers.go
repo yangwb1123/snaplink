@@ -1,6 +1,5 @@
 package sso
 
-
 import (
 	"errors"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 )
+
 // tracer is shared by audit-event helpers for parsing inbound W3C
 // traceparent headers into TraceID/SpanID for stamping on Event
 // records. Stateless — safe at package scope.

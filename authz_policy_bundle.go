@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/permissions"
 )
+
 // handleAuthzPolicyBundle serves the read-only role-DEFINITION export a
 // service-mesh sidecar pulls to enforce authorization locally (no
 // per-request Authorizer RPC). Admin-gated (admin:read) by the path

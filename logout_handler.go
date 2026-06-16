@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/spi"
 )
+
 func (s *Server) handleLogout(ctx HandlerContext) {
 	var req struct {
 		SessionID string `json:"session_id"`

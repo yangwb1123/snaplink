@@ -44,7 +44,7 @@ var fileSizeExemptions = map[string]bool{
 	"caep/receiver.go":                     true,
 	"cmd/sso-import/main.go":               true,
 	"cmd/sso-server/main.go":               true,
-	"cmd/sso-server/build_stores.go":            true,
+	"cmd/sso-server/build_stores.go":       true,
 	"config/config.go":                     true,
 	"core/consts.go":                       true,
 	"core/types.go":                        true,

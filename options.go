@@ -1,14 +1,15 @@
 package sso
 
 import (
-	"time"
 	"github.com/snaplink/sso/fapi"
+	"time"
 
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
 )
+
 func WithRouter(r Router) Option {
 	return func(s *Server) { s.router = r }
 }

@@ -5,8 +5,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"net/http"
-
 )
+
 func (f ClientCertExtractorFunc) ExtractClientCert(r *http.Request) (*x509.Certificate, bool) {
 	return f(r)
 }

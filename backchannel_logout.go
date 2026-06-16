@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
 )
+
 func NewHTTPLogoutNotifier() *HTTPLogoutNotifier {
 	return &HTTPLogoutNotifier{
 		Client: &http.Client{Timeout: DefaultBackchannelLogoutTimeout},

@@ -1,8 +1,6 @@
 package sso
 
-import (
-
-)
+import ()
 
 // oidcConfiguration is the OIDC Discovery 1.0 §4 response shape.
 //

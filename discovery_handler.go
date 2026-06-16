@@ -6,13 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/metering"
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/permissions"
 )
+
 const PathOIDCDiscovery = "/.well-known/openid-configuration"
 
 // oidcConfiguration mirrors OpenID Connect Discovery 1.0 §3 +

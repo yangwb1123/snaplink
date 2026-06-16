@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/metering"
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/middleware"
@@ -33,8 +34,6 @@ import (
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/signingkeys"
 	"github.com/snaplink/sso/tenant"
-	"github.com/snaplink/sso/internal/handler"
-
 )
 
 // pendingConsentChallenge is a short-lived server-issued token that binds a
@@ -581,6 +580,7 @@ type namedReadyCheck struct {
 	Check   ReadyCheck
 	Timeout time.Duration // 0 -> use the aggregate deadline
 }
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		authenticators:            make(map[string]Authenticator),

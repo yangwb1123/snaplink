@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/snaplink/sso/internal/handler"
-
 )
+
 func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
 	claims, _, err := s.validateAnyToken(ctx, token)
 	return claims, err
@@ -112,8 +112,8 @@ func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked
 // When an issuer adopts a typed sentinel (e.g. ErrUnknownToken), add
 // it here.
 
-func isUnknownTokenErr(err error) bool { return handler.IsUnknownTokenErr(err) }
-func jwsHeaderAlg(token string) (string, bool) { return handler.JWSHeaderAlg(token) }
+func isUnknownTokenErr(err error) bool           { return handler.IsUnknownTokenErr(err) }
+func jwsHeaderAlg(token string) (string, bool)   { return handler.JWSHeaderAlg(token) }
 func algAllowed(alg string, allow []string) bool { return handler.AlgAllowed(alg, allow) }
 
 func (s *Server) requireDeps(deps ...string) error {

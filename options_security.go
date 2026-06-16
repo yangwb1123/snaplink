@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
 )
+
 func WithJTIReplayStore(store security.JTIReplayStore) Option {
 	return func(s *Server) { s.jtiReplayStore = store }
 }

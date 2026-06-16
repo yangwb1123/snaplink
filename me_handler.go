@@ -1,11 +1,12 @@
 package sso
 
 import (
-	"net/http"
 	"github.com/snaplink/sso/tenant"
+	"net/http"
 
 	"github.com/snaplink/sso/core"
 )
+
 func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok bool) {
 	claims, ok := s.meClaimsOrChallenge(ctx)
 	if !ok {

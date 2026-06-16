@@ -5,6 +5,7 @@ import (
 
 	"github.com/snaplink/sso/oidc"
 )
+
 func (s *Server) getAuthenticator(name string) (Authenticator, error) {
 	a, ok := s.authenticators[name]
 	if !ok {

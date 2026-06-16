@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/region"
 )
+
 // matter whether MFA gated the request or not.
 func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRequest, client *Client) {
 	if s.userProvider != nil {

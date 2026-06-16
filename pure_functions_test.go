@@ -13,9 +13,9 @@ func TestIsSecureRedirectURI(t *testing.T) {
 		want bool
 	}{
 		{"https://example.com/cb", true},
-		{"http://example.com/cb", false},         // not HTTPS
-		{"http://localhost:8080/cb", true},        // localhost is allowed
-		{"https://", true},                        // https scheme is allowed
+		{"http://example.com/cb", false},   // not HTTPS
+		{"http://localhost:8080/cb", true}, // localhost is allowed
+		{"https://", true},                 // https scheme is allowed
 		{"", false},
 	}
 	for _, tc := range tests {
@@ -39,7 +39,7 @@ func TestIsValidPKCEMethod(t *testing.T) {
 	}{
 		{"S256", true},
 		{"plain", true},
-		{"", true},       // empty means default method
+		{"", true}, // empty means default method
 		{"invalid", false},
 	}
 	for _, tc := range tests {

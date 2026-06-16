@@ -6,6 +6,7 @@ import (
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/oidc"
 )
+
 // WithJWKSCacheTTL overrides the Cache-Control max-age advertised
 // on /.well-known/jwks.json. Default is [DefaultJWKSCacheMaxAge]
 // (5 minutes). Lower this when key rotation must propagate faster;

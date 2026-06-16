@@ -14,6 +14,7 @@ import (
 
 	"github.com/snaplink/sso/security"
 )
+
 func verifyDPoPProof(
 	ctx context.Context,
 	proof string,
@@ -347,7 +348,6 @@ type DPoPNonceProvider interface {
 // invalidates all outstanding nonces but is harmless — clients just
 // see a fresh challenge on their next request.
 var ErrDPoPNonceRequired = errors.New("dpop: nonce required")
-
 
 // WithDPoPNonceProvider enables RFC 9449 §8 nonce-bound DPoP proofs.
 // When set, /token rejects DPoP-bearing requests that lack a fresh

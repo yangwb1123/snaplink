@@ -2,16 +2,17 @@ package sso
 
 import (
 	"context"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"slices"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/security"
 )
+
 func (s *Server) applyPairwiseSubject(ctx context.Context, client *Client, localSub string) string {
 	if client == nil || s.pairwiseStore == nil {
 		return localSub

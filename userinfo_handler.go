@@ -8,6 +8,7 @@ import (
 
 	"github.com/snaplink/sso/oauth"
 )
+
 func (s *Server) handleUserInfo(ctx HandlerContext) {
 	// /userinfo carries the subject's profile (sub, name, email,
 	// custom claims). Per RFC 6749 §5.1 cache-prevention pattern
@@ -290,4 +291,3 @@ func projectUserInfoForOIDC(u *User, scopes []string, requestedClaims json.RawMe
 	}
 	return out
 }
-

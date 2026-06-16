@@ -1,11 +1,12 @@
 package sso
 
 import (
-	"net/http"
 	"encoding/json"
+	"net/http"
 
 	"github.com/snaplink/sso/core"
 )
+
 func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
 	userID, ok := s.meSubjectOrChallenge(ctx)

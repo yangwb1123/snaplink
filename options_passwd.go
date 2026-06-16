@@ -1,14 +1,15 @@
 package sso
 
 import (
-	"io/fs"
-	"time"
 	"github.com/snaplink/sso/metering"
 	"github.com/snaplink/sso/middleware"
+	"io/fs"
+	"time"
 
 	"github.com/snaplink/sso/compliance"
 	"github.com/snaplink/sso/spi"
 )
+
 func WithPasswordResetStore(store PasswordResetStore, ttl time.Duration) Option {
 	return func(srv *Server) {
 		srv.passwordResetStore = store
@@ -217,7 +218,6 @@ func WithSelfEditableProfileAttributes(keys ...string) Option {
 		}
 	}
 }
-
 
 func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }

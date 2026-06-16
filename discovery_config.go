@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
 )
+
 func codeChallengeMethodsFor(s *Server) []string {
 	return oidc.CodeChallengeMethodsFor(s.oauth21Strict)
 }
@@ -378,7 +379,6 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidcCon
 // (an RFC 8414 field of the discovery doc) is deliberately NOT carried: the
 // Entity Statement is itself a signed JWS, so the discovery-doc signature is
 // redundant inside it.
-
 
 // BuildOPMetadata, handleFederationEntityConfig, handleFederationFetch,
 // and requestBaseURL were extracted to federation_handler.go.

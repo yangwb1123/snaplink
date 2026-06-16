@@ -5,10 +5,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/core"
 	"github.com/snaplink/sso/oidc"
 )
+
 func WithDiscoveryCacheTTL(d time.Duration) Option {
 	return func(s *Server) { s.discoveryCacheTTL = d }
 }

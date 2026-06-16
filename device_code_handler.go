@@ -1,15 +1,16 @@
 package sso
 
 import (
-	"net/http"
-	"strings"
 	"errors"
+	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 )
+
 func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode() }
 
 // generateUserCodeBytes delegates to oauth.GenerateUserCode.

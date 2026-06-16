@@ -2,18 +2,19 @@ package sso
 
 import (
 	"net/http"
-	"time"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/spi"
-	"github.com/snaplink/sso/oauth"
 )
+
 func (s *Server) handleLogin(ctx HandlerContext) {
 	// Stamp the request start time onto the context for the
 	// sso_login_duration_seconds histogram observation in

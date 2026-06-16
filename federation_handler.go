@@ -6,6 +6,7 @@ import (
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/middleware"
 )
+
 func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPFederationMetadata {
 	cfg := s.buildOIDCConfiguration(ctx, base)
 	return federation.OPFederationMetadata{

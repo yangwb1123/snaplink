@@ -14,6 +14,7 @@ import (
 
 	"github.com/snaplink/sso/oauth"
 )
+
 // Server's authCodeTTL with a fallback to DefaultAuthCodeTTL.
 func (s *Server) issueAuthCode(
 	ctx context.Context,

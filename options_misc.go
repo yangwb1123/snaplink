@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/spi"
 	"github.com/snaplink/sso/tenant"
 )
+
 func WithPermissionProvider(p permissions.Provider) Option {
 	return func(s *Server) { s.permissions = p }
 }

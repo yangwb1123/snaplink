@@ -7,6 +7,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/core"
 )
+
 func (s *Server) handleMySessions(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
 	userID, ok := s.meSubjectOrChallenge(ctx)

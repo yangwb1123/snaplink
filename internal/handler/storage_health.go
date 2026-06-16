@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sort"
 	"time"
-
 )
 
 const storageHealthProbeTimeout = 3 * time.Second
