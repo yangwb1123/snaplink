@@ -299,7 +299,10 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 		}
 	}
 
-	session, err := s.createSession(ctx, result.UserID)
+	// Provider-callback (federated) path: no authenticating RP client is in
+	// scope, so the session stays tenant-unbound — tenant revocation falls
+	// back to the membership-roster path for these users.
+	session, err := s.createSession(ctx, result.UserID, "")
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))

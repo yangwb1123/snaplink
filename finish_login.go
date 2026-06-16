@@ -209,7 +209,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRe
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrSessionMgrNotConfigured))
 		return
 	}
-	session, err := s.createSession(ctx, result.UserID)
+	session, err := s.createSession(ctx, result.UserID, client.TenantID)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))

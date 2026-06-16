@@ -304,11 +304,16 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 // SessionManager implements SessionMetaCreator (memory + sqlite do). The IP
 // honors the same first-hop X-Forwarded-For trust model as the rest of the
 // server. A manager without the extension falls back to the plain Create.
-func (s *Server) createSession(ctx HandlerContext, userID string) (*Session, error) {
+// tenantID stamps Session.TenantID so SessionTenantIndex.DeleteByTenant can
+// actively revoke this session when its tenant is suspended/deleted — pass the
+// authenticating client's TenantID (empty for non-tenant clients, which leaves
+// the session tenant-unbound and relies on the membership-roster revoke path).
+func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Session, error) {
 	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
 		return mc.CreateWithMeta(ctx.Request().Context(), userID, SessionMeta{
 			IP:        audit.ClientIP(ctx.Request()),
 			UserAgent: ctx.Request().UserAgent(),
+			TenantID:  tenantID,
 		})
 	}
 	return s.sessionMgr.Create(ctx.Request().Context(), userID)
