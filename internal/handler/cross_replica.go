@@ -2,14 +2,14 @@ package handler
 
 import (
 	"context"
-
-	"github.com/snaplink/sso/metrics"
-	"github.com/snaplink/sso/spi"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/metrics"
+	"github.com/snaplink/sso/spi"
 )
 
 // CrossReplicaDeps is the interface for cross-replica revocation.
@@ -40,35 +40,56 @@ func JWTExpUnsafe(token string) int64 {
 	return claims.Exp
 }
 
-// PublishTokenRevocation broadcasts a token revocation to peer replicas.
+// PublishTokenRevocation broadcasts a token revocation to peer replicas so each
+// armed replica can add the token to its own in-process deny-set. The detail
+// rides Event.Payload (MetaRevokedToken + advisory MetaRevokedExp) per the
+// cluster.Bus contract — the receiver re-decodes the token itself, so exp is
+// advisory only. Best-effort and fail-open: a publish error is logged and
+// swallowed because the local revoke already succeeded and cross-replica
+// propagation is purely additive. The success metric is nil-guarded so an
+// unwired Metrics is a no-op, not a panic.
 func PublishTokenRevocation(d *ServerDeps, ctx context.Context, token string, exp int64) {
-	if !d.CrossReplicaRevocation {
-		return
-	}
-	if d.InvalidationBus == nil {
+	if !d.CrossReplicaRevocation || d.InvalidationBus == nil || token == "" {
 		return
 	}
 	evt := cluster.Event{
 		Kind: cluster.KindTokenRevoked,
-		Key:  token,
+		Payload: map[string]string{
+			cluster.MetaRevokedToken: token,
+			cluster.MetaRevokedExp:   strconv.FormatInt(exp, 10),
+		},
 	}
 	if err := d.InvalidationBus.Publish(ctx, evt); err != nil {
-		d.Logger.Error("cross-replica revocation publish failed", "error", err)
-		d.Metrics.TokenRevocationsPropagatedTotal.WithLabelValues("publish").Inc()
+		d.Logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "error", err)
+		return
+	}
+	if d.Metrics != nil {
+		d.Metrics.TokenRevocationsPropagatedTotal.WithLabelValues(metrics.RevocationDirectionPublished).Inc()
 	}
 }
 
-// ApplyTokenRevocation processes an inbound revocation event from a peer replica.
+// ApplyTokenRevocation is the cluster.KindTokenRevoked arm of the bus
+// subscriber. It ADDS the carried token to this replica's per-issuer deny-set
+// via the LOCAL-ONLY revoke seam — d.RevokeAcrossIssuers is wired to the
+// unexported local revoke that never touches the bus, so adoption does NOT
+// re-publish (no broadcast loop). A token no local issuer owns is a clean
+// no-op; per-issuer errors are swallowed because the origin replica already
+// audited the user-facing revoke, so a malformed or foreign Event can never
+// reject a valid token here. Only a successful adoption is counted, and only
+// when Metrics is wired.
 func ApplyTokenRevocation(d *ServerDeps, ctx context.Context, evt cluster.Event) {
+	if !d.CrossReplicaRevocation {
+		return
+	}
 	if evt.Kind != cluster.KindTokenRevoked {
 		return
 	}
-	revoked, failed := d.RevokeAcrossIssuers(ctx, evt.Key)
-	if len(revoked) > 0 {
-		d.Logger.Info("cross-replica revocation adopted", "token_prefix", evt.Key[:8], "revoked", len(revoked))
+	token := evt.Payload[cluster.MetaRevokedToken]
+	if token == "" {
+		return
 	}
-	if len(failed) > 0 {
-		d.Logger.Error("cross-replica revocation adopt failed", "token_prefix", evt.Key[:8], "failed", len(failed))
+	revoked, _ := d.RevokeAcrossIssuers(ctx, token)
+	if len(revoked) > 0 && d.Metrics != nil {
+		d.Metrics.TokenRevocationsPropagatedTotal.WithLabelValues(metrics.RevocationDirectionAdopted).Inc()
 	}
-	d.Metrics.TokenRevocationsPropagatedTotal.WithLabelValues("adopted").Inc()
 }
