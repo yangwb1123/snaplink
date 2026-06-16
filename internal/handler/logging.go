@@ -13,10 +13,10 @@ var tracer = audit.NewTracer()
 
 // LogErrorCtx routes an Error log line through the wired logger, attaching
 // the request's W3C trace id when the logger implements spi.ContextLogger.
-func LogErrorCtx(d ServerDeps, ctx HandlerContext, msg string, kv ...any) {
-	cl, ok := d.SrvLogger().(spi.ContextLogger)
+func LogErrorCtx(d *ServerDeps, ctx HandlerContext, msg string, kv ...any) {
+	cl, ok := d.Logger.(spi.ContextLogger)
 	if !ok {
-		d.SrvLogger().Error(msg, kv...)
+		d.Logger.Error(msg, kv...)
 		return
 	}
 	cl.ErrorCtx(traceContext(ctx), msg, kv...)

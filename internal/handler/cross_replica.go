@@ -41,34 +41,34 @@ func JWTExpUnsafe(token string) int64 {
 }
 
 // PublishTokenRevocation broadcasts a token revocation to peer replicas.
-func PublishTokenRevocation(d CrossReplicaDeps, ctx context.Context, token string, exp int64) {
-	if !d.CrossReplicaRevocationEnabled() {
+func PublishTokenRevocation(d *ServerDeps, ctx context.Context, token string, exp int64) {
+	if !d.CrossReplicaRevocation {
 		return
 	}
-	if d.InvalidationBus() == nil {
+	if d.InvalidationBus == nil {
 		return
 	}
 	evt := cluster.Event{
 		Kind: cluster.KindTokenRevoked,
 		Key:  token,
 	}
-	if err := d.InvalidationBus().Publish(ctx, evt); err != nil {
-		d.SrvLogger().Error("cross-replica revocation publish failed", "error", err)
-		d.Metrics().TokenRevocationsPropagatedTotal.WithLabelValues("publish").Inc()
+	if err := d.InvalidationBus.Publish(ctx, evt); err != nil {
+		d.Logger.Error("cross-replica revocation publish failed", "error", err)
+		d.Metrics.TokenRevocationsPropagatedTotal.WithLabelValues("publish").Inc()
 	}
 }
 
 // ApplyTokenRevocation processes an inbound revocation event from a peer replica.
-func ApplyTokenRevocation(d CrossReplicaDeps, ctx context.Context, evt cluster.Event) {
+func ApplyTokenRevocation(d *ServerDeps, ctx context.Context, evt cluster.Event) {
 	if evt.Kind != cluster.KindTokenRevoked {
 		return
 	}
 	revoked, failed := d.RevokeAcrossIssuers(ctx, evt.Key)
 	if len(revoked) > 0 {
-		d.SrvLogger().Info("cross-replica revocation adopted", "token_prefix", evt.Key[:8], "revoked", len(revoked))
+		d.Logger.Info("cross-replica revocation adopted", "token_prefix", evt.Key[:8], "revoked", len(revoked))
 	}
 	if len(failed) > 0 {
-		d.SrvLogger().Error("cross-replica revocation adopt failed", "token_prefix", evt.Key[:8], "failed", len(failed))
+		d.Logger.Error("cross-replica revocation adopt failed", "token_prefix", evt.Key[:8], "failed", len(failed))
 	}
-	d.Metrics().TokenRevocationsPropagatedTotal.WithLabelValues("adopted").Inc()
+	d.Metrics.TokenRevocationsPropagatedTotal.WithLabelValues("adopted").Inc()
 }

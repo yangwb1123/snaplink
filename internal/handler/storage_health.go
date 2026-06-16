@@ -19,7 +19,7 @@ type storageHealthStore struct {
 }
 
 // HandleStorageHealth serves GET /api/v1/admin/storage-health.
-func HandleStorageHealth(d StorageHealthDeps, ctx HandlerContext) {
+func HandleStorageHealth(d *ServerDeps, ctx HandlerContext) {
 	reqCtx := ctx.Request().Context()
 	sources := d.StorageHealthSources()
 	stores := make([]storageHealthStore, 0, len(sources))

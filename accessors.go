@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/spi"
 	"github.com/snaplink/sso/connections"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/internal/handler"
 )
 
 // AuthCodeStore returns the wired AuthCodeStore (nil when not configured).
@@ -563,3 +564,81 @@ func (s *Server) CrossReplicaRevocationEnabled() bool { return s.crossReplicaRev
 
 // InvalidationBus returns the invalidation bus (nil when not configured).
 func (s *Server) InvalidationBus() cluster.Bus { return s.invalidationBus }
+
+// BuildHandlerDeps constructs the handler.ServerDeps struct from Server fields.
+func (s *Server) BuildHandlerDeps() *handler.ServerDeps {
+	return &handler.ServerDeps{
+		Logger:        s.logger,
+		Auditor:       s.auditor,
+		Metrics:       s.metrics,
+		Permissions:   s.permissions,
+		AnomalyRunner: s.anomalyRunner,
+		ClientStore:      s.clientStore,
+		UserProvider:     s.userProvider,
+		SessionMgr:       s.sessionMgr,
+		ConsentStore:     s.consentStore,
+		TenantUserStore:  s.tenantUserStore,
+		DeviceSecretStore: s.deviceSecretStore,
+		AuthCodeStore:       s.authCodeStore,
+		AuthCodeTTL:         s.authCodeTTL,
+		RefreshTokenStore:   s.refreshTokenStore,
+		RefreshTokenTTL:     s.refreshTokenTTL,
+		DeviceCodeStore:     s.deviceCodeStore,
+		DeviceCodeTTL:       s.deviceCodeTTL,
+		DeviceCodeInterval:  s.deviceCodeInterval,
+		DeviceVerifyBaseURL: s.deviceVerifyBaseURL,
+		PARStore:            s.parStore,
+		PARTTL:              s.parTTL,
+		CIBAStore:           s.cibaStore,
+		CIBARequestTTL:      s.cibaRequestTTL,
+		CIBAPollInterval:    s.cibaPollInterval,
+		DCRPolicy:           s.dcrPolicy,
+		TokenIssuers:        s.tokenIssuers,
+		IDTokenIssuer:       s.idTokenIssuer,
+		JARMSigner:          s.jarmSigner,
+		AccountLockout:       s.accountLockout,
+		JTIReplayStore:       s.jtiReplayStore,
+		JTIReplayFailClosed:  s.jtiReplayFailClosed,
+		JARFetcher:           s.jarFetcher,
+		JARDecrypter:         s.jarDecrypter,
+		PairwiseStore:        s.pairwiseStore,
+		SubjectClientIndex:   s.subjectClientIndex,
+		MFAProvider:          s.mfaProvider,
+		MFAChallengeStore:    s.mfaChallengeStore,
+		MFAChallengeTTL:      s.mfaChallengeTTL,
+		OAuth21Strict:        s.oauth21Strict,
+		EmbedPermissions:     s.embedPermissions,
+		FAPIValidator:        s.fapiValidator,
+		ScopeDescriptions:    s.scopeDescriptions,
+		ConnectionStore:      s.connectionStore,
+		BackchannelLogoutMaxConcurrent: s.backchannelLogoutMaxConcurrent,
+		AllowDynamicClientRegistration: s.dcrPolicy != nil,
+		TenantMetricsEnabled:  s.tenantMetricsEnabled(),
+		CrossReplicaRevocation: s.crossReplicaRevocation,
+		InvalidationBus:        s.invalidationBus,
+		AuthzErrorBody:         s.authzErrorBody,
+		AuthzErrorBodyDesc:     s.authzErrorBodyDesc,
+		ResolveIssuer:          s.resolveIssuer,
+		RecordLoginFailure:     s.recordLoginFailure,
+		RecordLoginSuccess:     s.recordLoginSuccess,
+		RecordTokenIssued:      s.recordTokenIssued,
+		RecordLogout:           s.recordLogout,
+		RecordIDTokenIssued:    s.recordIDTokenIssued,
+		RecordRefreshTokenIssued: s.recordRefreshTokenIssued,
+		MeSubjectOrChallenge:   s.meSubjectOrChallenge,
+		LogErrorCtx:            s.logErrorCtx,
+		RevokeAcrossIssuers:    s.revokeAcrossIssuers,
+		RecordTenantLoginAttempt: s.recordTenantLoginAttempt,
+		RecordTenantTokenIssued:  s.recordTenantTokenIssued,
+		ReadyChecks: func() map[string]func(ctx context.Context) error {
+			m := make(map[string]func(ctx context.Context) error)
+			for _, rc := range s.readyChecks {
+				m[rc.Name] = rc.Check
+			}
+			return m
+		},
+		StorageHealthSources: func() []handler.StorageHealthSource {
+			return s.storageHealthSources
+		},
+	}
+}

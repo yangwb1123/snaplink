@@ -1,21 +1,16 @@
 package sso
 
-import (
-	"github.com/snaplink/sso/internal/handler"
-)
+import "github.com/snaplink/sso/internal/handler"
 
-// WithStorageHealth mounts GET /api/v1/admin/storage-health.
 func WithStorageHealth(sources ...StorageHealthSource) Option {
 	return func(s *Server) {
 		for _, src := range sources {
-			if src.Name == "" {
-				continue
-			}
+			if src.Name == "" { continue }
 			s.storageHealthSources = append(s.storageHealthSources, src)
 		}
 	}
 }
 
 func (s *Server) handleStorageHealth(ctx HandlerContext) {
-	handler.HandleStorageHealth(s, ctx)
+	handler.HandleStorageHealth(s.BuildHandlerDeps(), ctx)
 }
