@@ -273,6 +273,11 @@ type app struct {
 
 	// netStop closes when the Classifier's Watch loop exits (after shutdown).
 	netStop <-chan struct{}
+	// netCancel stops the Classifier's self-healing Watch loop at shutdown so
+	// it exits cleanly instead of treating the store-Close as a Watch failure
+	// (which would flip degraded + churn reconnects on the way out). nil when
+	// network policy is disabled.
+	netCancel context.CancelFunc
 
 	// invalidationBus is the cross-replica cache-coordination bus (nil
 	// when unconfigured); busStop closes when its subscriber exits.
@@ -422,8 +427,12 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 			grpcSrv.Stop()
 		}
 	}
-	// Wait briefly for the Classifier's watch loop to exit, so any in-flight
-	// Apply events are flushed before we drop the store reference.
+	// Cancel the Classifier's watch loop so it exits cleanly (no spurious
+	// degraded flip), then wait briefly for it to drain any in-flight Apply
+	// events before we drop the store reference.
+	if a.netCancel != nil {
+		a.netCancel()
+	}
 	if a.netStop != nil {
 		select {
 		case <-a.netStop:

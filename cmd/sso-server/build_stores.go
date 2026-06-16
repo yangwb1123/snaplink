@@ -2201,7 +2201,7 @@ func seedRevocations(iss interface {
 	return iss.SeedRevocations(context.Background())
 }
 
-func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
+func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr error) {
 	// Metrics constructed early so the retention schedulers can emit
 	// counters when they fire. The asyncSink collector + WithMetrics
 	// wiring still happen later (after the audit subsystem builds
@@ -2487,13 +2487,29 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	}
 	var classifier *netpolicy.Classifier
 	var netStop <-chan struct{}
+	var netCancel context.CancelFunc
 	if netStore != nil {
 		classifier = netpolicy.NewClassifier(
 			netpolicy.WithClassifierMetrics(metricsRegistry),
 			netpolicy.WithClassifierLogger(logger),
 		)
-		done, err := classifier.Start(context.Background(), netStore)
+		// Cancellable run ctx so shutdown stops the self-healing Watch loop
+		// cleanly (it exits on ctx cancel). Without it the loop would treat the
+		// shutdown store-Close as a Watch failure and flip degraded on the way
+		// out, emitting a spurious degraded signal + reconnect churn.
+		var netCtx context.Context
+		netCtx, netCancel = context.WithCancel(context.Background())
+		// If buildApp fails downstream, stop the classifier's watch loop so its
+		// goroutine + context don't leak; on success the app owns netCancel and
+		// calls it at shutdown.
+		defer func() {
+			if retErr != nil {
+				netCancel()
+			}
+		}()
+		done, err := classifier.Start(netCtx, netStore)
 		if err != nil {
+			netCancel()
 			_ = netStore.Close()
 			return nil, fmt.Errorf("network classifier: %w", err)
 		}
@@ -3712,6 +3728,7 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		pushNotify:              pushNotify,
 		metrics:                 metricsRegistry,
 		netStop:                 netStop,
+		netCancel:               netCancel,
 		invalidationBus:         invalidationBus,
 		busStop:                 busStop,
 		signingKeyRegistry:      signingKeyRegistry,
