@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/anomaly"
+	"crypto/x509"
+	"net/http"
+	"github.com/snaplink/sso/compliance"
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/cluster"
 	"github.com/snaplink/sso/connections"
@@ -19,7 +22,6 @@ import (
 )
 
 // ServerDeps holds all Server dependencies for handlers.
-// Populated once by root package via Server.BuildHandlerDeps().
 type ServerDeps struct {
 	// Core services
 	Logger        spi.Logger
@@ -35,6 +37,12 @@ type ServerDeps struct {
 	ConsentStore      core.ConsentStore
 	TenantUserStore   core.TenantUserStore
 	DeviceSecretStore core.DeviceSecretStore
+	PasswordResetStore core.PasswordResetStore
+	PasswordResetTTL  time.Duration
+	PasswordResetSender func(ctx context.Context, email, token string) error
+	PasswordResetResolver func(ctx context.Context, email string) (string, error)
+	InvitationStore   core.InvitationStore
+	InvitationSender  func(ctx context.Context, email, token, tenantID string) error
 
 	// OAuth stores
 	AuthCodeStore       oauth.AuthCodeStore
@@ -52,10 +60,12 @@ type ServerDeps struct {
 	CIBAPollInterval    time.Duration
 	DCRPolicy           *oauth.DCRPolicy
 	TokenIssuers        map[string]core.TokenIssuer
+	DefaultTokenStrategy string
 
 	// OIDC
 	IDTokenIssuer oidc.IDTokenIssuer
 	JARMSigner    oidc.JARMSigner
+	MetadataSigner oidc.MetadataSigner
 
 	// Security
 	AccountLockout       security.AccountLockout
@@ -65,27 +75,45 @@ type ServerDeps struct {
 	JARDecrypter         security.JWEDecrypter
 	PairwiseStore        security.PairwiseSubjectStore
 	SubjectClientIndex   security.SubjectClientIndex
+	ClientCertExtractor  func(r *http.Request) (*x509.Certificate, bool)
+	DPoPNonceProvider    func(ctx context.Context) (string, error)
 
 	// MFA
-	MFAProvider       spi.MFAProvider
-	MFAChallengeStore spi.MFAChallengeStore
-	MFAChallengeTTL   time.Duration
+	MFAProvider          spi.MFAProvider
+	MFAChallengeStore    spi.MFAChallengeStore
+	MFAChallengeTTL      time.Duration
+	MFAEnrollmentStore   core.MFAEnrollmentStore
+	TOTPEnroller         interface{ Enroll(ctx context.Context, userID string) (interface{}, error) }
+	WebAuthnRegistrar    interface{ BeginRegistration(ctx context.Context, userID string) (interface{}, error) }
 
 	// Feature flags
 	OAuth21Strict      bool
 	EmbedPermissions   bool
 	FAPIValidator      *fapi.Validator
+	SignupEnabled      bool
+	JITMembership      bool
+	AuditAPI           bool
 
-	// Misc
+	// Config
 	ScopeDescriptions              map[string]string
 	ConnectionStore                connections.Store
 	BackchannelLogoutMaxConcurrent int
 	AllowDynamicClientRegistration bool
+	Issuer                        string
+	SupportedSigningAlgs           []string
+	JWKSCacheTTL                  time.Duration
+	DiscoveryDocCacheTTL          time.Duration
+	BodyLimit                     int64
+	BodyLimitByPath               map[string]int64
+	SelfEditableAttrs             []string
+	RateLimitPolicy               interface{}
 
-	// Tenant metrics
+	// Tenant
 	TenantMetricsEnabled    bool
 	RecordTenantLoginAttempt func(ctx HandlerContext, clientID, outcome string)
 	RecordTenantTokenIssued  func(ctx HandlerContext, clientID, strategy string)
+	TenantSuspensionCache   interface{ Get(tenantID string) (suspended bool, fresh bool) }
+	TenantResidencyCache    interface{ Get(tenantID string) (allowed bool, fresh bool) }
 
 	// Ready / Storage health
 	ReadyChecks          func() map[string]func(ctx context.Context) error
@@ -95,7 +123,17 @@ type ServerDeps struct {
 	CrossReplicaRevocation bool
 	InvalidationBus        cluster.Bus
 
-	// Func wrappers for common Server methods
+	// Extra stores for self-service
+	EmailChangeSender   func(ctx context.Context, userID, newEmail, token string) error
+	EmailChangeStore    core.EmailChangeStore
+	EmailChangeTTL      time.Duration
+	PasswordCredentialStore core.PasswordCredentialStore
+	DataExporter        interface{ Export(ctx context.Context, subject string) (*compliance.Report, error) }
+	AccountEraser       interface{ Erase(ctx context.Context, subject string) (*compliance.Report, error) }
+	ConsentChallenges   map[string]interface{}
+	ConsentChallengeFunc func(ctx context.Context, challengeID string) (interface{}, bool)
+
+	// Func wrappers for Server methods
 	AuthzErrorBody          func(ctx HandlerContext, code string) map[string]string
 	AuthzErrorBodyDesc      func(ctx HandlerContext, code, desc string) map[string]string
 	ResolveIssuer           func(ctx HandlerContext) string
@@ -105,15 +143,28 @@ type ServerDeps struct {
 	RecordLogout            func(ctx HandlerContext, sessionID string, revoked []string)
 	RecordIDTokenIssued     func(ctx HandlerContext, clientID, subjectID string)
 	RecordRefreshTokenIssued func(ctx HandlerContext, clientID, subjectID string, rotation bool)
+	RecordCallbackFailure   func(ctx HandlerContext, provider, reason string)
+	RecordAccountLocked     func(ctx HandlerContext, clientID, provider, lockKey string, until time.Time)
+	RecordCodeSent          func(ctx HandlerContext, provider, target string, ok bool)
+	RecordDeviceCodeIssued  func(ctx HandlerContext, clientID string)
+	RecordSelfErase         func(ctx HandlerContext, userID string)
+	RecordRefreshTokenReuse func(ctx HandlerContext, clientID, familyID string, killed int)
 	MeSubjectOrChallenge    func(ctx HandlerContext) (string, bool)
 	LogErrorCtx             func(ctx HandlerContext, msg string, kv ...any)
 	RevokeAcrossIssuers     func(ctx context.Context, token string) ([]string, []string)
+	ValidateToken           func(ctx context.Context, token string) (*core.TokenClaims, error)
+	ApplyPairwiseSubject    func(ctx context.Context, client *core.Client, user *core.User) string
+	IssuerForClient         func(client *core.Client) (string, core.TokenIssuer, error)
+	IDTokenIssuerForClient  func(client *core.Client) (oidc.IDTokenIssuer, bool, error)
+	JARMSignerForClient     func(client *core.Client) (oidc.JARMSigner, bool)
+	AuthenticateClientCreds func(ctx HandlerContext, id, secret string) error
+	AuthenticatedSubject    func(ctx HandlerContext) (userID, clientID string, ok bool)
+	BuildOIDCConfiguration  func(ctx HandlerContext, base string) map[string]any
+	ComputeDiscoverySnapshot func(ctx context.Context) any
 }
 
-// HandlerContext alias.
 type HandlerContext = core.HandlerContext
 
-// StorageHealthSource describes one wired store.
 type StorageHealthSource struct {
 	Name           string
 	Ping           func(ctx context.Context) error

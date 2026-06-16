@@ -565,7 +565,8 @@ func (s *Server) CrossReplicaRevocationEnabled() bool { return s.crossReplicaRev
 // InvalidationBus returns the invalidation bus (nil when not configured).
 func (s *Server) InvalidationBus() cluster.Bus { return s.invalidationBus }
 
-// BuildHandlerDeps constructs the handler.ServerDeps struct from Server fields.
+
+// BuildHandlerDeps populates handler.ServerDeps from Server fields.
 func (s *Server) BuildHandlerDeps() *handler.ServerDeps {
 	return &handler.ServerDeps{
 		Logger:        s.logger,
@@ -613,7 +614,8 @@ func (s *Server) BuildHandlerDeps() *handler.ServerDeps {
 		ConnectionStore:      s.connectionStore,
 		BackchannelLogoutMaxConcurrent: s.backchannelLogoutMaxConcurrent,
 		AllowDynamicClientRegistration: s.dcrPolicy != nil,
-		TenantMetricsEnabled:  s.tenantMetricsEnabled(),
+		Issuer:               s.issuer,
+		SupportedSigningAlgs: s.supportedSigningAlgs,
 		CrossReplicaRevocation: s.crossReplicaRevocation,
 		InvalidationBus:        s.invalidationBus,
 		AuthzErrorBody:         s.authzErrorBody,
@@ -628,6 +630,7 @@ func (s *Server) BuildHandlerDeps() *handler.ServerDeps {
 		MeSubjectOrChallenge:   s.meSubjectOrChallenge,
 		LogErrorCtx:            s.logErrorCtx,
 		RevokeAcrossIssuers:    s.revokeAcrossIssuers,
+		ValidateToken:          s.ValidateToken,
 		RecordTenantLoginAttempt: s.recordTenantLoginAttempt,
 		RecordTenantTokenIssued:  s.recordTenantTokenIssued,
 		ReadyChecks: func() map[string]func(ctx context.Context) error {
