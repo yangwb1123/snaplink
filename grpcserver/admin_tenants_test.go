@@ -437,6 +437,41 @@ func TestTenantAdmin_DeleteInvalidatesCache(t *testing.T) {
 	}
 }
 
+func TestTenantAdmin_DeleteInvalidatesResidencyCache(t *testing.T) {
+	// A deleted tenant's cached residency policy must be evicted on delete —
+	// symmetric with UpdateTenant. Without this, a still-valid token keeps being
+	// residency-gated against a policy that no longer exists until the cache TTL
+	// expires, and peers stay stale (no bus event).
+	store := tenantmemory.New()
+	var residencyInvalidated atomic.Int32
+	var lastID atomic.Value
+	conn := startTenantAdminGRPCFull(t, store, audit.New(audit.NewMemorySink(10)),
+		func(string) {}, // suspension cache
+		func(id string) { // residency cache
+			residencyInvalidated.Add(1)
+			lastID.Store(id)
+		},
+		nil) // token revocation
+	c := adminv1.NewTenantAdminServiceClient(conn)
+	ctx := context.Background()
+
+	_, _ = c.CreateTenant(ctx, &adminv1.CreateTenantRequest{
+		Tenant: &adminv1.Tenant{Id: "t1", Slug: "t1", HomeRegion: "eu"},
+	})
+	// Create-with-residency fires the eviction once; reset so we measure delete.
+	residencyInvalidated.Store(0)
+
+	if _, err := c.DeleteTenant(ctx, &adminv1.DeleteTenantRequest{Id: "t1"}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if residencyInvalidated.Load() != 1 {
+		t.Fatalf("residency invalidate count = %d want 1 after delete", residencyInvalidated.Load())
+	}
+	if got, _ := lastID.Load().(string); got != "t1" {
+		t.Fatalf("residency invalidated id = %q want t1", got)
+	}
+}
+
 func TestTenantAdmin_DomainCRUD(t *testing.T) {
 	store := tenantmemory.New()
 	conn := startTenantAdminGRPC(t, store, audit.New(audit.NewMemorySink(20)), nil)

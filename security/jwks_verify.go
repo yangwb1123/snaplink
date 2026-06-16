@@ -310,14 +310,28 @@ func rsaPublicFromJWK(jwk core.JWK) (*rsa.PublicKey, error) {
 	if err != nil || len(eb) == 0 {
 		return nil, errors.New("jws: malformed RSA e")
 	}
-	e := 0
-	for _, b := range eb {
-		e = e<<8 | int(b)
+	// Accumulate into a big.Int first so an over-long encoding can't silently
+	// overflow the int below (a 5+ byte E would wrap on 32-bit and is bogus
+	// regardless). The decoded value is then range-checked before truncation.
+	ebig := new(big.Int).SetBytes(eb)
+	// Reject a degenerate public exponent at the gate, BEFORE any signature
+	// work — the same floor the signing-key aggregation decoder and the RSA
+	// issuer's AdoptVerifyKey enforce. e=1 makes RSA verification the identity
+	// (sig^1 mod N == sig), so anyone could forge a "signature" with no private
+	// key; an even e has no inverse modulo the (odd) RSA totient and is
+	// cryptographically degenerate. Don't rely on crypto/rsa's own internal
+	// e-check to backstop this: it is an implementation detail (and absent in
+	// older Go / alternate verify backends), so this shared verifier (federation
+	// / CAEP receiver / SPIFFE / JAR / private_key_jwt) enforces it explicitly,
+	// fail-closed.
+	if !ebig.IsInt64() {
+		return nil, errors.New("jws: RSA exponent too large")
 	}
-	if e <= 0 {
-		return nil, errors.New("jws: bad RSA exponent")
+	e := ebig.Int64()
+	if e < 3 || e&1 == 0 {
+		return nil, errors.New("jws: degenerate RSA exponent")
 	}
-	return &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: e}, nil
+	return &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: int(e)}, nil
 }
 
 func isAsymmetricJWSAlg(alg string) bool {

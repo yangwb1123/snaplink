@@ -189,6 +189,11 @@ func (s *TenantAdminService) DeleteTenant(ctx context.Context, in *adminv1.Delet
 	// re-resolve as "no tenant" on the next request, not stay cached
 	// as Active until TTL expiry.
 	s.invalidateSuspensionCache(in.Id)
+	// A deleted tenant's cached residency policy must die with it too — symmetric
+	// with UpdateTenant. Without this, a still-valid token keeps being residency-
+	// gated against a policy that no longer exists until the cache TTL expires,
+	// and peers stay stale (no KindTenantResidency bus event). Nil-safe no-op.
+	s.invalidateResidencyCache(in.Id)
 	// A deleted tenant must not leave usable refresh tokens behind for its
 	// (now-orphaned) clients — purge them too, symmetric with the suspend
 	// path. Best-effort; the hook logs + audits internally.

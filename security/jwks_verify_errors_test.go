@@ -5,7 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
+	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/snaplink/sso/core"
@@ -173,4 +176,82 @@ func TestPublicKeyReconstruct_MalformedKeys(t *testing.T) {
 			t.Fatal("RS256 header with EC JWK accepted")
 		}
 	})
+
+	t.Run("RSA degenerate exponent", func(t *testing.T) {
+		t.Parallel()
+		// A real 2048-bit modulus (passes the size floor) paired with a
+		// degenerate public exponent must be rejected AT THE EXPONENT GATE,
+		// before any signature work: e=1 makes RSA verification the identity
+		// (anyone forges a "signature" with no private key) and any even e is
+		// cryptographically degenerate. This mirrors the signing-key aggregation
+		// decoder + RSA AdoptVerifyKey as a defense-in-depth floor that does NOT
+		// rely on the stdlib's own internal e-check in rsa.Verify*. Asserting on
+		// the specific error proves the new gate fired (a bare err!=nil would
+		// also pass when the later signature check rejects it).
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("rsa keygen: %v", err)
+		}
+		nb := priv.N.Bytes() // exactly 256 bytes for a 2048-bit modulus
+		for _, tc := range []struct {
+			name string
+			e    *big.Int
+		}{
+			{"e=1 identity", big.NewInt(1)},
+			{"e=2 even", big.NewInt(2)},
+			{"e=4 even", big.NewInt(4)},
+			{"e=65536 even", big.NewInt(65536)},
+		} {
+			jwk := core.JWK{
+				Kty: "RSA", Kid: "k1", Alg: "RS256",
+				N: b64(nb), E: encodeRSAExponent(tc.e),
+			}
+			header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"k1"}`))
+			payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"x"}`))
+			token := header + "." + payload + "." + base64.RawURLEncoding.EncodeToString([]byte("sig"))
+			_, err := security.VerifyCompactJWS(token, []core.JWK{jwk}, map[string]struct{}{"RS256": {}})
+			if err == nil {
+				t.Fatalf("%s: degenerate RSA exponent accepted", tc.name)
+			}
+			if !strings.Contains(err.Error(), "degenerate RSA exponent") {
+				t.Fatalf("%s: rejected by %q, want the exponent gate", tc.name, err)
+			}
+		}
+	})
+
+	t.Run("RSA sound exponent passes the gate", func(t *testing.T) {
+		t.Parallel()
+		// Control: a sound e=65537 with a real 2048-bit modulus must clear the
+		// exponent floor and reach the SIGNATURE check — proving the new gate
+		// doesn't reject legitimate keys. The garbage signature then fails, but
+		// NOT at the exponent gate.
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("rsa keygen: %v", err)
+		}
+		jwk := core.JWK{
+			Kty: "RSA", Kid: "k1", Alg: "RS256",
+			N: b64(priv.N.Bytes()), E: encodeRSAExponent(big.NewInt(65537)),
+		}
+		header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"k1"}`))
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"x"}`))
+		token := header + "." + payload + "." + base64.RawURLEncoding.EncodeToString([]byte("garbage-sig"))
+		_, err = security.VerifyCompactJWS(token, []core.JWK{jwk}, map[string]struct{}{"RS256": {}})
+		if err == nil {
+			t.Fatal("garbage signature accepted")
+		}
+		if strings.Contains(err.Error(), "degenerate RSA exponent") {
+			t.Fatalf("sound e=65537 wrongly rejected at the exponent gate: %v", err)
+		}
+	})
+}
+
+// encodeRSAExponent renders an RSA public exponent as the minimal big-endian
+// base64url string used in a JWK "e" field (RFC 7518 §6.3).
+func encodeRSAExponent(e *big.Int) string {
+	b := e.Bytes() // already big-endian, minimal length
+	if len(b) == 0 {
+		b = []byte{0} // e=0 still needs a byte so the field isn't empty
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
