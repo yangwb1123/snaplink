@@ -2488,7 +2488,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 	var classifier *netpolicy.Classifier
 	var netStop <-chan struct{}
 	if netStore != nil {
-		classifier = netpolicy.NewClassifier()
+		classifier = netpolicy.NewClassifier(
+			netpolicy.WithClassifierMetrics(metricsRegistry),
+			netpolicy.WithClassifierLogger(logger),
+		)
 		done, err := classifier.Start(context.Background(), netStore)
 		if err != nil {
 			_ = netStore.Close()
@@ -2501,6 +2504,13 @@ func buildApp(cfg *config.Config, logger spi.Logger) (*app, error) {
 		}
 		if netStoreKind == "etcd" {
 			opts = appendReadyCheck(opts, "etcd-netpolicy", netStore)
+			// The Classifier's self-healing Watch loop flips degraded when the
+			// etcd watch closes under a live context (compaction/leader change):
+			// it keeps serving its frozen snapshot but stops applying policy
+			// edits. Surface that on /readyz so a stuck-stale replica is visible
+			// (Ready ignores ctx — it reads an atomic flag, no I/O).
+			cls := classifier
+			opts = append(opts, sso.WithReadyCheck("netpolicy-classifier", func(context.Context) error { return cls.Ready() }))
 		}
 	}
 

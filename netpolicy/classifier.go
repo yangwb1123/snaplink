@@ -6,6 +6,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/snaplink/sso/metrics"
+	"github.com/snaplink/sso/spi"
 )
 
 // Classifier keeps a priority-sorted snapshot of every policy in a Store and
@@ -15,14 +20,48 @@ import (
 // Construction:
 //
 //	c := netpolicy.NewClassifier()
-//	if err := c.Reload(ctx, store); err != nil { ... }
-//	go c.Run(ctx, store)
+//	done, err := c.Start(ctx, store)
+//	if err != nil { ... }
 //
-// Reload performs the initial List; Run blocks on Watch and applies updates.
-// Calling Run multiple times is undefined.
+// Start seeds the snapshot via Reload and spawns the SELF-HEALING Watch
+// consumer (see classifier_selfheal.go): a single drain is not enough because
+// Store.Watch can close mid-life (etcd watch compaction / leader change /
+// network blip — netpolicy/etcd returns on the first watch error), at which
+// point the old bare `for range` goroutine exited PERMANENTLY and this replica
+// served a frozen snapshot forever with /readyz still green. Calling Start more
+// than once on the same Classifier is undefined.
 type Classifier struct {
 	mu       sync.RWMutex
 	snapshot []*compiledPolicy
+
+	// Self-heal observability. degraded is read by the concurrent Ready()
+	// (readiness probe) and written only by the single Watch-consumer goroutine,
+	// so it is atomic for that one cross-goroutine read. metrics + logger are
+	// optional (nil when WithClassifier* options aren't supplied — the loop
+	// stays byte-identical in behavior, just unobservable). backoffBase is a
+	// test seam to shrink the resubscribe delay; zero uses the production const.
+	degraded    atomic.Bool
+	metrics     *metrics.Metrics
+	logger      spi.Logger
+	backoffBase time.Duration
+}
+
+// ClassifierOption configures a Classifier at construction. All options are
+// optional — NewClassifier() with no options behaves exactly as before (the
+// self-heal loop still runs; it is simply unobservable without metrics/logger).
+type ClassifierOption func(*Classifier)
+
+// WithClassifierMetrics wires the bounded-cardinality health gauge +
+// reconnect counter (sso_netpolicy_classifier_{up,reconnects_total}) the
+// self-heal loop stamps on each degraded/recovered transition. nil is a no-op.
+func WithClassifierMetrics(m *metrics.Metrics) ClassifierOption {
+	return func(c *Classifier) { c.metrics = m }
+}
+
+// WithClassifierLogger wires the logger the self-heal loop uses to report a
+// Watch drop + each resubscribe. nil leaves logging off.
+func WithClassifierLogger(l spi.Logger) ClassifierOption {
+	return func(c *Classifier) { c.logger = l }
 }
 
 // compiledPolicy is a Policy with its CIDRs pre-parsed into net.IPNets and
@@ -34,8 +73,14 @@ type compiledPolicy struct {
 	hostnames map[string]struct{}
 }
 
-// NewClassifier returns an empty Classifier. Use Reload to populate.
-func NewClassifier() *Classifier { return &Classifier{} }
+// NewClassifier returns an empty Classifier. Use Start (or Reload) to populate.
+func NewClassifier(opts ...ClassifierOption) *Classifier {
+	c := &Classifier{}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
 
 // Classify returns the highest-priority policy that matches. host beats
 // remoteAddr — see package doc. Returns nil when nothing matches; callers
@@ -94,12 +139,15 @@ func (c *Classifier) Reload(ctx context.Context, s Store) error {
 
 // Start subscribes to the store's Watch channel synchronously (so by the time
 // Start returns, no events can be lost between Reload and the consumer loop),
-// seeds the snapshot via Reload, then spawns a goroutine that applies updates
-// until ctx is done or the watch closes. The returned done channel closes
-// when the consumer loop exits — callers that want to block on shutdown can
-// wait on it.
+// seeds the snapshot via Reload, then spawns the SELF-HEALING consumer goroutine
+// (run, in classifier_selfheal.go). The returned done channel closes ONLY when
+// ctx is cancelled — a mid-life Watch close no longer ends the loop; it
+// resubscribes. Callers that want to block on shutdown can wait on done.
 //
-// Calling Start more than once on the same Classifier is undefined.
+// A synchronous first Watch + Reload surfaces a wiring/transport fault to the
+// caller at boot (matching the prior contract); a LATER channel close is the
+// self-heal path. Healthy from the first successful subscribe. Calling Start
+// more than once on the same Classifier is undefined.
 func (c *Classifier) Start(ctx context.Context, s Store) (<-chan struct{}, error) {
 	ch, err := s.Watch(ctx)
 	if err != nil {
@@ -108,13 +156,9 @@ func (c *Classifier) Start(ctx context.Context, s Store) (<-chan struct{}, error
 	if err := c.Reload(ctx, s); err != nil {
 		return nil, err
 	}
+	c.setHealthy()
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for evt := range ch {
-			c.apply(evt)
-		}
-	}()
+	go c.run(ctx, s, done, ch)
 	return done, nil
 }
 

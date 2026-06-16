@@ -36,6 +36,9 @@ const (
 	NameInvalidationBusUp              = "sso_invalidation_bus_up"
 	NameInvalidationBusReconnectsTotal = "sso_invalidation_bus_reconnects_total"
 
+	NameNetPolicyClassifierUp              = "sso_netpolicy_classifier_up"
+	NameNetPolicyClassifierReconnectsTotal = "sso_netpolicy_classifier_reconnects_total"
+
 	NameCIBAPingTotal = "sso_ciba_ping_total"
 
 	NameCAEPSetsTotal = "sso_caep_sets_total"
@@ -132,6 +135,21 @@ const (
 const (
 	InvalidationBusReasonDegraded    = "degraded"
 	InvalidationBusReasonReconnected = "reconnected"
+)
+
+// Network-policy classifier reconnect outcomes
+// (sso_netpolicy_classifier_reconnects_total), bounded to the two transitions
+// the self-healing Watch loop can record on the `reason` label (§5 bounded
+// cardinality; no per-policy label):
+//   - degraded: the Store.Watch channel closed while the run context was still
+//     live (etcd watch compaction / leader change / network blip) and the loop
+//     flipped degraded — this replica STOPPED applying policy updates and is
+//     serving a frozen snapshot until it resubscribes.
+//   - reconnected: a degraded loop successfully resubscribed, re-listed (so it
+//     catches any change missed during the gap), and resumed applying updates.
+const (
+	NetPolicyClassifierReasonDegraded    = "degraded"
+	NetPolicyClassifierReasonReconnected = "reconnected"
 )
 
 // Credential-health signal label values, bounded to two.

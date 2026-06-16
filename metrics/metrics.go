@@ -218,6 +218,28 @@ type Metrics struct {
 	// cardinality). Zero traffic when no invalidation bus is wired.
 	InvalidationBusReconnectsTotal *prometheus.CounterVec // labels: reason
 
+	// NetPolicyClassifierUp is 1 while this replica's network-policy Classifier
+	// is subscribed to Store.Watch and applying updates, 0 while it is degraded
+	// (the Watch channel closed under a live context and the loop is between
+	// resubscribe attempts). A degraded Classifier keeps SERVING its last
+	// snapshot (fail-open — Classify never blocks or errors) but STOPS picking up
+	// policy edits, so a just-added/removed network class is not reflected here
+	// until it resubscribes — while /readyz would otherwise stay green. This
+	// gauge (plus the matching readiness check) is the direct alert. No labels —
+	// classifier health is a single per-replica condition. Never set when no
+	// network-policy store is wired.
+	NetPolicyClassifierUp prometheus.Gauge
+
+	// NetPolicyClassifierReconnectsTotal counts network-policy Classifier Watch
+	// subscription transitions, by reason ∈ {degraded, reconnected} (bounded).
+	// degraded = the Watch channel closed under a live context and the loop
+	// flipped degraded; reconnected = a degraded loop resubscribed, re-listed,
+	// and resumed. A rising degraded series (especially without matching
+	// reconnected ticks) means the policy backend is flapping or down and this
+	// replica is serving a frozen policy snapshot. No per-policy label (§5
+	// bounded cardinality). Zero traffic when no network-policy store is wired.
+	NetPolicyClassifierReconnectsTotal *prometheus.CounterVec // labels: reason
+
 	// CAEPSetsTotal counts OpenID Shared Signals (CAEP/RISC) Security
 	// Event Token push attempts from the detached transmitter goroutine, by
 	// outcome ∈ {success, failed, dropped} (bounded). A failed/dropped SET
@@ -530,6 +552,21 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 			prometheus.CounterOpts{
 				Name: NameInvalidationBusReconnectsTotal,
 				Help: "Cross-replica invalidation-bus subscription transitions, by reason (degraded/reconnected). degraded = the Subscribe channel closed under a live context and the loop flipped degraded (missing invalidations); reconnected = a degraded loop resubscribed and resumed. Alert on a rising degraded series without matching reconnected ticks (bus backend flapping/down). Zero traffic when no invalidation bus is wired.",
+			},
+			[]string{LabelReason},
+		),
+
+		NetPolicyClassifierUp: factory.NewGauge(
+			prometheus.GaugeOpts{
+				Name: NameNetPolicyClassifierUp,
+				Help: "Network-policy Classifier Watch subscription health: 1 while this replica is subscribed and applying policy updates, 0 while degraded (Store.Watch channel closed under a live context, loop retrying). Degraded means the Classifier keeps serving its last snapshot (fail-open) but stops picking up policy edits until it resubscribes — alert on 0. Never set when no network-policy store is wired.",
+			},
+		),
+
+		NetPolicyClassifierReconnectsTotal: factory.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: NameNetPolicyClassifierReconnectsTotal,
+				Help: "Network-policy Classifier Watch subscription transitions, by reason (degraded/reconnected). degraded = the Watch channel closed under a live context and the loop flipped degraded (serving a frozen snapshot); reconnected = a degraded loop resubscribed, re-listed, and resumed. Alert on a rising degraded series without matching reconnected ticks (policy backend flapping/down). Zero traffic when no network-policy store is wired.",
 			},
 			[]string{LabelReason},
 		),
