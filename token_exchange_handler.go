@@ -3,19 +3,22 @@ package sso
 //   - missing subject_token / subject_token_type → 400 invalid_request
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/oauth"
-	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/oauth"
+	"github.com/snaplink/sso/oidc"
+	"github.com/snaplink/sso/security"
 )
-//   - unsupported subject_token_type → 400 invalid_request
-//   - subject_token failed validation → 400 invalid_grant
-//   - unregistered resource / audience → 400 invalid_target (RFC 8707)
-//   - scope expansion attempt → 400 invalid_scope (RFC 6749 §6 analogue)
-//   - unsupported requested_token_type → 400 invalid_request
+
+// - unsupported subject_token_type → 400 invalid_request
+// - subject_token failed validation → 400 invalid_grant
+// - unregistered resource / audience → 400 invalid_target (RFC 8707)
+// - scope expansion attempt → 400 invalid_scope (RFC 6749 §6 analogue)
+// - unsupported requested_token_type → 400 invalid_request
 func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, req tokenExchangeRequest) {
 	if req.SubjectToken == "" || req.SubjectTokenType == "" {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
@@ -32,10 +35,11 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	}
 	if req.RequestedTokenType != "" &&
 		req.RequestedTokenType != TokenTypeAccessToken &&
-		req.RequestedTokenType != TokenTypeRefreshToken {
-		// Access + Refresh supported; ID token / SAML2 are future
-		// work (no compelling caller need yet). Anything else =>
-		// caller wanted something we can't deliver.
+		req.RequestedTokenType != TokenTypeRefreshToken &&
+		req.RequestedTokenType != TokenTypeIDToken {
+		// Access + Refresh + ID token supported; SAML1/2 are future work
+		// (no compelling caller need yet). Anything else => caller wanted
+		// something we can't deliver.
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return
 	}
@@ -45,6 +49,19 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 	if req.RequestedTokenType == TokenTypeRefreshToken && s.refreshTokenStore == nil {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrRefreshTokenNotConfigured))
 		return
+	}
+	// RFC 8693 §2.2.1 id_token output requires a wired IDTokenIssuer.
+	// Without one this AS instance cannot produce the requested
+	// representation — collapse to invalid_request (the same code an
+	// unsupported requested_token_type returns) so no oracle reveals
+	// whether OIDC is configured. Resolved against the per-client
+	// (tenant-aware) issuer so a tenant whose strategy is non-OIDC also
+	// fails closed here rather than at issuance time.
+	if req.RequestedTokenType == TokenTypeIDToken {
+		if _, emit, idErr := s.idTokenIssuerForClient(client); idErr != nil || !emit {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
 	}
 
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), req.SubjectToken)
@@ -332,6 +349,70 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 			resp[KeyIssuedTokenType] = TokenTypeRefreshToken
 			s.recordRefreshTokenIssued(ctx, client.ID, claims.Subject, false)
 		}
+	}
+
+	// RFC 8693 §2.2.1 id_token output. The access token is always returned
+	// (same as the refresh branch — requested_token_type names what
+	// issued_token_type reports, not what's emitted exclusively). The
+	// IDTokenIssuer was confirmed wired up-front (fail-closed invalid_request
+	// above), so a resolution failure here is a genuine internal/tenant
+	// misconfiguration, NOT a feature-off case.
+	//
+	// An id_token is only meaningful for an OIDC exchange — one carrying the
+	// `openid` scope, i.e. a real end-user authentication is in the loop
+	// (the same gate /auth/login, the authorization_code grant, device, and
+	// CIBA all apply before minting an id_token). A service-to-service
+	// exchange (no openid scope; e.g. a SPIFFE SVID) has no user to assert,
+	// so demanding an id_token for it is a malformed request → invalid_request
+	// (oracle-safe: identical to the unsupported-type collapse).
+	if req.RequestedTokenType == TokenTypeIDToken {
+		if !slices.Contains(scopes, ScopeOpenID) {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+			return
+		}
+		idIssuer, _, idErr := s.idTokenIssuerForClient(client)
+		if idErr != nil || idIssuer == nil {
+			s.logger.Error("token exchange id_token issuer resolution failed", "client", client.ID, "error", idErr)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		// auth_time / acr / amr / sid propagate from the inbound subject_token
+		// exactly as the access token above — the exchange is NOT a fresh
+		// end-user auth event, so the original factor strength + session bind
+		// carry forward. AccessToken is the one just minted so the issuer
+		// stamps OIDC Core §3.1.3.6 at_hash, keeping the id_token consistent
+		// with every other id_token-bearing flow. No nonce: there is no
+		// authorization request in a token-exchange, and nonce only guards
+		// against id_token replay in the implicit/hybrid front channel.
+		idToken, iErr := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+			Subject:     issuedSub,
+			Audience:    client.ID,
+			AuthTime:    claims.AuthTime,
+			ACR:         claims.ACR,
+			AMR:         append([]string(nil), claims.AMR...),
+			Claims:      claims.Extra,
+			SID:         claims.SID,
+			AccessToken: token.AccessToken,
+		})
+		if iErr != nil {
+			s.logger.Error("token exchange id_token issue failed", "client", client.ID, "error", iErr)
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		// Per-client id_token JWE (OIDC §10.2) when configured — same seam
+		// /auth/login uses; a no-op pass-through when the client has no
+		// encrypted-response metadata.
+		enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken)
+		if !ok {
+			// Encryption requested but no encrypter wired — the issuer logged
+			// the cause; omitting a requested id_token silently would be a
+			// confusing partial success, so collapse to the internal error.
+			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			return
+		}
+		resp[KeyIDToken] = enc
+		resp[KeyIssuedTokenType] = TokenTypeIDToken
+		s.recordIDTokenIssued(ctx, client.ID, claims.Subject)
 	}
 
 	ctx.JSON(http.StatusOK, resp)

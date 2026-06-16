@@ -215,8 +215,8 @@ func TestTokenExchange_MissingSubjectTokenIsInvalidRequest(t *testing.T) {
 func TestTokenExchange_UnsupportedRequestedTokenTypeRejected(t *testing.T) {
 	srv := newTokenExchangeHarness(t, nil)
 	subject := txLogin(t, srv, nil)
-	// SAML2 token output is unsupported (only access_token + refresh_token
-	// are wired today).
+	// SAML2 token output is unsupported (only access_token + refresh_token +
+	// id_token are wired today).
 	status, body := postExchange(t, srv, url.Values{
 		"grant_type":           {"urn:ietf:params:oauth:grant-type:token-exchange"},
 		"client_id":            {txClientID},
