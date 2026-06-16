@@ -749,6 +749,11 @@ func (j *ECDSAJWTIssuer) lookupVerifyKey(kid string) *ecdsa.PublicKey {
 // release it FULLY before acquiring peerKeysMu. The two mutexes are never held
 // nested (independent lock order), so there is no double-unlock and no
 // deadlock.
+// Alg reports the JWS alg this issuer signs with, so callers (e.g. the userinfo
+// signing gate) can confirm a client's requested signed-response alg matches
+// what this issuer actually produces. This issuer signs ES256 exclusively.
+func (j *ECDSAJWTIssuer) Alg() string { return jwtAlgES256 }
+
 func (j *ECDSAJWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	j.keyMu.RLock()
 	keyID := j.keyID

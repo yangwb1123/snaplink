@@ -108,7 +108,7 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 		// (encrypt path is unaffected — it keys off Client.JWKS, not the
 		// signer).
 		signer, ok := userinfoSignerForClient(d, client)
-		if ok && userinfoAlgSupported(d, ctx, client.UserinfoSignedResponseAlg) {
+		if ok && userinfoSignerProducesAlg(d, ctx, signer, client.UserinfoSignedResponseAlg) {
 			jwt, serr := signer.SignUserInfo(reqCtx, client.ID, body)
 			if serr != nil {
 				d.SrvLogger().Error("userinfo sign failed", "error", serr, "client", client.ID)
@@ -204,6 +204,25 @@ func userinfoAlgSupported(d UserinfoSigningDeps, ctx core.HandlerContext, alg st
 		}
 	}
 	return false
+}
+
+// userinfoSignerProducesAlg reports whether the RESOLVED signer will actually
+// produce the client's requested userinfo_signed_response_alg. SignUserInfo
+// takes no alg parameter — the signer always signs with its own fixed key alg —
+// so when the signer reports its alg (the default issuers do via Alg()) we
+// require an EXACT match. Without this, a multi-alg deployment whose resolved
+// per-tenant signer's alg differs from the requested alg would emit a JWT in
+// the WRONG alg, breaking the client's registered contract. Signers that don't
+// report an alg (third-party UserinfoSigner impls) fall back to the
+// discovery-consistent server-set membership check.
+func userinfoSignerProducesAlg(d UserinfoSigningDeps, ctx core.HandlerContext, signer UserinfoSigner, alg string) bool {
+	if alg == "" {
+		return false
+	}
+	if ar, ok := signer.(interface{ Alg() string }); ok {
+		return ar.Alg() == alg
+	}
+	return userinfoAlgSupported(d, ctx, alg)
 }
 
 func userinfoSignerForClient(d UserinfoSigningDeps, client *core.Client) (UserinfoSigner, bool) {

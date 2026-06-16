@@ -986,6 +986,11 @@ func (j *Ed25519JWTIssuer) lookupVerifyKey(headerB64 string) ed25519.PublicKey {
 // keyMu and release it FULLY before acquiring peerKeysMu. The two
 // mutexes are never held nested (independent lock order), so there is no
 // double-unlock and no deadlock.
+// Alg reports the JWS alg this issuer signs with, so callers (e.g. the userinfo
+// signing gate) can confirm a client's requested signed-response alg matches
+// what this issuer actually produces. Ed25519 signs EdDSA exclusively.
+func (j *Ed25519JWTIssuer) Alg() string { return jwtAlgEdDSA }
+
 func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	j.keyMu.RLock()
 	keyID := j.keyID

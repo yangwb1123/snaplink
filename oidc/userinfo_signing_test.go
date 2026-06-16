@@ -119,12 +119,49 @@ func TestMaybeSignUserInfo_NoSignNoEncryptFallsThrough(t *testing.T) {
 
 func TestMaybeSignUserInfo_UnsupportedAlgFallsThrough(t *testing.T) {
 	d, _ := newSignDeps(t)
-	// Server's live alg set does NOT include the client's requested alg →
-	// fall through to JSON rather than mis-signing.
-	d.algs = []string{"ES256"}
+	store := d.clients.(*defaultimpl.MemoryClientStore)
+	// The resolved signer is Ed25519 (Alg "EdDSA"). A client that registered a
+	// DIFFERENT alg the signer cannot produce must fall through to JSON rather
+	// than mis-signing with EdDSA — even though the server's advertised set
+	// happens to include ES256 (the signer, not the set, is authoritative).
+	d.algs = []string{"EdDSA", "ES256"}
+	mustSeedClient(t, store, &core.Client{ID: "rp-es256", UserinfoSignedResponseAlg: "ES256"})
 	ctx, _ := newCtx(http.MethodGet, "/userinfo")
-	if oidc.MaybeSignUserInfo(d, ctx, "rp-1", map[string]any{"sub": "u"}) {
-		t.Error("unsupported sign alg with no encryption must fall through to JSON")
+	if oidc.MaybeSignUserInfo(d, ctx, "rp-es256", map[string]any{"sub": "u"}) {
+		t.Error("signer cannot produce the client's requested alg; must fall through to JSON")
+	}
+}
+
+// noAlgSigner is a third-party UserinfoSigner/IDTokenIssuer that does NOT report
+// its alg (no Alg() method — it holds the real issuer as a field rather than
+// embedding it, so Alg() is not promoted). It exercises the fallback branch of
+// userinfoSignerProducesAlg: the server's advertised SigningAlgValues set.
+type noAlgSigner struct{ inner oidc.IDTokenIssuer }
+
+func (s noAlgSigner) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequest) (string, error) {
+	return s.inner.IssueIDToken(ctx, req)
+}
+
+func (s noAlgSigner) SignUserInfo(ctx context.Context, audience string, claims map[string]any) (string, error) {
+	return s.inner.(oidc.UserinfoSigner).SignUserInfo(ctx, audience, claims)
+}
+
+func TestMaybeSignUserInfo_NoAlgSignerFallsBackToServerSet(t *testing.T) {
+	d, _ := newSignDeps(t)
+	d.issuer = noAlgSigner{inner: defaultimpl.NewEd25519JWTIssuer()}
+
+	// In the set → signs (fallback admits it). rp-1 requests EdDSA, set has EdDSA.
+	d.algs = []string{"EdDSA"}
+	ctx, _ := newCtx(http.MethodGet, "/userinfo")
+	if !oidc.MaybeSignUserInfo(d, ctx, "rp-1", map[string]any{"sub": "u"}) {
+		t.Error("no-Alg signer with requested alg in the server set must sign")
+	}
+
+	// Not in the set → falls through to JSON.
+	d.algs = []string{"ES256"}
+	ctx2, _ := newCtx(http.MethodGet, "/userinfo")
+	if oidc.MaybeSignUserInfo(d, ctx2, "rp-1", map[string]any{"sub": "u"}) {
+		t.Error("no-Alg signer with requested alg outside the server set must fall through to JSON")
 	}
 }
 
