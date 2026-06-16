@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/spi"
 )
 
 // PublicKeyResolver looks up the registered Ed25519 public key for a key ID.
@@ -62,18 +64,59 @@ func (s *MemoryPublicKeyStore) Resolve(_ context.Context, keyID string) (ed25519
 //	}
 //
 // The server replays the canonical message and verifies it against the stored
-// public key. Replay protection is the caller's responsibility (compare nonce
-// against a recent-nonce cache, reject stale timestamps).
+// public key. The bounded timestamp/clock-skew window alone does NOT stop
+// replay: the SAME (key_id, nonce, timestamp) tuple can be resubmitted within
+// that window. Wire [WithKeyPairNonceStore] to close that hole — it records
+// each accepted nonce in a [security.JTIReplayStore] and rejects a second
+// sighting. Without it, the prior bounded-window-only behavior is unchanged.
 type KeyPairAuthenticator struct {
 	resolver     PublicKeyResolver
 	maxClockSkew time.Duration
+	// nonceStore is optional. When wired, a verified nonce that has been
+	// seen before within its window is rejected as a replay; nil keeps the
+	// historical bounded-window-only behavior (byte-identical).
+	nonceStore security.JTIReplayStore
+	logger     spi.Logger // optional; surfaces fail-open nonce-store errors only
 }
 
-func NewKeyPairAuthenticator(resolver PublicKeyResolver, maxClockSkew time.Duration) *KeyPairAuthenticator {
+// KeyPairOption configures a KeyPairAuthenticator at construction. Most
+// deployments need none — the bounded clock-skew window covers honest clients.
+type KeyPairOption func(*KeyPairAuthenticator)
+
+// WithKeyPairNonceStore wires an optional replay-defense store. After the
+// Ed25519 signature AND the timestamp window both verify, the accepted nonce
+// is recorded against the store; a nonce already seen within its window is
+// rejected (the SAME signed request can no longer be replayed inside the
+// clock-skew window). The store reuses the existing [security.JTIReplayStore]
+// SPI — a nonce is just another "have I seen this key before" check — so any
+// memory/sqlite/redis JTI backend works unchanged.
+//
+// FAIL-OPEN on store error: a degraded replay-defense backend must not turn a
+// cryptographically valid login into a failure (it is logged via
+// [WithKeyPairLogger] for ops visibility, matching the JTI-replay default
+// across this repo). A nil store — or simply not passing this option — keeps
+// the historical bounded-window-only behavior.
+func WithKeyPairNonceStore(store security.JTIReplayStore) KeyPairOption {
+	return func(k *KeyPairAuthenticator) { k.nonceStore = store }
+}
+
+// WithKeyPairLogger attaches an optional logger used only to surface a
+// malfunctioning nonce store (the replay check stays fail-open: the logger
+// never changes the auth outcome). A nil logger keeps the prior silent
+// behavior.
+func WithKeyPairLogger(l spi.Logger) KeyPairOption {
+	return func(k *KeyPairAuthenticator) { k.logger = l }
+}
+
+func NewKeyPairAuthenticator(resolver PublicKeyResolver, maxClockSkew time.Duration, opts ...KeyPairOption) *KeyPairAuthenticator {
 	if maxClockSkew <= 0 {
 		maxClockSkew = DefaultKeyPairClockSkew
 	}
-	return &KeyPairAuthenticator{resolver: resolver, maxClockSkew: maxClockSkew}
+	k := &KeyPairAuthenticator{resolver: resolver, maxClockSkew: maxClockSkew}
+	for _, opt := range opts {
+		opt(k)
+	}
+	return k
 }
 
 func (k *KeyPairAuthenticator) Name() string { return MethodKeyPair }
@@ -113,6 +156,25 @@ func (k *KeyPairAuthenticator) Authenticate(ctx context.Context, req *sso.AuthRe
 	message := canonicalKeyPairMessage(keyID, nonce, tsStr)
 	if !ed25519.Verify(pub, message, signature) {
 		return nil, errors.New("keypair: signature verification failed")
+	}
+
+	// Replay defense runs ONLY on an otherwise-valid request (signature +
+	// timestamp window both passed). Key the nonce by key_id so two clients
+	// can't collide on a shared nonce string, and anchor the entry's expiry
+	// to the clock-skew window — past it the timestamp gate rejects anyway,
+	// so there is no value in remembering the nonce longer. FAIL-OPEN: a
+	// store error is logged but never blocks a cryptographically valid login.
+	if k.nonceStore != nil {
+		nonceKey := keyID + keyPairMessageSeparator + nonce
+		firstSighting, err := k.nonceStore.MarkSeen(ctx, nonceKey, ts.Add(k.maxClockSkew))
+		switch {
+		case err != nil:
+			if k.logger != nil {
+				k.logger.Error("keypair nonce store failed (allowing)", "key_id", keyID, "error", err)
+			}
+		case !firstSighting:
+			return nil, errors.New("keypair: nonce replay detected")
+		}
 	}
 
 	if subject == nil {

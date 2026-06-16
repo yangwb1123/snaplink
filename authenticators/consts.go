@@ -36,6 +36,13 @@ const (
 	keyPrefixEmail = "email:"
 )
 
+// Replay-store key prefixes — namespace the optional JTIReplayStore seams so a
+// single shared replay backend can hold entries for several authenticators
+// without one authenticator's key colliding with another's.
+const (
+	subjectPrefixTOTPConsumed = "totp:"
+)
+
 // Subject ID prefixes used when an authenticator must synthesize one.
 const (
 	subjectPrefixPhone   = "phone:"

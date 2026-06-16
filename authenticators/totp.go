@@ -11,11 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/spi"
 )
 
 // TOTP implements RFC 6238 "Time-based One-Time Password Algorithm".
@@ -37,11 +40,14 @@ import (
 //   - Constant-time code comparison (subtle.ConstantTimeCompare) so
 //     timing oracles can't sniff which digit position diverged first.
 //
+// What this implementation does only when wired:
+//   - Per-user code-reuse defense. By default a code is valid for one
+//     full step window and replays inside that window succeed. Operators
+//     that need strict one-time semantics wire [WithTOTPConsumedStore]:
+//     it records each accepted (user, step) pair in a
+//     [security.JTIReplayStore] and rejects a second use of the same code.
+//
 // What this implementation deliberately doesn't do:
-//   - Per-user code-reuse defense (a code is valid for one full step
-//     window; replays inside that window succeed). Operators that
-//     need strict one-time semantics SHOULD wire a small Redis store
-//     of recently-consumed (user, step) pairs.
 //   - HOTP (counter-based). TOTP is the universal choice for human MFA.
 
 // TOTPStore retrieves a user's TOTP shared secret. Implementations
@@ -115,6 +121,12 @@ type TOTPAuthenticator struct {
 	// 6 because that's universal and changing it breaks QR-code
 	// auto-provisioning expectations.
 	digits int
+	// consumedStore is optional. When wired, the matched (user, step) is
+	// recorded after a code verifies; a second use of that same code is
+	// rejected. nil keeps the default behavior (a code stays valid for its
+	// full window — replays inside it succeed).
+	consumedStore security.JTIReplayStore
+	logger        spi.Logger // optional; surfaces fail-open consumed-store errors only
 }
 
 // TOTPOption tunes the constructor. Most deployments need none.
@@ -125,6 +137,31 @@ type TOTPOption func(*TOTPAuthenticator)
 // force window proportionally.
 func WithTOTPSkew(steps int) TOTPOption {
 	return func(t *TOTPAuthenticator) { t.skewSteps = steps }
+}
+
+// WithTOTPConsumedStore wires an optional one-time-use store. After a code
+// verifies, the matched (userID, step) is recorded; a prior consume of that
+// same (userID, step) makes the code unusable for the rest of its window —
+// the strict one-time semantics RFC 6238 §5.2 RECOMMENDS. It reuses the
+// existing [security.JTIReplayStore] SPI (a consumed (user, step) is just
+// another "have I seen this key before" check), so any memory/sqlite/redis
+// JTI backend works unchanged.
+//
+// Fail behavior is deliberately asymmetric: a CONFIRMED prior consume is
+// fail-CLOSED (reject — the entire point of the option is to deny reuse),
+// while a store ERROR is fail-OPEN (log via [WithTOTPLogger] + allow — a
+// degraded backend must not lock out users holding a valid code), matching
+// the JTI-replay default across this repo. A nil store — or simply not
+// passing this option — keeps the default window-reuse behavior.
+func WithTOTPConsumedStore(store security.JTIReplayStore) TOTPOption {
+	return func(t *TOTPAuthenticator) { t.consumedStore = store }
+}
+
+// WithTOTPLogger attaches an optional logger used only to surface a
+// malfunctioning consumed store (the fail-open path; a confirmed prior
+// consume rejects regardless). A nil logger keeps the prior silent behavior.
+func WithTOTPLogger(l spi.Logger) TOTPOption {
+	return func(t *TOTPAuthenticator) { t.logger = l }
 }
 
 // NewTOTPAuthenticator constructs a TOTP authenticator backed by the
@@ -159,9 +196,31 @@ func (t *TOTPAuthenticator) Authenticate(ctx context.Context, req *sso.AuthReque
 		return nil, errors.New("totp: empty secret")
 	}
 	now := time.Now()
-	if !t.verifyCodeWithSkew(secret, code, now) {
+	matchedStep, ok := t.verifyCodeStep(secret, code, now)
+	if !ok {
 		return nil, errors.New("totp: invalid code")
 	}
+
+	// One-time-use enforcement runs ONLY on an already-valid code. Key by
+	// (userID, matched step) so the SAME code can't be replayed inside its
+	// window, yet the NEXT step's distinct code still authenticates. The
+	// entry expires one full step past the matched window (covers the +skew
+	// edge), after which the code is naturally stale. A confirmed prior
+	// consume is fail-CLOSED (reject); a store error is fail-OPEN (allow).
+	if t.consumedStore != nil {
+		consumedKey := subjectPrefixTOTPConsumed + username + keyPairMessageSeparator + strconv.FormatInt(matchedStep, 10)
+		expiresAt := time.Unix((matchedStep+int64(t.skewSteps)+1)*int64(t.step.Seconds()), 0)
+		firstSighting, mErr := t.consumedStore.MarkSeen(ctx, consumedKey, expiresAt)
+		switch {
+		case mErr != nil:
+			if t.logger != nil {
+				t.logger.Error("totp consumed store failed (allowing)", "username", username, "error", mErr)
+			}
+		case !firstSighting:
+			return nil, errors.New("totp: code already used")
+		}
+	}
+
 	return &sso.AuthResult{
 		UserID:      username,
 		Provider:    t.Name(),
@@ -188,21 +247,32 @@ func (t *TOTPAuthenticator) VerifyCode(secret []byte, code string) bool {
 // matches step `now-1` doesn't take measurably longer to validate
 // than one that matches step `now`.
 func (t *TOTPAuthenticator) verifyCodeWithSkew(secret []byte, code string, now time.Time) bool {
+	_, ok := t.verifyCodeStep(secret, code, now)
+	return ok
+}
+
+// verifyCodeStep is verifyCodeWithSkew that additionally returns the step
+// counter the code matched, so one-time-use enforcement can key the consumed
+// store by the exact window the code belongs to. Like verifyCodeWithSkew it
+// never breaks early — the full ±skew loop runs so timing reveals nothing
+// about WHICH step matched. matchedStep is meaningful only when ok is true.
+func (t *TOTPAuthenticator) verifyCodeStep(secret []byte, code string, now time.Time) (matchedStep int64, ok bool) {
 	if len(code) != t.digits {
-		return false
+		return 0, false
 	}
 	stepCounter := now.Unix() / int64(t.step.Seconds())
 	want := []byte(code)
-	match := false
 	for offset := -t.skewSteps; offset <= t.skewSteps; offset++ {
-		expected := hotp(secret, stepCounter+int64(offset), t.digits)
+		candidate := stepCounter + int64(offset)
+		expected := hotp(secret, candidate, t.digits)
 		if subtle.ConstantTimeCompare([]byte(expected), want) == 1 {
-			match = true
+			matchedStep = candidate
+			ok = true
 			// Don't break — finish the loop so timing reveals no
 			// information about WHICH step matched.
 		}
 	}
-	return match
+	return matchedStep, ok
 }
 
 // hotp computes the RFC 4226 HMAC-Based One-Time Password — the
