@@ -39,3 +39,4 @@ coverage.out
 /BOOTSTRAP.md
 /EVALUATION.md
 /TODO.md
+__pycache__/

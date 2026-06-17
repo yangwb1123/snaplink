@@ -21,6 +21,7 @@ Commands:
     check-exemptions      Check exemption sync
     self-test             Harness self-test
     check-invariants      Security invariants
+    check-root            Check root directory for business code violations
     test                  Run go tests
     race                  Run tests with -race
     bench                 Run benchmarks
@@ -152,6 +153,11 @@ def cmd_check_invariants():
     return iv_run()
 
 
+def cmd_check_root():
+    from checks.root_business_code import run as rb_run
+    return rb_run()
+
+
 def cmd_test():
     return run("go", "test", "./...").returncode
 
@@ -241,6 +247,7 @@ COMMANDS = {
     "check-exemptions": cmd_check_exemptions,
     "self-test": cmd_self_test,
     "check-invariants": cmd_check_invariants,
+    "check-root": cmd_check_root,
     "test": cmd_test,
     "race": cmd_race,
     "bench": cmd_bench,

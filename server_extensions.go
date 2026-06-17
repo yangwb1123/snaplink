@@ -12,7 +12,9 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/cluster"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/middleware"
+	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/security"
 )
 
@@ -406,3 +408,82 @@ func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
 // Safe to call when no cache is configured (no-op). Note this affects only
 // the METADATA cache — ValidateSecret bypasses the cache entirely (§2), so
 // a credential decision is never stale to begin with.
+
+// === CIBA adapter methods (migrated from ciba_handler.go) ===
+
+// handleBackchannelAuth delegates to oauth.HandleBackchannelAuth —
+// see that file for the OIDC CIBA Core 1.0 poll-mode flow.
+func (s *Server) handleBackchannelAuth(ctx HandlerContext) { oauth.HandleBackchannelAuth(s, ctx) }
+
+// ResolveCIBAHint maps a CIBA request's hints to a known user's subject
+// id. Poll mode: at least one hint must resolve. login_hint is matched
+// against UserProvider.GetByID (the canonical identifier); id_token_hint
+// is validated and its sub trusted; login_hint_token is treated as an
+// opaque GetByID lookup. Returns ("", nil) when nothing resolves — the
+// handler collapses that to unknown_user_id (anti-enumeration). The
+// provider name is recorded for the AMR claim ("ciba" — out-of-band
+// confirmation).
+func (s *Server) ResolveCIBAHint(ctx context.Context, loginHint, idTokenHint, loginHintToken string) (string, string, error) {
+	// id_token_hint: validate the token and trust its subject. The
+	// validator rejects expired / wrong-alg / bad-signature tokens.
+	if idTokenHint != "" {
+		if claims, err := s.ValidateToken(ctx, idTokenHint); err == nil && claims != nil && claims.Subject != "" {
+			return claims.Subject, CIBAAMR, nil
+		}
+	}
+	if s.userProvider == nil {
+		return "", "", nil
+	}
+	for _, hint := range []string{loginHint, loginHintToken} {
+		if hint == "" {
+			continue
+		}
+		if u, err := s.userProvider.GetByID(ctx, hint); err == nil && u != nil {
+			return u.ID, CIBAAMR, nil
+		}
+	}
+	return "", "", nil
+}
+
+// CIBAAMR is the AMR / provider value recorded for a token minted via
+// the CIBA grant — the user confirmed out of band on a separate
+// authentication device.
+const CIBAAMR = "ciba"
+
+// DeliverCIBAChallenge pushes the auth_req_id out of band via the wired
+// CIBA transport. binding_message is forwarded under the metadata key
+// so the device app can render it for the user to correlate.
+func (s *Server) DeliverCIBAChallenge(ctx context.Context, authReqID, subjectID, bindingMessage string) error {
+	if s.cibaTransport == nil {
+		return oauth.ErrCIBARequestInvalid
+	}
+	var meta map[string]string
+	if bindingMessage != "" {
+		meta = map[string]string{"binding_message": bindingMessage}
+	}
+	return s.cibaTransport.Send(ctx, authReqID, subjectID, meta)
+}
+
+// RecordCIBAAuthRequest emits the ciba_auth_request audit event.
+func (s *Server) RecordCIBAAuthRequest(ctx HandlerContext, clientID, subjectID, authReqID string) {
+	audit.RecordCIBAAuthRequest(s.auditor, ctx, clientID, subjectID, authReqID)
+}
+
+// recordCIBADecision emits a ciba_approved / ciba_denied audit event.
+func (s *Server) recordCIBADecision(ctx HandlerContext, clientID, subjectID string, approved bool) {
+	audit.RecordCIBADecision(s.auditor, ctx, clientID, subjectID, approved)
+}
+// publishTokenRevocation broadcasts a token revocation to other replicas.
+func (s *Server) publishTokenRevocation(ctx context.Context, token string, exp int64) {
+	handler.PublishTokenRevocation(s.BuildHandlerDeps(), ctx, token, exp)
+}
+
+// applyTokenRevocation applies a token revocation received from another replica.
+func (s *Server) applyTokenRevocation(ctx context.Context, evt cluster.Event) {
+	handler.ApplyTokenRevocation(s.BuildHandlerDeps(), ctx, evt)
+}
+
+// jwtExpUnsafe extracts the exp claim from a JWT without validation.
+func jwtExpUnsafe(token string) int64 {
+	return handler.JWTExpUnsafe(token)
+}

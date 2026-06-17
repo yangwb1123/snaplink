@@ -55,6 +55,45 @@ After every change to a `.go` file:
 
 **Fail-fast:** If any gate fails, fix immediately before proceeding to the next task.
 
+### 0.6 Root Directory Policy
+
+根目录禁止新增业务代码。Root 只允许包含 server composition 文件。
+
+**Allowed files in root:**
+- `sso.go` — Server struct + routes
+- `handler.go` — Login orchestrator
+- `handlers.go` — Discovery delegators
+- `server_extensions.go` — DPoP, mTLS, JAR, JWE, BCL, FCL
+- `mesh_authz.go` — Mesh authorization
+- `signing_key_aggregation.go` — Key aggregation loop
+- `storage_health.go` — Storage health check
+- `accessors.go` — Field accessors for Deps interfaces
+- `aliases.go` — Re-exports
+- `options*.go` — Server configuration options
+- `server_routes.go`, `server_helpers.go`, `server_validation.go`, `server_health.go`
+
+**Prohibited in root:**
+- `*_handler.go` (except `handler.go`, `handlers.go`)
+- `*_service.go`
+- `*_store.go`
+- `*_grant.go`
+- Business logic files (see `checks/root_business_code.py` BANNED_FILES)
+
+**Migration strategy:**
+1. Extract logic to pure functions in target domain package
+2. Keep thin wrapper methods in root that call domain functions
+3. Update Deps interface if needed
+
+**Target locations:**
+- OAuth handlers → `oauth/`
+- OIDC handlers → `oidc/`
+- Security logic → `security/`
+- Cluster coordination → `cluster/`
+- Tenant logic → `tenant/`
+- Self-service → `selfservice/` (new package)
+
+**Enforcement:** `python cli.py check-root`
+
 ---
 
 ## 1. System Overview
