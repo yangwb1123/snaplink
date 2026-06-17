@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+import subprocess, sys
+def main():
+    r = subprocess.run([sys.executable, "cli.py", "harness"], capture_output=True, text=True)
+    if r.returncode != 0: print("pre-push FAILED"); return 1
+    return 0
+if __name__ == "__main__": sys.exit(main())

@@ -1,41 +1,46 @@
-# Common dev tasks. Mirrors what CI runs so "make ci" locally catches
-# regressions before pushing. Pinned to the Go version in go.mod via
-# `go` from PATH — keep the toolchain in sync via `go mod download`.
+# Compatibility layer — delegates to Taskfile or Python CLI.
+# Preferred: `task <target>` or `python cli.py <command>` (cross-platform).
+# Keep: `make <target>` works on Linux/macOS via thin wrappers.
 
 GO        ?= go
 BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend
+CLI = python cli.py
 
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance
+
+# ── Go Dev (via $GO directly for speed) ──────────────────────────────
+
+help:
 	@awk 'BEGIN {FS = ":.*## "; printf "make targets:\n"} \
 		/^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 test: ## Run unit tests.
 	$(GO) test ./...
 
-race: ## Run tests with the race detector + no test cache.
+race: ## Run tests with the race detector.
 	$(GO) test -race -count=1 ./...
 
-bench: ## Run the hot-path benchmarks (token issue/validate, JWKS, param bind, rate limiter).
+bench: ## Run benchmarks.
 	$(GO) test -run='^$$' -bench=. -benchmem ./defaultimpl/ ./oauth/ ./ratelimit/ ./security/
 
-load-test: ## Load-test the /token hot path against a RUNNING server (env: BASE_URL CLIENT_ID CLIENT_SECRET VUS DURATION). Requires k6.
-	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed — see https://k6.io/docs/get-started/installation/" >&2; exit 1; }
+load-test: ## Load-test /token (requires k6).
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
 	k6 run deploy/loadtest/token.js
 
-vet: ## Static analysis (go vet).
+vet: ## Static analysis.
 	$(GO) vet ./...
 
-lint: ## Run golangci-lint over the root module (.golangci.yml). Needs a go1.26-compatible golangci-lint; @latest tracks it.
+lint: ## Run golangci-lint.
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --timeout 5m
 
-security-scan: ## Local SAST/SCA sweep over the root module (govulncheck CVEs + gosec). Mirrors the CI govulncheck + gosec jobs; CI also runs CodeQL + Trivy on GitHub infra.
+security-scan: ## SAST/SCA (govulncheck + gosec).
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	$(GO) run github.com/securego/gosec/v2/cmd/gosec@latest -quiet ./...
 
-fmt: ## Check gofmt; fails if any file needs formatting.
+fmt: ## Check gofmt.
 	@unformatted=$$(gofmt -l . | grep -v '^\.claude/'); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Unformatted files:" >&2; \
@@ -43,57 +48,40 @@ fmt: ## Check gofmt; fails if any file needs formatting.
 		exit 1; \
 	fi
 
-build: ## Compile cmd/sso-server and offline CLIs to $(BIN_DIR)/.
-	@mkdir -p $(BIN_DIR)
-	$(GO) build -trimpath -o $(BIN_DIR)/sso-server   ./cmd/sso-server
-	$(GO) build -trimpath -o $(BIN_DIR)/sso-import   ./cmd/sso-import
+build: ## Compile to $(BIN_DIR)/.
+	$(CLI) build
 
-docker: ## Build the sso-server container image.
+docker: ## Build container image.
 	docker build -t $(IMAGE):$(IMAGE_TAG) .
 
-proto-lint: ## Lint .proto files (MINIMAL ruleset, see proto/buf.yaml).
+proto-lint: ## Lint .proto files.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest lint
 
-proto-breaking: ## Check protos for wire-breaking changes vs main.
+proto-breaking: ## Check proto wire-breaking vs main.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
 		--against "../.git#branch=main,subdir=proto"
 
-docs-validate: ## Validate docs/openapi.yaml against the OpenAPI 3 schema.
+docs-validate: ## Validate openapi.yaml.
 	@$(GO) run github.com/getkin/kin-openapi/cmd/validate@latest docs/openapi.yaml
 
-release-check: ## Lint .goreleaser.yaml without building anything.
+release-check: ## Lint .goreleaser.yaml.
 	$(GO) run github.com/goreleaser/goreleaser/v2@latest check
 
-release-snapshot: ## Local goreleaser dry-run (no tag, no publish, full matrix).
+release-snapshot: ## goreleaser dry-run.
 	$(GO) run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=publish
 
-docs-serve: ## Serve docs/openapi.yaml in swagger-ui on localhost:8088.
+docs-serve: ## Serve openapi.yaml in swagger-ui.
 	@echo "swagger-ui at http://localhost:8088 (ctrl-c to stop)"
 	@docker run --rm -p 8088:8080 \
 		-e SWAGGER_JSON=/spec/openapi.yaml \
 		-v $(PWD)/docs:/spec \
 		swaggerapi/swagger-ui
 
-playground: ## Run the interactive Web UI playground on localhost:8090.
+playground: ## Run Web UI playground.
 	@echo "SSO playground at http://localhost:8090 (ctrl-c to stop)"
 	@go run ./examples/playground
 
-# ci-modules builds + tests each NESTED module separately. They are
-# excluded from the root `go ... ./...` on purpose (kms/awskms carries
-# aws-sdk-go-v2, kms/gcpkms carries cloud.google.com/go/kms, kms/azurekeyvault
-# carries github.com/Azure/azure-sdk-for-go, kms/pkcs11 carries
-# github.com/miekg/pkcs11 [cgo], redis carries go-redis, saml carries
-# github.com/crewjam/saml [XML/DSig], ldap carries github.com/go-ldap/ldap/v3,
-# extauthz carries github.com/envoyproxy/go-control-plane [Envoy ext_authz
-# gRPC API], kerberos carries github.com/jcmturner/gokrb5/v8 [SPNEGO/Kerberos],
-# radius carries layeh.com/radius [RADIUS/RFC 2865 client]
-# — none MUST enter the core go.mod), so CI
-# must enter each submodule explicitly. There is deliberately
-# no go.work: a workspace would merge the build lists and surface those SDKs
-# in the root module graph (`go list -m all`), blurring the core's
-# zero-external-SDK invariant. Each submodule resolves the core module via
-# its own `replace => ../` (or ../../).
-ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms/azurekeyvault, kms/pkcs11, redis, saml, ldap, extauthz, kerberos, radius).
+ci-modules: ## Build + test all nested modules.
 	cd kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/gcpkms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/azurekeyvault && $(GO) build ./... && $(GO) test -race -count=1 ./...
@@ -105,55 +93,62 @@ ci-modules: ## Build + race-test the nested modules (kms/awskms, kms/gcpkms, kms
 	cd kerberos && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build proto-lint ci-modules ## Run the same checks CI runs.
-
-help: ## Show this help.
-	@bash .make-help.sh
-
-# Engineering System Gates
-
-generate-engineering: ## Generate all engineering scaffolding (regenerates gitignored files).
-	@bash docs/templates/engineering/generate-engineering.sh
-
-harness: generate-engineering filesize complexity architecture ## Run all engineering gates (auto-generates scaffolding first).
-
-filesize: generate-engineering
-	@bash .check-filesize.sh
-
-complexity: generate-engineering
-	@bash .check-complexity.sh
-
-architecture: generate-engineering
-	@bash .check-architecture.sh
-
-coverage:
-	@go test -count=1 -coverprofile=/tmp/cover.out ./... && go tool cover -func=/tmp/cover.out
-
-coverage-check: generate-engineering
-	@bash .check-coverage.sh
-
-evaluate: coverage coverage-check ## Run coverage evaluation.
-
-check-exemptions: generate-engineering
-	@bash .check-exemptions-sync.sh
-
-self-test: generate-engineering
-	@bash .check-harness-self-test.sh
-
-check-invariants: generate-engineering
-	@bash .check-invariants.sh
-
-review: generate-engineering
-	@cat docs/review-checklist.md
-
-health-report: generate-engineering
-	@bash .check-health-report.sh
-
-diagnose: generate-engineering
-	@bash scripts/diagnose.sh
-
-trend: generate-engineering
-	@bash scripts/trend.sh
+ci: fmt vet race build proto-lint ci-modules ## Run CI checks.
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)
+
+# ── Engineering System Gates (delegated to CLI) ──────────────────────
+
+generate-engineering: ## Regenerate scaffolding
+	$(CLI) generate
+
+check-quick: filesize vet ## Fast post-edit check (filesize + vet). Same as `python cli.py check`.
+
+check-filesize-direct: ## Direct filesize check (no scaffolding).
+	$(CLI) check-filesize
+
+harness: ## Full gates (regenerates + filesize + complexity + architecture).
+	$(CLI) harness
+
+filesize: ## File size check.
+	$(CLI) check-filesize
+
+complexity: ## Cyclomatic + cognitive complexity.
+	$(CLI) complexity
+
+architecture: ## Dependency direction.
+	$(CLI) architecture
+
+coverage: ## Test coverage report.
+	$(CLI) coverage
+
+coverage-check: ## Coverage regression check.
+	$(CLI) coverage
+
+acceptance: ## Full acceptance (EVALUATION.md).
+	$(CLI) accept
+
+evaluate: ## Coverage evaluation.
+	$(CLI) evaluate
+
+check-exemptions: ## Exemption list sync.
+	$(CLI) check-exemptions
+
+self-test: ## Harness self-test.
+	$(CLI) self-test
+
+check-invariants: ## Security invariants.
+	$(CLI) check-invariants
+
+review: ## Review checklist.
+	$(CLI) review
+
+diagnose: ## Run diagnosis.
+	$(CLI) diagnose
+
+trend: ## Record trend snapshot.
+	$(CLI) trend
+
+health-report: ## Health report.
+	$(CLI) health-report

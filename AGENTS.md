@@ -4,6 +4,59 @@ Operational guide for AI agents. Follows [agents.md](https://agents.md). User in
 
 ---
 
+## 0. Agent Engineering Principles (HARD GATES)
+
+### 0.1 Code Size Budgets
+
+| Metric | Limit | Violation Action |
+|---|---|---|
+| File lines (`.go`) | ≤ 500 | STOP feature. Run `skills/split-large-file.md` |
+| Function lines | ≤ 50 | Extract sub-functions |
+| Cyclomatic complexity | ≤ 15 | Run `skills/refactor-high-complexity.md` |
+| Cognitive complexity | ≤ 20 | Simplify control flow |
+| Switch/if-chain cases | ≤ 10 | Replace with strategy table |
+| If-nesting depth | ≤ 3 | Guard clauses / early return |
+
+**Cardinal rule:** If your edit pushes a file OVER 500 lines, you MUST pause feature work, split the file via the skill, then continue. Do not append to an already-over-limit file without splitting first.
+
+### 0.2 Dependency Direction
+
+```
+handlers.go → oauth/ → security/ → core/
+handlers.go → oidc/   → security/ → core/
+```
+
+**Absolute prohibits:** `oauth/ → oidc/`, `oidc/ → oauth/`, `cmd/ ← any`. New packages must slot into the correct layer.
+
+### 0.3 Refactoring > Feature
+
+If during feature work you detect a file at 480+ lines whose limit your change will exceed, or a function at cyclo=14 you will push to 16 — **stop, refactor the pre-existing violation first, then apply your feature change.** Refactoring tasks always outrank feature tasks.
+
+### 0.4 Prohibited Patterns
+
+| Pattern | Why | Do instead |
+|---|---|---|
+| `TODO: refactor later` | Debt agents never revisit | Refactor immediately |
+| Appending to 490+ line file | Death by 1000 cuts | Split, then edit |
+| God function / God file | Agent context cost explodes | Split by concern |
+| `oidc/` importing `oauth/` | Creates cycle | Route via `handlers.go` |
+| Bypassing `SetMeta` for audit | Clobbers enrichment | Use `SetMeta` only |
+| Root file count > 15 non-exempt | Structural debt accumulates | Run `skills/project-reorganization/` before feature work |
+| Business code (`*_handler.go`, etc.) in root | Breaks domain isolation | Move to `internal/<module>/` |
+| New `*_handler.go`, `*_service.go`, `*_store.go` in root | HARDCAP | Blocked by `.check-root-business-code.sh` |
+
+### 0.5 Post-Edit Verification
+
+After every change to a `.go` file:
+1. `go build ./...` passes
+2. File is under 500 lines (unless in HARNESS.md exemption list)
+3. If function was modified: lines ≤ 50, cyclo ≤ 15
+4. `go vet ./...` passes
+
+**Fail-fast:** If any gate fails, fix immediately before proceeding to the next task.
+
+---
+
 ## 1. System Overview
 
 **Binary:** OAuth 2.0 + OIDC SSO server SDK + runnable binary. All concerns are interfaces; defaults in `defaultimpl/` (memory) + `defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS deps. Consumers wire embedded (`ssoclient/local`) or centralized (`ssoclient/remote`, gRPC+JWKS).

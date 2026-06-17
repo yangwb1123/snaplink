@@ -1,0 +1,154 @@
+version: '3'
+
+vars:
+  CLI: python cli.py
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  generate:
+    desc: Regenerate engineering scaffolding
+    cmds:
+      - '{{.CLI}} generate'
+
+  check:
+    desc: Quick check (filesize + vet) — after every edit
+    cmds:
+      - '{{.CLI}} check'
+
+  check-filesize:
+    desc: Direct filesize check only
+    cmds:
+      - '{{.CLI}} check-filesize'
+
+  accept:
+    desc: Full acceptance suite (EVALUATION.md)
+    cmds:
+      - '{{.CLI}} accept'
+
+  harness:
+    desc: Full engineering gates (filesize + complexity + architecture)
+    cmds:
+      - '{{.CLI}} harness'
+
+  complexity:
+    desc: Cyclomatic + cognitive complexity check
+    cmds:
+      - '{{.CLI}} complexity'
+
+  architecture:
+    desc: Dependency direction check
+    cmds:
+      - '{{.CLI}} architecture'
+
+  coverage:
+    desc: Run test coverage
+    cmds:
+      - '{{.CLI}} coverage'
+
+  evaluate:
+    desc: Coverage + coverage-check
+    cmds:
+      - '{{.CLI}} evaluate'
+
+  review:
+    desc: Review checklist (optional: feature-spec path)
+    cmds:
+      - '{{.CLI}} review {{.spec}}'
+    vars:
+      spec: '{{.spec | default ""}}'
+
+  diagnose:
+    desc: Run diagnosis
+    cmds:
+      - '{{.CLI}} diagnose'
+
+  trend:
+    desc: Record trend snapshot
+    cmds:
+      - '{{.CLI}} trend'
+
+  health-report:
+    desc: Health report
+    cmds:
+      - '{{.CLI}} health-report'
+
+  check-exemptions:
+    desc: Check exemption list sync
+    cmds:
+      - '{{.CLI}} check-exemptions'
+
+  self-test:
+    desc: Harness self-test
+    cmds:
+      - '{{.CLI}} self-test'
+
+  check-invariants:
+    desc: Security invariants
+    cmds:
+      - '{{.CLI}} check-invariants'
+
+  skill:
+    desc: Run a skill by name (e.g. task skill -- oracle-leak oauth/auth_code.go)
+    cmds:
+      - '{{.CLI}} skill {{.args}}'
+    vars:
+      args: '{{.args | default ""}}'
+
+  test:
+    desc: Run go tests
+    cmds:
+      - '{{.CLI}} test'
+
+  race:
+    desc: Run tests with -race
+    cmds:
+      - '{{.CLI}} race'
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - '{{.CLI}} bench'
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - '{{.CLI}} vet'
+
+  fmt:
+    desc: Check gofmt
+    cmds:
+      - '{{.CLI}} fmt'
+
+  build:
+    desc: Build binaries to bin/
+    cmds:
+      - '{{.CLI}} build'
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - '{{.CLI}} lint'
+
+  security-scan:
+    desc: Run govulncheck + gosec
+    cmds:
+      - '{{.CLI}} security-scan'
+
+  check-root-files:
+    desc: Check root file count gate
+    cmds:
+      - bash .check-root-files.sh
+
+  reorganize:
+    desc: Analyze project structure (skills/project-reorganization/)
+    cmds:
+      - '{{.CLI}} skill project-reorganization --analyze-only'
+
+  help:
+    desc: Show this help
+    cmds:
+      - task --list

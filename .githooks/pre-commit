@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+import subprocess, sys
+from pathlib import Path
+def main():
+    r = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"], capture_output=True, text=True)
+    staged = [f for f in r.stdout.strip().split("\n") if f.endswith(".go")]
+    if not staged: return 0
+    for f in staged:
+        if not Path(f).exists(): continue
+        r2 = subprocess.run([sys.executable, "checks/filesize.py", f], capture_output=True, text=True)
+        if "FAIL" in r2.stdout: print(f"pre-commit FAILED: {f} exceeds 500 lines"); return 1
+    r3 = subprocess.run(["gofmt", "-l"] + staged, capture_output=True, text=True)
+    if r3.stdout.strip(): print("pre-commit: gofmt needed in:\n" + r3.stdout); return 1
+    return 0
+if __name__ == "__main__": sys.exit(main())
