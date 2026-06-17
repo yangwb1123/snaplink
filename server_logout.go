@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/spi"
 )
 
@@ -171,7 +172,7 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 
 	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
 
-	promptConsent := hasPromptValue(prompt, PromptConsent)
+	promptConsent := consent.HasPromptValue(prompt, PromptConsent)
 	needsConsent := false
 
 	switch {
@@ -185,7 +186,7 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 	case promptConsent:
 		// RP requested explicit re-consent (e.g. for UI branding or re-auth).
 		needsConsent = true
-	case !scopesSubsumed(grant.Scopes, scopes):
+	case !consent.ScopesSubsumed(grant.Scopes, scopes):
 		// Existing grant does not cover all the requested scopes — new scopes
 		// were added to the authorization request since the user last consented.
 		needsConsent = true
@@ -375,53 +376,10 @@ func (s *Server) consumeConsentChallenge(id, userID, clientID string, scopes []s
 	if !ok || now.After(ch.ExpiresAt) {
 		return false
 	}
-	if ch.UserID != userID || ch.ClientID != clientID || !consentScopesMatch(ch.Scopes, scopes) {
+	if ch.UserID != userID || ch.ClientID != clientID || !consent.ScopesMatch(ch.Scopes, scopes) {
 		return false
 	}
 	// Single-use: consume immediately.
 	delete(s.consentChallenges, id)
-	return true
-}
-
-// consentScopesMatch reports whether a and b contain exactly the same scopes
-// regardless of order. Used to bind challenge validation to the exact scope set
-// the challenge was issued for.
-func consentScopesMatch(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	as := slices.Clone(a)
-	bs := slices.Clone(b)
-	slices.Sort(as)
-	slices.Sort(bs)
-	return slices.Equal(as, bs)
-}
-
-// hasPromptValue reports whether the space-separated OIDC prompt parameter
-// contains the named value (e.g. "consent"). Case-sensitive per spec.
-func hasPromptValue(prompt, val string) bool {
-	for _, p := range strings.Fields(prompt) {
-		if p == val {
-			return true
-		}
-	}
-	return false
-}
-
-// scopesSubsumed reports whether every scope in requested is present in
-// granted. An empty requested set is trivially subsumed (nothing to check).
-func scopesSubsumed(granted, requested []string) bool {
-	if len(requested) == 0 {
-		return true
-	}
-	set := make(map[string]struct{}, len(granted))
-	for _, s := range granted {
-		set[s] = struct{}{}
-	}
-	for _, r := range requested {
-		if _, ok := set[r]; !ok {
-			return false
-		}
-	}
 	return true
 }
