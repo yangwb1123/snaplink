@@ -66,17 +66,6 @@ func TestURLQueryEscape(t *testing.T) {
 	}
 }
 
-func TestPasswordResetBoolStr(t *testing.T) {
-	t.Parallel()
-
-	if got := passwordResetBoolStr(true); got != "true" {
-		t.Errorf("passwordResetBoolStr(true) = %q, want 'true'", got)
-	}
-	if got := passwordResetBoolStr(false); got != "false" {
-		t.Errorf("passwordResetBoolStr(false) = %q, want 'false'", got)
-	}
-}
-
 func TestHasPromptValue(t *testing.T) {
 	t.Parallel()
 

@@ -43,7 +43,7 @@ If during feature work you detect a file at 480+ lines whose limit your change w
 | Bypassing `SetMeta` for audit | Clobbers enrichment | Use `SetMeta` only |
 | Root file count > 15 non-exempt | Structural debt accumulates | Run `skills/project-reorganization/` before feature work |
 | Business code (`*_handler.go`, etc.) in root | Breaks domain isolation | Move to `internal/<module>/` |
-| New `*_handler.go`, `*_service.go`, `*_store.go` in root | HARDCAP | Blocked by `.check-root-business-code.sh` |
+| New `*_handler.go`, `*_service.go`, `*_store.go` in root | HARDCAP | Blocked by `checks/root_business_code.py` |
 
 ### 0.5 Post-Edit Verification
 
