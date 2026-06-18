@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/internal/handler"
 	"net/http"
 	"slices"
@@ -16,7 +17,7 @@ import (
 
 type mfaResumeState struct {
 	Result           *AuthResult       `json:"result"`
-	Request          loginRequest      `json:"request"`
+	Request          login.Request     `json:"request"`
 	CredentialHealth *CredentialHealth `json:"credential_health,omitempty"`
 }
 
@@ -24,7 +25,7 @@ type mfaResumeState struct {
 // frozen login state for resumption. Writes the mfa_required response.
 // Audit: emits mfa_required (success outcome — primary credential was
 // fine, the user just hasn't completed step-up yet).
-func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req loginRequest, client *Client) {
+func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
 	// Set CredentialHealth explicitly: AuthResult.CredentialHealth is
 	// json:"-", so the embedded Result drops it; this side channel
 	// preserves it for the post-step-up audit in finishLogin.

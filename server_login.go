@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/security"
@@ -29,7 +30,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// access_token + refresh_token (and PKCE-flow code values
 	// that an intermediary cache must not retain).
 	tokenNoStoreHeaders(ctx)
-	var req loginRequest
+	var req login.Request
 	if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
 		return

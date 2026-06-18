@@ -3,6 +3,7 @@ package sso
 import (
 	"net/http"
 
+	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/oauth"
 	"github.com/snaplink/sso/security"
 )
@@ -10,7 +11,7 @@ import (
 // resolveLoginRequest handles JAR request_uri URL-fetch and PAR
 // consume. Returns true if the request is fully handled (caller
 // should return immediately).
-func (s *Server) resolveLoginRequest(ctx HandlerContext, req *loginRequest) bool {
+func (s *Server) resolveLoginRequest(ctx HandlerContext, req *login.Request) bool {
 	if req.RequestURI != "" && security.IsJARFetchableURI(req.RequestURI) {
 		if s.jarFetcher == nil {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))

@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/internal/handler"
 	"net/http"
 	"slices"
@@ -12,7 +13,7 @@ import (
 )
 
 // matter whether MFA gated the request or not.
-func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req loginRequest, client *Client) {
+func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
 	if s.userProvider != nil {
 		user := &User{
 			ID:         result.UserID,

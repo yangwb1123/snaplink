@@ -1,11 +1,11 @@
-package sso
+package login
 
 import (
 	"encoding/json"
 )
 
-// loginRequest is the parsed /auth/login request body.
-type loginRequest struct {
+// Request is the parsed /auth/login request body.
+type Request struct {
 	Provider             string            `json:"provider"`
 	Credential           map[string]string `json:"credential"`
 	ClientID             string            `json:"client_id"`

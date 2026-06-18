@@ -5,11 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/oauth"
 )
 
 // issueAuthCode delegates to oauth.IssueAuthCode.
-func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *loginRequest, client *Client) (string, error) {
+func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *login.Request, client *Client) (string, error) {
 	return oauth.IssueAuthCode(ctx, oauth.IssueAuthCodeParams{
 		AuthCodeTTL:          s.authCodeTTL,
 		AuthCodeStore:        s.authCodeStore,
