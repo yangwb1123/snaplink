@@ -508,6 +508,3 @@ type Server struct {
 	// leaves /portal/ unmounted — byte-identical to a build without it.
 	portalFS fs.FS
 }
-
-// WithRouter sets the HTTP router.
-// RegisterAuthenticator adds an authenticator at runtime.
