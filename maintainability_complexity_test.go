@@ -58,8 +58,8 @@ type funcMetric struct {
 //	SEED_MAINTAINABILITY=1 go test -run TestSeedMaintainabilityExemptions -v .
 var cycloExemptions = map[string]int{
 	"authenticators/keypair.go:(*KeyPairAuthenticator).Authenticate":     17,
-	"caep/receiver.go:(*Receiver).Receive":                               36,
-	"caep/receiver.go:NewReceiver":                                       19,
+	"caep/receiver_construct.go:NewReceiver":                             19,
+	"caep/receiver_receive.go:(*Receiver).Receive":                       36,
 	"cmd/sso-server/build_stores.go:buildApp":                            23,
 	"cmd/sso-snapshotctl/main.go:runVerify":                              18,
 	"defaultimpl/ecdsa_validate.go:(*ECDSAJWTIssuer).Validate":           23,
@@ -112,8 +112,8 @@ var funcLenExemptions = map[string]int{
 	"authenticators/webauthn/mds.go:BuildMDSProvider":                    51,
 	"authenticators/webauthn/webauthn.go:NewHelper":                      71,
 	"caep/event_mapper.go:mapAuditEvent":                                 55,
-	"caep/receiver.go:(*Receiver).Receive":                               198,
-	"caep/receiver.go:NewReceiver":                                       81,
+	"caep/receiver_construct.go:NewReceiver":                             81,
+	"caep/receiver_receive.go:(*Receiver).Receive":                       198,
 	"caep/revoker.go:(*userProviderResolver).ResolveLocalSubject":        51,
 	"cmd/sso-audit-verify/main.go:readFromURL":                           57,
 	"cmd/sso-import/main.go:main":                                        69,
@@ -190,8 +190,8 @@ var funcLenExemptions = map[string]int{
 	"signingkeys/etcd/etcd_keepalive.go:(*Registry).Publish":             57,
 	"signingkeys/etcd/etcd_keepalive.go:(*Registry).supervisedKeepAlive": 107,
 	"snapshot/snapshotter.go:(*Snapshotter).Export":                      56,
-	"sso.go:NewServer":                                                   94,
-	"testkit/testkit.go:NewServer":                                       68,
+	"sso.go:NewServer":             94,
+	"testkit/testkit.go:NewServer": 68,
 }
 
 func TestMaintainability_CyclomaticComplexity(t *testing.T) {
