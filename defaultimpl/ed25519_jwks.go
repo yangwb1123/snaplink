@@ -100,14 +100,7 @@ func (j *Ed25519JWTIssuer) Alg() string { return jwtAlgEdDSA }
 func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	j.keyMu.RLock()
 	keyID := j.keyID
-	out := []sso.JWK{{
-		Kty: jwkKtyOKP,
-		Crv: jwkCrvEd25519,
-		Kid: keyID,
-		X:   base64.RawURLEncoding.EncodeToString(j.publicKey),
-		Use: jwkUseSig,
-		Alg: jwtAlgEdDSA,
-	}}
+	out := []sso.JWK{ed25519PublicJWK(keyID, j.publicKey)}
 	// Collect kids of LOCAL verify-only keys (skip the primary, already
 	// emitted above).
 	verifyKids := make([]string, 0, len(j.verifyKeys))
@@ -127,14 +120,7 @@ func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	// Sort for deterministic output — the JWKS ETag depends on it.
 	sortStrings(verifyKids)
 	for _, kid := range verifyKids {
-		out = append(out, sso.JWK{
-			Kty: jwkKtyOKP,
-			Crv: jwkCrvEd25519,
-			Kid: kid,
-			X:   base64.RawURLEncoding.EncodeToString(local[kid]),
-			Use: jwkUseSig,
-			Alg: jwtAlgEdDSA,
-		})
+		out = append(out, ed25519PublicJWK(kid, local[kid]))
 	}
 
 	// Adopted peer keys under a SEPARATE lock — keyMu is already released.
@@ -151,16 +137,22 @@ func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 
 	sortStrings(peerKids)
 	for _, kid := range peerKids {
-		out = append(out, sso.JWK{
-			Kty: jwkKtyOKP,
-			Crv: jwkCrvEd25519,
-			Kid: kid,
-			X:   base64.RawURLEncoding.EncodeToString(peer[kid]),
-			Use: jwkUseSig,
-			Alg: jwtAlgEdDSA,
-		})
+		out = append(out, ed25519PublicJWK(kid, peer[kid]))
 	}
 	return out, nil
+}
+
+// ed25519PublicJWK builds the RFC 8037 §2 OKP JWK for an Ed25519 public
+// key: kty "OKP", crv "Ed25519", x = base64url(raw 32-byte public key).
+func ed25519PublicJWK(kid string, pub ed25519.PublicKey) sso.JWK {
+	return sso.JWK{
+		Kty: jwkKtyOKP,
+		Crv: jwkCrvEd25519,
+		Kid: kid,
+		X:   base64.RawURLEncoding.EncodeToString(pub),
+		Use: jwkUseSig,
+		Alg: jwtAlgEdDSA,
+	}
 }
 
 // sortStrings is a tiny non-allocating bubble sort to avoid

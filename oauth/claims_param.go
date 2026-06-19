@@ -61,29 +61,40 @@ func parseClaimsSection(raw json.RawMessage) (map[string]*ClaimRequest, error) {
 			out[name] = nil
 			continue
 		}
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(spec, &obj); err != nil {
-			return nil, errors.New("claims: entry for " + name + " must be null or an object")
-		}
-		cr := &ClaimRequest{}
-		if v, ok := obj["essential"]; ok && len(v) > 0 {
-			if err := json.Unmarshal(v, &cr.Essential); err != nil {
-				return nil, errors.New("claims: " + name + ".essential must be a boolean")
-			}
-		}
-		if v, ok := obj["value"]; ok && len(v) > 0 {
-			cr.Value = append(json.RawMessage(nil), v...)
-		}
-		if v, ok := obj["values"]; ok && len(v) > 0 {
-			var arr []json.RawMessage
-			if err := json.Unmarshal(v, &arr); err != nil {
-				return nil, errors.New("claims: " + name + ".values must be an array")
-			}
-			cr.Values = arr
+		cr, err := parseClaimEntry(name, spec)
+		if err != nil {
+			return nil, err
 		}
 		out[name] = cr
 	}
 	return out, nil
+}
+
+// parseClaimEntry parses one non-null per-claim spec object into a
+// *ClaimRequest, applying the same shape checks as ValidateClaimsParameter
+// so constrained requests decode identically.
+func parseClaimEntry(name string, spec json.RawMessage) (*ClaimRequest, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(spec, &obj); err != nil {
+		return nil, errors.New("claims: entry for " + name + " must be null or an object")
+	}
+	cr := &ClaimRequest{}
+	if v, ok := obj["essential"]; ok && len(v) > 0 {
+		if err := json.Unmarshal(v, &cr.Essential); err != nil {
+			return nil, errors.New("claims: " + name + ".essential must be a boolean")
+		}
+	}
+	if v, ok := obj["value"]; ok && len(v) > 0 {
+		cr.Value = append(json.RawMessage(nil), v...)
+	}
+	if v, ok := obj["values"]; ok && len(v) > 0 {
+		var arr []json.RawMessage
+		if err := json.Unmarshal(v, &arr); err != nil {
+			return nil, errors.New("claims: " + name + ".values must be an array")
+		}
+		cr.Values = arr
+	}
+	return cr, nil
 }
 
 // RequestedACRFromClaims extracts the ACR value constraints requested via the

@@ -56,14 +56,9 @@ func formIntoStruct(form url.Values, v any) error {
 	rv = rv.Elem()
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
-		field := rt.Field(i)
-		tag := field.Tag.Get("json")
-		if tag == "" || tag == "-" {
+		tag := formFieldKey(rt.Field(i))
+		if tag == "" {
 			continue
-		}
-		// Strip ",omitempty" and friends.
-		if i := strings.IndexByte(tag, ','); i >= 0 {
-			tag = tag[:i]
 		}
 		raw, ok := form[tag]
 		if !ok || len(raw) == 0 {
@@ -73,29 +68,52 @@ func formIntoStruct(form url.Values, v any) error {
 		if !f.CanSet() {
 			continue
 		}
-		switch f.Kind() {
-		case reflect.String:
-			f.SetString(raw[0])
-		case reflect.Bool:
-			f.SetBool(raw[0] == "true" || raw[0] == "1")
-		case reflect.Slice:
-			if f.Type().Elem().Kind() == reflect.String {
-				// Honor both "scope=a&scope=b" (multi-value) and
-				// "scope=a%20b" (space-separated single value) per
-				// RFC 6749 §3.3. Token endpoint uses the latter
-				// almost universally.
-				if len(raw) == 1 && strings.ContainsAny(raw[0], " ,") {
-					sep := " "
-					if strings.Contains(raw[0], ",") && !strings.Contains(raw[0], " ") {
-						sep = ","
-					}
-					out := strings.Split(raw[0], sep)
-					f.Set(reflect.ValueOf(out))
-				} else {
-					f.Set(reflect.ValueOf(append([]string(nil), raw...)))
-				}
-			}
-		}
+		setFormField(f, raw)
 	}
 	return nil
+}
+
+// formFieldKey derives the form key for a struct field from its `json`
+// tag, returning "" for untagged or skipped fields. Mirrors the subset
+// of encoding/json tag handling the request structs rely on.
+func formFieldKey(field reflect.StructField) string {
+	tag := field.Tag.Get("json")
+	if tag == "" || tag == "-" {
+		return ""
+	}
+	// Strip ",omitempty" and friends.
+	if i := strings.IndexByte(tag, ','); i >= 0 {
+		tag = tag[:i]
+	}
+	return tag
+}
+
+// setFormField writes raw form values into a settable struct field for
+// the subset of types OAuth request bodies use: string, bool, []string.
+func setFormField(f reflect.Value, raw []string) {
+	switch f.Kind() {
+	case reflect.String:
+		f.SetString(raw[0])
+	case reflect.Bool:
+		f.SetBool(raw[0] == "true" || raw[0] == "1")
+	case reflect.Slice:
+		if f.Type().Elem().Kind() == reflect.String {
+			f.Set(reflect.ValueOf(formStringSlice(raw)))
+		}
+	}
+}
+
+// formStringSlice flattens raw form values into a []string, honoring both
+// "scope=a&scope=b" (multi-value) and "scope=a%20b" (space-separated
+// single value) per RFC 6749 §3.3. Token endpoint uses the latter almost
+// universally.
+func formStringSlice(raw []string) []string {
+	if len(raw) == 1 && strings.ContainsAny(raw[0], " ,") {
+		sep := " "
+		if strings.Contains(raw[0], ",") && !strings.Contains(raw[0], " ") {
+			sep = ","
+		}
+		return strings.Split(raw[0], sep)
+	}
+	return append([]string(nil), raw...)
 }

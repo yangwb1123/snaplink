@@ -33,13 +33,9 @@ func (r *Registry) Publish(ctx context.Context, ann signingkeys.Announcement) er
 	}
 
 	ttlSec := r.leaseSeconds(ann.LeaseSeconds)
-	lease, err := r.client.Grant(ctx, ttlSec)
+	lease, err := r.grantAndPut(ctx, ann, body, ttlSec)
 	if err != nil {
-		return fmt.Errorf("signingkeys/etcd: grant lease: %w", err)
-	}
-	if _, err := r.client.Put(ctx, r.replicaKey(ann.ReplicaID), string(body),
-		clientv3.WithLease(lease.ID)); err != nil {
-		return fmt.Errorf("signingkeys/etcd: put announcement: %w", err)
+		return err
 	}
 
 	// The supervised loop runs off a background context so it outlives the
@@ -53,13 +49,7 @@ func (r *Registry) Publish(ctx context.Context, ann signingkeys.Announcement) er
 		return fmt.Errorf("signingkeys/etcd: keepalive: %w", err)
 	}
 
-	r.mu.Lock()
-	oldCancel, oldLease := r.cancel, r.lease
-	r.cancel = cancel
-	r.bgCtx = keepCtx
-	r.lease = lease.ID
-	r.lastAnn = ann
-	r.mu.Unlock()
+	oldCancel, oldLease := r.swapSupervised(cancel, keepCtx, lease.ID, ann)
 
 	go r.supervisedKeepAlive(keepCtx, keepAlive, ann, ttlSec, string(body))
 
@@ -72,6 +62,45 @@ func (r *Registry) Publish(ctx context.Context, ann signingkeys.Announcement) er
 		_, _ = r.client.Revoke(ctx, oldLease)
 	}
 	return nil
+}
+
+// grantAndPut grants a fresh lease and puts the announcement under it. Split
+// from Publish to keep the grant/put error wrapping in one cohesive place.
+func (r *Registry) grantAndPut(
+	ctx context.Context,
+	ann signingkeys.Announcement,
+	body []byte,
+	ttlSec int64,
+) (*clientv3.LeaseGrantResponse, error) {
+	lease, err := r.client.Grant(ctx, ttlSec)
+	if err != nil {
+		return nil, fmt.Errorf("signingkeys/etcd: grant lease: %w", err)
+	}
+	if _, err := r.client.Put(ctx, r.replicaKey(ann.ReplicaID), string(body),
+		clientv3.WithLease(lease.ID)); err != nil {
+		return nil, fmt.Errorf("signingkeys/etcd: put announcement: %w", err)
+	}
+	return lease, nil
+}
+
+// swapSupervised installs the new supervised loop's cancel/context/lease/ann
+// under the lock and returns the prior cancel + lease so the caller can tear
+// them down after launching the new loop. Keeping the swap atomic preserves the
+// invariant that bgCtx, cancel, and lease always refer to the same generation.
+func (r *Registry) swapSupervised(
+	cancel context.CancelFunc,
+	keepCtx context.Context,
+	lease clientv3.LeaseID,
+	ann signingkeys.Announcement,
+) (context.CancelFunc, clientv3.LeaseID) {
+	r.mu.Lock()
+	oldCancel, oldLease := r.cancel, r.lease
+	r.cancel = cancel
+	r.bgCtx = keepCtx
+	r.lease = lease
+	r.lastAnn = ann
+	r.mu.Unlock()
+	return oldCancel, oldLease
 }
 
 // supervisedKeepAlive drains the KeepAlive channel. If the channel closes while
@@ -105,16 +134,10 @@ func (r *Registry) supervisedKeepAlive(
 	attempt := 0
 	for {
 		attempt++
-		d := signingKeyLeaseBackoff(attempt)
-
-		t := time.NewTimer(d)
-		select {
-		case <-ctx.Done():
-			t.Stop()
+		if !r.backoffWait(ctx, attempt) {
 			// Clean ctx cancel during backoff — not a failure, stay degraded
 			// flag is moot since the loop is gone.
 			return
-		case <-t.C:
 		}
 
 		// Retrieve the current announcement under the lock in case a concurrent
@@ -127,65 +150,118 @@ func (r *Registry) supervisedKeepAlive(
 		currentAnn := r.lastAnn
 		r.mu.Unlock()
 
-		newLease, err := r.client.Grant(ctx, ttlSec)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
+		done, retry := r.regrantOnce(ctx, currentAnn, ttlSec, body)
+		if retry {
 			continue
 		}
-
-		annBody, encErr := encodeAnnouncement(currentAnn)
-		if encErr != nil {
-			// The announcement hasn't changed structurally since we encoded it
-			// once before — marshal failure here would be a panic-level bug, but
-			// we stay live by falling back to the original body so the lease
-			// entry is never empty.
-			annBody = []byte(body)
-		}
-
-		if _, err := r.client.Put(ctx, r.replicaKey(currentAnn.ReplicaID), string(annBody),
-			clientv3.WithLease(newLease.ID)); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			_, _ = r.client.Revoke(ctx, newLease.ID)
-			continue
-		}
-
-		newKA, err := r.client.KeepAlive(ctx, newLease.ID)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			_, _ = r.client.Revoke(ctx, newLease.ID)
-			continue
-		}
-
-		// We have a live lease again. Update the registry's tracked lease under
-		// the lock — but only if our background context is still the active one
-		// (a concurrent Publish may have already replaced it, in which case that
-		// Publish owns the new lease and we should stop).
-		r.mu.Lock()
-		ctxStillActive := r.bgCtx == ctx
-		if ctxStillActive {
-			r.lease = newLease.ID
-		}
-		r.mu.Unlock()
-
-		if !ctxStillActive {
-			// A concurrent Publish replaced us. Revoke our new lease to avoid
-			// leaving a ghost announcement alongside the newer one, then exit.
-			_, _ = r.client.Revoke(context.Background(), newLease.ID)
+		if done {
 			return
 		}
+	}
+}
 
-		r.clearDegraded()
-		// Hand off to a fresh supervised loop for the new lease. Tail-call via
-		// goroutine to avoid unbounded stack growth across many re-grant cycles.
-		go r.supervisedKeepAlive(ctx, newKA, currentAnn, ttlSec, string(annBody))
+// backoffWait sleeps for the attempt's backoff delay, returning false if ctx is
+// cancelled during the wait (clean shutdown) and true once the timer fires.
+func (r *Registry) backoffWait(ctx context.Context, attempt int) bool {
+	d := signingKeyLeaseBackoff(attempt)
+	t := time.NewTimer(d)
+	select {
+	case <-ctx.Done():
+		t.Stop()
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// regrantOnce performs a single re-grant attempt: grant a new lease, put the
+// current announcement, restart KeepAlive, and (if our context is still the
+// active generation) hand off to a fresh supervised loop. It returns
+// (done, retry): retry=true means the caller should loop again after backoff;
+// done=true means the loop should exit (recovered, replaced, or cancelled).
+// Splitting this out preserves the exact grant/put/keepalive/handoff ordering
+// while keeping supervisedKeepAlive under the complexity budget.
+func (r *Registry) regrantOnce(
+	ctx context.Context,
+	currentAnn signingkeys.Announcement,
+	ttlSec int64,
+	body string,
+) (done bool, retry bool) {
+	newLease, err := r.client.Grant(ctx, ttlSec)
+	if err != nil {
+		if ctx.Err() != nil {
+			return true, false
+		}
+		return false, true
+	}
+
+	annBody, encErr := encodeAnnouncement(currentAnn)
+	if encErr != nil {
+		// The announcement hasn't changed structurally since we encoded it
+		// once before — marshal failure here would be a panic-level bug, but
+		// we stay live by falling back to the original body so the lease
+		// entry is never empty.
+		annBody = []byte(body)
+	}
+
+	if _, err := r.client.Put(ctx, r.replicaKey(currentAnn.ReplicaID), string(annBody),
+		clientv3.WithLease(newLease.ID)); err != nil {
+		if ctx.Err() != nil {
+			return true, false
+		}
+		_, _ = r.client.Revoke(ctx, newLease.ID)
+		return false, true
+	}
+
+	newKA, err := r.client.KeepAlive(ctx, newLease.ID)
+	if err != nil {
+		if ctx.Err() != nil {
+			return true, false
+		}
+		_, _ = r.client.Revoke(ctx, newLease.ID)
+		return false, true
+	}
+
+	r.installRegrantedLease(ctx, newLease.ID, newKA, currentAnn, ttlSec, string(annBody))
+	return true, false
+}
+
+// installRegrantedLease takes ownership of a freshly re-granted live lease: it
+// updates the tracked lease under the lock only if our background context is
+// still the active generation, clears degraded, and hands off to a fresh
+// supervised loop. If a concurrent Publish already replaced this generation it
+// revokes the new lease so no ghost announcement lingers. Extracted verbatim
+// from regrantOnce's tail to keep that function within the length budget.
+func (r *Registry) installRegrantedLease(
+	ctx context.Context,
+	newLease clientv3.LeaseID,
+	newKA <-chan *clientv3.LeaseKeepAliveResponse,
+	currentAnn signingkeys.Announcement,
+	ttlSec int64,
+	annBody string,
+) {
+	// We have a live lease again. Update the registry's tracked lease under
+	// the lock — but only if our background context is still the active one
+	// (a concurrent Publish may have already replaced it, in which case that
+	// Publish owns the new lease and we should stop).
+	r.mu.Lock()
+	ctxStillActive := r.bgCtx == ctx
+	if ctxStillActive {
+		r.lease = newLease
+	}
+	r.mu.Unlock()
+
+	if !ctxStillActive {
+		// A concurrent Publish replaced us. Revoke our new lease to avoid
+		// leaving a ghost announcement alongside the newer one, then exit.
+		_, _ = r.client.Revoke(context.Background(), newLease)
 		return
 	}
+
+	r.clearDegraded()
+	// Hand off to a fresh supervised loop for the new lease. Tail-call via
+	// goroutine to avoid unbounded stack growth across many re-grant cycles.
+	go r.supervisedKeepAlive(ctx, newKA, currentAnn, ttlSec, annBody)
 }
 
 // ReadyzCheck returns an error if the Registry is degraded — i.e. the
