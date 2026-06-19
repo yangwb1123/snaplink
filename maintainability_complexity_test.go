@@ -135,7 +135,7 @@ var funcLenExemptions = map[string]int{
 	"examples/basic/main.go:buildAuthenticators":                         69,
 	"examples/basic/main.go:main":                                        127,
 	"examples/playground/main.go:main":                                   114,
-	"federation/registration.go:MetadataToClient":                        53,
+	"federation/registration_metadata.go:MetadataToClient":               53,
 	"handlers.go:(*Server).handleAuthzPolicyBundle":                      58,
 	"mesh_authz.go:(*Server).MeshAuthorize":                              154,
 	"metrics/metrics_ctor.go:NewWithRegistry":                            293,

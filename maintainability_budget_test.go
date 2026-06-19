@@ -36,11 +36,7 @@ const maxFileLines = 500
 // fileSizeExemptions is the frozen backlog of files that exceeded maxFileLines
 // when this gate was introduced. SHRINK THIS LIST; never grow it.
 var fileSizeExemptions = map[string]bool{
-	"cmd/sso-server/main.go":     true,
-	"federation/registration.go": true,
-	"federation/trust_chain.go":  true,
-	"federation/trust_marks.go":  true,
-	"sso.go":                     true,
+	"sso.go": true,
 }
 
 // skipDirs are not part of this module's hand-written production surface.

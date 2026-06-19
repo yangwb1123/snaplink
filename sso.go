@@ -1,11 +1,5 @@
 package sso
 
-import "github.com/snaplink/sso/oidc"
-
-import "github.com/snaplink/sso/spi"
-
-import "github.com/snaplink/sso/oauth"
-
 import (
 	"context"
 	"io/fs"
@@ -29,11 +23,14 @@ import (
 	"github.com/snaplink/sso/metrics"
 	"github.com/snaplink/sso/middleware"
 	"github.com/snaplink/sso/netpolicy"
+	"github.com/snaplink/sso/oauth"
+	"github.com/snaplink/sso/oidc"
 	"github.com/snaplink/sso/permissions"
 	"github.com/snaplink/sso/ratelimit"
 	"github.com/snaplink/sso/region"
 	"github.com/snaplink/sso/security"
 	"github.com/snaplink/sso/signingkeys"
+	"github.com/snaplink/sso/spi"
 	"github.com/snaplink/sso/tenant"
 )
 
@@ -511,49 +508,6 @@ type Server struct {
 	// and /me/mfa with the end-user's own Bearer token. Nil (the default)
 	// leaves /portal/ unmounted — byte-identical to a build without it.
 	portalFS fs.FS
-}
-
-// jwksSingleFlight collapses concurrent JWKS document computations into a
-// single one, reduced to one global key (the JWKS doc is not per-host).
-// It is the classic single-flight pattern: callers that arrive while a
-// computation is in flight block on it and share its result instead of
-// each recomputing. Calls that arrive after the in-flight one completes
-// recompute fresh — there is intentionally no result caching, so a key
-// rotation is reflected on the very next poll.
-type jwksSingleFlight struct {
-	mu     sync.Mutex
-	active *jwksCall
-}
-
-type jwksCall struct {
-	wg   sync.WaitGroup
-	body []byte
-	err  error
-}
-
-// Do runs compute, collapsing any concurrent invocations onto the first
-// caller's result. compute must be safe to skip for the followers — it
-// is, since the JWKS doc derives only from the (rotation-guarded) issuer
-// key set, identical for every concurrent caller.
-func (f *jwksSingleFlight) Do(compute func() ([]byte, error)) ([]byte, error) {
-	f.mu.Lock()
-	if c := f.active; c != nil {
-		f.mu.Unlock()
-		c.wg.Wait()
-		return c.body, c.err
-	}
-	c := &jwksCall{}
-	c.wg.Add(1)
-	f.active = c
-	f.mu.Unlock()
-
-	c.body, c.err = compute()
-
-	f.mu.Lock()
-	f.active = nil
-	f.mu.Unlock()
-	c.wg.Done()
-	return c.body, c.err
 }
 
 // Option configures the Server.
