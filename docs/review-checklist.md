@@ -1,8 +1,9 @@
 # Code Review Checklist
 
 ## Engineering Gates
-- [ ] `make harness` passes (filesize + complexity + architecture)
-- [ ] No new file > 500 lines, no new function > 15 cyclo
+- [ ] `go test -run TestMaintainability_ ./...` passes (committed gates: file-size <=500 + cyclo <=15 + function-length <=50)
+- [ ] `go test -run TestArchitecture_ImportBoundaries ./...` passes (dependency direction)
+- [ ] No new file > 500 lines, no new function > 15 cyclo or > 50 lines
 - [ ] Architecture dependency rules satisfied
 
 ## Security

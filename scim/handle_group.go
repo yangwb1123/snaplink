@@ -94,22 +94,10 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Materialize every group (with members) BEFORE filtering + pagination:
-	// a ?filter= over members[/displayName] must see the full set, and
-	// totalResults must reflect the FILTERED set (RFC 7644 §3.4.2.2). WHY
-	// resolve members for all groups, not just the page: a `members eq`
-	// filter needs each group's membership; resolving per group is the same
-	// per-role members() call the unfiltered path already made, just over
-	// the whole role list (acceptable at operator-defined group scale — see
-	// filter.go performance note).
-	resources := make([]GroupResource, 0, len(roles))
-	for _, role := range roles {
-		members, err := h.groups.members(r.Context(), role.Code)
-		if err != nil {
-			h.writeError(w, h.storageError(err))
-			return
-		}
-		resources = append(resources, roleToGroup(role, members, h.groupLocation(role.Code)))
+	resources, merr := h.materializeGroups(r, roles)
+	if merr != nil {
+		h.writeError(w, *merr)
+		return
 	}
 	resources, ferr := h.filterGroups(r, resources)
 	if ferr != nil {
@@ -120,14 +108,7 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	sortGroups(resources, parseSortSpec(r))
 
 	total := len(resources)
-	lo := startIndex - 1
-	if lo > total {
-		lo = total
-	}
-	hi := lo + count
-	if hi > total {
-		hi = total
-	}
+	lo, hi := pageBounds(startIndex, count, total)
 	page := resources[lo:hi]
 
 	h.writeJSON(w, http.StatusOK, GroupListResponse{
@@ -137,6 +118,26 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		ItemsPerPage: len(page),
 		Resources:    page,
 	})
+}
+
+// materializeGroups projects every role into a GroupResource, resolving each
+// group's membership. WHY resolve members for ALL groups (not just the page):
+// filtering + totalResults must see the full set BEFORE pagination (RFC 7644
+// §3.4.2.2), and a `members eq` filter needs each group's membership. This is
+// the same per-role members() call the unfiltered path makes, just over the
+// whole role list (acceptable at operator-defined group scale — see filter.go
+// performance note). A non-nil pointer carries the SCIM error to write.
+func (h *Handler) materializeGroups(r *http.Request, roles []permissions.Role) ([]GroupResource, *ErrorResponse) {
+	resources := make([]GroupResource, 0, len(roles))
+	for _, role := range roles {
+		members, err := h.groups.members(r.Context(), role.Code)
+		if err != nil {
+			e := h.storageError(err)
+			return nil, &e
+		}
+		resources = append(resources, roleToGroup(role, members, h.groupLocation(role.Code)))
+	}
+	return resources, nil
 }
 
 // filterGroups applies the optional ?filter= query parameter to a Group
@@ -231,24 +232,14 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 
-	// Validate every op BEFORE mutating, so a malformed later op can't
-	// leave a half-applied membership change behind (the permissions SPI
-	// has no rollback). plan holds the membership mutations to run only
-	// once the whole op list type-checks.
-	newName := role.Name
-	nameChanged := false
-	var plan []groupMemberMutation
-	for _, op := range ops {
-		e, mut, nameSet, name, ok := planGroupOp(op)
-		if !ok {
-			h.writeError(w, e)
-			return
-		}
-		if nameSet {
-			newName = name
-			nameChanged = true
-		}
-		plan = append(plan, mut...)
+	// Validate every op BEFORE mutating, so a malformed later op can't leave
+	// a half-applied membership change behind (the permissions SPI has no
+	// rollback). The plan holds the membership mutations to run only once the
+	// whole op list type-checks.
+	newName, nameChanged, plan, e, ok := planGroupPatch(role.Name, ops)
+	if !ok {
+		h.writeError(w, e)
+		return
 	}
 
 	if nameChanged {
@@ -258,11 +249,9 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 			return
 		}
 	}
-	for _, m := range plan {
-		if e := h.runMemberMutation(r.Context(), id, m); e != nil {
-			h.writeError(w, *e)
-			return
-		}
+	if e := h.runMemberPlan(r.Context(), id, plan); e != nil {
+		h.writeError(w, *e)
+		return
 	}
 
 	members, err := h.groups.members(r.Context(), id)
@@ -272,6 +261,37 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 	}
 	h.auditGroup(r, audit.EventAdminRoleUpdated, id)
 	h.writeGroupResource(w, http.StatusOK, roleToGroup(role, members, h.groupLocation(id)))
+}
+
+// planGroupPatch validates the full PATCH op list against the group schema
+// WITHOUT touching the store, returning the resulting displayName (and whether
+// it changed) plus the deferred membership mutations. ok=false carries the
+// SCIM error from the first invalid op.
+func planGroupPatch(currentName string, ops []PatchOperation) (newName string, nameChanged bool, plan []groupMemberMutation, e ErrorResponse, ok bool) {
+	newName = currentName
+	for _, op := range ops {
+		oe, mut, nameSet, name, opOK := planGroupOp(op)
+		if !opOK {
+			return "", false, nil, oe, false
+		}
+		if nameSet {
+			newName = name
+			nameChanged = true
+		}
+		plan = append(plan, mut...)
+	}
+	return newName, nameChanged, plan, ErrorResponse{}, true
+}
+
+// runMemberPlan executes the deferred membership mutations in order, stopping
+// at the first store error.
+func (h *Handler) runMemberPlan(ctx context.Context, id string, plan []groupMemberMutation) *ErrorResponse {
+	for _, m := range plan {
+		if e := h.runMemberMutation(ctx, id, m); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, id string) {

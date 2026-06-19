@@ -122,49 +122,50 @@ func (d *VelocityDetector) Inspect(ctx context.Context, event *anomaly.LoginEven
 	}
 
 	hourCutoff := event.Timestamp.Add(-1 * time.Hour)
-	var hourlyCount, dailyCount int
+	hourlyCount, dailyCount := countWindows(entries, hourCutoff)
+
+	var anomalies []anomaly.Signal
+	if d.hourlyLimit > 0 && hourlyCount > d.hourlyLimit {
+		anomalies = append(anomalies, d.velocitySignal(event, "1h", anomaly.SeverityWarn, hourlyCount, d.hourlyLimit))
+	}
+	if d.dailyLimit > 0 && dailyCount > d.dailyLimit {
+		anomalies = append(anomalies, d.velocitySignal(event, "24h", anomaly.SeverityCritical, dailyCount, d.dailyLimit))
+	}
+	return anomalies, nil
+}
+
+// countWindows tallies hourly + daily attempt counts from the
+// already day-filtered entries, then adds 1 for the current event
+// which is not yet in the store (impossible-travel appends after
+// Inspect; without the +1 this is off-by-one on the first
+// cross-threshold call).
+func countWindows(entries []*anomaly.LoginEntry, hourCutoff time.Time) (hourlyCount, dailyCount int) {
 	for _, e := range entries {
 		dailyCount++ // already filtered by dayCutoff in the query
 		if !e.Timestamp.Before(hourCutoff) {
 			hourlyCount++
 		}
 	}
-	// Add 1 for the current event itself — not yet in the store
-	// (impossible-travel appends after Inspect; without that, this
-	// would be off-by-one on the very first cross-threshold call).
 	hourlyCount++
 	dailyCount++
+	return hourlyCount, dailyCount
+}
 
-	var anomalies []anomaly.Signal
-	if d.hourlyLimit > 0 && hourlyCount > d.hourlyLimit {
-		anomalies = append(anomalies, anomaly.Signal{
-			Type:      DetectorTypeVelocity,
-			Severity:  anomaly.SeverityWarn,
-			Score:     velocityScore(hourlyCount, d.hourlyLimit),
-			SubjectID: event.SubjectID,
-			Evidence: map[string]string{
-				"window":         "1h",
-				"count":          formatInt(int64(hourlyCount)),
-				"threshold":      formatInt(int64(d.hourlyLimit)),
-				"current_client": event.ClientID,
-			},
-		})
+// velocitySignal builds a velocity-burst signal for the given
+// window label, severity, observed count, and threshold.
+func (d *VelocityDetector) velocitySignal(event *anomaly.LoginEvent, window string, severity anomaly.Severity, count, threshold int) anomaly.Signal {
+	return anomaly.Signal{
+		Type:      DetectorTypeVelocity,
+		Severity:  severity,
+		Score:     velocityScore(count, threshold),
+		SubjectID: event.SubjectID,
+		Evidence: map[string]string{
+			"window":         window,
+			"count":          formatInt(int64(count)),
+			"threshold":      formatInt(int64(threshold)),
+			"current_client": event.ClientID,
+		},
 	}
-	if d.dailyLimit > 0 && dailyCount > d.dailyLimit {
-		anomalies = append(anomalies, anomaly.Signal{
-			Type:      DetectorTypeVelocity,
-			Severity:  anomaly.SeverityCritical,
-			Score:     velocityScore(dailyCount, d.dailyLimit),
-			SubjectID: event.SubjectID,
-			Evidence: map[string]string{
-				"window":         "24h",
-				"count":          formatInt(int64(dailyCount)),
-				"threshold":      formatInt(int64(d.dailyLimit)),
-				"current_client": event.ClientID,
-			},
-		})
-	}
-	return anomalies, nil
 }
 
 // velocityScore maps (count, threshold) to 0..100. Caps at 100

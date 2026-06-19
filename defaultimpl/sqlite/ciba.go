@@ -156,46 +156,61 @@ func (s *CIBAStore) Get(ctx context.Context, authReqID string) (*oauth.CIBAReque
                request_context, status, interval_ns, last_poll,
                created_at, expires_at
         FROM ciba_requests WHERE auth_req_id = ?`, authReqID)
-	var (
-		clientID, subjectID, provider, scopes, acr, binding, resources, nonce, notifToken, status string
-		reqCtx                                                                                    []byte
-		intervalNs, lastPoll, createdNs, expiresNs                                                int64
-	)
-	if err := row.Scan(&clientID, &subjectID, &provider, &scopes, &acr,
-		&binding, &resources, &nonce, &notifToken, &reqCtx, &status,
-		&intervalNs, &lastPoll, &createdNs, &expiresNs); err != nil {
+	var raw cibaRow
+	if err := raw.scan(row); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, oauth.ErrCIBARequestNotFound
 		}
 		return nil, fmt.Errorf("sqlite: get ciba_request: %w", err)
 	}
-	expiresAt := time.Unix(0, expiresNs).UTC()
+	expiresAt := time.Unix(0, raw.expiresNs).UTC()
 	if time.Now().After(expiresAt) {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM ciba_requests WHERE auth_req_id = ?`, authReqID)
 		return nil, oauth.ErrCIBARequestNotFound
 	}
+	return raw.toRequest(authReqID, expiresAt), nil
+}
+
+// cibaRow holds the raw column values of a ciba_requests row so Get's
+// scan + struct assembly each stay under budget.
+type cibaRow struct {
+	clientID, subjectID, provider, scopes, acr    string
+	binding, resources, nonce, notifToken, status string
+	reqCtx                                        []byte
+	intervalNs, lastPoll, createdNs, expiresNs    int64
+}
+
+func (r *cibaRow) scan(row interface{ Scan(...any) error }) error {
+	return row.Scan(&r.clientID, &r.subjectID, &r.provider, &r.scopes, &r.acr,
+		&r.binding, &r.resources, &r.nonce, &r.notifToken, &r.reqCtx, &r.status,
+		&r.intervalNs, &r.lastPoll, &r.createdNs, &r.expiresNs)
+}
+
+// toRequest projects the raw row onto an oauth.CIBARequest. lastPoll=0
+// stays the zero time (never polled), matching the original behavior.
+func (r *cibaRow) toRequest(authReqID string, expiresAt time.Time) *oauth.CIBARequest {
 	var lp time.Time
-	if lastPoll != 0 {
-		lp = time.Unix(0, lastPoll).UTC()
+	if r.lastPoll != 0 {
+		lp = time.Unix(0, r.lastPoll).UTC()
 	}
 	return &oauth.CIBARequest{
 		AuthReqID:               authReqID,
-		ClientID:                clientID,
-		SubjectID:               subjectID,
-		Provider:                provider,
-		Scopes:                  splitNonEmpty(scopes),
-		ACRValues:               acr,
-		BindingMessage:          binding,
-		Resources:               splitNonEmpty(resources),
-		Nonce:                   nonce,
-		ClientNotificationToken: notifToken,
-		RequestContext:          reqCtx,
-		Status:                  oauth.CIBAStatus(status),
-		Interval:                time.Duration(intervalNs),
+		ClientID:                r.clientID,
+		SubjectID:               r.subjectID,
+		Provider:                r.provider,
+		Scopes:                  splitNonEmpty(r.scopes),
+		ACRValues:               r.acr,
+		BindingMessage:          r.binding,
+		Resources:               splitNonEmpty(r.resources),
+		Nonce:                   r.nonce,
+		ClientNotificationToken: r.notifToken,
+		RequestContext:          r.reqCtx,
+		Status:                  oauth.CIBAStatus(r.status),
+		Interval:                time.Duration(r.intervalNs),
 		LastPoll:                lp,
-		CreatedAt:               time.Unix(0, createdNs).UTC(),
+		CreatedAt:               time.Unix(0, r.createdNs).UTC(),
 		ExpiresAt:               expiresAt,
-	}, nil
+	}
 }
 
 // SetStatus advances Pending → terminal via UPDATE ... WHERE status =

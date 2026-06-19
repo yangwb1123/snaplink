@@ -116,40 +116,17 @@ func (r *Registry) apply(ctx context.Context, id string, mode PinMode) (*PinRepo
 		return nil, err
 	}
 
-	var prevID string
-	prev, err := r.Store.Current(ctx)
-	if err != nil && !errors.Is(err, ErrNoCurrent) {
-		return nil, fmt.Errorf("releases: read current: %w", err)
-	}
-	if prev != nil {
-		prevID = prev.ID
-		if mode == PinForward && target.SchemaVersion < prev.SchemaVersion {
-			return nil, ErrSchemaRegress
-		}
+	prev, prevID, err := r.resolvePrevious(ctx, target, mode)
+	if err != nil {
+		return nil, err
 	}
 
-	// On Rollback with a ConfigSnapshot pointer, restore the paired
-	// admin-managed state BEFORE flipping the Pinner — the
-	// just-restored backend should come up with the matching
-	// clients/users/roles. Forward Pin intentionally skips this:
-	// rolling forward is for new state, not re-applying old state.
-	if mode == PinRollback && target.ConfigSnapshot != "" && r.SnapshotRestorer != nil {
-		if err := r.SnapshotRestorer.RestoreByID(ctx, target.ConfigSnapshot); err != nil {
-			return nil, fmt.Errorf("releases: rollback snapshot restore: %w", err)
-		}
+	if err := r.restoreSnapshot(ctx, target, mode); err != nil {
+		return nil, err
 	}
 
-	if r.Pinner != nil {
-		var perr error
-		switch mode {
-		case PinForward:
-			perr = r.Pinner.PinForward(ctx, target)
-		case PinRollback:
-			perr = r.Pinner.PinRollback(ctx, target)
-		}
-		if perr != nil {
-			return nil, fmt.Errorf("releases: pinner %s: %w", mode, perr)
-		}
+	if err := r.runPinner(ctx, target, mode); err != nil {
+		return nil, err
 	}
 
 	if err := r.Store.SetCurrent(ctx, id); err != nil {
@@ -167,6 +144,57 @@ func (r *Registry) apply(ctx context.Context, id string, mode PinMode) (*PinRepo
 	}
 
 	return &PinReport{ReleaseID: id, Mode: mode, PreviousID: prevID}, nil
+}
+
+// resolvePrevious reads the currently-pinned release and enforces the
+// forward-mode schema-regression gate. Returns the previous release
+// (nil on fresh deployments) and its id ("" when nothing was pinned).
+func (r *Registry) resolvePrevious(ctx context.Context, target *Release, mode PinMode) (*Release, string, error) {
+	prev, err := r.Store.Current(ctx)
+	if err != nil && !errors.Is(err, ErrNoCurrent) {
+		return nil, "", fmt.Errorf("releases: read current: %w", err)
+	}
+	if prev == nil {
+		return nil, "", nil
+	}
+	if mode == PinForward && target.SchemaVersion < prev.SchemaVersion {
+		return nil, "", ErrSchemaRegress
+	}
+	return prev, prev.ID, nil
+}
+
+// restoreSnapshot applies the target's paired ConfigSnapshot on
+// Rollback BEFORE flipping the Pinner — the just-restored backend
+// should come up with the matching clients/users/roles. Forward Pin
+// intentionally skips this: rolling forward is for new state, not
+// re-applying old state. A no-op when there is no snapshot or restorer.
+func (r *Registry) restoreSnapshot(ctx context.Context, target *Release, mode PinMode) error {
+	if mode != PinRollback || target.ConfigSnapshot == "" || r.SnapshotRestorer == nil {
+		return nil
+	}
+	if err := r.SnapshotRestorer.RestoreByID(ctx, target.ConfigSnapshot); err != nil {
+		return fmt.Errorf("releases: rollback snapshot restore: %w", err)
+	}
+	return nil
+}
+
+// runPinner invokes the mode-appropriate Pinner deploy step. A no-op
+// when no Pinner is configured (record-keeping-only Pin).
+func (r *Registry) runPinner(ctx context.Context, target *Release, mode PinMode) error {
+	if r.Pinner == nil {
+		return nil
+	}
+	var perr error
+	switch mode {
+	case PinForward:
+		perr = r.Pinner.PinForward(ctx, target)
+	case PinRollback:
+		perr = r.Pinner.PinRollback(ctx, target)
+	}
+	if perr != nil {
+		return fmt.Errorf("releases: pinner %s: %w", mode, perr)
+	}
+	return nil
 }
 
 // runProbe loops r.Probe.Probe up to ProbePolls times with

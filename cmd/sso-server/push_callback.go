@@ -1,7 +1,5 @@
 package main
 
-import "github.com/snaplink/sso/spi"
-
 import (
 	"encoding/json"
 	"errors"
@@ -14,6 +12,7 @@ import (
 	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/spi"
 )
 
 // pushCallbackDeps bundles the dependencies the push approval
@@ -88,38 +87,12 @@ func mountPushCallbackRoute(srv *sso.Server, deps *pushCallbackDeps) error {
 
 func pushCallbackHandler(deps *pushCallbackDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Bearer-token check first — short-circuit before doing
-		// any work. Constant-time compare via subtleEqualByte.
-		if deps.BearerToken != "" {
-			hdr := r.Header.Get("Authorization")
-			if !strings.HasPrefix(hdr, "Bearer ") {
-				writePushCallbackError(w, http.StatusUnauthorized, "missing_bearer", "Authorization: Bearer required")
-				return
-			}
-			supplied := strings.TrimPrefix(hdr, "Bearer ")
-			if !constantTimeEq(supplied, deps.BearerToken) {
-				writePushCallbackError(w, http.StatusUnauthorized, "invalid_bearer", "bearer token mismatch")
-				return
-			}
+		// Bearer + IP gates first — short-circuit before doing any work.
+		if !checkPushCallbackBearer(w, r, deps) {
+			return
 		}
-		// IP allowlist.
-		if len(deps.AllowedCIDRs) > 0 {
-			ip := callbackClientIP(r)
-			if ip == nil {
-				writePushCallbackError(w, http.StatusForbidden, "ip_not_allowed", "could not parse client IP")
-				return
-			}
-			allowed := false
-			for _, cidr := range deps.AllowedCIDRs {
-				if cidr.Contains(ip) {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				writePushCallbackError(w, http.StatusForbidden, "ip_not_allowed", "source IP not in allowlist")
-				return
-			}
+		if !checkPushCallbackIP(w, r, deps) {
+			return
 		}
 
 		// Decision routing — path params via the SDK router's
@@ -131,38 +104,89 @@ func pushCallbackHandler(deps *pushCallbackDeps) http.HandlerFunc {
 			writePushCallbackError(w, http.StatusBadRequest, "invalid_path", "expected /push/approval/{id}/{decision}")
 			return
 		}
-		var status defaultimpl.PushApprovalStatus
-		switch decision {
-		case "approve":
-			status = defaultimpl.PushApprovalApproved
-		case "deny":
-			status = defaultimpl.PushApprovalDenied
-		default:
+		status, ok := pushDecisionStatus(decision)
+		if !ok {
 			writePushCallbackError(w, http.StatusBadRequest, "invalid_decision", "decision must be approve|deny")
 			return
 		}
+		writePushCallbackResult(w, deps, r, id, decision, status)
+	}
+}
 
-		err := deps.Store.SetStatus(r.Context(), id, status)
-		switch {
-		case err == nil:
-			// Store is now the source of truth; nudge any blocked Verify
-			// to re-read it immediately rather than wait out a poll tick.
-			// Wake AFTER the store write so the woken Verify observes the
-			// resolved status (ordering the lost-wakeup contract relies on).
-			if deps.Notify != nil {
-				deps.Notify(id)
-			}
-			w.WriteHeader(http.StatusNoContent)
-		case errors.Is(err, defaultimpl.ErrPushApprovalNotFound):
-			writePushCallbackError(w, http.StatusNotFound, "not_found", "approval id unknown or expired")
-		case errors.Is(err, defaultimpl.ErrPushApprovalResolved):
-			writePushCallbackError(w, http.StatusConflict, "already_resolved", "approval already approved/denied")
-		default:
-			if deps.Logger != nil {
-				deps.Logger.Error("push callback SetStatus", "error", err, "approval_id", id, "decision", decision)
-			}
-			writePushCallbackError(w, http.StatusInternalServerError, "server_error", "internal error")
+// checkPushCallbackBearer enforces the configured bearer token (constant-time
+// compare). Returns false after writing the error when the check fails; true
+// (pass) when no token is configured or it matches.
+func checkPushCallbackBearer(w http.ResponseWriter, r *http.Request, deps *pushCallbackDeps) bool {
+	if deps.BearerToken == "" {
+		return true
+	}
+	hdr := r.Header.Get("Authorization")
+	if !strings.HasPrefix(hdr, "Bearer ") {
+		writePushCallbackError(w, http.StatusUnauthorized, "missing_bearer", "Authorization: Bearer required")
+		return false
+	}
+	if !constantTimeEq(strings.TrimPrefix(hdr, "Bearer "), deps.BearerToken) {
+		writePushCallbackError(w, http.StatusUnauthorized, "invalid_bearer", "bearer token mismatch")
+		return false
+	}
+	return true
+}
+
+// checkPushCallbackIP enforces the configured CIDR allowlist. Returns false
+// after writing the error when the source IP is unparsable or not allowed; true
+// (pass) when no allowlist is configured or the IP matches.
+func checkPushCallbackIP(w http.ResponseWriter, r *http.Request, deps *pushCallbackDeps) bool {
+	if len(deps.AllowedCIDRs) == 0 {
+		return true
+	}
+	ip := callbackClientIP(r)
+	if ip == nil {
+		writePushCallbackError(w, http.StatusForbidden, "ip_not_allowed", "could not parse client IP")
+		return false
+	}
+	for _, cidr := range deps.AllowedCIDRs {
+		if cidr.Contains(ip) {
+			return true
 		}
+	}
+	writePushCallbackError(w, http.StatusForbidden, "ip_not_allowed", "source IP not in allowlist")
+	return false
+}
+
+// pushDecisionStatus maps the path decision segment to a store status. ok=false
+// for anything other than approve|deny.
+func pushDecisionStatus(decision string) (defaultimpl.PushApprovalStatus, bool) {
+	switch decision {
+	case "approve":
+		return defaultimpl.PushApprovalApproved, true
+	case "deny":
+		return defaultimpl.PushApprovalDenied, true
+	default:
+		return "", false
+	}
+}
+
+// writePushCallbackResult performs Store.SetStatus and maps its outcome to the
+// enumerated HTTP responses (204 / 404 / 409 / 500). On success it wakes any
+// blocked Verify AFTER the store write so the woken Verify observes the resolved
+// status (the ordering the lost-wakeup contract relies on).
+func writePushCallbackResult(w http.ResponseWriter, deps *pushCallbackDeps, r *http.Request, id, decision string, status defaultimpl.PushApprovalStatus) {
+	err := deps.Store.SetStatus(r.Context(), id, status)
+	switch {
+	case err == nil:
+		if deps.Notify != nil {
+			deps.Notify(id)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, defaultimpl.ErrPushApprovalNotFound):
+		writePushCallbackError(w, http.StatusNotFound, "not_found", "approval id unknown or expired")
+	case errors.Is(err, defaultimpl.ErrPushApprovalResolved):
+		writePushCallbackError(w, http.StatusConflict, "already_resolved", "approval already approved/denied")
+	default:
+		if deps.Logger != nil {
+			deps.Logger.Error("push callback SetStatus", "error", err, "approval_id", id, "decision", decision)
+		}
+		writePushCallbackError(w, http.StatusInternalServerError, "server_error", "internal error")
 	}
 }
 

@@ -213,21 +213,43 @@ func (d *NewCountryDetector) Inspect(ctx context.Context, event *anomaly.LoginEv
 	if len(entries) == 0 {
 		return nil, nil // first login = baseline
 	}
-	if d.bootstrapGracePeriod > 0 {
-		oldest := entries[len(entries)-1].Timestamp
-		if event.Timestamp.Sub(oldest) < d.bootstrapGracePeriod {
-			return nil, nil
-		}
+	if d.withinGracePeriod(event, entries) {
+		return nil, nil
 	}
 	current := event.Geo.CountryCode
 	for _, e := range entries {
 		if e.CountryCode == current {
-			return nil, nil
+			return nil, nil // known country
 		}
 	}
-	// Build the baseline country list for evidence — operators
-	// glancing at the audit event want to see "user was in US/CA;
-	// this attempt was from RU."
+	return []anomaly.Signal{{
+		Type:      DetectorTypeNewCountry,
+		Severity:  anomaly.SeverityWarn,
+		Score:     50,
+		SubjectID: event.SubjectID,
+		Evidence: map[string]string{
+			"current_country":    current,
+			"baseline_countries": baselineCountryList(entries),
+			"baseline_entries":   formatInt(int64(len(entries))),
+		},
+	}}, nil
+}
+
+// withinGracePeriod reports whether the subject's oldest baseline
+// entry is recent enough that the bootstrap grace period still
+// applies — during which new countries seed the baseline silently.
+func (d *NewCountryDetector) withinGracePeriod(event *anomaly.LoginEvent, entries []*anomaly.LoginEntry) bool {
+	if d.bootstrapGracePeriod <= 0 {
+		return false
+	}
+	oldest := entries[len(entries)-1].Timestamp
+	return event.Timestamp.Sub(oldest) < d.bootstrapGracePeriod
+}
+
+// baselineCountryList renders the distinct non-empty country codes
+// seen in the baseline as a comma-joined string. Surfaced as
+// evidence so operators see "user was in US/CA; this was from RU."
+func baselineCountryList(entries []*anomaly.LoginEntry) string {
 	seenCountries := make(map[string]bool)
 	for _, e := range entries {
 		if e.CountryCode != "" {
@@ -241,17 +263,7 @@ func (d *NewCountryDetector) Inspect(ctx context.Context, event *anomaly.LoginEv
 		}
 		baselineList += c
 	}
-	return []anomaly.Signal{{
-		Type:      DetectorTypeNewCountry,
-		Severity:  anomaly.SeverityWarn,
-		Score:     50,
-		SubjectID: event.SubjectID,
-		Evidence: map[string]string{
-			"current_country":    current,
-			"baseline_countries": baselineList,
-			"baseline_entries":   formatInt(int64(len(entries))),
-		},
-	}}, nil
+	return baselineList
 }
 
 // computeUAHash rebuilds the same hash HashLoginEntry would have

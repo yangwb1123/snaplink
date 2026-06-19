@@ -156,45 +156,8 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 	if !client.Active {
 		return nil, errWebAuthnClientInactive
 	}
-	// Data-residency write-gate. Reached ONLY post-assertion (the caller
-	// invokes issueWebAuthnToken after deps.Helper.FinishLogin verified the
-	// WebAuthn assertion — the user is authenticated), and now that the client
-	// is resolved its TenantID is known, so this mirrors residencyGateLogin
-	// EXACTLY: gate the MINT (isWrite=true) on the tenant's ResidencyPolicy.
-	// Both hooks must be wired (cmd sets them only when a region resolver is
-	// configured) — either nil ⇒ no check ⇒ byte-identical pre-residency
-	// behavior. FAIL-OPEN consistent with the region middleware's nonfatal
-	// contract: a resolver error yields an empty serving region, which
-	// ResidencyDecision (via checkTenantResidency) treats as unconstrained.
-	if deps.RegionResolver != nil && deps.ResidencyDecision != nil {
-		sr, _ := deps.RegionResolver.Resolve(r)
-		if code, denied := deps.ResidencyDecision(ctx, client.TenantID, sr, true); denied {
-			return nil, &webauthnResidencyError{code: code}
-		}
-	}
-	// Prefer the server's tenant-aware selector (tenant → client strategy →
-	// default) so a tenant client's WebAuthn access token is signed with the
-	// same key as its id_token + its tokens from /auth/login + /token. When
-	// the hook is unset (embedders constructing webauthnDeps directly) fall
-	// back to the per-client strategy lookup for byte-identical legacy behavior.
-	var issuer sso.TokenIssuer
-	if deps.IssuerForClient != nil {
-		var ierr error
-		if _, issuer, ierr = deps.IssuerForClient(client); ierr != nil {
-			return nil, fmt.Errorf("%w: %v", errWebAuthnNoIssuer, ierr)
-		}
-	} else {
-		strategy := client.TokenStrategy
-		if strategy == "" {
-			strategy = deps.DefaultStrat
-		}
-		if strategy == "" {
-			strategy = "jwt"
-		}
-		var ok bool
-		if issuer, ok = deps.TokenIssuers[strategy]; !ok {
-			return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
-		}
+	if err := webAuthnResidencyGate(r, deps, client); err != nil {
+		return nil, err
 	}
 	scopes, err := oauth.GrantedScopes(client.AllowedScopes, client)
 	if err != nil {
@@ -205,66 +168,16 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		return nil, fmt.Errorf("webauthn: scope authorization: %w", err)
 	}
 	authTime := time.Now()
-	subject := &sso.Subject{
-		ID:       userID,
-		Provider: "webauthn",
-		ClientID: client.ID,
-		AuthTime: authTime,
-		AMR:      []string{"webauthn"},
-	}
-	token, err := issuer.Issue(ctx, subject, scopes)
+	token, result, err := issueWebAuthnAccessToken(ctx, deps, client, userID, authTime, scopes)
 	if err != nil {
-		return nil, fmt.Errorf("webauthn: issue access token: %w", err)
+		return nil, err
 	}
-	result := &webauthnIssueResult{
-		AccessToken: token.AccessToken,
-		TokenType:   token.TokenType,
-		ExpiresIn:   token.ExpiresIn,
-		Scope:       token.Scope,
-	}
-	// id_token: gated on openid scope AND a resolvable id_token issuer.
-	// Mirrors the contract /auth/login implements — clients that request
-	// openid get an id_token; clients that don't, don't. The issuer is
-	// resolved PER-TENANT so a tenant's WebAuthn id_token is signed by
-	// the tenant's key (same key as its access + id tokens elsewhere),
-	// not the shared key.
 	if slices.Contains(scopes, sso.ScopeOpenID) {
-		idIssuer, emit, resErr := idTokenIssuerForWebAuthn(deps, client)
-		if resErr != nil {
-			// Misconfigured/unregistered tenant issuer: fail closed
-			// (errWebAuthnIDToken → 500), exactly as the access-token
-			// path 500s on an unregistered strategy. Never sign this
-			// tenant's id_token with the shared key.
-			return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, resErr)
+		idToken, err := issueWebAuthnIDToken(ctx, deps, client, userID, authTime, token.AccessToken)
+		if err != nil {
+			return nil, err
 		}
-		// emit=false ⇒ no id_token issuer wired, OR the tenant's strategy
-		// can't mint id_tokens (e.g. opaque session tokens). Omit the
-		// id_token rather than sign with the shared key — same silent
-		// degrade /auth/login uses when no issuer is configured. Flow
-		// continues to the refresh-token block below regardless.
-		if emit {
-			idToken, err := idIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
-				Subject:     userID,
-				Audience:    client.ID,
-				AuthTime:    authTime,
-				AMR:         []string{"webauthn"},
-				AccessToken: token.AccessToken,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("%w: %v", errWebAuthnIDToken, err)
-			}
-			// Fail-closed encryption: a client that registered
-			// id_token_encrypted_response_alg gets a JWE; if encryption
-			// is requested but fails, omit the id_token (no cleartext
-			// leak) rather than returning the signed form.
-			if deps.EncryptIDToken != nil {
-				if enc, ok := deps.EncryptIDToken(ctx, client, idToken); ok {
-					result.IDToken = enc
-				}
-			} else {
-				result.IDToken = idToken
-			}
-		}
+		result.IDToken = idToken
 	}
 	// refresh_token: gated on a wired oauth.RefreshTokenStore — matches
 	// /auth/login + /token authorization_code which both issue
@@ -281,6 +194,119 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 		result.RefreshToken = refresh
 	}
 	return result, nil
+}
+
+// issueWebAuthnAccessToken resolves the per-tenant access-token issuer, builds
+// the WebAuthn subject (AMR carries "webauthn" so resource servers can branch on
+// auth strength), and mints the access token. Returns both the raw token (its
+// AccessToken seeds the id_token's at_hash) and the seeded result projection.
+func issueWebAuthnAccessToken(ctx context.Context, deps *webauthnDeps, client *sso.Client, userID string, authTime time.Time, scopes []string) (*sso.Token, *webauthnIssueResult, error) {
+	issuer, err := resolveWebAuthnIssuer(deps, client)
+	if err != nil {
+		return nil, nil, err
+	}
+	subject := &sso.Subject{
+		ID:       userID,
+		Provider: "webauthn",
+		ClientID: client.ID,
+		AuthTime: authTime,
+		AMR:      []string{"webauthn"},
+	}
+	token, err := issuer.Issue(ctx, subject, scopes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("webauthn: issue access token: %w", err)
+	}
+	return token, &webauthnIssueResult{
+		AccessToken: token.AccessToken,
+		TokenType:   token.TokenType,
+		ExpiresIn:   token.ExpiresIn,
+		Scope:       token.Scope,
+	}, nil
+}
+
+// webAuthnResidencyGate applies the data-residency write-gate. Reached ONLY
+// post-assertion (the caller invokes issueWebAuthnToken after FinishLogin
+// verified the assertion — the user is authenticated), and now that the client
+// is resolved its TenantID is known, so this mirrors residencyGateLogin EXACTLY:
+// gate the MINT (isWrite=true) on the tenant's ResidencyPolicy. Both hooks must
+// be wired (cmd sets them only when a region resolver is configured) — either
+// nil ⇒ no check ⇒ byte-identical pre-residency behavior. FAIL-OPEN consistent
+// with the region middleware's nonfatal contract: a resolver error yields an
+// empty serving region, which ResidencyDecision treats as unconstrained.
+func webAuthnResidencyGate(r *http.Request, deps *webauthnDeps, client *sso.Client) error {
+	if deps.RegionResolver == nil || deps.ResidencyDecision == nil {
+		return nil
+	}
+	sr, _ := deps.RegionResolver.Resolve(r)
+	if code, denied := deps.ResidencyDecision(r.Context(), client.TenantID, sr, true); denied {
+		return &webauthnResidencyError{code: code}
+	}
+	return nil
+}
+
+// resolveWebAuthnIssuer selects the access-token issuer. Prefer the server's
+// tenant-aware selector (tenant → client strategy → default) so a tenant
+// client's WebAuthn access token is signed with the same key as its id_token +
+// its tokens from /auth/login + /token. When the hook is unset (embedders
+// constructing webauthnDeps directly) fall back to the per-client strategy
+// lookup for byte-identical legacy behavior.
+func resolveWebAuthnIssuer(deps *webauthnDeps, client *sso.Client) (sso.TokenIssuer, error) {
+	if deps.IssuerForClient != nil {
+		_, issuer, ierr := deps.IssuerForClient(client)
+		if ierr != nil {
+			return nil, fmt.Errorf("%w: %v", errWebAuthnNoIssuer, ierr)
+		}
+		return issuer, nil
+	}
+	strategy := client.TokenStrategy
+	if strategy == "" {
+		strategy = deps.DefaultStrat
+	}
+	if strategy == "" {
+		strategy = "jwt"
+	}
+	issuer, ok := deps.TokenIssuers[strategy]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", errWebAuthnNoIssuer, strategy)
+	}
+	return issuer, nil
+}
+
+// issueWebAuthnIDToken mints the id_token for an openid-scoped WebAuthn login.
+// Returns ("", nil) when no id_token should be emitted (no issuer wired, or the
+// tenant's strategy can't mint id_tokens) — the same silent degrade /auth/login
+// uses. The issuer is resolved PER-TENANT so a tenant's id_token is signed by
+// the tenant's key (same key as its access + id tokens elsewhere), not the
+// shared key; a misconfigured/unregistered tenant issuer fails closed (500).
+func issueWebAuthnIDToken(ctx context.Context, deps *webauthnDeps, client *sso.Client, userID string, authTime time.Time, accessToken string) (string, error) {
+	idIssuer, emit, resErr := idTokenIssuerForWebAuthn(deps, client)
+	if resErr != nil {
+		return "", fmt.Errorf("%w: %v", errWebAuthnIDToken, resErr)
+	}
+	if !emit {
+		return "", nil
+	}
+	idToken, err := idIssuer.IssueIDToken(ctx, &oidc.IDTokenRequest{
+		Subject:     userID,
+		Audience:    client.ID,
+		AuthTime:    authTime,
+		AMR:         []string{"webauthn"},
+		AccessToken: accessToken,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errWebAuthnIDToken, err)
+	}
+	// Fail-closed encryption: a client that registered
+	// id_token_encrypted_response_alg gets a JWE; if encryption is requested
+	// but fails, omit the id_token (no cleartext leak) rather than returning
+	// the signed form.
+	if deps.EncryptIDToken != nil {
+		if enc, ok := deps.EncryptIDToken(ctx, client, idToken); ok {
+			return enc, nil
+		}
+		return "", nil
+	}
+	return idToken, nil
 }
 
 // mintWebAuthnRefreshToken generates a cryptographically random

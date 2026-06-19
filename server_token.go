@@ -2,16 +2,12 @@ package sso
 
 import (
 	"errors"
-	"github.com/snaplink/sso/internal/handler"
 	"net/http"
-	"slices"
 	"strings"
-	"time"
 
 	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/oauth"
-	"github.com/snaplink/sso/oidc"
 )
 
 func (s *Server) handleToken(ctx HandlerContext) {
@@ -243,156 +239,7 @@ func (s *Server) handleToken(ctx HandlerContext) {
 
 	switch req.GrantType {
 	case GrantAuthorizationCode:
-		if s.authCodeStore == nil {
-			ctx.JSON(http.StatusNotImplemented, errorBody(ErrAuthCodeNotConfigured))
-			return
-		}
-		if req.Code == "" {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
-			return
-		}
-		info, err := s.authCodeStore.Consume(ctx.Request().Context(), req.Code)
-		if err != nil {
-			// Unknown / expired / already-consumed all map to invalid_grant
-			// per RFC 6749 §5.2 — clients can't distinguish, by design.
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
-			return
-		}
-		// Bind the code to the client that's exchanging it.
-		if info.ClientID != client.ID {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
-			return
-		}
-		// Bind to the redirect_uri that was registered at issue time.
-		if info.RedirectURI != "" && req.RedirectURI != info.RedirectURI {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRedirectURI))
-			return
-		}
-		// PKCE verification per RFC 7636 §4.6: if a challenge was
-		// captured at issue, the exchange MUST present a verifier
-		// that derives to it under the original method. All failure
-		// cases (missing verifier, malformed verifier, wrong verifier)
-		// map to invalid_grant — RFC-mandated, and the oracle-leak
-		// hardening matches the rest of the code exchange.
-		if info.CodeChallenge != "" {
-			if l := len(req.CodeVerifier); l < PKCEVerifierMinLen || l > PKCEVerifierMaxLen {
-				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
-				return
-			}
-			if !verifyPKCE(info.CodeChallengeMethod, info.CodeChallenge, req.CodeVerifier) {
-				ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
-				return
-			}
-		}
-		strategy, ti, err := s.issuerForClient(client)
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
-			return
-		}
-		// Prefer the scopes captured at issue time; fall back to whatever
-		// the caller supplied so older clients that don't echo the scope
-		// param still get a sensible token.
-		scopes := info.Scopes
-		if len(scopes) == 0 {
-			scopes = strings.Split(req.Scope, " ")
-		}
-		// Resources captured at authorization win over anything the
-		// exchange caller supplies (RFC 8707 binds the audience at
-		// authorization time, not at token redemption).
-		resources := info.Resources
-		if len(resources) == 0 {
-			resources = req.Resource
-		}
-		issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
-		// auth_time reflects the real /auth/login moment captured on the
-		// AuthCode, not this redemption, so an RP's max_age / freshness
-		// check isn't fooled by a delayed code exchange (OIDC Core §2). A
-		// zero value (older code, or a store that doesn't persist it) falls
-		// back to now.
-		authTime := info.AuthTime
-		if authTime.IsZero() {
-			authTime = time.Now()
-		}
-		token, err := ti.Issue(ctx.Request().Context(), &Subject{
-			ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
-			Resources:            resources,
-			ClientID:             client.ID,
-			AuthTime:             authTime,
-			AMR:                  handler.AmrOrProvider(info.AuthMethods, info.Provider),
-			ACR:                  info.ACR,
-			AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
-			SID:                  info.SID,
-			TTL:                  client.AccessTokenTTL,
-			ConfirmationJKT:      dpopJKT,
-			ConfirmationX5TS256:  mtlsX5T,
-		}, scopes)
-		if err != nil {
-			s.logErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
-			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
-			return
-		}
-		s.recordTokenIssued(ctx, client.ID, strategy, info.UserID)
-		s.recordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
-		resp := map[string]any{
-			KeyAccessToken:   token.AccessToken,
-			KeyTokenType:     dpopTokenTypeOr(token.TokenType, dpopJKT),
-			KeyExpiresIn:     token.ExpiresIn,
-			KeyScope:         token.Scope,
-			KeyTokenStrategy: strategy,
-		}
-		if s.refreshTokenStore != nil {
-			rt, err := s.issueRefreshToken(ctx.Request().Context(),
-				info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
-				info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
-			if err != nil {
-				s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
-			} else {
-				resp[KeyRefreshToken] = rt
-				s.recordRefreshTokenIssued(ctx, client.ID, info.UserID, false)
-			}
-		}
-		// Native SSO 1.0: device_secret on the authorization_code grant (the
-		// primary native-app flow). Minted before the id_token so ds_hash rides
-		// it. device_sso is captured in info.Scopes at authorization time.
-		var deviceSecretValue string
-		if slices.Contains(info.Scopes, ScopeDeviceSSO) && s.deviceSecretStore != nil {
-			if ds, dsErr := s.issueDeviceSecret(ctx.Request().Context(), info.UserID, info.SID, client.ID); dsErr != nil {
-				s.logger.Error("device secret issue failed", "error", dsErr, "client", client.ID, "user", info.UserID)
-			} else {
-				deviceSecretValue = ds
-			}
-		}
-		// OIDC ID Token on the authorization_code path: same gate as
-		// the direct-mint login flow, but the scope + nonce come from
-		// what we captured at issue time, not from the exchange body.
-		if slices.Contains(info.Scopes, ScopeOpenID) {
-			idIssuer, emit, idErr := s.idTokenIssuerForClient(client)
-			if idErr != nil {
-				s.logger.Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", info.UserID)
-			} else if emit {
-				idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-					Subject:      issuedSub,
-					Audience:     client.ID,
-					Nonce:        info.Nonce,
-					AuthTime:     authTime,
-					AMR:          handler.AmrOrProvider(info.AuthMethods, info.Provider),
-					ACR:          info.ACR,
-					Claims:       info.Attributes,
-					AccessToken:  token.AccessToken,
-					DeviceSecret: deviceSecretValue,
-				})
-				if err != nil {
-					s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
-				} else if enc, ok := s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-					resp[KeyIDToken] = enc
-					s.recordIDTokenIssued(ctx, client.ID, info.UserID)
-				}
-			}
-		}
-		if deviceSecretValue != "" {
-			resp[KeyDeviceSecret] = deviceSecretValue
-		}
-		ctx.JSON(http.StatusOK, resp)
+		s.handleAuthCodeTokenGrant(ctx, client, req, scopes, dpopJKT, mtlsX5T)
 	case GrantRefreshToken:
 		s.handleRefreshTokenGrant(ctx, client, req.RefreshToken, req.Scope, dpopJKT, mtlsX5T)
 	case GrantDeviceCode:

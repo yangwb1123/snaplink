@@ -61,7 +61,7 @@ All 5 original large files (13,830 lines) refactored into 39 focused files
 - [x] cmd/sso-server/main.go: 5565 -> 704 lines
 
 ## Complexity Tech Debt
-Functions >15 cyclo (exempted in .check-complexity.sh):
+Functions >15 cyclo (frozen backlog in maintainability_complexity_test.go):
 - handleLogin (97), handleToken (89), finishLogin (57), Mount (52)
 - buildApp (256), handleTokenExchangeGrant (50), buildOIDCConfiguration (36)
 - HandleSilentRenewal (30), HandleEndSession (28)
@@ -78,7 +78,7 @@ Functions >15 cyclo (exempted in .check-complexity.sh):
 
 ## Infrastructure
 1. [x] Filesize gate
-2. [x] Complexity gate (cyclo <= 15, cognit <= 20)
+2. [x] Complexity + function-length gate (committed: maintainability_complexity_test.go; cyclo <= 15, lines <= 50)
 3. [x] Architecture dependency rules (declarative, 6-layer map)
 4. [x] Security invariants (10 checks)
 5. [x] Harness self-test (11 tests)
@@ -93,8 +93,9 @@ def write_review_checklist():
     content = """# Code Review Checklist
 
 ## Engineering Gates
-- [ ] `make harness` passes (filesize + complexity + architecture)
-- [ ] No new file > 500 lines, no new function > 15 cyclo
+- [ ] `go test -run TestMaintainability_ ./...` passes (committed gates: file-size <=500 + cyclo <=15 + function-length <=50)
+- [ ] `go test -run TestArchitecture_ImportBoundaries ./...` passes (dependency direction)
+- [ ] No new file > 500 lines, no new function > 15 cyclo or > 50 lines
 - [ ] Architecture dependency rules satisfied
 
 ## Security

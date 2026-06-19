@@ -55,10 +55,24 @@ func mountSCIMRoutes(srv *sso.Server, users core.UserProvider, recorder *audit.R
 	h := scim.NewHandler(users, scimBasePath, opts...)
 	serve := func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }
 
-	type scimRoute struct {
-		method string
-		path   string
+	for _, rt := range scimRouteTable(groupsEnabled) {
+		if err := srv.Handle(rt.method, rt.path, serve); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+type scimRoute struct {
+	method string
+	path   string
+}
+
+// scimRouteTable enumerates every SCIM route shape registered on the router.
+// Groups routes append only when groupsEnabled (they require a
+// permissions.Provider). Kept separate so mountSCIMRoutes stays a thin wiring
+// loop and the route inventory is reviewable in one place.
+func scimRouteTable(groupsEnabled bool) []scimRoute {
 	routes := []scimRoute{
 		// Discovery (RFC 7643 §5 + §7).
 		{http.MethodGet, scimBasePath + "/ServiceProviderConfig"},
@@ -92,10 +106,5 @@ func mountSCIMRoutes(srv *sso.Server, users core.UserProvider, recorder *audit.R
 			scimRoute{http.MethodDelete, scimBasePath + "/Groups/:id"},
 		)
 	}
-	for _, rt := range routes {
-		if err := srv.Handle(rt.method, rt.path, serve); err != nil {
-			return err
-		}
-	}
-	return nil
+	return routes
 }

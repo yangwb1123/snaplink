@@ -105,46 +105,67 @@ func (s *RuleBasedRiskScorer) Score(_ context.Context, req *spi.RiskRequest) (*s
 	if req == nil {
 		return &spi.RiskAssessment{Decision: spi.DecisionAllow}, nil
 	}
-	ip := parseRequestIP(req.RemoteIP)
-	if ip != nil {
-		if _, denied := s.denyIPs[ip.String()]; denied {
-			return deny("ip_deny_list", "ip-deny"), nil
-		}
-		for _, n := range s.denyNets {
-			if n.Contains(ip) {
-				return deny("ip_deny_list", "ip-deny"), nil
-			}
-		}
-		if s.hasAllowIPRules {
-			if _, ok := s.allowIPs[ip.String()]; ok {
-				goto countryRules
-			}
-			for _, n := range s.allowNets {
-				if n.Contains(ip) {
-					goto countryRules
-				}
-			}
-			return deny("ip_allow_list", "ip-not-allowed"), nil
-		}
+	if d := s.scoreIP(parseRequestIP(req.RemoteIP)); d != nil {
+		return d, nil
 	}
-countryRules:
-	country := geoCountry(req)
-	if country != "" {
-		if _, denied := s.denyCountries[country]; denied {
-			return deny("country_deny_list", "country-deny"), nil
-		}
-	}
-	if s.hasAllowCountry {
-		switch {
-		case country != "":
-			if _, ok := s.allowCountries[country]; !ok {
-				return deny("country_allow_list", "country-not-allowed"), nil
-			}
-		case s.denyOnGeoMissing:
-			return deny("country_allow_list", "geo-missing"), nil
-		}
+	if d := s.scoreCountry(geoCountry(req)); d != nil {
+		return d, nil
 	}
 	return &spi.RiskAssessment{Decision: spi.DecisionAllow}, nil
+}
+
+// scoreIP applies the IP deny/allow rules (steps 1-2). Returns a Deny
+// assessment when the IP is blocked, or nil to fall through to country
+// rules — including when ip is nil (no usable IP skips IP rules entirely)
+// or when an allow-listed IP matches (the original goto countryRules).
+func (s *RuleBasedRiskScorer) scoreIP(ip net.IP) *spi.RiskAssessment {
+	if ip == nil {
+		return nil
+	}
+	if _, denied := s.denyIPs[ip.String()]; denied {
+		return deny("ip_deny_list", "ip-deny")
+	}
+	for _, n := range s.denyNets {
+		if n.Contains(ip) {
+			return deny("ip_deny_list", "ip-deny")
+		}
+	}
+	if !s.hasAllowIPRules {
+		return nil
+	}
+	if _, ok := s.allowIPs[ip.String()]; ok {
+		return nil
+	}
+	for _, n := range s.allowNets {
+		if n.Contains(ip) {
+			return nil
+		}
+	}
+	return deny("ip_allow_list", "ip-not-allowed")
+}
+
+// scoreCountry applies the country deny/allow rules (steps 3-4) to the
+// already-normalized country code. Returns a Deny assessment or nil to
+// fall through to Allow. Preserves the DenyOnGeoMissing semantics: an
+// empty country only denies when an allow list exists AND geo is required.
+func (s *RuleBasedRiskScorer) scoreCountry(country string) *spi.RiskAssessment {
+	if country != "" {
+		if _, denied := s.denyCountries[country]; denied {
+			return deny("country_deny_list", "country-deny")
+		}
+	}
+	if !s.hasAllowCountry {
+		return nil
+	}
+	switch {
+	case country != "":
+		if _, ok := s.allowCountries[country]; !ok {
+			return deny("country_allow_list", "country-not-allowed")
+		}
+	case s.denyOnGeoMissing:
+		return deny("country_allow_list", "geo-missing")
+	}
+	return nil
 }
 
 var _ spi.RiskScorer = (*RuleBasedRiskScorer)(nil)

@@ -57,65 +57,8 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// is live) or login_required (§3.1.2.6).
 	prompts := oidc.ParsePromptValues(req.Prompt)
 	if oidc.PromptHasNone(prompts) {
-		// Silent renewal needs the client resolved to verify
-		// id_token_hint binding. Mirror the validation guards the
-		// post-probe path runs so a misconfigured caller still
-		// gets a coherent error.
-		if req.ClientID == "" {
-			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMissingClientID))
-			return
-		}
-		if s.clientStore == nil {
-			ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
-			return
-		}
-		c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
-		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidClient))
-			return
-		}
-		if !c.Active {
-			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
-			return
-		}
-		if !clientTenantOK(ctx, c) {
-			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
-			return
-		}
-		// Data-residency write-gate BEFORE the silent-renewal mint. prompt=none
-		// mints a fresh access (and id) token in handleSilentRenewal and returns
-		// — without this gate it executes ABOVE the credential-path gate below,
-		// so a foreign-region prompt=none request would bypass the primary write
-		// control. The mint happens from THIS request's serving region, so the
-		// gate reads the live region here (isWrite=true). Provider is attributed
-		// "silent_renewal" to match the success audit RecordLoginSuccess emits.
-		if s.residencyGateLogin(ctx, c.ID, "silent_renewal", c.TenantID) {
-			return
-		}
-		// Scope authorization for the prompt=none silent-renewal mint —
-		// the same RFC 6749 §3.3 gate as the interactive finishLogin path,
-		// applied here because silent renewal mints a fresh access (and
-		// id) token from THIS request's `scope` param without funneling
-		// through finishLogin. Empty allowlist = unrestricted (unchanged).
-		srGranted, srScopeErr := oauth.GrantedScopes(req.Scope, c)
-		if srScopeErr != nil {
-			s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", ErrInvalidScope)
-			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
-			return
-		}
-		req.Scope = srGranted
-		if s.handleSilentRenewal(ctx, prompts, oidc.SilentRenewalRequest{
-			ClientID:             req.ClientID,
-			Scope:                req.Scope,
-			State:                req.State,
-			Nonce:                req.Nonce,
-			Resource:             req.Resource,
-			AuthorizationDetails: req.AuthorizationDetails,
-			IDTokenHint:          req.IDTokenHint,
-			MaxAge:               req.MaxAge,
-		}, c) {
-			return
-		}
+		s.handlePromptNone(ctx, prompts, &req)
+		return
 	}
 
 	if req.Provider == "" {
@@ -477,9 +420,3 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	s.finishLogin(ctx, result, req, client)
 }
 
-// finishLogin runs the post-credential-validation, post-risk-decision
-// portion of /auth/login: optional userProvider upsert, OAuth 2.1
-// strict checks, response_mode validation, the code-flow / direct-mint
-// branches plus the refresh_token / id_token / permission-embed
-// bookkeeping. Extracted so handleMFAComplete can re-enter the same
-// flow after the step-up factor verifies — same response shape no

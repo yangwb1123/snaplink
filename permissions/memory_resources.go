@@ -128,10 +128,7 @@ func (m *MemoryProvider) ResolveResource(_ context.Context, lookup ResourceLooku
 func matchAttributes(t ResourceType, want, have map[string]string) bool {
 	switch t {
 	case ResourceTypeHTTPAPI:
-		if !equalFold(want["method"], have["method"]) {
-			return false
-		}
-		return matchPath(want["path"], have["path"])
+		return equalFold(want["method"], have["method"]) && matchPath(want["path"], have["path"])
 	case ResourceTypeGRPCAPI:
 		return want["service"] == have["service"] && want["method"] == have["method"]
 	case ResourceTypeGraphQLAPI:
@@ -141,26 +138,34 @@ func matchAttributes(t ResourceType, want, have map[string]string) bool {
 	case ResourceTypeJSFn:
 		return want["route"] == have["route"] && want["symbol"] == have["symbol"]
 	case ResourceTypeUIElement:
-		// UI elements are typically resolved by selector lookup
-		// per page; runtime path is rare. Match by selector
-		// (and page_id when both sides set it).
-		if want["selector"] != have["selector"] {
-			return false
-		}
-		if wp, hp := want["page_id"], have["page_id"]; wp != "" && hp != "" && wp != hp {
-			return false
-		}
-		return true
+		return matchUIElement(want, have)
 	default:
-		// Custom types: best-effort exact match across every key
-		// in the registered Attributes.
-		for k, v := range want {
-			if have[k] != v {
-				return false
-			}
-		}
-		return true
+		return matchCustomAttributes(want, have)
 	}
+}
+
+// matchUIElement matches a UI element by selector, and by page_id
+// only when both sides set it. UI elements are typically resolved by
+// selector lookup per page; a runtime path is rare.
+func matchUIElement(want, have map[string]string) bool {
+	if want["selector"] != have["selector"] {
+		return false
+	}
+	if wp, hp := want["page_id"], have["page_id"]; wp != "" && hp != "" && wp != hp {
+		return false
+	}
+	return true
+}
+
+// matchCustomAttributes is the best-effort exact match for custom
+// types: every key in the registered Attributes must match.
+func matchCustomAttributes(want, have map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // matchPath returns true when actual matches the pattern, where

@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -197,33 +198,45 @@ func (c *HIBPPasswordHealthChecker) Check(ctx context.Context, password string) 
 // response for suffix, returning its breach count (0 when absent). Any
 // transport/HTTP/parse failure returns an error for the fail-open caller.
 func (c *HIBPPasswordHealthChecker) lookup(ctx context.Context, prefix, suffix string) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+prefix, nil)
+	resp, err := c.doRangeRequest(ctx, prefix)
 	if err != nil {
-		return 0, fmt.Errorf("build request: %w", err)
-	}
-	// Add-Padding asks HIBP to pad the response with random count-0 entries
-	// so the response length cannot reveal which prefix was queried — extra
-	// privacy on top of k-anonymity. We must therefore IGNORE count-0 lines
-	// when matching (they are padding, never real breach hits).
-	req.Header.Set("Add-Padding", "true")
-	req.Header.Set("User-Agent", c.userAgent)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("http GET range: %w", err)
+		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("http GET range: status %d", resp.StatusCode)
 	}
+	return scanRangeBody(resp.Body, suffix)
+}
 
-	// Body lines are "<SUFFIX>:<COUNT>", one per breached hash sharing the
-	// prefix, typically CRLF-terminated. bufio.Scanner's ScanLines strips
-	// the trailing \r, so CRLF and LF both parse cleanly.
-	sc := bufio.NewScanner(resp.Body)
+// doRangeRequest issues the k-anonymity GET for prefix with the privacy
+// headers set. Add-Padding asks HIBP to pad the response with random
+// count-0 entries so the response length cannot reveal which prefix was
+// queried — extra privacy on top of k-anonymity (the scanner therefore
+// IGNORES count-0 lines, since they are padding, never real breach hits).
+func (c *HIBPPasswordHealthChecker) doRangeRequest(ctx context.Context, prefix string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+prefix, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Add-Padding", "true")
+	req.Header.Set("User-Agent", c.userAgent)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http GET range: %w", err)
+	}
+	return resp, nil
+}
+
+// scanRangeBody scans the range response for suffix and returns its breach
+// count, or 0 when the suffix is absent (or present only as padding). Body
+// lines are "<SUFFIX>:<COUNT>", one per breached hash sharing the prefix,
+// typically CRLF-terminated; bufio.Scanner's ScanLines strips the trailing
+// \r, so CRLF and LF both parse cleanly.
+func scanRangeBody(body io.Reader, suffix string) (int64, error) {
+	sc := bufio.NewScanner(body)
 	for sc.Scan() {
-		line := sc.Text()
-		sfx, cnt, ok := strings.Cut(line, ":")
+		sfx, cnt, ok := strings.Cut(sc.Text(), ":")
 		if !ok {
 			continue // tolerate stray/blank lines rather than fail the lookup
 		}

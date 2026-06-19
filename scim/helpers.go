@@ -54,6 +54,22 @@ func paginationParams(r *http.Request) (startIndex, count int, err error) {
 	return startIndex, count, nil
 }
 
+// pageBounds translates a 1-based startIndex + count into a [lo,hi) slice
+// window over a result set of size total, clamped to the bounds (RFC 7644
+// §3.4.2.4). Shared by the User and Group list handlers so the clamping is
+// identical across resource types.
+func pageBounds(startIndex, count, total int) (lo, hi int) {
+	lo = startIndex - 1
+	if lo > total {
+		lo = total
+	}
+	hi = lo + count
+	if hi > total {
+		hi = total
+	}
+	return lo, hi
+}
+
 // randomID mints a 128-bit hex resource id. SCIM clients don't supply an
 // id on create (RFC 7643 §3.1 — id is server-assigned, read-only), so the
 // server owns the scheme; callers treat it as opaque.

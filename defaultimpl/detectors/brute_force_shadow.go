@@ -136,36 +136,49 @@ func (d *BruteForceShadowDetector) Inspect(ctx context.Context, event *anomaly.L
 
 	var anomalies []anomaly.Signal
 	if d.failureLimit > 0 && total > d.failureLimit {
-		anomalies = append(anomalies, anomaly.Signal{
-			Type:      DetectorTypeBruteForceShadow,
-			Severity:  anomaly.SeverityWarn,
-			Score:     bfScore(total, d.failureLimit),
-			SubjectID: event.SubjectID,
-			Evidence: map[string]string{
-				"window":            d.window.String(),
-				"total_failures":    formatInt(int64(total)),
-				"distinct_subjects": formatInt(int64(distinct)),
-				"failure_threshold": formatInt(int64(d.failureLimit)),
-				"current_outcome":   event.Outcome,
-			},
-		})
+		anomalies = append(anomalies, d.failureSignal(event, total, distinct))
 	}
 	if d.distinctSubjectLimit > 0 && distinct > d.distinctSubjectLimit {
-		anomalies = append(anomalies, anomaly.Signal{
-			Type:      DetectorTypeBruteForceShadow,
-			Severity:  anomaly.SeverityCritical,
-			Score:     bfScore(distinct, d.distinctSubjectLimit),
-			SubjectID: event.SubjectID,
-			Evidence: map[string]string{
-				"window":                     d.window.String(),
-				"total_failures":             formatInt(int64(total)),
-				"distinct_subjects":          formatInt(int64(distinct)),
-				"distinct_subject_threshold": formatInt(int64(d.distinctSubjectLimit)),
-				"current_outcome":            event.Outcome,
-			},
-		})
+		anomalies = append(anomalies, d.distinctSubjectSignal(event, total, distinct))
 	}
 	return anomalies, nil
+}
+
+// failureSignal builds the warn-level signal emitted when an IP's
+// total failure count in the window crosses failureLimit.
+func (d *BruteForceShadowDetector) failureSignal(event *anomaly.LoginEvent, total, distinct int) anomaly.Signal {
+	return anomaly.Signal{
+		Type:      DetectorTypeBruteForceShadow,
+		Severity:  anomaly.SeverityWarn,
+		Score:     bfScore(total, d.failureLimit),
+		SubjectID: event.SubjectID,
+		Evidence: map[string]string{
+			"window":            d.window.String(),
+			"total_failures":    formatInt(int64(total)),
+			"distinct_subjects": formatInt(int64(distinct)),
+			"failure_threshold": formatInt(int64(d.failureLimit)),
+			"current_outcome":   event.Outcome,
+		},
+	}
+}
+
+// distinctSubjectSignal builds the critical-level signal emitted
+// when an IP targets more distinct subjects in the window than
+// distinctSubjectLimit — the credential-spray fingerprint.
+func (d *BruteForceShadowDetector) distinctSubjectSignal(event *anomaly.LoginEvent, total, distinct int) anomaly.Signal {
+	return anomaly.Signal{
+		Type:      DetectorTypeBruteForceShadow,
+		Severity:  anomaly.SeverityCritical,
+		Score:     bfScore(distinct, d.distinctSubjectLimit),
+		SubjectID: event.SubjectID,
+		Evidence: map[string]string{
+			"window":                     d.window.String(),
+			"total_failures":             formatInt(int64(total)),
+			"distinct_subjects":          formatInt(int64(distinct)),
+			"distinct_subject_threshold": formatInt(int64(d.distinctSubjectLimit)),
+			"current_outcome":            event.Outcome,
+		},
+	}
 }
 
 // hashIPForBF reuses the same salted SHA-256 truncation scheme as

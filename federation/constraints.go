@@ -87,46 +87,73 @@ func enforceConstraints(links []chainLink) error {
 		if c == nil {
 			continue // statement carries no constraints — nothing to enforce here.
 		}
-
-		// max_path_length: the count of Intermediates between THIS statement's
-		// issuer and the leaf is i-1; it MUST NOT exceed the bound. A bound of 0
-		// requires the subject to be the leaf directly (i-1 == 0, i.e. SS_1).
-		if c.MaxPathLength != nil {
-			limit := *c.MaxPathLength
-			if limit < 0 {
-				// §6.2.1: max_path_length MUST be >= 0. A malformed (negative)
-				// value is fail-closed rejected, never silently treated as
-				// unlimited.
-				return fmt.Errorf("constraints at %d: max_path_length %d is negative (malformed)", i, limit)
-			}
-			intermediatesBelow := i - 1
-			if intermediatesBelow > limit {
-				return fmt.Errorf("constraints at %d: %d intermediate(s) below exceed max_path_length %d", i, intermediatesBelow, limit)
-			}
+		if err := enforceStatementConstraints(c, i, links, leafTypes); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
-		// naming_constraints: every subordinate Entity Identifier below this
-		// statement's issuer (its subject and all entities subordinate to it,
-		// i.e. links[1..i].Sub) MUST satisfy the permitted/excluded host
-		// subtrees (RFC 5280 §4.2.1.10, host component).
-		if c.NamingConstraints != nil {
-			for j := 1; j <= i; j++ {
-				subID := links[j].claims.Sub
-				if err := checkNamingConstraint(subID, c.NamingConstraints); err != nil {
-					return fmt.Errorf("constraints at %d: subordinate %q: %w", i, subID, err)
-				}
-			}
-		}
+// enforceStatementConstraints applies the §6.2 constraints carried on the
+// Subordinate Statement at index i, INDEPENDENTLY against the subtree below its
+// issuer (the spec's accumulation model). Returns the first violation.
+func enforceStatementConstraints(c *EntityConstraints, i int, links []chainLink, leafTypes map[string]struct{}) error {
+	if err := enforceMaxPathLength(c, i); err != nil {
+		return err
+	}
+	if err := enforceNamingConstraints(c, i, links); err != nil {
+		return err
+	}
+	return enforceAllowedEntityTypes(c, i, leafTypes)
+}
 
-		// allowed_entity_types: the leaf's Entity Types MUST all be within the
-		// allowed set (federation_entity is always implicitly allowed). Absent
-		// (nil pointer) ⇒ any type allowed; a present (even empty) array ⇒
-		// only the listed types (+ federation_entity).
-		if c.AllowedEntityTypes != nil {
-			if err := checkAllowedEntityTypes(leafTypes, *c.AllowedEntityTypes); err != nil {
-				return fmt.Errorf("constraints at %d: %w", i, err)
-			}
+// enforceMaxPathLength applies max_path_length: the count of Intermediates
+// between THIS statement's issuer and the leaf is i-1; it MUST NOT exceed the
+// bound. A bound of 0 requires the subject to be the leaf directly (SS_1).
+func enforceMaxPathLength(c *EntityConstraints, i int) error {
+	if c.MaxPathLength == nil {
+		return nil
+	}
+	limit := *c.MaxPathLength
+	if limit < 0 {
+		// §6.2.1: max_path_length MUST be >= 0. A malformed (negative) value is
+		// fail-closed rejected, never silently treated as unlimited.
+		return fmt.Errorf("constraints at %d: max_path_length %d is negative (malformed)", i, limit)
+	}
+	intermediatesBelow := i - 1
+	if intermediatesBelow > limit {
+		return fmt.Errorf("constraints at %d: %d intermediate(s) below exceed max_path_length %d", i, intermediatesBelow, limit)
+	}
+	return nil
+}
+
+// enforceNamingConstraints applies naming_constraints: every subordinate Entity
+// Identifier below this statement's issuer (its subject and all entities
+// subordinate to it, i.e. links[1..i].Sub) MUST satisfy the permitted/excluded
+// host subtrees (RFC 5280 §4.2.1.10, host component).
+func enforceNamingConstraints(c *EntityConstraints, i int, links []chainLink) error {
+	if c.NamingConstraints == nil {
+		return nil
+	}
+	for j := 1; j <= i; j++ {
+		subID := links[j].claims.Sub
+		if err := checkNamingConstraint(subID, c.NamingConstraints); err != nil {
+			return fmt.Errorf("constraints at %d: subordinate %q: %w", i, subID, err)
 		}
+	}
+	return nil
+}
+
+// enforceAllowedEntityTypes applies allowed_entity_types: the leaf's Entity
+// Types MUST all be within the allowed set (federation_entity is always
+// implicitly allowed). Absent (nil pointer) ⇒ any type allowed; a present
+// (even empty) array ⇒ only the listed types (+ federation_entity).
+func enforceAllowedEntityTypes(c *EntityConstraints, i int, leafTypes map[string]struct{}) error {
+	if c.AllowedEntityTypes == nil {
+		return nil
+	}
+	if err := checkAllowedEntityTypes(leafTypes, *c.AllowedEntityTypes); err != nil {
+		return fmt.Errorf("constraints at %d: %w", i, err)
 	}
 	return nil
 }

@@ -165,30 +165,40 @@ func (r *Resource) Validate() error {
 	if r.RequireMode != "" && r.RequireMode != RequireAny && r.RequireMode != RequireAll {
 		return errors.Join(ErrInvalidResource, errors.New("require_mode must be any|all"))
 	}
-	switch r.Type {
-	case ResourceTypeHTTPAPI:
-		if r.Attributes["method"] == "" || r.Attributes["path"] == "" {
-			return errors.Join(ErrInvalidResource, errors.New("http_api requires method+path attributes"))
-		}
-	case ResourceTypeGRPCAPI:
-		if r.Attributes["service"] == "" || r.Attributes["method"] == "" {
-			return errors.Join(ErrInvalidResource, errors.New("grpc_api requires service+method attributes"))
-		}
-	case ResourceTypeGraphQLAPI:
-		if r.Attributes["op"] == "" || r.Attributes["field"] == "" {
-			return errors.Join(ErrInvalidResource, errors.New("graphql_api requires op+field attributes"))
-		}
-	case ResourceTypePage:
-		if r.Attributes["route"] == "" {
-			return errors.Join(ErrInvalidResource, errors.New("page requires route attribute"))
-		}
-	case ResourceTypeJSFn:
-		if r.Attributes["route"] == "" || r.Attributes["symbol"] == "" {
-			return errors.Join(ErrInvalidResource, errors.New("js_fn requires route+symbol attributes"))
-		}
-	case ResourceTypeUIElement:
-		if r.Attributes["selector"] == "" {
-			return errors.Join(ErrInvalidResource, errors.New("ui_element requires selector attribute"))
+	return r.validateTypeAttributes()
+}
+
+// requiredAttrRule declares the Attribute keys a ResourceType must
+// carry plus the message returned when any is missing. Data-driven so
+// the per-Type validation stays a flat lookup instead of a wide
+// switch (keeps cyclomatic complexity bounded).
+type requiredAttrRule struct {
+	keys []string
+	msg  string
+}
+
+// requiredAttrRules is the per-Type required-Attribute contract. Types
+// absent from the map (e.g. custom types) impose no attribute check.
+var requiredAttrRules = map[ResourceType]requiredAttrRule{
+	ResourceTypeHTTPAPI:    {keys: []string{"method", "path"}, msg: "http_api requires method+path attributes"},
+	ResourceTypeGRPCAPI:    {keys: []string{"service", "method"}, msg: "grpc_api requires service+method attributes"},
+	ResourceTypeGraphQLAPI: {keys: []string{"op", "field"}, msg: "graphql_api requires op+field attributes"},
+	ResourceTypePage:       {keys: []string{"route"}, msg: "page requires route attribute"},
+	ResourceTypeJSFn:       {keys: []string{"route", "symbol"}, msg: "js_fn requires route+symbol attributes"},
+	ResourceTypeUIElement:  {keys: []string{"selector"}, msg: "ui_element requires selector attribute"},
+}
+
+// validateTypeAttributes runs the per-Type required-Attribute checks.
+// Split from Validate so the common-field checks stay readable and
+// the cyclomatic weight of the type rules is isolated.
+func (r *Resource) validateTypeAttributes() error {
+	rule, ok := requiredAttrRules[r.Type]
+	if !ok {
+		return nil
+	}
+	for _, k := range rule.keys {
+		if r.Attributes[k] == "" {
+			return errors.Join(ErrInvalidResource, errors.New(rule.msg))
 		}
 	}
 	return nil

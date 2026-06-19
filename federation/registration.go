@@ -400,10 +400,8 @@ func (s *RegistrationClientStore) Get(ctx context.Context, clientID string) (*co
 // to the SAME unknown-client error as any miss (oracle-safe).
 func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, entityID string) (*core.Client, bool) {
 	now := s.now()
-	if e, _ := s.cache.Load(entityID); e != nil {
-		if entry, _ := e.(*federationClientEntry); entry.fresh(now) {
-			return entry.client, true
-		}
+	if client, ok := s.cachedClient(entityID, now); ok {
+		return client, true
 	}
 
 	// NEGATIVE-cache check BEFORE taking the per-entity lock or the semaphore:
@@ -422,10 +420,8 @@ func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, e
 	// Re-check the positive cache under the lock — another goroutine may have
 	// populated it while we waited (double-checked locking).
 	now = s.now()
-	if e, _ := s.cache.Load(entityID); e != nil {
-		if entry, _ := e.(*federationClientEntry); entry.fresh(now) {
-			return entry.client, true
-		}
+	if client, ok := s.cachedClient(entityID, now); ok {
+		return client, true
 	}
 	// Re-check the negative cache under the lock too: a sibling goroutine for
 	// THIS id may have just recorded a failure while we waited on the per-entity
@@ -445,58 +441,7 @@ func (s *RegistrationClientStore) resolveFederationClient(ctx context.Context, e
 	}
 	defer s.releaseResolveSlot()
 
-	chain, err := s.resolver.ResolveTrustChain(ctx, entityID)
-	if err != nil {
-		// ResolveTrustChain already collapsed + logged the specific cause to
-		// ErrTrustChainInvalid (or returned ErrFederationResolverDisabled).
-		// Record a SHORT-TTL negative entry so a repeated fake id doesn't
-		// re-fetch — the short TTL means a legit RP whose superior was
-		// transiently down re-attempts soon (it DELAYS, never permanently pins).
-		s.recordNegative(entityID, s.now())
-		s.logError("federation: trust chain resolution failed for client", "client_id", entityID, "error", err)
-		return nil, false
-	}
-
-	// §7 TRUST-MARK GATE (slice 4b) — an EXTRA admission requirement AFTER the
-	// chain validates and BEFORE the client is derived. The chain proved the RP
-	// is a federation member; the trust marks prove it is CERTIFIED for the
-	// operator-required type(s). nil/inert ⇒ no-op (slice-3 byte-identical). A
-	// missing/forged/unauthorized/expired/wrong-subject required mark fails
-	// CLOSED here: the RP stays unknown (the SAME oracle-safe unknown-client
-	// outcome as a failed resolution; the cause is logged, not leaked).
-	// Negative-cache it (short TTL) so a repeated probe for an RP that lacks the
-	// required marks isn't re-resolved on every request.
-	if err := s.trustMarks.validate(ctx, chain.LeafEntityID, chain.LeafTrustMarks, s.now(), s.logError); err != nil {
-		s.recordNegative(entityID, s.now())
-		s.logError("federation: trust mark requirement unmet for client", "client_id", entityID, "error", err)
-		return nil, false
-	}
-
-	client, err := MetadataToClient(entityID, chain.ResolvedRPMetadata, s.chainJWKS(chain), s.defaultTenantID)
-	if err != nil {
-		// A chain validated but its metadata can't form a client — equally an
-		// unusable id; negative-cache it (short TTL) so it isn't re-resolved on
-		// every probe.
-		s.recordNegative(entityID, s.now())
-		s.logError("federation: derive client from resolved metadata failed", "client_id", entityID, "error", err)
-		return nil, false
-	}
-
-	// A successful resolution clears any lingering negative entry for this id
-	// (e.g. a legit RP that just recovered from a transient superior outage) —
-	// keeps the negative cache tidy; the positive cache is authoritative below.
-	s.clearNegative(entityID)
-
-	// Cache bounded by the chain's earliest exp — never serve a client from an
-	// expired chain. A non-positive/zero expiry (which a validated chain never
-	// produces) is treated as already-expired: cache nothing, just return the
-	// derived client for THIS request so a defensive zero doesn't pin a stale
-	// client.
-	exp := chain.Expiry()
-	if exp.After(now) {
-		s.cache.Store(entityID, &federationClientEntry{client: client, expiresAt: exp})
-	}
-	return client, true
+	return s.resolveAndDeriveClient(ctx, entityID, now)
 }
 
 // ----- negative (failure) cache + concurrency semaphore -------------------

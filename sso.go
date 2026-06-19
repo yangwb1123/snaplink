@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/fapi"
 	"github.com/snaplink/sso/federation"
 	"github.com/snaplink/sso/geo"
+	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/metering"
 	"github.com/snaplink/sso/metrics"
@@ -35,18 +36,6 @@ import (
 	"github.com/snaplink/sso/signingkeys"
 	"github.com/snaplink/sso/tenant"
 )
-
-// pendingConsentChallenge is a short-lived server-issued token that binds a
-// consent gate decision to a specific (UserID, ClientID, Scopes) tuple. The
-// SPA must present the challenge ID back in the next /auth/login call instead
-// of a bare consent_approved boolean — this proves the AS computed the need for
-// consent before accepting the approval signal.
-type pendingConsentChallenge struct {
-	UserID    string
-	ClientID  string
-	Scopes    []string
-	ExpiresAt time.Time
-}
 
 // Server is the core SSO orchestrator.
 type Server struct {
@@ -480,12 +469,10 @@ type Server struct {
 	// risk flags) the operator stores alongside presentation data.
 	selfEditableAttrs map[string]struct{}
 
-	// consentChallengeMu guards consentChallenges.
-	consentChallengeMu sync.Mutex
 	// consentChallenges holds server-issued single-use consent challenge tokens.
 	// Each entry is bound to (UserID, ClientID, Scopes) and expires after
-	// consentChallengeTTL. Lazy-initialized on first issue.
-	consentChallenges map[string]*pendingConsentChallenge
+	// consent.ChallengeTTL. Thread-safe via consent.ChallengeStore.
+	consentChallenges *consent.ChallengeStore
 
 	// usageAggregator backs GET /api/v1/admin/tenants/:id/usage
 	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —
@@ -591,6 +578,7 @@ func NewServer(opts ...Option) *Server {
 		discoveryCacheTTL:         defaultDiscoveryCacheTTL,
 		discoveryDocCacheTTL:      DefaultDiscoveryDocCacheTTL,
 		authzPolicyBundleCacheTTL: DefaultAuthzPolicyBundleCacheTTL,
+		consentChallenges:         consent.NewChallengeStore(),
 	}
 	for _, opt := range opts {
 		opt(s)

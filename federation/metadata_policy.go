@@ -280,54 +280,13 @@ func checkOperatorConsistency(param string, pp paramPolicy) error {
 // against the one_of/subset_of/superset_of constraints in the same param
 // policy. one_of constrains a SCALAR; subset_of/superset_of constrain a LIST.
 func valueSatisfiesConstraints(param, label string, operand any, pp paramPolicy) error {
-	if oneOf, ok := pp[opOneOf]; ok {
-		allowed, err := toStringSlice(oneOf)
-		if err != nil {
-			return fmt.Errorf("metadata policy: %q one_of: %w", param, err)
-		}
-		s, ok := operand.(string)
-		if !ok {
-			return fmt.Errorf("metadata policy: %q %s must be a string to satisfy one_of, got %T", param, label, operand)
-		}
-		if !containsString(allowed, s) {
-			return fmt.Errorf("metadata policy: %q %s %q not in one_of %v", param, label, s, allowed)
-		}
+	if err := operandSatisfiesOneOf(param, label, operand, pp); err != nil {
+		return err
 	}
-	if sub, ok := pp[opSubsetOf]; ok {
-		allowed, err := toStringSlice(sub)
-		if err != nil {
-			return fmt.Errorf("metadata policy: %q subset_of: %w", param, err)
-		}
-		vals, err := toStringSlice(operand)
-		if err != nil {
-			return fmt.Errorf("metadata policy: %q %s must be a list to satisfy subset_of: %w", param, label, err)
-		}
-		for _, v := range vals {
-			if !containsString(allowed, v) {
-				return fmt.Errorf("metadata policy: %q %s value %q not in subset_of %v", param, label, v, allowed)
-			}
-		}
+	if err := operandSatisfiesSubsetOf(param, label, operand, pp); err != nil {
+		return err
 	}
-	if sup, ok := pp[opSupersetOf]; ok {
-		required, err := toStringSlice(sup)
-		if err != nil {
-			return fmt.Errorf("metadata policy: %q superset_of: %w", param, err)
-		}
-		vals, err := toStringSlice(operand)
-		if err != nil {
-			return fmt.Errorf("metadata policy: %q %s must be a list to satisfy superset_of: %w", param, label, err)
-		}
-		have := map[string]struct{}{}
-		for _, v := range vals {
-			have[v] = struct{}{}
-		}
-		for _, req := range required {
-			if _, ok := have[req]; !ok {
-				return fmt.Errorf("metadata policy: %q %s missing superset_of member %q", param, label, req)
-			}
-		}
-	}
-	return nil
+	return operandSatisfiesSupersetOf(param, label, operand, pp)
 }
 
 // enforcePolicy applies the merged policy to the leaf RP metadata in place,
@@ -343,90 +302,8 @@ func enforcePolicy(merged map[string]paramPolicy, rp map[string]any) error {
 	sort.Strings(params)
 
 	for _, param := range params {
-		pp := merged[param]
-
-		// value: pin the param (overrides whatever the leaf asserted).
-		if v, ok := pp[opValue]; ok {
-			rp[param] = v
-		}
-		// add: append the operands to the (list) param.
-		if a, ok := pp[opAdd]; ok {
-			additions, err := toStringSlice(a)
-			if err != nil {
-				return fmt.Errorf("metadata policy: %q add: %w", param, err)
-			}
-			rp[param] = appendUnique(rp[param], additions)
-		}
-		// default: fill the param if absent.
-		if d, ok := pp[opDefault]; ok {
-			if _, present := rp[param]; !present {
-				rp[param] = d
-			}
-		}
-
-		// one_of: the (scalar) value MUST be one of the set.
-		if oneOf, ok := pp[opOneOf]; ok {
-			if cur, present := rp[param]; present {
-				allowed, err := toStringSlice(oneOf)
-				if err != nil {
-					return fmt.Errorf("metadata policy: %q one_of: %w", param, err)
-				}
-				s, ok := cur.(string)
-				if !ok {
-					return fmt.Errorf("metadata policy: %q value must be a string for one_of, got %T", param, cur)
-				}
-				if !containsString(allowed, s) {
-					return fmt.Errorf("metadata policy: %q value %q violates one_of %v", param, s, allowed)
-				}
-			}
-		}
-		// subset_of: the (list) value MUST be a subset of the set.
-		if sub, ok := pp[opSubsetOf]; ok {
-			if cur, present := rp[param]; present {
-				allowed, err := toStringSlice(sub)
-				if err != nil {
-					return fmt.Errorf("metadata policy: %q subset_of: %w", param, err)
-				}
-				vals, err := toStringSlice(cur)
-				if err != nil {
-					return fmt.Errorf("metadata policy: %q value must be a list for subset_of: %w", param, err)
-				}
-				for _, v := range vals {
-					if !containsString(allowed, v) {
-						return fmt.Errorf("metadata policy: %q value %q violates subset_of %v", param, v, allowed)
-					}
-				}
-			}
-		}
-		// superset_of: the (list) value MUST contain all required members.
-		if sup, ok := pp[opSupersetOf]; ok {
-			if cur, present := rp[param]; present {
-				required, err := toStringSlice(sup)
-				if err != nil {
-					return fmt.Errorf("metadata policy: %q superset_of: %w", param, err)
-				}
-				vals, err := toStringSlice(cur)
-				if err != nil {
-					return fmt.Errorf("metadata policy: %q value must be a list for superset_of: %w", param, err)
-				}
-				have := map[string]struct{}{}
-				for _, v := range vals {
-					have[v] = struct{}{}
-				}
-				for _, req := range required {
-					if _, ok := have[req]; !ok {
-						return fmt.Errorf("metadata policy: %q value missing required %q (superset_of)", param, req)
-					}
-				}
-			}
-		}
-		// essential: the param MUST be present (after the modifiers above).
-		if e, ok := pp[opEssential]; ok {
-			if eb, _ := e.(bool); eb {
-				if _, present := rp[param]; !present {
-					return fmt.Errorf("metadata policy: essential parameter %q is missing", param)
-				}
-			}
+		if err := applyParamPolicy(param, merged[param], rp); err != nil {
+			return err
 		}
 	}
 	return nil

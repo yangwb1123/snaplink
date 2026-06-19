@@ -1,7 +1,5 @@
 package main
 
-import "github.com/snaplink/sso/spi"
-
 import (
 	"encoding/hex"
 	"os"
@@ -11,6 +9,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/spi"
 )
 
 func quietLogger() spi.Logger { return spi.NopLogger{} }

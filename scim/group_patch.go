@@ -45,85 +45,106 @@ func planGroupOp(op PatchOperation) (e ErrorResponse, muts []groupMemberMutation
 
 	// Path-less add/replace: a {displayName: ..., members: [...]} object.
 	if op.Path == "" {
-		var obj map[string]json.RawMessage
-		if len(op.Value) == 0 {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "PATCH op missing value"), nil, false, "", false
-		}
-		if err := json.Unmarshal(op.Value, &obj); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidSyntax, "PATCH value is not an object"), nil, false, "", false
-		}
-		for key, v := range obj {
-			switch strings.ToLower(key) {
-			case strings.ToLower(pathAttrDisplayName):
-				var s string
-				if err := json.Unmarshal(v, &s); err != nil {
-					return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
-				}
-				nameSet, name = true, s
-			case strings.ToLower(pathAttrMembers):
-				vals, ferr := memberValuesFromRaw(v)
-				if ferr != nil {
-					return *ferr, nil, false, "", false
-				}
-				muts = append(muts, groupMemberMutation{replace: true, members: vals})
-			default:
-				return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+key), nil, false, "", false
-			}
-		}
-		return ErrorResponse{}, muts, nameSet, name, true
+		return planGroupRootMerge(op.Value)
 	}
 
 	pp, pok := parsePatchPath(op.Path)
 	if !pok {
 		return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+op.Path), nil, false, "", false
 	}
+	return planGroupPathOp(verb, pp, op.Value, op.Path)
+}
+
+// planGroupRootMerge validates a path-less add/replace whose value is a
+// {displayName: ..., members: [...]} object, returning the implied
+// displayName change and membership replace.
+func planGroupRootMerge(value json.RawMessage) (e ErrorResponse, muts []groupMemberMutation, nameSet bool, name string, ok bool) {
+	var obj map[string]json.RawMessage
+	if len(value) == 0 {
+		return newError(http.StatusBadRequest, scimTypeInvalidValue, "PATCH op missing value"), nil, false, "", false
+	}
+	if err := json.Unmarshal(value, &obj); err != nil {
+		return newError(http.StatusBadRequest, scimTypeInvalidSyntax, "PATCH value is not an object"), nil, false, "", false
+	}
+	for key, v := range obj {
+		switch strings.ToLower(key) {
+		case strings.ToLower(pathAttrDisplayName):
+			var s string
+			if err := json.Unmarshal(v, &s); err != nil {
+				return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
+			}
+			nameSet, name = true, s
+		case strings.ToLower(pathAttrMembers):
+			vals, ferr := memberValuesFromRaw(v)
+			if ferr != nil {
+				return *ferr, nil, false, "", false
+			}
+			muts = append(muts, groupMemberMutation{replace: true, members: vals})
+		default:
+			return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+key), nil, false, "", false
+		}
+	}
+	return ErrorResponse{}, muts, nameSet, name, true
+}
+
+// planGroupPathOp validates a targeted (path-bearing) group PATCH op against
+// the displayName or members attribute. rawPath is the original op.Path, kept
+// only for the unsupported-path error detail.
+func planGroupPathOp(verb string, pp patchPath, value json.RawMessage, rawPath string) (e ErrorResponse, muts []groupMemberMutation, nameSet bool, name string, ok bool) {
 	switch {
 	case pp.isAttr(pathAttrDisplayName) && pp.sub == "":
 		if verb == patchOpRemove {
 			return ErrorResponse{}, nil, true, "", true // clear displayName
 		}
 		var s string
-		if err := json.Unmarshal(op.Value, &s); err != nil {
+		if err := json.Unmarshal(value, &s); err != nil {
 			return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
 		}
 		return ErrorResponse{}, nil, true, s, true
 
 	case pp.isAttr(pathAttrMembers) && pp.filter != nil:
-		// Value-path members op (RFC 7644 §3.5.2 —
-		// "members[value eq \"<id>\"]"): the connector targets member(s) by a
-		// value filter. This is the per-member delta Azure AD / Okta send.
-		// Only remove is meaningful on a member element (a member ref is
-		// immutable per RFC 7643 §4.2 — added or removed, never edited in
-		// place), so add/replace on a filtered member path is rejected. The
-		// filter is resolved against the CURRENT membership at apply time
-		// (planGroupOp has no membership), so an arbitrary value filter —
-		// not just a literal id — works.
-		if verb != patchOpRemove {
-			return newError(http.StatusBadRequest, scimTypeInvalidPath, "members value-path supports remove only"), nil, false, "", false
-		}
-		return ErrorResponse{}, []groupMemberMutation{{removeFilter: pp.filter}}, false, "", true
+		return planGroupMembersFiltered(verb, pp)
 
 	case pp.isAttr(pathAttrMembers) && pp.sub == "":
-		if verb == patchOpRemove {
-			// Unfiltered members remove drops the whole set (RFC 7644
-			// §3.5.2.2). A filtered remove is handled by the value-path branch
-			// above.
-			return ErrorResponse{}, []groupMemberMutation{{replace: true, members: nil}}, false, "", true
-		}
-		vals, ferr := memberValuesFromRaw(op.Value)
-		if ferr != nil {
-			return *ferr, nil, false, "", false
-		}
-		if verb == patchOpReplace {
-			return ErrorResponse{}, []groupMemberMutation{{replace: true, members: vals}}, false, "", true
-		}
-		// add: append each member individually (idempotent per member).
-		for _, v := range vals {
-			muts = append(muts, groupMemberMutation{member: v, add: true})
-		}
-		return ErrorResponse{}, muts, false, "", true
+		return planGroupMembers(verb, value)
 	}
-	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+op.Path), nil, false, "", false
+	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path: "+rawPath), nil, false, "", false
+}
+
+// planGroupMembersFiltered validates a value-path members op (RFC 7644 §3.5.2
+// — "members[value eq \"<id>\"]"): the connector targets member(s) by a value
+// filter, the per-member delta Azure AD / Okta send. Only remove is meaningful
+// on a member element (a member ref is immutable per RFC 7643 §4.2 — added or
+// removed, never edited in place), so add/replace on a filtered member path is
+// rejected. The filter is resolved against the CURRENT membership at apply time
+// (planGroupOp has no membership), so an arbitrary value filter — not just a
+// literal id — works.
+func planGroupMembersFiltered(verb string, pp patchPath) (e ErrorResponse, muts []groupMemberMutation, nameSet bool, name string, ok bool) {
+	if verb != patchOpRemove {
+		return newError(http.StatusBadRequest, scimTypeInvalidPath, "members value-path supports remove only"), nil, false, "", false
+	}
+	return ErrorResponse{}, []groupMemberMutation{{removeFilter: pp.filter}}, false, "", true
+}
+
+// planGroupMembers validates an unfiltered members add/replace/remove op.
+func planGroupMembers(verb string, value json.RawMessage) (e ErrorResponse, muts []groupMemberMutation, nameSet bool, name string, ok bool) {
+	if verb == patchOpRemove {
+		// Unfiltered members remove drops the whole set (RFC 7644 §3.5.2.2).
+		// A filtered remove is handled by the value-path branch.
+		return ErrorResponse{}, []groupMemberMutation{{replace: true, members: nil}}, false, "", true
+	}
+	vals, ferr := memberValuesFromRaw(value)
+	if ferr != nil {
+		return *ferr, nil, false, "", false
+	}
+	if verb == patchOpReplace {
+		return ErrorResponse{}, []groupMemberMutation{{replace: true, members: vals}}, false, "", true
+	}
+	// add: append each member individually (idempotent per member).
+	for _, v := range vals {
+		muts = append(muts, groupMemberMutation{member: v, add: true})
+	}
+	return ErrorResponse{}, muts, false, "", true
 }
 
 // memberValuesFromRaw decodes a PATCH members value (an array of member

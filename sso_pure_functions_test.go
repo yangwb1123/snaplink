@@ -2,6 +2,8 @@ package sso
 
 import (
 	"testing"
+
+	"github.com/snaplink/sso/internal/auth/consent"
 )
 
 func TestNormalizeUserCode(t *testing.T) {
@@ -69,10 +71,10 @@ func TestURLQueryEscape(t *testing.T) {
 func TestHasPromptValue(t *testing.T) {
 	t.Parallel()
 
-	if !hasPromptValue("login consent", "login") {
+	if !consent.HasPromptValue("login consent", "login") {
 		t.Error("hasPromptValue should find 'login' in space-separated prompt")
 	}
-	if hasPromptValue("login consent", "none") {
+	if consent.HasPromptValue("login consent", "none") {
 		t.Error("hasPromptValue should not find 'none'")
 	}
 }
@@ -80,10 +82,10 @@ func TestHasPromptValue(t *testing.T) {
 func TestConsentScopesMatch(t *testing.T) {
 	t.Parallel()
 
-	if !consentScopesMatch([]string{"openid"}, []string{"openid"}) {
+	if !consent.ScopesMatch([]string{"openid"}, []string{"openid"}) {
 		t.Error("consentScopesMatch(equal) should be true")
 	}
-	if consentScopesMatch([]string{"openid"}, []string{"profile"}) {
+	if consent.ScopesMatch([]string{"openid"}, []string{"profile"}) {
 		t.Error("consentScopesMatch(different) should be false")
 	}
 }

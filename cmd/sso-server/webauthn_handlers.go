@@ -146,29 +146,37 @@ func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 		// disturbed.
 		clientID := r.URL.Query().Get("client_id")
 		if clientID != "" && deps.ClientStore != nil && len(deps.TokenIssuers) > 0 {
-			result, err := issueWebAuthnToken(r, deps, clientID, user.Name)
-			if err != nil {
-				status, code := webauthnIssueErrorStatus(err)
-				writeWebAuthnError(w, status, code, err.Error())
-				// Token issuance failure post-assertion is still a
-				// crypto-verified user — the assertion succeeded. We
-				// label the issuance failure separately via the
-				// existing http_requests_total status_class signal.
-				// Don't double-count by also flagging this as an
-				// assertion failure.
-				recordWebAuthnAssertion(deps, "success")
+			if !applyWebAuthnTokenIssuance(w, r, deps, clientID, user.Name, &resp) {
 				return
 			}
-			resp.AccessToken = result.AccessToken
-			resp.TokenType = result.TokenType
-			resp.ExpiresIn = result.ExpiresIn
-			resp.Scope = result.Scope
-			resp.RefreshToken = result.RefreshToken
-			resp.IDToken = result.IDToken
 		}
 		writeWebAuthnJSON(w, http.StatusOK, resp)
 		recordWebAuthnAssertion(deps, "success")
 	}
+}
+
+// applyWebAuthnTokenIssuance mints the optional token bundle for the
+// crypto-verified user and folds it into resp. Returns false when issuance
+// failed (the error response has been written and the assertion-success metric
+// already recorded) so the caller returns without writing the v1 body — token
+// issuance failure post-assertion is still a verified user, so the failure is
+// labelled via the existing http_requests_total status_class signal, NOT a
+// double-counted assertion failure.
+func applyWebAuthnTokenIssuance(w http.ResponseWriter, r *http.Request, deps *webauthnDeps, clientID, userName string, resp *webauthnFinishLoginResponse) bool {
+	result, err := issueWebAuthnToken(r, deps, clientID, userName)
+	if err != nil {
+		status, code := webauthnIssueErrorStatus(err)
+		writeWebAuthnError(w, status, code, err.Error())
+		recordWebAuthnAssertion(deps, "success")
+		return false
+	}
+	resp.AccessToken = result.AccessToken
+	resp.TokenType = result.TokenType
+	resp.ExpiresIn = result.ExpiresIn
+	resp.Scope = result.Scope
+	resp.RefreshToken = result.RefreshToken
+	resp.IDToken = result.IDToken
+	return true
 }
 
 // errWebAuthnClientNotFound is returned by issueWebAuthnToken when

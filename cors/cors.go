@@ -56,6 +56,104 @@ type Policy struct {
 	MaxAge time.Duration
 }
 
+// corsConfig holds the precomputed CORS values shared across all
+// requests. Joined header strings + origin lookups are built once at
+// Middleware construction so per-request work is just a few probes.
+type corsConfig struct {
+	methodsHdr       string
+	headersHdr       string
+	exposeHdr        string
+	maxAgeHdr        string
+	allowsWildcard   bool
+	allowCredentials bool
+	exactOrigins     map[string]struct{}
+}
+
+// buildConfig precomputes the per-request constants from p. Defaults
+// for methods/headers are applied here (p is taken by value, so the
+// caller's Policy is untouched).
+func buildConfig(p Policy) corsConfig {
+	if len(p.AllowedMethods) == 0 {
+		p.AllowedMethods = DefaultAllowedMethods
+	}
+	if len(p.AllowedHeaders) == 0 {
+		p.AllowedHeaders = DefaultAllowedHeaders
+	}
+	cfg := corsConfig{
+		methodsHdr:       strings.Join(p.AllowedMethods, ", "),
+		headersHdr:       strings.Join(p.AllowedHeaders, ", "),
+		exposeHdr:        strings.Join(p.ExposedHeaders, ", "),
+		allowCredentials: p.AllowCredentials,
+		exactOrigins:     make(map[string]struct{}, len(p.AllowedOrigins)),
+	}
+	if p.MaxAge > 0 {
+		cfg.maxAgeHdr = strconv.Itoa(int(p.MaxAge.Seconds()))
+	}
+	for _, o := range p.AllowedOrigins {
+		if o == OriginWildcard {
+			cfg.allowsWildcard = true
+			continue
+		}
+		cfg.exactOrigins[o] = struct{}{}
+	}
+	return cfg
+}
+
+// originAllowed reports whether origin may receive CORS headers.
+func (c *corsConfig) originAllowed(origin string) bool {
+	if _, exact := c.exactOrigins[origin]; exact {
+		return true
+	}
+	return c.allowsWildcard
+}
+
+// resolveAllowOrigin picks the Access-Control-Allow-Origin value:
+//   - Wildcard + credentials: echo the request Origin (spec forbids
+//     "*" + credentials).
+//   - Wildcard alone (non-exact origin): emit "*".
+//   - Exact match: echo the request Origin (no need to emit "*").
+func (c *corsConfig) resolveAllowOrigin(origin string) string {
+	if c.allowsWildcard && !c.allowCredentials {
+		if _, exact := c.exactOrigins[origin]; !exact {
+			return OriginWildcard
+		}
+	}
+	return origin
+}
+
+// writeCommonHeaders emits the Allow-Origin / Vary / credentials /
+// exposed-headers values shared by both preflight and actual requests.
+func (c *corsConfig) writeCommonHeaders(w http.ResponseWriter, origin string) {
+	w.Header().Set(HeaderAccessControlAllowOrigin, c.resolveAllowOrigin(origin))
+	// Vary on Origin so caches don't serve a per-origin response to
+	// the wrong origin.
+	w.Header().Add(HeaderVary, HeaderOrigin)
+	if c.allowCredentials {
+		w.Header().Set(HeaderAccessControlAllowCreds, TrueLiteral)
+	}
+	if c.exposeHdr != "" {
+		w.Header().Set(HeaderAccessControlExposeHeaders, c.exposeHdr)
+	}
+}
+
+// isPreflight reports whether r is a CORS preflight request.
+func isPreflight(r *http.Request) bool {
+	return r.Method == http.MethodOptions &&
+		r.Header.Get(HeaderAccessControlRequestMethod) != ""
+}
+
+// writePreflight emits the preflight-only headers (methods, headers,
+// max-age) and short-circuits with 204 — the actual request arrives
+// in a follow-up.
+func (c *corsConfig) writePreflight(w http.ResponseWriter) {
+	w.Header().Set(HeaderAccessControlAllowMethods, c.methodsHdr)
+	w.Header().Set(HeaderAccessControlAllowHeaders, c.headersHdr)
+	if c.maxAgeHdr != "" {
+		w.Header().Set(HeaderAccessControlMaxAge, c.maxAgeHdr)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Middleware returns an http.Handler middleware enforcing p. When
 // AllowedOrigins is empty the middleware is identity (zero overhead
 // for deployments not using CORS).
@@ -64,79 +162,22 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	// Cache joined strings + lookups so per-request work is just a
-	// few map / slice probes.
-	if len(p.AllowedMethods) == 0 {
-		p.AllowedMethods = DefaultAllowedMethods
-	}
-	if len(p.AllowedHeaders) == 0 {
-		p.AllowedHeaders = DefaultAllowedHeaders
-	}
-	methodsHdr := strings.Join(p.AllowedMethods, ", ")
-	headersHdr := strings.Join(p.AllowedHeaders, ", ")
-	exposeHdr := strings.Join(p.ExposedHeaders, ", ")
-	var maxAgeHdr string
-	if p.MaxAge > 0 {
-		maxAgeHdr = strconv.Itoa(int(p.MaxAge.Seconds()))
-	}
-
-	allowsWildcard := false
-	exactOrigins := make(map[string]struct{}, len(p.AllowedOrigins))
-	for _, o := range p.AllowedOrigins {
-		if o == OriginWildcard {
-			allowsWildcard = true
-			continue
-		}
-		exactOrigins[o] = struct{}{}
-	}
+	cfg := buildConfig(p)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get(HeaderOrigin)
-			if origin == "" {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if _, exact := exactOrigins[origin]; !exact && !allowsWildcard {
-				// Not allowed — drop CORS headers entirely. The
-				// browser blocks the response on its end.
+			if origin == "" || !cfg.originAllowed(origin) {
+				// No origin, or not allowed — drop CORS headers
+				// entirely. The browser blocks the response on its end.
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Allowed origin echo strategy:
-			//   * Wildcard + credentials: echo the request Origin
-			//     (spec forbids "*" + credentials).
-			//   * Wildcard alone: emit "*".
-			//   * Exact match: echo the request Origin (no need to
-			//     emit "*").
-			allowOrigin := origin
-			if allowsWildcard && !p.AllowCredentials {
-				if _, exact := exactOrigins[origin]; !exact {
-					allowOrigin = OriginWildcard
-				}
-			}
-			w.Header().Set(HeaderAccessControlAllowOrigin, allowOrigin)
-			// Vary on Origin so caches don't serve a per-origin
-			// response to the wrong origin.
-			w.Header().Add(HeaderVary, HeaderOrigin)
-			if p.AllowCredentials {
-				w.Header().Set(HeaderAccessControlAllowCreds, TrueLiteral)
-			}
-			if exposeHdr != "" {
-				w.Header().Set(HeaderAccessControlExposeHeaders, exposeHdr)
-			}
+			cfg.writeCommonHeaders(w, origin)
 
-			if r.Method == http.MethodOptions && r.Header.Get(HeaderAccessControlRequestMethod) != "" {
-				// CORS preflight. Echo methods + headers + max-age,
-				// short-circuit with 204 — the actual request comes
-				// in a follow-up.
-				w.Header().Set(HeaderAccessControlAllowMethods, methodsHdr)
-				w.Header().Set(HeaderAccessControlAllowHeaders, headersHdr)
-				if maxAgeHdr != "" {
-					w.Header().Set(HeaderAccessControlMaxAge, maxAgeHdr)
-				}
-				w.WriteHeader(http.StatusNoContent)
+			if isPreflight(r) {
+				cfg.writePreflight(w)
 				return
 			}
 			next.ServeHTTP(w, r)

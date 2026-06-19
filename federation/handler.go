@@ -93,45 +93,14 @@ func HandleEntityConfiguration(deps Deps, ctx core.HandlerContext) {
 	// walk /jwks.json performs. These are the OP's published signing keys;
 	// the Entity Statement is signed by one of them (kid match), so a
 	// consumer validates it with no new trust setup (the key-reuse crux).
-	keys := make([]core.JWK, 0)
-	for _, ti := range deps.TokenIssuers() {
-		jp, ok := ti.(core.JWKSProvider)
-		if !ok {
-			continue
-		}
-		ks, err := jp.JWKS(ctx.Request().Context())
-		if err != nil {
-			deps.LogError("federation: jwks provider failed", "error", err)
-			continue
-		}
-		keys = append(keys, ks...)
-	}
+	keys := aggregateIssuerJWKS(deps, ctx)
 
 	// openid_provider metadata is DERIVED from the discovery doc (via the
 	// OP projection) so the two views never diverge. federation_entity is
 	// the federation-level contact/org metadata from config.
-	opMeta := deps.BuildOPMetadata(ctx, base)
-	meta := &EntityMetadata{OP: &opMeta}
-	// federation_entity carries the org/contacts AND — when this server is a
-	// SUPERIOR (subordinates configured) — the §8 federation_fetch_endpoint so a
-	// resolver/subordinate discovers where to fetch this server's Subordinate
-	// Statements. With NO subordinates the endpoint is omitted (and the §8 route
-	// is unmounted), keeping the slice-1 leaf-OP entity config byte-identical.
-	if fe := federationEntityMeta(cfg, base); fe != nil {
-		meta.FederationEntity = fe
-	}
+	meta := buildEntityMetadata(deps, ctx, cfg, base)
 
-	ttl := cfg.entityStatementTTL()
-	claims := EntityStatementClaims{
-		// Self-signed Entity Configuration: iss == sub == entity identifier.
-		Iss:            iss,
-		Sub:            iss,
-		Iat:            now.Unix(),
-		Exp:            now.Add(ttl).Unix(),
-		JWKS:           EntityJWKS{Keys: keys},
-		Metadata:       meta,
-		AuthorityHints: authorityHints(cfg),
-	}
+	claims := entityConfigurationClaims(iss, keys, meta, cfg, now)
 
 	compact, err := deps.FederationSigner().SignJWT(ctx.Request().Context(), EntityStatementTyp, claims)
 	if err != nil {
@@ -150,6 +119,56 @@ func HandleEntityConfiguration(deps Deps, ctx core.HandlerContext) {
 		cache.store(iss, &entityConfigEntry{compact: body, etag: etag, expiresAt: now.Add(cfg.cacheTTL())})
 	}
 	WriteEntityStatement(ctx.ResponseWriter(), ctx.Request(), body, etag, cfg.cacheTTL())
+}
+
+// aggregateIssuerJWKS aggregates the OP's published signing keys from every
+// JWKSProvider TokenIssuer — the SAME walk /jwks.json performs. A provider that
+// errors is logged + skipped (the Entity Statement still publishes the keys
+// that did resolve; one broken issuer must not blank the whole jwks).
+func aggregateIssuerJWKS(deps Deps, ctx core.HandlerContext) []core.JWK {
+	keys := make([]core.JWK, 0)
+	for _, ti := range deps.TokenIssuers() {
+		jp, ok := ti.(core.JWKSProvider)
+		if !ok {
+			continue
+		}
+		ks, err := jp.JWKS(ctx.Request().Context())
+		if err != nil {
+			deps.LogError("federation: jwks provider failed", "error", err)
+			continue
+		}
+		keys = append(keys, ks...)
+	}
+	return keys
+}
+
+// buildEntityMetadata assembles the Entity Configuration's metadata: the
+// openid_provider projection (DERIVED from the discovery doc so the two views
+// never diverge) plus, when present, the federation_entity entry (org/contacts
+// + the §8 federation_fetch_endpoint when this server is a superior).
+func buildEntityMetadata(deps Deps, ctx core.HandlerContext, cfg *Config, base string) *EntityMetadata {
+	opMeta := deps.BuildOPMetadata(ctx, base)
+	meta := &EntityMetadata{OP: &opMeta}
+	if fe := federationEntityMeta(cfg, base); fe != nil {
+		meta.FederationEntity = fe
+	}
+	return meta
+}
+
+// entityConfigurationClaims builds the self-signed Entity Configuration claims
+// (iss == sub == entity identifier), stamping iat/exp from now + the configured
+// TTL and carrying the aggregated jwks, metadata, and authority_hints.
+func entityConfigurationClaims(iss string, keys []core.JWK, meta *EntityMetadata, cfg *Config, now time.Time) EntityStatementClaims {
+	ttl := cfg.entityStatementTTL()
+	return EntityStatementClaims{
+		Iss:            iss,
+		Sub:            iss,
+		Iat:            now.Unix(),
+		Exp:            now.Add(ttl).Unix(),
+		JWKS:           EntityJWKS{Keys: keys},
+		Metadata:       meta,
+		AuthorityHints: authorityHints(cfg),
+	}
 }
 
 // federationEntityMeta builds the federation_entity metadata entry from

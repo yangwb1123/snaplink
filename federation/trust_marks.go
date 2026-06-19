@@ -2,7 +2,6 @@ package federation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -481,33 +480,12 @@ func (r *trustMarkRequirement) satisfiedBy(ctx context.Context, leafEntityID, re
 // validated mark. Returns nil only when the mark is a valid, authorized, fresh,
 // correctly-bound mark of reqType.
 func (r *trustMarkRequirement) validateMark(ctx context.Context, leafEntityID, reqType, compact string, now time.Time, budget *resolutionBudget, logError func(msg string, args ...any)) error {
-	if compact == "" {
-		return errors.New("empty trust mark")
-	}
-	// typ gate FIRST (before any signature work): a non-trust-mark+jwt token
-	// signed by the issuer key (an id_token, an entity statement) must not be
-	// accepted as a Trust Mark.
-	typ, err := jwsHeaderTyp(compact)
+	// Cheap structural gate: typ == trust-mark+jwt + the (unverified) claims,
+	// parsed only to read `iss` (to select the authorized issuer). This grants no
+	// trust — the signature against the issuer's REAL keys below is the gate.
+	claims, err := parseTrustMark(compact)
 	if err != nil {
-		return fmt.Errorf("trust mark header: %w", err)
-	}
-	if typ != TrustMarkTyp {
-		return fmt.Errorf("trust mark typ %q != %q", typ, TrustMarkTyp)
-	}
-
-	// Parse the UNVERIFIED payload only to read `iss` (to select the authorized
-	// issuer + its verification keys). This grants no trust: if iss is forged to
-	// name a configured/resolvable issuer, the signature check against that
-	// issuer's REAL keys below fails (the attacker lacks the issuer's private
-	// key). This is the same unverified-parse-to-navigate discipline the
-	// trust-chain resolver uses.
-	payload, err := unverifiedPayload(compact)
-	if err != nil {
-		return fmt.Errorf("trust mark payload: %w", err)
-	}
-	var claims trustMarkClaims
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return fmt.Errorf("trust mark claims: %w", err)
+		return err
 	}
 
 	// Resolve the AUTHORIZED issuer's verification keys for reqType. The
@@ -648,11 +626,8 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 	// the issuer's chain-validated keys + the types the anchor authorized it for;
 	// authorize reqType against that set without re-resolving (and without
 	// spending the budget/semaphore — no resolution happens).
-	if entry := r.resolvedIssuers.lookup(iss, now); entry != nil {
-		if _, ok := entry.authorizedTypes[reqType]; !ok {
-			return nil, fmt.Errorf("federation-resolved issuer %q not anchor-authorized for type %q", iss, reqType)
-		}
-		return entry.keys, nil
+	if keys, found, err := r.cachedResolvedKeys(iss, reqType, now); found {
+		return keys, err
 	}
 
 	// NEGATIVE-cache check BEFORE the per-issuer lock or any resolution: a
@@ -668,11 +643,8 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 	unlock := r.resolvedIssuers.resolveLock.lock(iss)
 	defer unlock()
 	// Double-checked: another goroutine may have populated it while we waited.
-	if entry := r.resolvedIssuers.lookup(iss, now); entry != nil {
-		if _, ok := entry.authorizedTypes[reqType]; !ok {
-			return nil, fmt.Errorf("federation-resolved issuer %q not anchor-authorized for type %q", iss, reqType)
-		}
-		return entry.keys, nil
+	if keys, found, err := r.cachedResolvedKeys(iss, reqType, now); found {
+		return keys, err
 	}
 	// Re-check the negative cache under the lock too: a sibling resolution for
 	// THIS iss may have just recorded a failure while we waited.
@@ -680,87 +652,15 @@ func (r *trustMarkRequirement) federationResolvedIssuerKeys(ctx context.Context,
 		return nil, fmt.Errorf("federation-resolved issuer %q recently failed resolution (negative-cached)", iss)
 	}
 
-	// PER-CALL BUDGET (fix a): cap DISTINCT issuers this validate call will
-	// resolve. Deduped — the same iss across N marks already short-circuits on the
-	// cache above, but the budget bounds the DISTINCT-iss fan-out regardless. Over
-	// budget ⇒ shed WITHOUT negative-caching (this is per-call load-shedding, not
-	// an issuer failure; a legit issuer beyond budget in a flooded call resolves
-	// on a later, smaller call). The required type goes unsatisfied → fail-closed.
-	if !budget.tryAcquire(iss) {
-		logError("federation: per-request issuer-resolution budget exhausted; shedding (unknown-client)",
-			"issuer", iss, "trust_mark_type", reqType, "budget", r.maxResolvedIssuersPerRequest)
-		return nil, fmt.Errorf("federation-resolved issuer %q: per-request resolution budget exhausted", iss)
-	}
-
-	// GLOBAL SEMAPHORE (fix b): bound CONCURRENT nested resolutions across ALL
-	// in-flight registrations (independent of the slice-3 resolveSem, the OUTER RP
-	// resolution). Non-blocking acquire; saturated ⇒ shed WITHOUT negative-caching
-	// (load-shedding, not an issuer failure). Released on completion (defer).
-	if !r.acquireIssuerResolveSlot() {
-		logError("federation: nested issuer-resolution concurrency limit reached; shedding (unknown-client)",
-			"issuer", iss, "trust_mark_type", reqType)
-		return nil, fmt.Errorf("federation-resolved issuer %q: nested-resolution concurrency limit reached", iss)
+	// PER-CALL BUDGET + GLOBAL SEMAPHORE: bound the nested-resolution fan-out
+	// (per-call distinct issuers) + concurrency (across all registrations). Both
+	// shed WITHOUT negative-caching (load-shedding, not an issuer failure).
+	if err := r.acquireResolutionSlots(iss, reqType, budget, logError); err != nil {
+		return nil, err
 	}
 	defer r.releaseIssuerResolveSlot()
 
-	// 1) Resolve the ISSUER's trust chain to a CONFIGURED anchor (slice 2,
-	//    fail-closed). Failure = not a federation member / no configured anchor /
-	//    forged chain → this issuer is not trusted → reject. NEGATIVE-cache the
-	//    failure (short TTL) so a repeated/distinct-request dead-or-slow iss is
-	//    not re-resolved every time (fix c); the short TTL re-attempts a legit
-	//    issuer whose superior was transiently down.
-	chain, err := r.resolver.ResolveTrustChain(ctx, iss)
-	if err != nil {
-		r.resolvedIssuers.recordNegative(iss, now)
-		logError("federation: trust-mark issuer chain resolution failed", "issuer", iss, "trust_mark_type", reqType, "error", err)
-		return nil, fmt.Errorf("federation-resolved issuer %q: chain resolution failed: %w", iss, err)
-	}
-
-	// 2) AUTHORIZATION ROOT: the matched ANCHOR's validated trust_mark_issuers
-	//    MUST authorize iss for reqType. The map was read off the chain-validated
-	//    ANCHOR config (the root of trust) in ResolveTrustChain — NOT a self-
-	//    asserted value on the issuer/intermediate (the spec mandates the claim
-	//    be IGNORED on any non-anchor). authorizedTypes captures EVERY required
-	//    type this issuer is authorized for at this anchor so the cache answers
-	//    multi-type requirements without re-resolving.
-	authorizedTypes := r.anchorAuthorizedTypes(iss, chain.AnchorTrustMarkIssuers)
-	if _, ok := authorizedTypes[reqType]; !ok {
-		// The issuer chains to a configured anchor but that anchor does not
-		// authorize it for reqType (not listed, or no trust_mark_issuers at all).
-		// A genuine authorization MISS (the resolution succeeded but the issuer is
-		// not authorized) — negative-cache it so a repeated probe doesn't re-resolve.
-		r.resolvedIssuers.recordNegative(iss, now)
-		logError("federation: anchor does not authorize trust-mark issuer for type",
-			"issuer", iss, "anchor", chain.AnchorEntityID, "trust_mark_type", reqType)
-		return nil, fmt.Errorf("federation-resolved issuer %q not anchor-authorized for type %q", iss, reqType)
-	}
-
-	// The issuer's CHAIN-VALIDATED keys (its leaf Entity Configuration jwks,
-	// vouched by its chain) — verify the mark against THESE, never a self-
-	// asserted set. The leaf config's signature was verified in validate(), so
-	// the keys it carries are chain-vouched.
-	keys := issuerChainKeys(chain)
-	if len(keys) == 0 {
-		// Resolved but unusable (no keys) — negative-cache so it isn't re-resolved
-		// on every probe.
-		r.resolvedIssuers.recordNegative(iss, now)
-		logError("federation: resolved trust-mark issuer has no chain-validated keys", "issuer", iss)
-		return nil, fmt.Errorf("federation-resolved issuer %q has no chain-validated keys", iss)
-	}
-
-	// Cache bounded by the issuer-chain's earliest exp — never verify against an
-	// expired chain. A non-positive expiry (a validated chain never produces one)
-	// is treated as already-expired: skip caching, just return the keys for THIS
-	// mark so a defensive zero doesn't pin a stale resolution.
-	exp := chain.Expiry()
-	if exp.After(now) {
-		r.resolvedIssuers.store(iss, &resolvedIssuerEntry{
-			keys:            keys,
-			authorizedTypes: authorizedTypes,
-			expiresAt:       exp,
-		})
-	}
-	return keys, nil
+	return r.resolveAndAuthorizeIssuer(ctx, iss, reqType, now, logError)
 }
 
 // acquireIssuerResolveSlot tries to take one of the bounded GLOBAL nested-

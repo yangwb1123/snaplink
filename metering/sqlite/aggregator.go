@@ -110,7 +110,22 @@ func (a *Aggregator) TopTenants(ctx context.Context, period metering.UsagePeriod
 	}
 	since, until := periodBounds(start, period)
 
-	// Aggregate logins per tenant, then fetch the other metrics for each.
+	tops, err := a.topTenantsByLogins(ctx, period, since, until, limit)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range tops {
+		if err := a.fillTenantMetrics(ctx, u, since, until); err != nil {
+			return nil, err
+		}
+	}
+	return tops, nil
+}
+
+// topTenantsByLogins runs the GROUP BY login aggregation and returns the
+// tenants ordered by login count (preserving the SQL ORDER BY ... DESC LIMIT
+// ranking), seeded with Period/PeriodStart and the login total only.
+func (a *Aggregator) topTenantsByLogins(ctx context.Context, period metering.UsagePeriod, since, until time.Time, limit int) ([]*metering.TenantUsage, error) {
 	rows, err := a.db.QueryContext(ctx,
 		`SELECT tenant_id, COUNT(*) as logins FROM audit_events WHERE type='login' AND outcome='success' AND tenant_id!='' AND ts_unix_ns>=? AND ts_unix_ns<? GROUP BY tenant_id ORDER BY logins DESC LIMIT ?`,
 		since.UnixNano(), until.UnixNano(), limit,
@@ -131,31 +146,33 @@ func (a *Aggregator) TopTenants(ctx context.Context, period metering.UsagePeriod
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("metering/sqlite: top_tenants rows: %w", err)
 	}
-
-	// Fetch the remaining metrics for each tenant. We accept N round-trips
-	// (one per tenant) because TopTenants is an operator dashboard call, not
-	// a hot-path per-request operation, and the limit keeps N small.
-	for _, u := range tops {
-		if err := a.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='token_issued' AND ts_unix_ns>=? AND ts_unix_ns<?`,
-			u.TenantID, since.UnixNano(), until.UnixNano(),
-		).Scan(&u.TokensIssued); err != nil {
-			return nil, fmt.Errorf("metering/sqlite: top_tenants tokens: %w", err)
-		}
-		if err := a.db.QueryRowContext(ctx,
-			`SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE tenant_id=? AND type='login' AND outcome='success' AND actor_id!='' AND ts_unix_ns>=? AND ts_unix_ns<?`,
-			u.TenantID, since.UnixNano(), until.UnixNano(),
-		).Scan(&u.ActiveUsers); err != nil {
-			return nil, fmt.Errorf("metering/sqlite: top_tenants users: %w", err)
-		}
-		if err := a.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='mfa_required' AND ts_unix_ns>=? AND ts_unix_ns<?`,
-			u.TenantID, since.UnixNano(), until.UnixNano(),
-		).Scan(&u.MFAChallenges); err != nil {
-			return nil, fmt.Errorf("metering/sqlite: top_tenants mfa: %w", err)
-		}
-	}
 	return tops, nil
+}
+
+// fillTenantMetrics fetches the non-login metrics for one tenant over the
+// [since, until) window. We accept N round-trips (one per tenant) because
+// TopTenants is an operator dashboard call, not a hot-path per-request
+// operation, and the limit keeps N small.
+func (a *Aggregator) fillTenantMetrics(ctx context.Context, u *metering.TenantUsage, since, until time.Time) error {
+	if err := a.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='token_issued' AND ts_unix_ns>=? AND ts_unix_ns<?`,
+		u.TenantID, since.UnixNano(), until.UnixNano(),
+	).Scan(&u.TokensIssued); err != nil {
+		return fmt.Errorf("metering/sqlite: top_tenants tokens: %w", err)
+	}
+	if err := a.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE tenant_id=? AND type='login' AND outcome='success' AND actor_id!='' AND ts_unix_ns>=? AND ts_unix_ns<?`,
+		u.TenantID, since.UnixNano(), until.UnixNano(),
+	).Scan(&u.ActiveUsers); err != nil {
+		return fmt.Errorf("metering/sqlite: top_tenants users: %w", err)
+	}
+	if err := a.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='mfa_required' AND ts_unix_ns>=? AND ts_unix_ns<?`,
+		u.TenantID, since.UnixNano(), until.UnixNano(),
+	).Scan(&u.MFAChallenges); err != nil {
+		return fmt.Errorf("metering/sqlite: top_tenants mfa: %w", err)
+	}
+	return nil
 }
 
 // periodBounds returns the [since, until) UTC half-open interval for the

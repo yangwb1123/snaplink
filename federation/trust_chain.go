@@ -305,6 +305,15 @@ func (r *TrustChainResolver) ResolveTrustChain(ctx context.Context, leafEntityID
 		return nil, ErrTrustChainInvalid
 	}
 
+	return buildTrustChain(leafEntityID, anchor, links, resolvedRP), nil
+}
+
+// buildTrustChain assembles the VALIDATED TrustChain result from the verified
+// links + the policy-applied RP metadata. Every field is sourced from a
+// signature-validated statement (the leaf's trust_marks/jwks off links[0], the
+// anchor's trust_mark_issuers off the terminus) — see the field docs on
+// TrustChain for the per-field provenance.
+func buildTrustChain(leafEntityID string, anchor TrustAnchor, links []chainLink, resolvedRP map[string]any) *TrustChain {
 	statements := make([]string, len(links))
 	for i, l := range links {
 		statements[i] = l.compact
@@ -330,7 +339,7 @@ func (r *TrustChainResolver) ResolveTrustChain(ctx context.Context, leafEntityID
 		// slice-4c path when the leaf is itself a Trust Mark Issuer.
 		LeafKeys:           links[0].claims.JWKS.Keys,
 		ResolvedRPMetadata: resolvedRP,
-	}, nil
+	}
 }
 
 // anchorTrustMarkIssuers extracts the §3.1.2 trust_mark_issuers map from a
@@ -481,77 +490,85 @@ func (r *TrustChainResolver) climbToAnchor(ctx context.Context, state *walkState
 	}
 	currentID := current.claims.Sub
 	for _, sup := range hints {
-		if _, seen := visited[sup]; seen {
-			// Cycle in authority_hints (A hints B hints A, or a self-hint).
-			r.logError("federation: authority_hints cycle detected", "superior", sup, "from", currentID)
-			continue
+		res, found, fatal := r.climbViaHint(ctx, state, sup, currentID, visited, remainingDepth)
+		if found {
+			return res, true
 		}
-		if err := validateFederationURL(sup); err != nil {
-			r.logError("federation: authority hint rejected", "superior", sup, "error", err)
-			continue
+		if fatal {
+			// Fetch-budget exhaustion is terminal for the whole resolution, not
+			// just this branch — stop rather than try more fan-out.
+			return climbResult{}, false
 		}
-
-		supConfig, err := r.fetchEntityConfig(ctx, state, sup)
-		if err != nil {
-			r.logError("federation: fetch superior entity configuration", "superior", sup, "error", err)
-			// A fetch-budget exhaustion (vs a transport error) is terminal for the
-			// whole resolution, not just this branch — bail out rather than try
-			// more fan-out.
-			if state.remainingFetches <= 0 {
-				return climbResult{}, false
-			}
-			continue
-		}
-		fetchEndpoint := superiorFetchEndpoint(supConfig.claims)
-		if fetchEndpoint == "" {
-			r.logError("federation: superior has no federation_fetch_endpoint", "superior", sup)
-			continue
-		}
-		subStmt, err := r.fetchSubordinate(ctx, state, fetchEndpoint, sup, currentID)
-		if err != nil {
-			r.logError("federation: fetch subordinate statement", "superior", sup, "subject", currentID, "error", err)
-			if state.remainingFetches <= 0 {
-				return climbResult{}, false
-			}
-			continue
-		}
-
-		if anchor, ok := r.matchConfiguredAnchor(sup); ok {
-			// Reached a configured anchor: the upward links are the Subordinate
-			// Statement (anchor about current) + the anchor's own Entity
-			// Configuration (the terminal, verified against the CONFIGURED keys).
-			return climbResult{
-				links:  []chainLink{subStmt, supConfig},
-				anchor: anchor,
-			}, true
-		}
-
-		supHints := supConfig.claims.AuthorityHints
-		if len(supHints) == 0 {
-			r.logError("federation: superior is not a configured anchor and has no authority_hints", "superior", sup)
-			continue
-		}
-		// Descend through this superior. Mark it visited in a COPY scoped to this
-		// branch so a failed branch does not poison a sibling hint (correct cycle
-		// detection across alternatives). remainingDepth-1 consumes this hop.
-		childVisited := cloneVisited(visited)
-		childVisited[sup] = struct{}{}
-		upper, ok := r.climbToAnchor(ctx, state, supConfig, supHints, childVisited, remainingDepth-1)
-		if !ok {
-			if state.remainingFetches <= 0 {
-				return climbResult{}, false
-			}
-			continue
-		}
-		// Prepend ONLY this hop's Subordinate Statement below the upper links.
-		// The intermediate's own config (supConfig) is NOT a validated link — its
-		// keys enter trust solely via the upper SS that vouches for them.
-		combined := make([]chainLink, 0, 1+len(upper.links))
-		combined = append(combined, subStmt)
-		combined = append(combined, upper.links...)
-		return climbResult{links: combined, anchor: upper.anchor}, true
 	}
 	return climbResult{}, false
+}
+
+// climbViaHint attempts to reach a configured anchor via ONE authority hint
+// `sup` (a superior of currentID). It returns:
+//
+//   - (res, true, false) when this hint reaches a configured anchor (directly
+//     or via recursion) — res holds the discovered upward links;
+//   - ({}, false, true) when the fetch budget is exhausted — a TERMINAL
+//     condition the caller must propagate (no more fan-out anywhere);
+//   - ({}, false, false) when this hint is a dead end (cycle, bad URL,
+//     unreachable, no fetch endpoint, no anchor) — the caller tries the next.
+func (r *TrustChainResolver) climbViaHint(ctx context.Context, state *walkState, sup, currentID string, visited map[string]struct{}, remainingDepth int) (climbResult, bool, bool) {
+	if _, seen := visited[sup]; seen {
+		// Cycle in authority_hints (A hints B hints A, or a self-hint).
+		r.logError("federation: authority_hints cycle detected", "superior", sup, "from", currentID)
+		return climbResult{}, false, false
+	}
+	if err := validateFederationURL(sup); err != nil {
+		r.logError("federation: authority hint rejected", "superior", sup, "error", err)
+		return climbResult{}, false, false
+	}
+	supConfig, err := r.fetchEntityConfig(ctx, state, sup)
+	if err != nil {
+		r.logError("federation: fetch superior entity configuration", "superior", sup, "error", err)
+		return climbResult{}, false, state.remainingFetches <= 0
+	}
+	fetchEndpoint := superiorFetchEndpoint(supConfig.claims)
+	if fetchEndpoint == "" {
+		r.logError("federation: superior has no federation_fetch_endpoint", "superior", sup)
+		return climbResult{}, false, false
+	}
+	subStmt, err := r.fetchSubordinate(ctx, state, fetchEndpoint, sup, currentID)
+	if err != nil {
+		r.logError("federation: fetch subordinate statement", "superior", sup, "subject", currentID, "error", err)
+		return climbResult{}, false, state.remainingFetches <= 0
+	}
+	if anchor, ok := r.matchConfiguredAnchor(sup); ok {
+		// Reached a configured anchor: the upward links are the Subordinate
+		// Statement (anchor about current) + the anchor's own Entity Configuration
+		// (the terminal, verified against the CONFIGURED keys).
+		return climbResult{links: []chainLink{subStmt, supConfig}, anchor: anchor}, true, false
+	}
+	return r.descendThroughSuperior(ctx, state, sup, supConfig, subStmt, visited, remainingDepth)
+}
+
+// descendThroughSuperior continues the climb through a non-anchor superior:
+// it recurses from supConfig over the superior's own authority_hints (visited
+// COPIED + extended so a failed branch can't poison a sibling, remainingDepth-1
+// consuming this hop) and, on success, prepends ONLY this hop's Subordinate
+// Statement below the upper links. The intermediate's own config is NOT a
+// validated link — its keys enter trust solely via the upper SS that vouches for
+// them. Returns the same (result, found, fatal) triple as climbViaHint.
+func (r *TrustChainResolver) descendThroughSuperior(ctx context.Context, state *walkState, sup string, supConfig, subStmt chainLink, visited map[string]struct{}, remainingDepth int) (climbResult, bool, bool) {
+	supHints := supConfig.claims.AuthorityHints
+	if len(supHints) == 0 {
+		r.logError("federation: superior is not a configured anchor and has no authority_hints", "superior", sup)
+		return climbResult{}, false, false
+	}
+	childVisited := cloneVisited(visited)
+	childVisited[sup] = struct{}{}
+	upper, ok := r.climbToAnchor(ctx, state, supConfig, supHints, childVisited, remainingDepth-1)
+	if !ok {
+		return climbResult{}, false, state.remainingFetches <= 0
+	}
+	combined := make([]chainLink, 0, 1+len(upper.links))
+	combined = append(combined, subStmt)
+	combined = append(combined, upper.links...)
+	return climbResult{links: combined, anchor: upper.anchor}, true, false
 }
 
 // validate is the TRUST decision: it re-verifies every signature in the
@@ -590,17 +607,8 @@ func (r *TrustChainResolver) validate(links []chainLink, anchor TrustAnchor) err
 
 	// 1) Anchor Entity Configuration (last link) verified against the CONFIGURED
 	//    anchor keys — the root of trust. Self-signed: iss==sub==anchor id.
-	if len(anchor.Keys) == 0 {
-		return fmt.Errorf("configured anchor %q has no keys", anchor.EntityID)
-	}
-	if err := r.verifyStatement(last.compact, anchor.Keys); err != nil {
-		return fmt.Errorf("anchor entity configuration signature: %w", err)
-	}
-	if err := checkSelfSigned(last.claims, anchor.EntityID); err != nil {
-		return fmt.Errorf("anchor entity configuration: %w", err)
-	}
-	if err := checkFresh(last.claims, now, skew); err != nil {
-		return fmt.Errorf("anchor entity configuration: %w", err)
+	if err := r.verifyAnchorConfig(last, anchor, now, skew); err != nil {
+		return err
 	}
 
 	// Degenerate single-link chain: leaf IS the configured anchor. Done.
@@ -608,52 +616,11 @@ func (r *TrustChainResolver) validate(links []chainLink, anchor TrustAnchor) err
 		return nil
 	}
 
-	// 2) Walk DOWN. issuerKeys/issuerID are the keys + identity the link just
-	//    verified vouches for the NEXT link down. Seed with the (now-trusted)
-	//    anchor config's own keys.
-	issuerKeys := last.claims.JWKS.Keys
-	issuerID := last.claims.Sub
-
-	// 2a) The Subordinate Statements SS_n .. SS_1 (indices len-2 down to 1). Each
-	//     is verified against the keys vouched for its issuer by the link above.
-	for i := len(links) - 2; i >= 1; i-- {
-		ss := links[i]
-		if err := r.verifyStatement(ss.compact, issuerKeys); err != nil {
-			return fmt.Errorf("subordinate statement at %d signature: %w", i, err)
-		}
-		if err := checkFresh(ss.claims, now, skew); err != nil {
-			return fmt.Errorf("subordinate statement at %d: %w", i, err)
-		}
-		// iss MUST be the entity the link above vouched for (issuerID); sub is the
-		// entity below; iss != sub (a real subordinate relationship).
-		if ss.claims.Iss != issuerID {
-			return fmt.Errorf("subordinate statement at %d: iss %q != expected issuer %q", i, ss.claims.Iss, issuerID)
-		}
-		if ss.claims.Sub == "" || ss.claims.Sub == ss.claims.Iss {
-			return fmt.Errorf("subordinate statement at %d: bad sub %q (empty or == iss)", i, ss.claims.Sub)
-		}
-		if len(ss.claims.JWKS.Keys) == 0 {
-			return fmt.Errorf("subordinate statement at %d: empty subject jwks", i)
-		}
-		// The keys this SS vouches for its SUBJECT become the issuer keys for the
-		// next link down (the next SS, or the leaf config at index 0).
-		issuerKeys = ss.claims.JWKS.Keys
-		issuerID = ss.claims.Sub
-	}
-
-	// 2b) The leaf Entity Configuration (index 0): verified against the keys
-	//     SS_1 vouched for the leaf (issuerKeys), NOT its self-asserted keys.
-	//     Self-signed: iss==sub==leaf, and that identity MUST equal the subject
-	//     SS_1 vouched for (issuerID).
-	leaf := links[0]
-	if err := r.verifyStatement(leaf.compact, issuerKeys); err != nil {
-		return fmt.Errorf("leaf entity configuration signature: %w", err)
-	}
-	if err := checkFresh(leaf.claims, now, skew); err != nil {
-		return fmt.Errorf("leaf entity configuration: %w", err)
-	}
-	if err := checkSelfSigned(leaf.claims, issuerID); err != nil {
-		return fmt.Errorf("leaf entity configuration: %w", err)
+	// 2) Walk DOWN, establishing each link's verification keys from the link
+	//    above (seeded with the now-trusted anchor config's own keys), then verify
+	//    the leaf against the keys SS_1 vouched for it.
+	if err := r.verifyChainLinks(links, last, now, skew); err != nil {
+		return err
 	}
 
 	// 3) §6.2 trust-chain CONSTRAINTS. Enforced HERE — at the tail of validate,

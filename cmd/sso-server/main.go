@@ -301,17 +301,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if err != nil {
 		return err
 	}
-	defer func() { _ = a.registry.Close() }()
-	if a.netStore != nil {
-		defer func() { _ = a.netStore.Close() }()
-	}
-	if a.tenantStore != nil {
-		defer func() { _ = a.tenantStore.Close() }()
-	}
-	// connections.Store has no Close on the interface; the sqlite backend does.
-	if c, ok := a.connectionStore.(io.Closer); ok {
-		defer func() { _ = c.Close() }()
-	}
+	defer closeAppStores(a)
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
 	// role, admin user, default netpolicy, admin client). Must complete
@@ -322,79 +312,18 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 		}
 	}
 
-	httpHandler, err := buildHTTPHandler(cfg, a, logger)
+	httpSrv, err := buildHTTPServer(cfg, a, logger)
 	if err != nil {
-		return fmt.Errorf("http handler: %w", err)
-	}
-
-	httpSrv := &http.Server{
-		Addr:              cfg.Server.Listen,
-		Handler:           httpHandler,
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
+		return err
 	}
 
 	errCh := make(chan error, 2)
-	go func() {
-		var serveErr error
-		if tlsCert != "" && tlsKey != "" {
-			logger.Info("http listening (TLS)", "addr", cfg.Server.Listen)
-			serveErr = httpSrv.ListenAndServeTLS(tlsCert, tlsKey)
-		} else {
-			logger.Info("http listening", "addr", cfg.Server.Listen)
-			serveErr = httpSrv.ListenAndServe()
-		}
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("http: %w", serveErr)
-			return
-		}
-		errCh <- nil
-	}()
+	startHTTPServer(httpSrv, cfg, logger, tlsCert, tlsKey, errCh)
+	pprofSrv := startPprofServer(cfg, logger)
 
-	// Optional pprof on a SEPARATE listener bound to a trusted interface
-	// (default 127.0.0.1:6060). Never mounted on the public router — pprof
-	// leaks memory contents and the CPU profile is a DoS vector. Failure is
-	// non-fatal (log-only): profiling is observability, not a serving path.
-	// An explicit mux (not DefaultServeMux) keeps the handlers off any other
-	// server the process might run.
-	var pprofSrv *http.Server
-	if cfg.Server.Pprof.Enabled {
-		pprofAddr := cfg.Server.Pprof.Listen
-		if pprofAddr == "" {
-			pprofAddr = "127.0.0.1:6060"
-		}
-		pmux := http.NewServeMux()
-		pmux.HandleFunc("/debug/pprof/", pprof.Index)
-		pmux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		pmux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		pmux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		pmux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		pprofSrv = &http.Server{Addr: pprofAddr, Handler: pmux, ReadHeaderTimeout: readHeaderTimeout}
-		go func() {
-			logger.Info("pprof listening", "addr", pprofAddr)
-			if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logger.Error("pprof server failed", "error", err)
-			}
-		}()
-	}
-
-	var grpcSrv *grpc.Server
-	if grpcListen != "" {
-		grpcSrv = newGRPCServer(a)
-		ln, err := net.Listen("tcp", grpcListen)
-		if err != nil {
-			return fmt.Errorf("grpc listen: %w", err)
-		}
-		go func() {
-			logger.Info("grpc listening", "addr", grpcListen)
-			if err := grpcSrv.Serve(ln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-				errCh <- fmt.Errorf("grpc: %w", err)
-				return
-			}
-			errCh <- nil
-		}()
+	grpcSrv, err := startGRPCServer(a, grpcListen, logger, errCh)
+	if err != nil {
+		return err
 	}
 
 	logEndpoints(cfg, grpcListen)
@@ -410,6 +339,125 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	shutdownServers(ctx, logger, httpSrv, pprofSrv, grpcSrv)
+	shutdownSubsystems(ctx, a, logger)
+	logger.Info("server stopped cleanly")
+	return nil
+}
+
+// closeAppStores releases the long-lived backing stores at process exit. Order
+// mirrors the original LIFO defer chain (connections → tenant → netpolicy →
+// registry): connections + tenant + netpolicy stores depend on nothing the
+// registry close needs, and closing innermost-first matches the prior behavior.
+func closeAppStores(a *app) {
+	// connections.Store has no Close on the interface; the sqlite backend does.
+	if c, ok := a.connectionStore.(io.Closer); ok {
+		_ = c.Close()
+	}
+	if a.tenantStore != nil {
+		_ = a.tenantStore.Close()
+	}
+	if a.netStore != nil {
+		_ = a.netStore.Close()
+	}
+	_ = a.registry.Close()
+}
+
+// buildHTTPServer wires the runtime handler and wraps it in an *http.Server with
+// the shared timeouts. Split out so run stays a thin lifecycle sequence.
+func buildHTTPServer(cfg *config.Config, a *app, logger spi.Logger) (*http.Server, error) {
+	httpHandler, err := buildHTTPHandler(cfg, a, logger)
+	if err != nil {
+		return nil, fmt.Errorf("http handler: %w", err)
+	}
+	return &http.Server{
+		Addr:              cfg.Server.Listen,
+		Handler:           httpHandler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}, nil
+}
+
+// startHTTPServer launches the main HTTP listener in a goroutine, choosing TLS
+// when both cert + key are supplied. A clean close (http.ErrServerClosed) sends
+// nil; any other error is forwarded on errCh.
+func startHTTPServer(httpSrv *http.Server, cfg *config.Config, logger spi.Logger, tlsCert, tlsKey string, errCh chan<- error) {
+	go func() {
+		var serveErr error
+		if tlsCert != "" && tlsKey != "" {
+			logger.Info("http listening (TLS)", "addr", cfg.Server.Listen)
+			serveErr = httpSrv.ListenAndServeTLS(tlsCert, tlsKey)
+		} else {
+			logger.Info("http listening", "addr", cfg.Server.Listen)
+			serveErr = httpSrv.ListenAndServe()
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("http: %w", serveErr)
+			return
+		}
+		errCh <- nil
+	}()
+}
+
+// startPprofServer launches the optional pprof listener on a SEPARATE listener
+// bound to a trusted interface (default 127.0.0.1:6060). Never mounted on the
+// public router — pprof leaks memory contents and the CPU profile is a DoS
+// vector. Failure is non-fatal (log-only): profiling is observability, not a
+// serving path. An explicit mux (not DefaultServeMux) keeps the handlers off
+// any other server the process might run. Returns nil when pprof is disabled.
+func startPprofServer(cfg *config.Config, logger spi.Logger) *http.Server {
+	if !cfg.Server.Pprof.Enabled {
+		return nil
+	}
+	pprofAddr := cfg.Server.Pprof.Listen
+	if pprofAddr == "" {
+		pprofAddr = "127.0.0.1:6060"
+	}
+	pmux := http.NewServeMux()
+	pmux.HandleFunc("/debug/pprof/", pprof.Index)
+	pmux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	pmux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	pmux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	pmux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	pprofSrv := &http.Server{Addr: pprofAddr, Handler: pmux, ReadHeaderTimeout: readHeaderTimeout}
+	go func() {
+		logger.Info("pprof listening", "addr", pprofAddr)
+		if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprof server failed", "error", err)
+		}
+	}()
+	return pprofSrv
+}
+
+// startGRPCServer registers + serves the gRPC services on grpcListen in a
+// goroutine. Returns (nil, nil) when grpcListen is empty (disabled). A bind
+// failure is fatal (returned); a clean stop sends nil on errCh.
+func startGRPCServer(a *app, grpcListen string, logger spi.Logger, errCh chan<- error) (*grpc.Server, error) {
+	if grpcListen == "" {
+		return nil, nil
+	}
+	grpcSrv := newGRPCServer(a)
+	ln, err := net.Listen("tcp", grpcListen)
+	if err != nil {
+		return nil, fmt.Errorf("grpc listen: %w", err)
+	}
+	go func() {
+		logger.Info("grpc listening", "addr", grpcListen)
+		if err := grpcSrv.Serve(ln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			errCh <- fmt.Errorf("grpc: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+	return grpcSrv, nil
+}
+
+// shutdownServers gracefully stops the HTTP, pprof, and gRPC listeners under the
+// shared shutdown deadline. HTTP falls back to a hard Close on graceful-shutdown
+// error; gRPC falls back to Stop when GracefulStop outlives ctx.
+func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *http.Server, grpcSrv *grpc.Server) {
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		logger.Error("http graceful shutdown failed", "error", err)
 		_ = httpSrv.Close()
@@ -417,110 +465,27 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if pprofSrv != nil {
 		_ = pprofSrv.Shutdown(ctx)
 	}
-	if grpcSrv != nil {
-		stopped := make(chan struct{})
-		go func() { grpcSrv.GracefulStop(); close(stopped) }()
-		select {
-		case <-stopped:
-		case <-ctx.Done():
-			logger.Error("grpc graceful shutdown timed out — forcing stop")
-			grpcSrv.Stop()
-		}
+	if grpcSrv == nil {
+		return
 	}
-	// Cancel the Classifier's watch loop so it exits cleanly (no spurious
-	// degraded flip), then wait briefly for it to drain any in-flight Apply
-	// events before we drop the store reference.
-	if a.netCancel != nil {
-		a.netCancel()
+	stopped := make(chan struct{})
+	go func() { grpcSrv.GracefulStop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		logger.Error("grpc graceful shutdown timed out — forcing stop")
+		grpcSrv.Stop()
 	}
-	if a.netStop != nil {
-		select {
-		case <-a.netStop:
-		case <-ctx.Done():
-		}
-	}
-	// Close the invalidation bus so its subscriber Watch loop exits, then
-	// wait briefly for that goroutine to drain — same shape as netStop.
-	if a.invalidationBus != nil {
-		_ = a.invalidationBus.Close()
-	}
-	if a.busStop != nil {
-		select {
-		case <-a.busStop:
-		case <-ctx.Done():
-		}
-	}
-	// Close the signing-key registry so its subscriber stream exits, then
-	// wait briefly for that goroutine to drain — same shape as busStop.
-	if a.signingKeyRegistry != nil {
-		_ = a.signingKeyRegistry.Close()
-	}
-	if a.signingKeyStop != nil {
-		select {
-		case <-a.signingKeyStop:
-		case <-ctx.Done():
-		}
-	}
-	// Stop the signing-key rotation loop and wait for it to exit.
-	if a.keyRotationCancel != nil {
-		a.keyRotationCancel()
-	}
-	if a.keyRotationStop != nil {
-		select {
-		case <-a.keyRotationStop:
-		case <-ctx.Done():
-		}
-	}
-	// Stop the audit retention scheduler BEFORE draining the
-	// AsyncSink so an in-flight Prune doesn't race the close. The
-	// scheduler exits within the bounded shutdown ctx; if it's
-	// mid-Prune we wait for it (Prune is bounded by SQLite's
-	// transaction time which is typically <1s on retention runs).
-	if a.auditRetentionCancel != nil {
-		a.auditRetentionCancel()
-		if a.auditRetentionDone != nil {
-			select {
-			case <-a.auditRetentionDone:
-			case <-ctx.Done():
-				logger.Error("audit retention scheduler did not exit cleanly")
-			}
-		}
-	}
-	// Snapshot retention scheduler: same pattern. Cancel + bounded
-	// wait. Loop body is List + (k-N)*Delete; bounded by storage
-	// backend Delete latency.
-	if a.snapshotRetentionCancel != nil {
-		a.snapshotRetentionCancel()
-		if a.snapshotRetentionDone != nil {
-			select {
-			case <-a.snapshotRetentionDone:
-			case <-ctx.Done():
-				logger.Error("snapshot retention scheduler did not exit cleanly")
-			}
-		}
-	}
-	// Push approval pruner: same pattern.
-	if a.pushPruneCancel != nil {
-		a.pushPruneCancel()
-		if a.pushPruneDone != nil {
-			select {
-			case <-a.pushPruneDone:
-			case <-ctx.Done():
-				logger.Error("push approval pruner did not exit cleanly")
-			}
-		}
-	}
-	// CIBA request pruner: same pattern.
-	if a.cibaPruneCancel != nil {
-		a.cibaPruneCancel()
-		if a.cibaPruneDone != nil {
-			select {
-			case <-a.cibaPruneDone:
-			case <-ctx.Done():
-				logger.Error("ciba request pruner did not exit cleanly")
-			}
-		}
-	}
+}
+
+// shutdownApp tears down the wired subsystems in dependency order under the
+// shared shutdown deadline. Ordering matters: watch/subscriber loops are
+// cancelled + drained before their stores close, and the audit retention
+// scheduler stops BEFORE the AsyncSink drains so an in-flight Prune can't race
+// the close.
+func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
+	shutdownWatchLoops(ctx, a)
+	shutdownSchedulers(ctx, a, logger)
 	// Anomaly detection: drain queue + close SQLite stores. Bounded
 	// by the same shutdown ctx so a hung detector backend can't
 	// stall the whole process.
@@ -547,8 +512,81 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 			}
 		}
 	}
-	logger.Info("server stopped cleanly")
-	return nil
+}
+
+// shutdownWatchLoops cancels + drains the cross-replica watch/subscriber loops
+// (netpolicy classifier, invalidation bus, signing-key registry + rotation)
+// before their backing stores are dropped, so each loop exits cleanly instead of
+// treating the store close as a watch failure.
+func shutdownWatchLoops(ctx context.Context, a *app) {
+	// Cancel the Classifier's watch loop so it exits cleanly (no spurious
+	// degraded flip), then wait briefly for it to drain any in-flight Apply
+	// events before we drop the store reference.
+	if a.netCancel != nil {
+		a.netCancel()
+	}
+	waitForStop(ctx, a.netStop)
+	// Close the invalidation bus so its subscriber Watch loop exits, then
+	// wait briefly for that goroutine to drain — same shape as netStop.
+	if a.invalidationBus != nil {
+		_ = a.invalidationBus.Close()
+	}
+	waitForStop(ctx, a.busStop)
+	// Close the signing-key registry so its subscriber stream exits, then
+	// wait briefly for that goroutine to drain — same shape as busStop.
+	if a.signingKeyRegistry != nil {
+		_ = a.signingKeyRegistry.Close()
+	}
+	waitForStop(ctx, a.signingKeyStop)
+	// Stop the signing-key rotation loop and wait for it to exit.
+	if a.keyRotationCancel != nil {
+		a.keyRotationCancel()
+	}
+	waitForStop(ctx, a.keyRotationStop)
+}
+
+// shutdownSchedulers stops the background retention/prune schedulers (audit +
+// snapshot retention, push + CIBA pruners). Each is cancelled then waited on
+// under the shared deadline; a missed deadline is logged but not fatal.
+func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
+	// Stop the audit retention scheduler BEFORE draining the AsyncSink so an
+	// in-flight Prune doesn't race the close (handled by the caller's ordering).
+	stopScheduler(ctx, logger, a.auditRetentionCancel, a.auditRetentionDone,
+		"audit retention scheduler did not exit cleanly")
+	stopScheduler(ctx, logger, a.snapshotRetentionCancel, a.snapshotRetentionDone,
+		"snapshot retention scheduler did not exit cleanly")
+	stopScheduler(ctx, logger, a.pushPruneCancel, a.pushPruneDone,
+		"push approval pruner did not exit cleanly")
+	stopScheduler(ctx, logger, a.cibaPruneCancel, a.cibaPruneDone,
+		"ciba request pruner did not exit cleanly")
+}
+
+// stopScheduler cancels a background scheduler and waits for its done channel
+// under ctx, logging msg if the deadline fires first. No-op when cancel is nil.
+func stopScheduler(ctx context.Context, logger spi.Logger, cancel context.CancelFunc, done <-chan struct{}, msg string) {
+	if cancel == nil {
+		return
+	}
+	cancel()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.Error(msg)
+	}
+}
+
+// waitForStop blocks until stop closes or ctx expires. No-op when stop is nil.
+func waitForStop(ctx context.Context, stop <-chan struct{}) {
+	if stop == nil {
+		return
+	}
+	select {
+	case <-stop:
+	case <-ctx.Done():
+	}
 }
 
 // newGRPCServer registers every available service on a fresh grpc.Server.

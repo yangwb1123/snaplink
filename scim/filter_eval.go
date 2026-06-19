@@ -48,37 +48,64 @@ func userAttrs(res Resource) attrLookup {
 			return emailTypes(res.Emails), len(res.Emails) > 0
 		case "emails.primary":
 			return emailPrimaries(res.Emails), len(res.Emails) > 0
-		case "name.formatted":
-			return nameSub(res.Name, func(n *Name) string { return n.Formatted })
-		case "name.familyname":
-			return nameSub(res.Name, func(n *Name) string { return n.FamilyName })
-		case "name.givenname":
-			return nameSub(res.Name, func(n *Name) string { return n.GivenName })
-		case "name.middlename":
-			return nameSub(res.Name, func(n *Name) string { return n.MiddleName })
-		case "name.honorificprefix":
-			return nameSub(res.Name, func(n *Name) string { return n.HonorificPrefix })
-		case "name.honorificsuffix":
-			return nameSub(res.Name, func(n *Name) string { return n.HonorificSuffix })
-		case "name":
-			// The whole "name" complex attribute is "present" when any
-			// sub-attribute is set; comparison against it is undefined in
-			// SCIM, so it only meaningfully supports "pr".
-			if res.Name.empty() {
-				return nil, false
-			}
-			return []string{res.Name.Formatted}, true
-		case "meta.resourcetype":
-			return metaField(res.Meta, func(m *Meta) string { return m.ResourceType })
-		case "meta.created":
-			return metaField(res.Meta, func(m *Meta) string { return m.Created })
-		case "meta.lastmodified":
-			return metaField(res.Meta, func(m *Meta) string { return m.LastModified })
-		case "meta.location":
-			return metaField(res.Meta, func(m *Meta) string { return m.Location })
+		}
+		if vals, present, handled := userNameAttrs(res, path); handled {
+			return vals, present
+		}
+		if vals, present, handled := userMetaAttrs(res, path); handled {
+			return vals, present
 		}
 		return nil, false
 	}
+}
+
+// userNameAttrs resolves the "name" complex attribute and its "name.<sub>"
+// sub-attribute forms. handled is false when path names no name attribute, so
+// the caller continues resolution.
+func userNameAttrs(res Resource, path string) (vals []string, present, handled bool) {
+	switch path {
+	case "name.formatted":
+		vals, present = nameSub(res.Name, func(n *Name) string { return n.Formatted })
+	case "name.familyname":
+		vals, present = nameSub(res.Name, func(n *Name) string { return n.FamilyName })
+	case "name.givenname":
+		vals, present = nameSub(res.Name, func(n *Name) string { return n.GivenName })
+	case "name.middlename":
+		vals, present = nameSub(res.Name, func(n *Name) string { return n.MiddleName })
+	case "name.honorificprefix":
+		vals, present = nameSub(res.Name, func(n *Name) string { return n.HonorificPrefix })
+	case "name.honorificsuffix":
+		vals, present = nameSub(res.Name, func(n *Name) string { return n.HonorificSuffix })
+	case "name":
+		// The whole "name" complex attribute is "present" when any
+		// sub-attribute is set; comparison against it is undefined in SCIM,
+		// so it only meaningfully supports "pr".
+		if res.Name.empty() {
+			return nil, false, true
+		}
+		return []string{res.Name.Formatted}, true, true
+	default:
+		return nil, false, false
+	}
+	return vals, present, true
+}
+
+// userMetaAttrs resolves the "meta.<sub>" sub-attributes. handled is false
+// when path names no meta attribute.
+func userMetaAttrs(res Resource, path string) (vals []string, present, handled bool) {
+	switch path {
+	case "meta.resourcetype":
+		vals, present = metaField(res.Meta, func(m *Meta) string { return m.ResourceType })
+	case "meta.created":
+		vals, present = metaField(res.Meta, func(m *Meta) string { return m.Created })
+	case "meta.lastmodified":
+		vals, present = metaField(res.Meta, func(m *Meta) string { return m.LastModified })
+	case "meta.location":
+		vals, present = metaField(res.Meta, func(m *Meta) string { return m.Location })
+	default:
+		return nil, false, false
+	}
+	return vals, present, true
 }
 
 // groupAttrs returns the attribute resolver for a Group Resource. members

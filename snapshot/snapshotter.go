@@ -79,92 +79,27 @@ func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot
 		SourceNodeID:    opts.SourceNodeID,
 	}
 
-	// Bootstrap state — only meaningful if a Tracker was wired.
-	if s.Tracker != nil {
-		v, err := s.Tracker.AppliedVersion(ctx, ns)
-		if err != nil {
-			return nil, fmt.Errorf("snapshot: tracker: %w", err)
-		}
-		snap.BootstrapState = BootstrapState{Namespace: ns, AppliedVersion: v}
+	if err := s.exportBootstrapState(ctx, snap, ns); err != nil {
+		return nil, err
 	}
 
 	// Clients first — also gives us the clientID list permissions /
-	// menus / assignments need to enumerate.
-	var clientIDs []string
-	if s.Clients != nil && !excluded(CategoryClients, opts.Exclude) {
-		cs, err := s.Clients.List(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("snapshot: clients.List: %w", err)
-		}
-		snap.Resources.Clients = cs
-		clientIDs = make([]string, 0, len(cs))
-		for _, c := range cs {
-			clientIDs = append(clientIDs, c.ID)
-		}
+	// menus / assignments need to enumerate. When the Clients store is nil
+	// (or excluded), clientIDs stays empty and permissions/menus
+	// enumeration is skipped — operator-acceptable: the destination
+	// presumably already has clients seeded.
+	clientIDs, err := s.exportClients(ctx, snap, opts)
+	if err != nil {
+		return nil, err
 	}
-	// When the Clients store is nil (or excluded), clientIDs stays empty and
-	// permissions/menus enumeration below is skipped — operator-acceptable:
-	// the destination presumably already has clients seeded.
-
-	if s.Users != nil && !excluded(CategoryUsers, opts.Exclude) {
-		us, err := s.Users.List(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("snapshot: users.List: %w", err)
-		}
-		snap.Resources.Users = us
+	if err := s.exportUsers(ctx, snap, opts); err != nil {
+		return nil, err
 	}
-
-	if s.Permissions != nil && len(clientIDs) > 0 {
-		if !excluded(CategoryRoles, opts.Exclude) {
-			for _, cid := range clientIDs {
-				roles, err := s.Permissions.ListAllRoles(ctx, cid)
-				if err != nil {
-					return nil, fmt.Errorf("snapshot: roles[%s]: %w", cid, err)
-				}
-				if len(roles) == 0 {
-					continue
-				}
-				snap.Resources.Roles = append(snap.Resources.Roles, ClientRoles{ClientID: cid, Roles: roles})
-			}
-		}
-		if !excluded(CategoryAssignments, opts.Exclude) {
-			for _, cid := range clientIDs {
-				as, err := s.Permissions.ListAssignments(ctx, cid)
-				if err != nil {
-					return nil, fmt.Errorf("snapshot: assignments[%s]: %w", cid, err)
-				}
-				if len(as) == 0 {
-					continue
-				}
-				snap.Resources.Assignments = append(snap.Resources.Assignments, ClientAssignments{ClientID: cid, Assignments: as})
-			}
-		}
-		if !excluded(CategoryMenus, opts.Exclude) {
-			ml, ok := s.Permissions.(permissions.MenuLister)
-			if ok {
-				for _, cid := range clientIDs {
-					menus, err := ml.GetMenus(ctx, cid)
-					if err != nil {
-						return nil, fmt.Errorf("snapshot: menus[%s]: %w", cid, err)
-					}
-					if len(menus) == 0 {
-						continue
-					}
-					snap.Resources.Menus = append(snap.Resources.Menus, ClientMenus{ClientID: cid, Menus: menus})
-				}
-			}
-			// If the Provider doesn't implement MenuLister we just skip
-			// menus silently — operators can opt-in by upgrading the
-			// backend without breaking the export.
-		}
+	if err := s.exportPermissions(ctx, snap, opts, clientIDs); err != nil {
+		return nil, err
 	}
-
-	if s.NetPolicy != nil && !excluded(CategoryNetPolicy, opts.Exclude) {
-		ps, err := s.NetPolicy.List(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("snapshot: netpolicy.List: %w", err)
-		}
-		snap.Resources.NetPolicy = ps
+	if err := s.exportNetPolicy(ctx, snap, opts); err != nil {
+		return nil, err
 	}
 
 	// Redaction is the LAST export step. The effective redactor is the
@@ -181,6 +116,136 @@ func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot
 	}
 
 	return snap, nil
+}
+
+// exportBootstrapState records the tracker's applied version — only
+// meaningful if a Tracker was wired.
+func (s *Snapshotter) exportBootstrapState(ctx context.Context, snap *Snapshot, ns string) error {
+	if s.Tracker == nil {
+		return nil
+	}
+	v, err := s.Tracker.AppliedVersion(ctx, ns)
+	if err != nil {
+		return fmt.Errorf("snapshot: tracker: %w", err)
+	}
+	snap.BootstrapState = BootstrapState{Namespace: ns, AppliedVersion: v}
+	return nil
+}
+
+// exportClients lists clients into snap and returns the enumerated client
+// IDs that downstream permission/menu enumeration depends on.
+func (s *Snapshotter) exportClients(ctx context.Context, snap *Snapshot, opts ExportOptions) ([]string, error) {
+	if s.Clients == nil || excluded(CategoryClients, opts.Exclude) {
+		return nil, nil
+	}
+	cs, err := s.Clients.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: clients.List: %w", err)
+	}
+	snap.Resources.Clients = cs
+	clientIDs := make([]string, 0, len(cs))
+	for _, c := range cs {
+		clientIDs = append(clientIDs, c.ID)
+	}
+	return clientIDs, nil
+}
+
+// exportUsers lists users into snap.
+func (s *Snapshotter) exportUsers(ctx context.Context, snap *Snapshot, opts ExportOptions) error {
+	if s.Users == nil || excluded(CategoryUsers, opts.Exclude) {
+		return nil
+	}
+	us, err := s.Users.List(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot: users.List: %w", err)
+	}
+	snap.Resources.Users = us
+	return nil
+}
+
+// exportPermissions enumerates roles, assignments and menus per client.
+func (s *Snapshotter) exportPermissions(ctx context.Context, snap *Snapshot, opts ExportOptions, clientIDs []string) error {
+	if s.Permissions == nil || len(clientIDs) == 0 {
+		return nil
+	}
+	if !excluded(CategoryRoles, opts.Exclude) {
+		if err := s.exportRoles(ctx, snap, clientIDs); err != nil {
+			return err
+		}
+	}
+	if !excluded(CategoryAssignments, opts.Exclude) {
+		if err := s.exportAssignments(ctx, snap, clientIDs); err != nil {
+			return err
+		}
+	}
+	if !excluded(CategoryMenus, opts.Exclude) {
+		if err := s.exportMenus(ctx, snap, clientIDs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Snapshotter) exportRoles(ctx context.Context, snap *Snapshot, clientIDs []string) error {
+	for _, cid := range clientIDs {
+		roles, err := s.Permissions.ListAllRoles(ctx, cid)
+		if err != nil {
+			return fmt.Errorf("snapshot: roles[%s]: %w", cid, err)
+		}
+		if len(roles) == 0 {
+			continue
+		}
+		snap.Resources.Roles = append(snap.Resources.Roles, ClientRoles{ClientID: cid, Roles: roles})
+	}
+	return nil
+}
+
+func (s *Snapshotter) exportAssignments(ctx context.Context, snap *Snapshot, clientIDs []string) error {
+	for _, cid := range clientIDs {
+		as, err := s.Permissions.ListAssignments(ctx, cid)
+		if err != nil {
+			return fmt.Errorf("snapshot: assignments[%s]: %w", cid, err)
+		}
+		if len(as) == 0 {
+			continue
+		}
+		snap.Resources.Assignments = append(snap.Resources.Assignments, ClientAssignments{ClientID: cid, Assignments: as})
+	}
+	return nil
+}
+
+// exportMenus enumerates menus per client. If the Provider doesn't
+// implement MenuLister we skip menus silently — operators can opt-in by
+// upgrading the backend without breaking the export.
+func (s *Snapshotter) exportMenus(ctx context.Context, snap *Snapshot, clientIDs []string) error {
+	ml, ok := s.Permissions.(permissions.MenuLister)
+	if !ok {
+		return nil
+	}
+	for _, cid := range clientIDs {
+		menus, err := ml.GetMenus(ctx, cid)
+		if err != nil {
+			return fmt.Errorf("snapshot: menus[%s]: %w", cid, err)
+		}
+		if len(menus) == 0 {
+			continue
+		}
+		snap.Resources.Menus = append(snap.Resources.Menus, ClientMenus{ClientID: cid, Menus: menus})
+	}
+	return nil
+}
+
+// exportNetPolicy lists network policies into snap.
+func (s *Snapshotter) exportNetPolicy(ctx context.Context, snap *Snapshot, opts ExportOptions) error {
+	if s.NetPolicy == nil || excluded(CategoryNetPolicy, opts.Exclude) {
+		return nil
+	}
+	ps, err := s.NetPolicy.List(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot: netpolicy.List: %w", err)
+	}
+	snap.Resources.NetPolicy = ps
+	return nil
 }
 
 // effectiveRedactor resolves the redactor for one Export: the per-call

@@ -30,9 +30,24 @@ type Query struct {
 // reuse this; backends with their own query language should translate Query
 // directly.
 func (q Query) Match(e *Event) bool {
+	return q.matchEnums(e) && q.matchIdentifiers(e) && q.matchTimeRange(e)
+}
+
+// matchEnums checks the typed enum filters (Type and Outcome). Empty fields are
+// wildcards.
+func (q Query) matchEnums(e *Event) bool {
 	if q.Type != "" && e.Type != q.Type {
 		return false
 	}
+	if q.Outcome != "" && e.Outcome != q.Outcome {
+		return false
+	}
+	return true
+}
+
+// matchIdentifiers checks the string identity filters. Empty fields are
+// wildcards.
+func (q Query) matchIdentifiers(e *Event) bool {
 	if q.ActorID != "" && e.ActorID != q.ActorID {
 		return false
 	}
@@ -45,15 +60,18 @@ func (q Query) Match(e *Event) bool {
 	if q.Provider != "" && e.Provider != q.Provider {
 		return false
 	}
-	if q.Outcome != "" && e.Outcome != q.Outcome {
-		return false
-	}
 	if q.RequestID != "" && e.RequestID != q.RequestID {
 		return false
 	}
 	if q.TraceID != "" && e.TraceID != q.TraceID {
 		return false
 	}
+	return true
+}
+
+// matchTimeRange checks the half-open time bounds: Since inclusive, Until
+// exclusive. Zero bounds are wildcards.
+func (q Query) matchTimeRange(e *Event) bool {
 	if !q.Since.IsZero() && e.Timestamp.Before(q.Since) {
 		return false
 	}

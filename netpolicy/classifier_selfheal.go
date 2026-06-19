@@ -68,31 +68,11 @@ func (c *Classifier) run(ctx context.Context, s Store, done chan struct{}, ch <-
 			return // ctx cancelled during backoff — clean exit.
 		}
 
-		next, err := s.Watch(ctx)
-		if err != nil {
-			// Resubscribe failed (backend still down). Stay degraded and retry
-			// after a longer backoff. A permanent-close error at shutdown is
-			// benign — the next ctx check or backoff observes the cancel.
-			if ctx.Err() != nil {
-				return
-			}
-			if c.logger != nil {
-				c.logger.Error("netpolicy classifier rewatch failed, will retry", "attempt", attempt, "error", err)
-			}
-			continue
-		}
-		// Re-List on the fresh subscription BEFORE clearing degraded: Watch is
-		// edge-triggered and the Store contract says slow consumers may miss
-		// events, so a change applied during the gap would otherwise be lost.
-		// A failed re-List leaves the (stale) snapshot in place and keeps the
-		// loop degraded — better a known-stale read than a silently-wrong one.
-		if err := c.Reload(ctx, s); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if c.logger != nil {
-				c.logger.Error("netpolicy classifier reload after rewatch failed, will retry", "attempt", attempt, "error", err)
-			}
+		next, action := c.resubscribe(ctx, s, attempt)
+		switch action {
+		case selfHealExit:
+			return
+		case selfHealRetry:
 			continue
 		}
 		// Recovered: clear degraded (gauge -> 1, flag -> false, reconnected
@@ -101,6 +81,54 @@ func (c *Classifier) run(ctx context.Context, s Store, done chan struct{}, ch <-
 		ch = next
 		attempt = 0
 	}
+}
+
+// selfHealAction is the outcome of a single resubscribe-and-reload attempt,
+// telling the run loop whether to exit cleanly, retry after backoff, or resume
+// on the freshly returned channel.
+type selfHealAction int
+
+const (
+	selfHealRecovered selfHealAction = iota // resubscribed AND re-Listed; resume on the new channel.
+	selfHealExit                            // ctx cancelled mid-attempt; exit cleanly.
+	selfHealRetry                           // attempt failed under a live ctx; stay degraded and retry.
+)
+
+// resubscribe re-establishes the Watch stream and re-Lists so any edit missed
+// during the degraded gap is caught. It returns the fresh channel only on
+// selfHealRecovered; on selfHealExit/selfHealRetry the channel is nil. Extracted
+// verbatim from run's resubscribe block — same ctx checks, logs, and ordering
+// (re-List BEFORE clearing degraded). Called only from the single Watch-consumer
+// goroutine.
+func (c *Classifier) resubscribe(ctx context.Context, s Store, attempt int) (<-chan Event, selfHealAction) {
+	next, err := s.Watch(ctx)
+	if err != nil {
+		// Resubscribe failed (backend still down). Stay degraded and retry
+		// after a longer backoff. A permanent-close error at shutdown is
+		// benign — the next ctx check or backoff observes the cancel.
+		if ctx.Err() != nil {
+			return nil, selfHealExit
+		}
+		if c.logger != nil {
+			c.logger.Error("netpolicy classifier rewatch failed, will retry", "attempt", attempt, "error", err)
+		}
+		return nil, selfHealRetry
+	}
+	// Re-List on the fresh subscription BEFORE clearing degraded: Watch is
+	// edge-triggered and the Store contract says slow consumers may miss
+	// events, so a change applied during the gap would otherwise be lost.
+	// A failed re-List leaves the (stale) snapshot in place and keeps the
+	// loop degraded — better a known-stale read than a silently-wrong one.
+	if err := c.Reload(ctx, s); err != nil {
+		if ctx.Err() != nil {
+			return nil, selfHealExit
+		}
+		if c.logger != nil {
+			c.logger.Error("netpolicy classifier reload after rewatch failed, will retry", "attempt", attempt, "error", err)
+		}
+		return nil, selfHealRetry
+	}
+	return next, selfHealRecovered
 }
 
 // setDegraded flips the Classifier into the degraded state ONCE per transition:

@@ -119,57 +119,26 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		opt(cfg)
 	}
 
-	exporter := cfg.Exporter
-	if exporter == nil {
-		endpoint := cfg.Endpoint
-		if endpoint == "" {
-			endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-		}
-		if endpoint == "" {
-			// No endpoint, no exporter — operate as no-op.
-			return func(context.Context) error { return nil }, nil
-		}
-		// Strip scheme — otlptracegrpc.WithEndpoint expects
-		// host:port, not http://host:port (a common operator mistake).
-		endpoint = strings.TrimPrefix(endpoint, "http://")
-		endpoint = strings.TrimPrefix(endpoint, "https://")
-
-		grpcOpts := []otlptracegrpc.Option{
-			otlptracegrpc.WithEndpoint(endpoint),
-		}
-		if cfg.Insecure || os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true" {
-			grpcOpts = append(grpcOpts, otlptracegrpc.WithInsecure())
-		}
-		client := otlptracegrpc.NewClient(grpcOpts...)
-		exp, err := otlptrace.New(ctx, client)
-		if err != nil {
-			return nil, fmt.Errorf("tracing: otlp exporter: %w", err)
-		}
-		exporter = exp
-	}
-
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(cfg.ServiceName),
-		),
-	)
+	// noop is true when no exporter could be resolved (no endpoint,
+	// no injected exporter) — Init then leaves the global provider as
+	// the no-op default and returns a no-op shutdown.
+	exporter, noop, err := resolveExporter(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("tracing: resource: %w", err)
+		return nil, err
+	}
+	if noop {
+		return func(context.Context) error { return nil }, nil
 	}
 
-	sampler := sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))
-	if cfg.SampleRate >= 1.0 {
-		// Cheap fast-path — AlwaysSample skips the ratio computation
-		// per span.
-		sampler = sdktrace.ParentBased(sdktrace.AlwaysSample())
+	res, err := buildResource(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sampler),
+		sdktrace.WithSampler(buildSampler(cfg)),
 	)
 	otel.SetTracerProvider(tp)
 
@@ -182,6 +151,68 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	))
 
 	return tp.Shutdown, nil
+}
+
+// resolveExporter returns the SpanExporter Init should batch into.
+// When cfg.Exporter is set it wins (test injection). Otherwise an OTLP
+// gRPC exporter is built from cfg.Endpoint / OTEL_EXPORTER_OTLP_ENDPOINT.
+// When no endpoint is resolvable, noop is true and the caller must
+// operate as a no-op (no provider registration).
+func resolveExporter(ctx context.Context, cfg *Config) (exporter sdktrace.SpanExporter, noop bool, err error) {
+	if cfg.Exporter != nil {
+		return cfg.Exporter, false, nil
+	}
+
+	endpoint := cfg.Endpoint
+	if endpoint == "" {
+		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	}
+	if endpoint == "" {
+		// No endpoint, no exporter — operate as no-op.
+		return nil, true, nil
+	}
+	// Strip scheme — otlptracegrpc.WithEndpoint expects
+	// host:port, not http://host:port (a common operator mistake).
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	endpoint = strings.TrimPrefix(endpoint, "https://")
+
+	grpcOpts := []otlptracegrpc.Option{
+		otlptracegrpc.WithEndpoint(endpoint),
+	}
+	if cfg.Insecure || os.Getenv("OTEL_EXPORTER_OTLP_INSECURE") == "true" {
+		grpcOpts = append(grpcOpts, otlptracegrpc.WithInsecure())
+	}
+	exp, err := otlptrace.New(ctx, otlptracegrpc.NewClient(grpcOpts...))
+	if err != nil {
+		return nil, false, fmt.Errorf("tracing: otlp exporter: %w", err)
+	}
+	return exp, false, nil
+}
+
+// buildResource merges the default OTel resource with the configured
+// service.name attribute every span carries.
+func buildResource(cfg *Config) (*resource.Resource, error) {
+	res, err := resource.Merge(
+		resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(cfg.ServiceName),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("tracing: resource: %w", err)
+	}
+	return res, nil
+}
+
+// buildSampler builds the ParentBased head sampler from cfg.SampleRate.
+// At >= 1.0 it uses AlwaysSample to skip the per-span ratio computation;
+// either way ParentBased lets an upstream traceparent's sampled flag win.
+func buildSampler(cfg *Config) sdktrace.Sampler {
+	if cfg.SampleRate >= 1.0 {
+		return sdktrace.ParentBased(sdktrace.AlwaysSample())
+	}
+	return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))
 }
 
 // Middleware wraps an http.Handler so every request creates a span.

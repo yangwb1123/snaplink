@@ -1,7 +1,5 @@
 package main
 
-import "github.com/snaplink/sso/spi"
-
 import (
 	"context"
 	"errors"
@@ -13,6 +11,7 @@ import (
 	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/spi"
 )
 
 // TestBuildMFA_DisabledReturnsZeroes proves cmd skips MFA wiring

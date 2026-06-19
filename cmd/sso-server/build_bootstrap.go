@@ -31,58 +31,14 @@ func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {
 	}
 	defer func() { _ = tracker.Close() }()
 
-	seed := &builtin.AdminSeed{
-		Permissions:    a.provider,
-		Users:          a.userProvider,
-		Clients:        a.clientStore,
-		Netpolicy:      a.netStore,
-		AdminUserID:    cfg.Bootstrap.AdminUserID,
-		AdminClientID:  cfg.Bootstrap.AdminClientID,
-		AdminRoleCode:  cfg.Bootstrap.AdminRoleCode,
-		AdminClientApp: cfg.Bootstrap.AdminClientApp,
-	}
-	if path := cfg.Bootstrap.AdminPasswordFile; path != "" {
-		// Compose stdout printer (banner stays so live operators
-		// still see the value) + file write at 0600. Atomic write
-		// via tmp+rename so a crashed write doesn't leave an empty
-		// file the operator trusts.
-		baseStdout := func(p string) {
-			fmt.Printf("\n=========================================================\n")
-			fmt.Printf(" SSO admin user seeded — capture this password NOW. It is\n")
-			fmt.Printf(" printed once and never again.\n")
-			fmt.Printf("   user_id: %s\n   password: %s\n   file:     %s (mode 0600)\n", cfg.Bootstrap.AdminUserID, p, path)
-			fmt.Printf("=========================================================\n\n")
-		}
-		seed.PasswordPrinter = func(p string) {
-			if err := writeAdminPasswordFile(path, p); err != nil {
-				logger.Error("bootstrap: write admin password file failed", "error", err, "path", path)
-			}
-			baseStdout(p)
-		}
-	}
+	seed := buildAdminSeed(cfg, a, logger)
 
 	// Snapshot restore runs BEFORE the runner so AdvanceBootstrap can
 	// bump the Tracker — that lets seed steps already covered by the
 	// snapshot skip themselves on the same boot. Restorer.Tracker must
 	// be wired here because the tracker isn't constructed until now.
-	if cfg.Snapshot.Enabled && cfg.Snapshot.RestoreFrom != "" && a.snapshotPipeline != nil && a.snapshotRestorer != nil {
-		a.snapshotRestorer.Tracker = tracker
-		plan := &builtin.RestorePlan{
-			URI:      cfg.Snapshot.RestoreFrom,
-			Pipeline: a.snapshotPipeline,
-			Restorer: a.snapshotRestorer,
-		}
-		logger.Info("bootstrap: applying snapshot restore", "uri", cfg.Snapshot.RestoreFrom)
-		rep, err := builtin.ApplyRestore(context.Background(), plan)
-		if err != nil {
-			return fmt.Errorf("snapshot restore: %w", err)
-		}
-		if rep != nil {
-			logger.Info("bootstrap: snapshot restored",
-				"mode", rep.Mode,
-				"bootstrap_advanced_to", rep.Bootstrap.To,
-				"items", len(rep.Items))
-		}
+	if err := applyBootstrapSnapshotRestore(cfg, a, tracker, logger); err != nil {
+		return err
 	}
 
 	bootLock, lockCloser, err := buildBootstrapLock(cfg, logger)
@@ -93,28 +49,100 @@ func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {
 		defer lockCloser()
 	}
 
-	opts := []bootstrap.Option{
-		bootstrap.WithRecorder(a.recorder),
-		bootstrap.WithLogger(bootstrapLogger{logger}),
-	}
-	if bootLock != nil {
-		key := cfg.Bootstrap.Lock.Key
-		if key == "" {
-			key = "/sso/bootstrap/" + bootstrapNamespace
-		}
-		opts = append(opts, bootstrap.WithLock(bootLock, key))
-		if cfg.Bootstrap.Lock.TTL > 0 {
-			opts = append(opts, bootstrap.WithLockTTL(cfg.Bootstrap.Lock.TTL))
-		}
-		if cfg.Bootstrap.Lock.Blocking {
-			opts = append(opts, bootstrap.WithLockBlocking(true, cfg.Bootstrap.Lock.Backoff))
-		}
-	}
-
+	opts := bootstrapRunnerOptions(cfg, a, bootLock, logger)
 	runner := bootstrap.NewRunner(bootstrapNamespace, tracker, opts...)
 	runner.Register(builtin.Steps(seed)...)
 	logger.Info("bootstrap: applying pending steps", "namespace", bootstrapNamespace, "state_file", statePath)
 	return runner.Run(context.Background())
+}
+
+// buildAdminSeed assembles the AdminSeed bundle. When an admin_password_file is
+// configured, the printer additionally writes the one-shot password to disk at
+// 0600 (atomic tmp+rename) alongside the stdout banner.
+func buildAdminSeed(cfg *config.Config, a *app, logger spi.Logger) *builtin.AdminSeed {
+	seed := &builtin.AdminSeed{
+		Permissions:    a.provider,
+		Users:          a.userProvider,
+		Clients:        a.clientStore,
+		Netpolicy:      a.netStore,
+		AdminUserID:    cfg.Bootstrap.AdminUserID,
+		AdminClientID:  cfg.Bootstrap.AdminClientID,
+		AdminRoleCode:  cfg.Bootstrap.AdminRoleCode,
+		AdminClientApp: cfg.Bootstrap.AdminClientApp,
+	}
+	path := cfg.Bootstrap.AdminPasswordFile
+	if path == "" {
+		return seed
+	}
+	// Compose stdout printer (banner stays so live operators
+	// still see the value) + file write at 0600. Atomic write
+	// via tmp+rename so a crashed write doesn't leave an empty
+	// file the operator trusts.
+	baseStdout := func(p string) {
+		fmt.Printf("\n=========================================================\n")
+		fmt.Printf(" SSO admin user seeded — capture this password NOW. It is\n")
+		fmt.Printf(" printed once and never again.\n")
+		fmt.Printf("   user_id: %s\n   password: %s\n   file:     %s (mode 0600)\n", cfg.Bootstrap.AdminUserID, p, path)
+		fmt.Printf("=========================================================\n\n")
+	}
+	seed.PasswordPrinter = func(p string) {
+		if err := writeAdminPasswordFile(path, p); err != nil {
+			logger.Error("bootstrap: write admin password file failed", "error", err, "path", path)
+		}
+		baseStdout(p)
+	}
+	return seed
+}
+
+// applyBootstrapSnapshotRestore runs the configured snapshot restore (if any)
+// and wires the Restorer's Tracker. No-op when snapshot restore is not
+// configured.
+func applyBootstrapSnapshotRestore(cfg *config.Config, a *app, tracker *bootstrapfile.Tracker, logger spi.Logger) error {
+	if !(cfg.Snapshot.Enabled && cfg.Snapshot.RestoreFrom != "" && a.snapshotPipeline != nil && a.snapshotRestorer != nil) {
+		return nil
+	}
+	a.snapshotRestorer.Tracker = tracker
+	plan := &builtin.RestorePlan{
+		URI:      cfg.Snapshot.RestoreFrom,
+		Pipeline: a.snapshotPipeline,
+		Restorer: a.snapshotRestorer,
+	}
+	logger.Info("bootstrap: applying snapshot restore", "uri", cfg.Snapshot.RestoreFrom)
+	rep, err := builtin.ApplyRestore(context.Background(), plan)
+	if err != nil {
+		return fmt.Errorf("snapshot restore: %w", err)
+	}
+	if rep != nil {
+		logger.Info("bootstrap: snapshot restored",
+			"mode", rep.Mode,
+			"bootstrap_advanced_to", rep.Bootstrap.To,
+			"items", len(rep.Items))
+	}
+	return nil
+}
+
+// bootstrapRunnerOptions builds the Runner options, attaching the distributed
+// lock (key/TTL/blocking) when one was configured.
+func bootstrapRunnerOptions(cfg *config.Config, a *app, bootLock lock.Lock, logger spi.Logger) []bootstrap.Option {
+	opts := []bootstrap.Option{
+		bootstrap.WithRecorder(a.recorder),
+		bootstrap.WithLogger(bootstrapLogger{inner: logger}),
+	}
+	if bootLock == nil {
+		return opts
+	}
+	key := cfg.Bootstrap.Lock.Key
+	if key == "" {
+		key = "/sso/bootstrap/" + bootstrapNamespace
+	}
+	opts = append(opts, bootstrap.WithLock(bootLock, key))
+	if cfg.Bootstrap.Lock.TTL > 0 {
+		opts = append(opts, bootstrap.WithLockTTL(cfg.Bootstrap.Lock.TTL))
+	}
+	if cfg.Bootstrap.Lock.Blocking {
+		opts = append(opts, bootstrap.WithLockBlocking(true, cfg.Bootstrap.Lock.Backoff))
+	}
+	return opts
 }
 
 // buildBootstrapLock translates BootstrapLockConfig into a concrete

@@ -13,56 +13,6 @@ import (
 	"github.com/snaplink/sso/migrate"
 )
 
-// refreshTokenSchema mirrors the in-memory contract — same fields,
-// JSON-encoded scope + attribute blobs, single table. Tokens live
-// for days/weeks (30 day default) so the table can grow large for
-// big fleets; the (expires_at) index is there for periodic
-// background GC, not currently invoked by the store itself.
-//
-// refresh_token_families is the OAuth Security BCP §4.13 reuse-
-// detection ledger: every Issue mirrors the (token, family_id) pair
-// here AND keeps it after Consume removed the active row, so a
-// presented-after-rotation token can be recognized as a replay and
-// the entire family killed.
-// refreshTokensTableDDL creates the table with the full current column
-// set. Kept separate from the index DDL so the Func migration can run
-// it BEFORE backfilling columns on a legacy DB — an index that
-// references a not-yet-added column (family_id) can't be created first.
-const refreshTokensTableDDL = `
-CREATE TABLE IF NOT EXISTS refresh_tokens (
-    token                  TEXT    PRIMARY KEY,
-    user_id                TEXT    NOT NULL,
-    client_id              TEXT    NOT NULL,
-    provider               TEXT    NOT NULL DEFAULT '',
-    scopes                 TEXT    NOT NULL DEFAULT '[]',
-    attributes             TEXT    NOT NULL DEFAULT '{}',
-    issued_at              INTEGER NOT NULL,
-    expires_at             INTEGER NOT NULL,
-    family_id              TEXT    NOT NULL DEFAULT '',
-    resources              TEXT    NOT NULL DEFAULT '[]',
-    authorization_details  TEXT    NOT NULL DEFAULT '',
-    sid                    TEXT    NOT NULL DEFAULT ''
-);`
-
-// refreshTokensIndexDDL creates indexes + the family ledger. Runs AFTER
-// the column backfill so idx_refresh_tokens_family(family_id) is valid
-// even on a database upgraded from the pre-family-tracker schema.
-const refreshTokensIndexDDL = `
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_client
-    ON refresh_tokens(client_id);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at
-    ON refresh_tokens(expires_at);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
-    ON refresh_tokens(family_id);
-
-CREATE TABLE IF NOT EXISTS refresh_token_families (
-    token     TEXT PRIMARY KEY,
-    family_id TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_refresh_token_families_family
-    ON refresh_token_families(family_id);
-`
-
 // oauth.RefreshTokenStore is the SQLite-backed implementation. Implements
 // both [oauth.RefreshTokenStore] AND [oauth.RefreshTokenInspector] so
 // introspection / revocation work against this backend out of the
@@ -97,84 +47,6 @@ func NewRefreshTokenStoreWithDB(db *sql.DB) *RefreshTokenStore {
 	// contract — this constructor never returned an error).
 	_ = migrate.Run(context.Background(), db, "refresh_tokens", refreshTokenMigrations)
 	return &RefreshTokenStore{db: db}
-}
-
-// refreshTokenMigrations is the schema history. v1 is a Func migration
-// rather than plain SQL because legacy databases predate the
-// family_id / resources / authorization_details / sid columns and
-// SQLite has no ADD COLUMN IF NOT EXISTS: the func creates the table
-// then adds each column only when it's missing. Fresh databases get the
-// full table from the CREATE and skip every add; pre-family-tracker
-// databases get the missing columns backfilled — the same outcome the
-// old error-tolerant ALTER dance produced, now version-tracked + atomic.
-var refreshTokenMigrations = []migrate.Migration{
-	{Version: 1, Name: "baseline_refresh_tokens", Func: ensureRefreshTokenSchema},
-	{
-		Version: 2,
-		SQL: `CREATE TABLE IF NOT EXISTS refresh_rotation_windows (
-    family_id    TEXT    PRIMARY KEY,
-    count        INTEGER NOT NULL DEFAULT 0,
-    window_start INTEGER NOT NULL DEFAULT 0
-);`,
-	},
-}
-
-func ensureRefreshTokenSchema(ctx context.Context, x migrate.Execer) error {
-	// 1. Table first (fresh DBs get all columns; legacy DBs no-op here).
-	if _, err := x.ExecContext(ctx, refreshTokensTableDDL); err != nil {
-		return err
-	}
-	// 2. Backfill columns a pre-family-tracker DB is missing.
-	addColumns := []struct{ name, ddl string }{
-		{"family_id", `ALTER TABLE refresh_tokens ADD COLUMN family_id TEXT NOT NULL DEFAULT ''`},
-		{"resources", `ALTER TABLE refresh_tokens ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'`},
-		{"authorization_details", `ALTER TABLE refresh_tokens ADD COLUMN authorization_details TEXT NOT NULL DEFAULT ''`},
-		{"sid", `ALTER TABLE refresh_tokens ADD COLUMN sid TEXT NOT NULL DEFAULT ''`},
-	}
-	for _, c := range addColumns {
-		has, err := refreshTokenColumnExists(ctx, x, c.name)
-		if err != nil {
-			return err
-		}
-		if has {
-			continue
-		}
-		if _, err := x.ExecContext(ctx, c.ddl); err != nil {
-			return fmt.Errorf("add column %s: %w", c.name, err)
-		}
-	}
-	// 3. Indexes + family ledger last — idx_refresh_tokens_family needs
-	// family_id to exist, which step 2 guarantees.
-	if _, err := x.ExecContext(ctx, refreshTokensIndexDDL); err != nil {
-		return err
-	}
-	return nil
-}
-
-// refreshTokenColumnExists reports whether refresh_tokens already has the
-// named column, via PRAGMA table_info (the table name is a constant, not
-// user input).
-func refreshTokenColumnExists(ctx context.Context, x migrate.Execer, column string) (bool, error) {
-	rows, err := x.QueryContext(ctx, `PRAGMA table_info(refresh_tokens)`)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var (
-			cid         int
-			name, ctype string
-			notnull, pk int
-			dflt        sql.NullString
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
 }
 
 func (s *RefreshTokenStore) Close() error {
@@ -475,61 +347,6 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		}
 	}
 	return &out, nil
-}
-
-// RecordRotation implements [oauth.RefreshTokenRotationLimiter]: it atomically
-// bumps familyID's fixed-window counter and reports (count, exceeded, err).
-// An empty familyID is a no-op (0, false, nil). The fixed window is rolled over
-// when RotationWindow > 0 and the current wall time is past window_start+RotationWindow.
-// Fail-open: a store error returns (0, false, err) — the caller treats that as
-// non-exceeded per §2.
-func (s *RefreshTokenStore) RecordRotation(ctx context.Context, familyID string) (int, bool, error) {
-	if familyID == "" {
-		return 0, false, nil
-	}
-	// BEGIN IMMEDIATE serializes the RMW against concurrent writers.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		return 0, false, fmt.Errorf("sqlite: rotation begin: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	var count int64
-	var windowStartNs int64
-	err = tx.QueryRowContext(ctx,
-		`SELECT count, window_start FROM refresh_rotation_windows WHERE family_id = ?`, familyID,
-	).Scan(&count, &windowStartNs)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, false, fmt.Errorf("sqlite: rotation query: %w", err)
-	}
-
-	nowNs := time.Now().UnixNano()
-	// Roll over fixed window when configured and elapsed.
-	if s.RotationWindow > 0 && windowStartNs > 0 &&
-		time.Duration(nowNs-windowStartNs) >= s.RotationWindow {
-		count = 0
-		windowStartNs = 0
-	}
-	count++
-	if windowStartNs == 0 {
-		windowStartNs = nowNs
-	}
-
-	_, err = tx.ExecContext(ctx, `
-        INSERT INTO refresh_rotation_windows (family_id, count, window_start)
-        VALUES (?, ?, ?)
-        ON CONFLICT(family_id) DO UPDATE SET count=excluded.count, window_start=excluded.window_start`,
-		familyID, count, windowStartNs)
-	if err != nil {
-		return 0, false, fmt.Errorf("sqlite: rotation upsert: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, false, fmt.Errorf("sqlite: rotation commit: %w", err)
-	}
-
-	exceeded := s.MaxRotationsPerWindow > 0 && s.RotationWindow > 0 &&
-		count > int64(s.MaxRotationsPerWindow)
-	return int(count), exceeded, nil
 }
 
 var (

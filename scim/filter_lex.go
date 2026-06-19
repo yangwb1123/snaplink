@@ -183,46 +183,56 @@ func readString(rs []rune, i int) (string, int, error) {
 		case '"':
 			return b.String(), i + 1, nil
 		case '\\':
-			i++
-			if i >= len(rs) {
-				return "", 0, filterError("unterminated escape in string")
+			next, err := writeStringEscape(&b, rs, i)
+			if err != nil {
+				return "", 0, err
 			}
-			esc := rs[i]
-			switch esc {
-			case '"', '\\', '/':
-				b.WriteRune(esc)
-			case 'b':
-				b.WriteRune('\b')
-			case 'f':
-				b.WriteRune('\f')
-			case 'n':
-				b.WriteRune('\n')
-			case 'r':
-				b.WriteRune('\r')
-			case 't':
-				b.WriteRune('\t')
-			case 'u':
-				// \uXXXX: four hex digits -> rune.
-				if i+4 >= len(rs) {
-					return "", 0, filterError("truncated \\u escape")
-				}
-				hex := string(rs[i+1 : i+5])
-				cp, err := strconv.ParseUint(hex, 16, 32)
-				if err != nil {
-					return "", 0, filterError("invalid \\u escape")
-				}
-				b.WriteRune(rune(cp))
-				i += 4
-			default:
-				return "", 0, filterError("invalid escape in string")
-			}
-			i++
+			i = next
 		default:
 			b.WriteRune(c)
 			i++
 		}
 	}
 	return "", 0, filterError("unterminated string")
+}
+
+// writeStringEscape decodes the backslash escape beginning at the backslash at
+// index i, writes the decoded rune(s) to b, and returns the index just past the
+// escape. Invalid/truncated escapes return errInvalidFilter (RFC 7644 §3.4.2.2
+// strings follow the JSON string production).
+func writeStringEscape(b *strings.Builder, rs []rune, i int) (int, error) {
+	i++ // skip backslash
+	if i >= len(rs) {
+		return 0, filterError("unterminated escape in string")
+	}
+	switch esc := rs[i]; esc {
+	case '"', '\\', '/':
+		b.WriteRune(esc)
+	case 'b':
+		b.WriteRune('\b')
+	case 'f':
+		b.WriteRune('\f')
+	case 'n':
+		b.WriteRune('\n')
+	case 'r':
+		b.WriteRune('\r')
+	case 't':
+		b.WriteRune('\t')
+	case 'u':
+		// \uXXXX: four hex digits -> rune.
+		if i+4 >= len(rs) {
+			return 0, filterError("truncated \\u escape")
+		}
+		cp, err := strconv.ParseUint(string(rs[i+1:i+5]), 16, 32)
+		if err != nil {
+			return 0, filterError("invalid \\u escape")
+		}
+		b.WriteRune(rune(cp))
+		i += 4
+	default:
+		return 0, filterError("invalid escape in string")
+	}
+	return i + 1, nil
 }
 
 // readNumber consumes a JSON-style number starting at i. It accepts an
@@ -235,27 +245,37 @@ func readNumber(rs []rune, i int) (string, int, error) {
 	if i < len(rs) && rs[i] == '-' {
 		i++
 	}
-	for i < len(rs) && (rs[i] >= '0' && rs[i] <= '9') {
-		i++
-	}
+	i = skipDigits(rs, i)
 	if i < len(rs) && rs[i] == '.' {
-		i++
-		for i < len(rs) && (rs[i] >= '0' && rs[i] <= '9') {
-			i++
-		}
+		i = skipDigits(rs, i+1)
 	}
-	if i < len(rs) && (rs[i] == 'e' || rs[i] == 'E') {
-		i++
-		if i < len(rs) && (rs[i] == '+' || rs[i] == '-') {
-			i++
-		}
-		for i < len(rs) && (rs[i] >= '0' && rs[i] <= '9') {
-			i++
-		}
-	}
+	i = skipExponent(rs, i)
 	num := string(rs[start:i])
 	if _, err := strconv.ParseFloat(num, 64); err != nil {
 		return "", 0, filterError("malformed number")
 	}
 	return num, i, nil
+}
+
+// skipDigits advances past a run of ASCII digits starting at i, returning the
+// index of the first non-digit (or len(rs)).
+func skipDigits(rs []rune, i int) int {
+	for i < len(rs) && rs[i] >= '0' && rs[i] <= '9' {
+		i++
+	}
+	return i
+}
+
+// skipExponent advances past an optional JSON number exponent ([eE][+-]?digits)
+// starting at i. With no exponent at i it returns i unchanged; strconv later
+// rejects a degenerate exponent (e.g. "1e") as a malformed number.
+func skipExponent(rs []rune, i int) int {
+	if i >= len(rs) || (rs[i] != 'e' && rs[i] != 'E') {
+		return i
+	}
+	i++
+	if i < len(rs) && (rs[i] == '+' || rs[i] == '-') {
+		i++
+	}
+	return skipDigits(rs, i)
 }

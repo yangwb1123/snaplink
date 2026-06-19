@@ -1,11 +1,8 @@
 package sso
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -139,10 +136,6 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, client)
 }
 
-// consentChallengeTTL is the lifetime of a server-issued consent challenge.
-// The SPA must present the challenge ID within this window.
-const consentChallengeTTL = 5 * time.Minute
-
 // handleConsentGate checks whether the user has consented to the requested
 // scopes for the given client. Returns true when the gate fired (caller
 // MUST return immediately) or false when the request may proceed.
@@ -157,7 +150,7 @@ const consentChallengeTTL = 5 * time.Minute
 // included. The SPA must present this ID back in the next /auth/login call
 // (consent_challenge_id field). The gate validates and atomically consumes the
 // challenge — the challenge is bound to (userID, clientID, exact scopes) and
-// expires after consentChallengeTTL, so a client cannot fabricate an approval
+// expires after consent.ChallengeTTL, so a client cannot fabricate an approval
 // or reuse a challenge for a different scope set.
 func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Client, scopes []string, prompt string, consentChallengeID string) (halted bool) {
 	requestCtx := ctx.Request().Context()
@@ -202,14 +195,14 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 		// Require a server-issued challenge that was previously returned in a
 		// consent_required response. A bare boolean would let any caller bypass
 		// the consent screen by fabricating the approval signal.
-		if consentChallengeID == "" || !s.consumeConsentChallenge(consentChallengeID, userID, clientID, scopes) {
+		if consentChallengeID == "" || !s.consentChallenges.Consume(consentChallengeID, userID, clientID, scopes) {
 			// A presented-but-invalid challenge is a failed approval attempt
 			// (expired / fabricated / replayed / wrong scopes) — record it for
 			// forensics. A first-time prompt (empty challenge) is not a denial.
 			if consentChallengeID != "" {
 				s.recordConsentEvent(ctx, audit.EventConsentDenied, audit.OutcomeFailure, userID, clientID, scopes)
 			}
-			challengeID := s.issueConsentChallenge(userID, clientID, scopes)
+			challengeID := s.consentChallenges.Issue(userID, clientID, scopes)
 			resp := map[string]any{
 				KeyError:              ErrConsentRequired,
 				KeyConsentChallengeID: challengeID,
@@ -330,56 +323,4 @@ func (s *Server) describeScopes(scopes []string) []map[string]string {
 		out = append(out, map[string]string{"scope": sc, "description": s.scopeDescriptions[sc]})
 	}
 	return out
-}
-
-// issueConsentChallenge generates and stores a single-use consent challenge
-// bound to (userID, clientID, scopes). Returns the opaque challenge ID to
-// include in the consent_required response.
-func (s *Server) issueConsentChallenge(userID, clientID string, scopes []string) string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	id := base64.RawURLEncoding.EncodeToString(b)
-
-	s.consentChallengeMu.Lock()
-	defer s.consentChallengeMu.Unlock()
-	if s.consentChallenges == nil {
-		s.consentChallenges = make(map[string]*pendingConsentChallenge)
-	}
-	s.consentChallenges[id] = &pendingConsentChallenge{
-		UserID:    userID,
-		ClientID:  clientID,
-		Scopes:    slices.Clone(scopes),
-		ExpiresAt: time.Now().Add(consentChallengeTTL),
-	}
-	return id
-}
-
-// consumeConsentChallenge validates and atomically removes the challenge with
-// the given ID. Returns true only if the challenge exists, matches
-// (userID, clientID, exact scopes), and has not expired.
-func (s *Server) consumeConsentChallenge(id, userID, clientID string, scopes []string) bool {
-	s.consentChallengeMu.Lock()
-	defer s.consentChallengeMu.Unlock()
-	if s.consentChallenges == nil {
-		return false
-	}
-
-	// Prune expired entries on every lookup to bound memory growth.
-	now := time.Now()
-	for k, v := range s.consentChallenges {
-		if now.After(v.ExpiresAt) {
-			delete(s.consentChallenges, k)
-		}
-	}
-
-	ch, ok := s.consentChallenges[id]
-	if !ok || now.After(ch.ExpiresAt) {
-		return false
-	}
-	if ch.UserID != userID || ch.ClientID != clientID || !consent.ScopesMatch(ch.Scopes, scopes) {
-		return false
-	}
-	// Single-use: consume immediately.
-	delete(s.consentChallenges, id)
-	return true
 }

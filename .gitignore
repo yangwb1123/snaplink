@@ -40,3 +40,10 @@ coverage.out
 /EVALUATION.md
 /TODO.md
 __pycache__/
+
+# Compiled binaries
+sso-audit-verify
+sso-server
+sso-migrate
+sso-snapshotctl
+sso-import

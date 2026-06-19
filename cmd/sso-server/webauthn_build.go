@@ -65,6 +65,14 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn helper: %w", err)
 	}
+	logWebAuthnEnabled(cfg, logger, userDesc, sessionDesc, policy, mds)
+	return h, users, sessions, nil
+}
+
+// logWebAuthnEnabled emits the WebAuthn startup banner, rendering the policy /
+// conveyance / MDS source labels without leaking secret material. Split out so
+// buildWebAuthnHelper stays a thin store-assembly sequence.
+func logWebAuthnEnabled(cfg config.WebAuthnConfig, logger spi.Logger, userDesc, sessionDesc string, policy *webauthn.AttestationPolicy, mds metadata.Provider) {
 	logger.Info("webauthn enabled",
 		"rp_id", cfg.RPID,
 		"origins", cfg.RPOrigins,
@@ -74,7 +82,6 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 		"attestation_policy", attestationPolicyLabel(policy),
 		"attestation_mds", mdsLabel(cfg.Attestation.MDS, mds),
 	)
-	return h, users, sessions, nil
 }
 
 // buildWebAuthnMDSProvider maps the YAML MDS block to a go-webauthn

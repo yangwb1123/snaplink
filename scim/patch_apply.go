@@ -93,17 +93,7 @@ func applyUserPathOp(res *Resource, verb string, pp patchPath, raw json.RawMessa
 		return newError(http.StatusBadRequest, scimTypeMutability, "id is immutable"), false
 
 	case pp.isAttr(pathAttrActive):
-		if verb == patchOpRemove {
-			// Removing the deprovision flag restores the default (active).
-			res.Active = true
-			return ErrorResponse{}, true
-		}
-		var b bool
-		if err := json.Unmarshal(raw, &b); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "active must be a boolean"), false
-		}
-		res.Active = b
-		return ErrorResponse{}, true
+		return applyUserActive(res, verb, raw)
 
 	case pp.isAttr(pathAttrUserName):
 		if verb == patchOpRemove {
@@ -111,36 +101,13 @@ func applyUserPathOp(res *Resource, verb string, pp patchPath, raw json.RawMessa
 			// leave an unidentifiable user.
 			return newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required and cannot be removed"), false
 		}
-		var s string
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "userName must be a string"), false
-		}
-		res.UserName = s
-		return ErrorResponse{}, true
+		return setUserStringAttr(&res.UserName, verb, raw, "userName")
 
 	case pp.isAttr(pathAttrDisplayName):
-		if verb == patchOpRemove {
-			res.DisplayName = ""
-			return ErrorResponse{}, true
-		}
-		var s string
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), false
-		}
-		res.DisplayName = s
-		return ErrorResponse{}, true
+		return setUserStringAttr(&res.DisplayName, verb, raw, "displayName")
 
 	case pp.isAttr(pathAttrExternalID):
-		if verb == patchOpRemove {
-			res.ExternalID = ""
-			return ErrorResponse{}, true
-		}
-		var s string
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return newError(http.StatusBadRequest, scimTypeInvalidValue, "externalId must be a string"), false
-		}
-		res.ExternalID = s
-		return ErrorResponse{}, true
+		return setUserStringAttr(&res.ExternalID, verb, raw, "externalId")
 
 	case pp.isAttr(pathAttrName):
 		return applyUserName(res, verb, pp, raw)
@@ -154,40 +121,42 @@ func applyUserPathOp(res *Resource, verb string, pp patchPath, raw json.RawMessa
 	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path"), false
 }
 
+// applyUserActive sets/clears the "active" deprovision flag. remove restores
+// the default (active=true, RFC 7643 §4.1.1).
+func applyUserActive(res *Resource, verb string, raw json.RawMessage) (ErrorResponse, bool) {
+	if verb == patchOpRemove {
+		res.Active = true
+		return ErrorResponse{}, true
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return newError(http.StatusBadRequest, scimTypeInvalidValue, "active must be a boolean"), false
+	}
+	res.Active = b
+	return ErrorResponse{}, true
+}
+
+// setUserStringAttr sets/clears a singular string attribute of the resource.
+// remove clears it; add/replace assign the JSON string value. label names the
+// attribute in the type-mismatch error.
+func setUserStringAttr(dst *string, verb string, raw json.RawMessage, label string) (ErrorResponse, bool) {
+	if verb == patchOpRemove {
+		*dst = ""
+		return ErrorResponse{}, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return newError(http.StatusBadRequest, scimTypeInvalidValue, label+" must be a string"), false
+	}
+	*dst = s
+	return ErrorResponse{}, true
+}
+
 // applyUserName handles the "name" complex attribute and its "name.<sub>"
 // sub-attribute form.
 func applyUserName(res *Resource, verb string, pp patchPath, raw json.RawMessage) (ErrorResponse, bool) {
 	if pp.sub != "" {
-		// name.<sub>: set one sub-attribute, allocating name if absent.
-		if res.Name == nil {
-			res.Name = &Name{}
-		}
-		var s string
-		if verb != patchOpRemove {
-			if err := json.Unmarshal(raw, &s); err != nil {
-				return newError(http.StatusBadRequest, scimTypeInvalidValue, "name sub-attribute must be a string"), false
-			}
-		}
-		switch pp.sub {
-		case subNameFormatted:
-			res.Name.Formatted = s
-		case subNameFamily:
-			res.Name.FamilyName = s
-		case subNameGiven:
-			res.Name.GivenName = s
-		case subNameMiddle:
-			res.Name.MiddleName = s
-		case subNamePrefix:
-			res.Name.HonorificPrefix = s
-		case subNameSuffix:
-			res.Name.HonorificSuffix = s
-		default:
-			return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported name sub-attribute"), false
-		}
-		if res.Name.empty() {
-			res.Name = nil
-		}
-		return ErrorResponse{}, true
+		return applyUserNameSub(res, verb, pp.sub, raw)
 	}
 	// Whole "name" object.
 	if verb == patchOpRemove {
@@ -204,6 +173,49 @@ func applyUserName(res *Resource, verb string, pp patchPath, raw json.RawMessage
 		res.Name = &n
 	}
 	return ErrorResponse{}, true
+}
+
+// applyUserNameSub sets one "name.<sub>" sub-attribute, allocating name if
+// absent and dropping it back to nil when the op leaves every sub empty.
+func applyUserNameSub(res *Resource, verb, sub string, raw json.RawMessage) (ErrorResponse, bool) {
+	if res.Name == nil {
+		res.Name = &Name{}
+	}
+	var s string
+	if verb != patchOpRemove {
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return newError(http.StatusBadRequest, scimTypeInvalidValue, "name sub-attribute must be a string"), false
+		}
+	}
+	dst := nameSubField(res.Name, sub)
+	if dst == nil {
+		return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported name sub-attribute"), false
+	}
+	*dst = s
+	if res.Name.empty() {
+		res.Name = nil
+	}
+	return ErrorResponse{}, true
+}
+
+// nameSubField returns a pointer to the Name field addressed by sub, or nil
+// for an unknown sub-attribute.
+func nameSubField(n *Name, sub string) *string {
+	switch sub {
+	case subNameFormatted:
+		return &n.Formatted
+	case subNameFamily:
+		return &n.FamilyName
+	case subNameGiven:
+		return &n.GivenName
+	case subNameMiddle:
+		return &n.MiddleName
+	case subNamePrefix:
+		return &n.HonorificPrefix
+	case subNameSuffix:
+		return &n.HonorificSuffix
+	}
+	return nil
 }
 
 // applyUserEmails handles the multi-valued "emails" attribute. add

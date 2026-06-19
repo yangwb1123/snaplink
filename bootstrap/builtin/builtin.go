@@ -106,6 +106,22 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 	if seed == nil {
 		return nil
 	}
+	applySeedDefaults(seed)
+
+	// Versioning convention: 1, 2, 3, ... ordered by dependency. Order and
+	// gating conditions are fixed; existing deployments only run new versions.
+	return []bootstrap.Step{
+		stepSeedAdminRole(seed),
+		stepSeedAdminUser(seed),
+		stepSeedDefaultNetpolicy(seed),
+		stepSeedAdminClient(seed),
+		stepSeedAdminConsoleClient(seed),
+	}
+}
+
+// applySeedDefaults fills the optional AdminSeed tunables with their canonical
+// defaults so the step closures can assume non-empty values.
+func applySeedDefaults(seed *AdminSeed) {
 	if seed.AdminUserID == "" {
 		seed.AdminUserID = "admin"
 	}
@@ -124,137 +140,150 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 			fmt.Printf("=========================================================\n\n")
 		}
 	}
+}
 
-	steps := []bootstrap.Step{
-		bootstrap.StepFunc("seed_admin_role", 1, func(ctx context.Context) error {
-			if seed.Permissions == nil {
-				return fmt.Errorf("seed_admin_role: permissions provider required")
-			}
-			err := seed.Permissions.AddRole(ctx, seed.AdminClientID, permissions.Role{
-				Code:        seed.AdminRoleCode,
-				Name:        "SSO Administrator",
-				Description: "Full admin:* scope across the control plane.",
-				Permissions: []string{sso.AdminScope},
-			})
-			// AddRole returns ErrRoleExists if a previous boot already created
-			// it — treat as success so we still mark applied. (The Runner only
-			// calls Run once per version, but defensive).
-			if errors.Is(err, permissions.ErrRoleExists) {
-				return nil
-			}
-			return err
-		}),
-
-		bootstrap.StepFunc("seed_admin_user", 2, func(ctx context.Context) error {
-			if seed.Users == nil {
-				return fmt.Errorf("seed_admin_user: user provider required")
-			}
-			password, err := generatePassword(24)
-			if err != nil {
-				return fmt.Errorf("seed_admin_user: rand: %w", err)
-			}
-			user := &sso.User{
-				ID:         seed.AdminUserID,
-				ExternalID: seed.AdminUserID,
-				Provider:   "password",
-				Attributes: map[string]string{
-					"seeded_password": password,
-				},
-			}
-			if err := seed.Users.CreateOrUpdate(ctx, user); err != nil {
-				return err
-			}
-			if seed.Permissions != nil {
-				if err := seed.Permissions.AssignRoles(ctx, user.ID, seed.AdminClientID, []string{seed.AdminRoleCode}); err != nil {
-					return fmt.Errorf("seed_admin_user: assign role: %w", err)
-				}
-			}
-			seed.PasswordPrinter(password)
+// stepSeedAdminRole is version 1: create the sso-admin role carrying admin:*.
+func stepSeedAdminRole(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("seed_admin_role", 1, func(ctx context.Context) error {
+		if seed.Permissions == nil {
+			return fmt.Errorf("seed_admin_role: permissions provider required")
+		}
+		err := seed.Permissions.AddRole(ctx, seed.AdminClientID, permissions.Role{
+			Code:        seed.AdminRoleCode,
+			Name:        "SSO Administrator",
+			Description: "Full admin:* scope across the control plane.",
+			Permissions: []string{sso.AdminScope},
+		})
+		// AddRole returns ErrRoleExists if a previous boot already created
+		// it — treat as success so we still mark applied. (The Runner only
+		// calls Run once per version, but defensive).
+		if errors.Is(err, permissions.ErrRoleExists) {
 			return nil
-		}),
+		}
+		return err
+	})
+}
 
-		bootstrap.StepFunc("seed_default_netpolicy", 3, func(ctx context.Context) error {
-			if seed.Netpolicy == nil {
-				return nil // optional dependency; nothing to do
-			}
-			// Only seed when there are no policies yet — operators may have
-			// already populated via YAML or the API.
-			existing, err := seed.Netpolicy.List(ctx)
-			if err != nil {
-				return fmt.Errorf("seed_default_netpolicy: list: %w", err)
-			}
-			if len(existing) > 0 {
-				return nil
-			}
-			_, err = seed.Netpolicy.Apply(ctx, &netpolicy.Policy{
-				Name:     "intranet",
-				CIDRs:    []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"},
-				Priority: 100,
-				Metadata: map[string]string{"seeded_by": "bootstrap"},
-			})
+// stepSeedAdminUser is version 2: create the admin user with a generated
+// password and assign the admin role.
+func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("seed_admin_user", 2, func(ctx context.Context) error {
+		if seed.Users == nil {
+			return fmt.Errorf("seed_admin_user: user provider required")
+		}
+		password, err := generatePassword(24)
+		if err != nil {
+			return fmt.Errorf("seed_admin_user: rand: %w", err)
+		}
+		user := &sso.User{
+			ID:         seed.AdminUserID,
+			ExternalID: seed.AdminUserID,
+			Provider:   "password",
+			Attributes: map[string]string{
+				"seeded_password": password,
+			},
+		}
+		if err := seed.Users.CreateOrUpdate(ctx, user); err != nil {
 			return err
-		}),
+		}
+		if seed.Permissions != nil {
+			if err := seed.Permissions.AssignRoles(ctx, user.ID, seed.AdminClientID, []string{seed.AdminRoleCode}); err != nil {
+				return fmt.Errorf("seed_admin_user: assign role: %w", err)
+			}
+		}
+		seed.PasswordPrinter(password)
+		return nil
+	})
+}
 
-		bootstrap.StepFunc("seed_admin_client", 4, func(ctx context.Context) error {
-			if seed.Clients == nil {
-				return nil
-			}
-			// Skip if the operator already declared a client with this ID
-			// in YAML (typical when migrating an existing deployment).
-			if _, err := seed.Clients.Get(ctx, "sso-admin"); err == nil {
-				return nil
-			}
-			secret, err := generatePassword(32)
-			if err != nil {
-				return fmt.Errorf("seed_admin_client: rand: %w", err)
-			}
-			err = seed.Clients.Add(ctx, &sso.Client{
-				ID:                    "sso-admin",
-				Secret:                secret,
-				Name:                  seed.AdminClientApp,
-				AllowedAuthenticators: []string{"password"},
-				TokenStrategy:         sso.TokenStrategyJWT,
-				AllowedScopes:         []string{sso.AdminScope, sso.AdminScopeRead, sso.AdminScopeWrite},
-				Active:                true,
-			})
-			if errors.Is(err, sso.ErrClientExists) {
-				return nil
-			}
-			return err
-		}),
+// stepSeedDefaultNetpolicy is version 3: seed the default intranet policy when
+// the optional netpolicy store is present and empty.
+func stepSeedDefaultNetpolicy(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("seed_default_netpolicy", 3, func(ctx context.Context) error {
+		if seed.Netpolicy == nil {
+			return nil // optional dependency; nothing to do
+		}
+		// Only seed when there are no policies yet — operators may have
+		// already populated via YAML or the API.
+		existing, err := seed.Netpolicy.List(ctx)
+		if err != nil {
+			return fmt.Errorf("seed_default_netpolicy: list: %w", err)
+		}
+		if len(existing) > 0 {
+			return nil
+		}
+		_, err = seed.Netpolicy.Apply(ctx, &netpolicy.Policy{
+			Name:     "intranet",
+			CIDRs:    []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"},
+			Priority: 100,
+			Metadata: map[string]string{"seeded_by": "bootstrap"},
+		})
+		return err
+	})
+}
 
-		// Step v5: seed the admin-console browser client. This is a public
-		// PKCE client (no secret) used by the hosted admin console SPA at
-		// /admin/ — it exchanges user credentials for a short-lived access
-		// token that carries admin:read and admin:write so the SPA can call
-		// the /api/v1/admin/* endpoints. Redirect URIs are intentionally empty
-		// here; the operator configures them for their deployment's origin.
-		bootstrap.StepFunc("seed_admin_console_client", 5, func(ctx context.Context) error {
-			if seed.Clients == nil {
-				return nil
-			}
-			// Skip if the operator already declared this client via YAML.
-			if _, err := seed.Clients.Get(ctx, "sso-admin-console"); err == nil {
-				return nil
-			}
-			err := seed.Clients.Add(ctx, &sso.Client{
-				ID:                    "sso-admin-console",
-				Name:                  "SSO Admin Console",
-				AllowedAuthenticators: []string{"password"},
-				TokenStrategy:         sso.TokenStrategyJWT,
-				AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
-				RequirePKCE:           true,
-				Active:                true,
-				// No Secret — this is a public PKCE client. RedirectURIs left
-				// empty; the operator sets them for their deployment's /admin/ URL.
-			})
-			if errors.Is(err, sso.ErrClientExists) {
-				return nil
-			}
-			return err
-		}),
-	}
-	return steps
+// stepSeedAdminClient is version 4: seed the confidential sso-admin client.
+func stepSeedAdminClient(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("seed_admin_client", 4, func(ctx context.Context) error {
+		if seed.Clients == nil {
+			return nil
+		}
+		// Skip if the operator already declared a client with this ID
+		// in YAML (typical when migrating an existing deployment).
+		if _, err := seed.Clients.Get(ctx, "sso-admin"); err == nil {
+			return nil
+		}
+		secret, err := generatePassword(32)
+		if err != nil {
+			return fmt.Errorf("seed_admin_client: rand: %w", err)
+		}
+		err = seed.Clients.Add(ctx, &sso.Client{
+			ID:                    "sso-admin",
+			Secret:                secret,
+			Name:                  seed.AdminClientApp,
+			AllowedAuthenticators: []string{"password"},
+			TokenStrategy:         sso.TokenStrategyJWT,
+			AllowedScopes:         []string{sso.AdminScope, sso.AdminScopeRead, sso.AdminScopeWrite},
+			Active:                true,
+		})
+		if errors.Is(err, sso.ErrClientExists) {
+			return nil
+		}
+		return err
+	})
+}
+
+// stepSeedAdminConsoleClient is version 5: seed the admin-console browser
+// client. This is a public PKCE client (no secret) used by the hosted admin
+// console SPA at /admin/ — it exchanges user credentials for a short-lived
+// access token that carries admin:read and admin:write so the SPA can call
+// the /api/v1/admin/* endpoints. Redirect URIs are intentionally empty here;
+// the operator configures them for their deployment's origin.
+func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("seed_admin_console_client", 5, func(ctx context.Context) error {
+		if seed.Clients == nil {
+			return nil
+		}
+		// Skip if the operator already declared this client via YAML.
+		if _, err := seed.Clients.Get(ctx, "sso-admin-console"); err == nil {
+			return nil
+		}
+		err := seed.Clients.Add(ctx, &sso.Client{
+			ID:                    "sso-admin-console",
+			Name:                  "SSO Admin Console",
+			AllowedAuthenticators: []string{"password"},
+			TokenStrategy:         sso.TokenStrategyJWT,
+			AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
+			RequirePKCE:           true,
+			Active:                true,
+			// No Secret — this is a public PKCE client. RedirectURIs left
+			// empty; the operator sets them for their deployment's /admin/ URL.
+		})
+		if errors.Is(err, sso.ErrClientExists) {
+			return nil
+		}
+		return err
+	})
 }
 
 // generatePassword returns a base64url-encoded random string of n bytes.

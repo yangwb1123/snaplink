@@ -82,72 +82,104 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 	}
 	rep := &Report{UserID: userID, DryRun: opts.DryRun}
 
-	// 1. Refresh tokens — per (subject, client), so enumerate clients.
+	// Credentials first so a deletion that fails midway still leaves the
+	// subject locked out rather than half-erased-but-usable.
+	e.eraseRefreshTokens(ctx, userID, opts, rep)
+	e.eraseSessions(ctx, userID, opts, rep)
+	e.eraseUser(ctx, userID, opts, rep)
+
+	return rep, rep.Err()
+}
+
+// eraseRefreshTokens revokes the subject's refresh tokens across every
+// client. Tokens are stored per (subject, client), so it enumerates clients
+// first. Under DryRun it projects counts non-destructively when the store
+// supports it.
+func (e *Eraser) eraseRefreshTokens(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
 	switch {
 	case e.Refresh == nil || e.Clients == nil:
 		rep.Skipped = append(rep.Skipped, "refresh_tokens(not wired)")
 	case opts.DryRun:
-		// Preview the count when the store supports a non-destructive
-		// count; otherwise note the limitation.
-		counter, ok := e.Refresh.(oauth.RefreshTokenSubjectCounter)
-		if !ok {
-			rep.Skipped = append(rep.Skipped, "refresh_tokens(dry-run: store has no CountForSubject)")
-			break
-		}
-		clients, err := e.Clients.List(ctx)
-		if err != nil {
-			rep.Errors = append(rep.Errors, fmt.Errorf("list clients: %w", err))
-			break
-		}
-		for _, c := range clients {
-			n, err := counter.CountForSubject(ctx, userID, c.ID)
-			if err != nil {
-				rep.Errors = append(rep.Errors, fmt.Errorf("count refresh tokens (client=%s): %w", c.ID, err))
-				continue
-			}
-			rep.RefreshTokensDeleted += n // projected count under DryRun
-		}
+		e.previewRefreshTokens(ctx, userID, rep)
 	default:
-		clients, err := e.Clients.List(ctx)
-		if err != nil {
-			rep.Errors = append(rep.Errors, fmt.Errorf("list clients: %w", err))
-			break
-		}
-		for _, c := range clients {
-			n, err := e.Refresh.DeleteAllForSubject(ctx, userID, c.ID)
-			if err != nil {
-				rep.Errors = append(rep.Errors, fmt.Errorf("revoke refresh tokens (client=%s): %w", c.ID, err))
-				continue
-			}
-			rep.RefreshTokensDeleted += n
-		}
+		e.revokeRefreshTokens(ctx, userID, rep)
 	}
+}
 
-	// 2. Sessions.
+// previewRefreshTokens projects the per-client token counts without
+// mutating anything, when the store exposes a non-destructive count;
+// otherwise it notes the limitation.
+func (e *Eraser) previewRefreshTokens(ctx context.Context, userID string, rep *Report) {
+	counter, ok := e.Refresh.(oauth.RefreshTokenSubjectCounter)
+	if !ok {
+		rep.Skipped = append(rep.Skipped, "refresh_tokens(dry-run: store has no CountForSubject)")
+		return
+	}
+	clients, err := e.Clients.List(ctx)
+	if err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("list clients: %w", err))
+		return
+	}
+	for _, c := range clients {
+		n, err := counter.CountForSubject(ctx, userID, c.ID)
+		if err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("count refresh tokens (client=%s): %w", c.ID, err))
+			continue
+		}
+		rep.RefreshTokensDeleted += n // projected count under DryRun
+	}
+}
+
+// revokeRefreshTokens destructively deletes the subject's refresh tokens
+// for every registered client.
+func (e *Eraser) revokeRefreshTokens(ctx context.Context, userID string, rep *Report) {
+	clients, err := e.Clients.List(ctx)
+	if err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("list clients: %w", err))
+		return
+	}
+	for _, c := range clients {
+		n, err := e.Refresh.DeleteAllForSubject(ctx, userID, c.ID)
+		if err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("revoke refresh tokens (client=%s): %w", c.ID, err))
+			continue
+		}
+		rep.RefreshTokensDeleted += n
+	}
+}
+
+// eraseSessions destroys the subject's active server-side sessions. Under
+// DryRun it counts the sessions that would be destroyed.
+func (e *Eraser) eraseSessions(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
 	if e.Sessions == nil {
 		rep.Skipped = append(rep.Skipped, "sessions(not wired)")
-	} else if sessions, err := e.Sessions.ListByUser(ctx, userID); err != nil {
-		rep.Errors = append(rep.Errors, fmt.Errorf("list sessions: %w", err))
-	} else {
-		for _, s := range sessions {
-			if opts.DryRun {
-				rep.SessionsDestroyed++ // would-destroy count
-				continue
-			}
-			if err := e.Sessions.Destroy(ctx, s.ID); err != nil {
-				rep.Errors = append(rep.Errors, fmt.Errorf("destroy session %s: %w", s.ID, err))
-				continue
-			}
-			rep.SessionsDestroyed++
-		}
+		return
 	}
+	sessions, err := e.Sessions.ListByUser(ctx, userID)
+	if err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("list sessions: %w", err))
+		return
+	}
+	for _, s := range sessions {
+		if opts.DryRun {
+			rep.SessionsDestroyed++ // would-destroy count
+			continue
+		}
+		if err := e.Sessions.Destroy(ctx, s.ID); err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("destroy session %s: %w", s.ID, err))
+			continue
+		}
+		rep.SessionsDestroyed++
+	}
+}
 
-	// 3. User account.
+// eraseUser deletes the subject's account. Under DryRun it records the
+// intent only; Report.DryRun signals UserDeleted is a projection.
+func (e *Eraser) eraseUser(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
 	switch {
 	case e.Users == nil:
 		rep.Skipped = append(rep.Skipped, "user(not wired)")
 	case opts.DryRun:
-		// Intent only; Report.DryRun signals UserDeleted is a projection.
 		rep.UserDeleted = true
 	default:
 		if err := e.Users.Delete(ctx, userID); err != nil {
@@ -156,6 +188,4 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 			rep.UserDeleted = true
 		}
 	}
-
-	return rep, rep.Err()
 }

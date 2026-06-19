@@ -259,29 +259,10 @@ func HandleFederationFetch(deps FetchDeps, ctx core.HandlerContext) {
 	now := deps.FederationNow()
 	issuer := deps.ResolveIssuer(ctx)
 
-	// §8: `sub` is REQUIRED. Missing → 400 invalid_request (the federation
-	// error JSON). Fail-closed: no `sub`, no statement.
-	sub := ctx.Query(ParamSub)
-	if sub == "" {
-		federationError(ctx, http.StatusBadRequest, ErrFederationInvalidRequest, "sub is required")
-		return
-	}
-	// §8: `iss` is OPTIONAL but, when present, MUST identify THIS server (the
-	// superior issues only its own statements). A mismatched iss → 400
-	// invalid_request (not 404: the caller asked the wrong issuer, not for an
-	// unknown subordinate).
-	if reqIss := ctx.Query(ParamIss); reqIss != "" && reqIss != issuer {
-		federationError(ctx, http.StatusBadRequest, ErrFederationInvalidRequest, "iss does not match this entity")
-		return
-	}
-
-	// The lookup is the trust gate: ONLY a configured subordinate yields a
-	// statement. An unknown/unregistered sub → 404 not_found — this server
-	// NEVER issues a statement about an entity it was not configured to vouch
-	// for (vouching for an unvetted entity would forge trust).
-	subordinate := cfg.lookupSubordinate(sub)
-	if subordinate == nil {
-		federationError(ctx, http.StatusNotFound, ErrFederationNotFound, "not a subordinate of this entity")
+	// §8 request parsing + the operator-config lookup (the trust gate). A bad
+	// request or an unknown subordinate has already written the §8 error here.
+	sub, subordinate, ok := parseFetchRequest(cfg, ctx, issuer)
+	if !ok {
 		return
 	}
 
@@ -296,19 +277,7 @@ func HandleFederationFetch(deps FetchDeps, ctx core.HandlerContext) {
 		}
 	}
 
-	ttl := cfg.entityStatementTTL()
-	claims := EntityStatementClaims{
-		// Subordinate Statement (NOT self-signed): iss == this server (the
-		// issuing superior), sub == the subordinate. The vouched keys + the
-		// imposed policy/constraints are OPERATOR CONFIG, never request input.
-		Iss:            issuer,
-		Sub:            subordinate.EntityID,
-		Iat:            now.Unix(),
-		Exp:            now.Add(ttl).Unix(),
-		JWKS:           EntityJWKS{Keys: subordinate.Keys},
-		MetadataPolicy: subordinate.MetadataPolicy,
-		Constraints:    subordinate.Constraints,
-	}
+	claims := subordinateStatementClaims(issuer, subordinate, now, cfg.entityStatementTTL())
 
 	compact, err := deps.FederationSigner().SignJWT(ctx.Request().Context(), EntityStatementTyp, claims)
 	if err != nil {
@@ -326,6 +295,56 @@ func HandleFederationFetch(deps FetchDeps, ctx core.HandlerContext) {
 		cache.store(issuer, sub, &subordinateStatementEntry{compact: body, etag: etag, expiresAt: now.Add(cfg.cacheTTL())})
 	}
 	WriteEntityStatement(ctx.ResponseWriter(), ctx.Request(), body, etag, cfg.cacheTTL())
+}
+
+// parseFetchRequest validates the §8 Fetch request and resolves the requested
+// subordinate from operator config. On any failure it writes the §8 error
+// response (400 invalid_request for a missing sub / mismatched iss, 404
+// not_found for an unconfigured sub) and returns ok=false. On success it
+// returns the requested sub + its configured SubordinateEntity.
+func parseFetchRequest(cfg *Config, ctx core.HandlerContext, issuer string) (string, *SubordinateEntity, bool) {
+	// §8: `sub` is REQUIRED. Missing → 400 invalid_request (the federation
+	// error JSON). Fail-closed: no `sub`, no statement.
+	sub := ctx.Query(ParamSub)
+	if sub == "" {
+		federationError(ctx, http.StatusBadRequest, ErrFederationInvalidRequest, "sub is required")
+		return "", nil, false
+	}
+	// §8: `iss` is OPTIONAL but, when present, MUST identify THIS server (the
+	// superior issues only its own statements). A mismatched iss → 400
+	// invalid_request (not 404: the caller asked the wrong issuer, not for an
+	// unknown subordinate).
+	if reqIss := ctx.Query(ParamIss); reqIss != "" && reqIss != issuer {
+		federationError(ctx, http.StatusBadRequest, ErrFederationInvalidRequest, "iss does not match this entity")
+		return "", nil, false
+	}
+
+	// The lookup is the trust gate: ONLY a configured subordinate yields a
+	// statement. An unknown/unregistered sub → 404 not_found — this server
+	// NEVER issues a statement about an entity it was not configured to vouch
+	// for (vouching for an unvetted entity would forge trust).
+	subordinate := cfg.lookupSubordinate(sub)
+	if subordinate == nil {
+		federationError(ctx, http.StatusNotFound, ErrFederationNotFound, "not a subordinate of this entity")
+		return "", nil, false
+	}
+	return sub, subordinate, true
+}
+
+// subordinateStatementClaims builds the §8 Subordinate Statement claims for a
+// configured subordinate. NOT self-signed: iss == this server (the issuing
+// superior), sub == the subordinate. The vouched keys + the imposed
+// policy/constraints are OPERATOR CONFIG, never request input.
+func subordinateStatementClaims(issuer string, subordinate *SubordinateEntity, now time.Time, ttl time.Duration) EntityStatementClaims {
+	return EntityStatementClaims{
+		Iss:            issuer,
+		Sub:            subordinate.EntityID,
+		Iat:            now.Unix(),
+		Exp:            now.Add(ttl).Unix(),
+		JWKS:           EntityJWKS{Keys: subordinate.Keys},
+		MetadataPolicy: subordinate.MetadataPolicy,
+		Constraints:    subordinate.Constraints,
+	}
 }
 
 // federationError writes the OpenID Federation 1.0 §8 error response: a JSON

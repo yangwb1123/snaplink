@@ -1,6 +1,10 @@
 package config
 
-import "github.com/snaplink/sso/permissions"
+import (
+	"context"
+
+	"github.com/snaplink/sso/permissions"
+)
 
 type PermissionsConfig struct {
 	Enabled      bool                    `yaml:"enabled"`
@@ -33,3 +37,22 @@ type UserRoleAssignment struct {
 
 // BuildPermissionProvider materializes a permissions.MemoryProvider from the
 // static config. Returns nil when permissions are disabled.
+func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
+	if !c.Permissions.Enabled {
+		return nil
+	}
+	ctx := context.Background()
+	p := permissions.NewMemoryProvider()
+	for _, app := range c.Permissions.Apps {
+		for _, role := range app.Roles {
+			_ = p.AddRole(ctx, app.ClientID, role)
+		}
+		if app.Menus != nil {
+			_ = p.SetMenus(ctx, app.ClientID, app.Menus)
+		}
+	}
+	for _, a := range c.Permissions.UserRoles {
+		_ = p.AssignRoles(ctx, a.UserID, a.ClientID, a.Roles)
+	}
+	return p
+}

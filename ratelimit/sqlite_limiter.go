@@ -148,14 +148,42 @@ func (s *SQLiteLimiter) Allow(key string) (bool, time.Duration) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	now := time.Now()
-	nowNs := now.UnixNano()
+	nowNs := time.Now().UnixNano()
 
+	tokens, ok := s.loadBucketTokens(ctx, tx, key, nowNs)
+	if !ok {
+		return true, 0
+	}
+
+	allowed, retryAfter, denyAll := s.consumeToken(&tokens)
+	if denyAll {
+		// Limiter configured to deny everything; no useful retry-after.
+		return false, 0
+	}
+
+	if !s.persistBucket(ctx, tx, key, tokens, nowNs) {
+		return true, 0
+	}
+
+	s.pruneStale(ctx, tx, nowNs)
+
+	if err := tx.Commit(); err != nil {
+		return true, 0
+	}
+	return allowed, retryAfter
+}
+
+// loadBucketTokens reads the persisted token count for key and applies the
+// time-based refill, capped at burst. The returned ok is false only on an
+// unexpected SQL error (caller fails open); a missing row is the normal first-
+// request path and yields a full bucket, ok=true. The read MUST run inside the
+// caller's BEGIN IMMEDIATE tx to preserve token-bucket atomicity.
+func (s *SQLiteLimiter) loadBucketTokens(ctx context.Context, tx *sql.Tx, key string, nowNs int64) (float64, bool) {
 	var (
 		tokens       float64
 		lastRefillNs int64
 	)
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
         SELECT tokens, last_refill_at_ns
           FROM rate_limit_buckets
          WHERE bucket_name = ? AND key = ?`,
@@ -166,7 +194,7 @@ func (s *SQLiteLimiter) Allow(key string) (bool, time.Duration) {
 		tokens = float64(s.burst)
 		lastRefillNs = nowNs
 	} else if err != nil {
-		return true, 0
+		return 0, false
 	}
 
 	// Refill: elapsed time × perSecond, capped at burst.
@@ -174,23 +202,30 @@ func (s *SQLiteLimiter) Allow(key string) (bool, time.Duration) {
 	if elapsedSec > 0 {
 		tokens = math.Min(float64(s.burst), tokens+elapsedSec*s.perSecond)
 	}
+	return tokens, true
+}
 
-	var (
-		allowed    bool
-		retryAfter time.Duration
-	)
-	if tokens >= 1.0 {
-		tokens -= 1.0
-		allowed = true
-	} else if s.perSecond <= 0 {
-		// Limiter configured to deny everything; no useful retry-after.
-		return false, 0
-	} else {
-		needed := 1.0 - tokens
-		retryAfter = time.Duration(needed / s.perSecond * float64(time.Second))
+// consumeToken spends one token from the refilled bucket in place and reports
+// the decision. denyAll is true only for the deny-everything configuration
+// (perSecond <= 0 with an empty bucket), where there is no meaningful retry-
+// after and the caller short-circuits without persisting.
+func (s *SQLiteLimiter) consumeToken(tokens *float64) (allowed bool, retryAfter time.Duration, denyAll bool) {
+	if *tokens >= 1.0 {
+		*tokens -= 1.0
+		return true, 0, false
 	}
+	if s.perSecond <= 0 {
+		return false, 0, true
+	}
+	needed := 1.0 - *tokens
+	return false, time.Duration(needed / s.perSecond * float64(time.Second)), false
+}
 
-	if _, err := tx.ExecContext(ctx, `
+// persistBucket writes the post-consumption token state back via upsert. It
+// returns false on SQL error so the caller fails open. Runs inside the caller's
+// tx so the read-modify-write stays a single atomic unit.
+func (s *SQLiteLimiter) persistBucket(ctx context.Context, tx *sql.Tx, key string, tokens float64, nowNs int64) bool {
+	_, err := tx.ExecContext(ctx, `
         INSERT INTO rate_limit_buckets (bucket_name, key, tokens, last_refill_at_ns, last_seen_at_ns)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (bucket_name, key) DO UPDATE SET
@@ -198,23 +233,20 @@ func (s *SQLiteLimiter) Allow(key string) (bool, time.Duration) {
             last_refill_at_ns = excluded.last_refill_at_ns,
             last_seen_at_ns = excluded.last_seen_at_ns`,
 		s.bucketName, key, tokens, nowNs, nowNs,
-	); err != nil {
-		return true, 0
-	}
+	)
+	return err == nil
+}
 
-	// Opportunistic stale prune — cheap because of the last_seen index.
-	// Skip when the table is small enough that pruning isn't worth the
-	// extra round-trip (1 in 64 calls is a balance between memory
-	// pressure and per-request cost).
-	if (nowNs/int64(time.Millisecond))%64 == 0 {
-		_, _ = tx.ExecContext(ctx, `DELETE FROM rate_limit_buckets WHERE last_seen_at_ns < ?`,
-			nowNs-s.stalePruneAfter.Nanoseconds())
+// pruneStale opportunistically evicts rows untouched past stalePruneAfter. It is
+// cheap because of the last_seen index, but still skipped on ~63 of 64 calls
+// (sampling on the millisecond clock) to balance memory pressure against the
+// extra per-request round-trip. Errors are ignored — pruning is housekeeping.
+func (s *SQLiteLimiter) pruneStale(ctx context.Context, tx *sql.Tx, nowNs int64) {
+	if (nowNs/int64(time.Millisecond))%64 != 0 {
+		return
 	}
-
-	if err := tx.Commit(); err != nil {
-		return true, 0
-	}
-	return allowed, retryAfter
+	_, _ = tx.ExecContext(ctx, `DELETE FROM rate_limit_buckets WHERE last_seen_at_ns < ?`,
+		nowNs-s.stalePruneAfter.Nanoseconds())
 }
 
 var _ Limiter = (*SQLiteLimiter)(nil)

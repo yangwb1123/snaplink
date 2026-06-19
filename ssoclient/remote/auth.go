@@ -90,22 +90,12 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*ssoclien
 		return nil, errors.New("ssoclient/remote: malformed token")
 	}
 
-	// Parse only the header `kid` to select the cached JWK — the alg gate,
-	// signature verification, and kty/crv↔alg consistency are all delegated to
-	// security.VerifyCompactJWS below (which rejects alg=none and every
-	// symmetric HS* alg before any signature work, so an attacker cannot
-	// downgrade an asymmetric token to "unsigned" nor force the RS/HS
-	// public-key-as-HMAC confusion).
-	hdrRaw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	kid, err := parseTokenKID(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("ssoclient/remote: header decode: %w", err)
-	}
-	var h jwtHeader
-	if err := json.Unmarshal(hdrRaw, &h); err != nil {
-		return nil, fmt.Errorf("ssoclient/remote: header parse: %w", err)
+		return nil, err
 	}
 
-	jwk, err := c.jwks.getJWK(ctx, h.Kid)
+	jwk, err := c.jwks.getJWK(ctx, kid)
 	if err != nil {
 		return nil, err
 	}
@@ -123,14 +113,46 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*ssoclien
 		return nil, fmt.Errorf("ssoclient/remote: payload parse: %w", err)
 	}
 
-	now := time.Now().Unix()
-	if p.Exp != 0 && now >= p.Exp {
-		return nil, errors.New("ssoclient/remote: token expired")
-	}
-	if p.Nbf != 0 && now < p.Nbf {
-		return nil, errors.New("ssoclient/remote: token not yet valid")
+	if err := validateTokenTime(p); err != nil {
+		return nil, err
 	}
 
+	return subjectFromPayload(p), nil
+}
+
+// parseTokenKID decodes only the header `kid` to select the cached JWK — the
+// alg gate, signature verification, and kty/crv↔alg consistency are all
+// delegated to security.VerifyCompactJWS (which rejects alg=none and every
+// symmetric HS* alg before any signature work, so an attacker cannot downgrade
+// an asymmetric token to "unsigned" nor force the RS/HS public-key-as-HMAC
+// confusion).
+func parseTokenKID(headerSegment string) (string, error) {
+	hdrRaw, err := base64.RawURLEncoding.DecodeString(headerSegment)
+	if err != nil {
+		return "", fmt.Errorf("ssoclient/remote: header decode: %w", err)
+	}
+	var h jwtHeader
+	if err := json.Unmarshal(hdrRaw, &h); err != nil {
+		return "", fmt.Errorf("ssoclient/remote: header parse: %w", err)
+	}
+	return h.Kid, nil
+}
+
+// validateTokenTime enforces exp/nbf using the same clock and inclusive/
+// exclusive boundaries as the original inline checks.
+func validateTokenTime(p jwtPayload) error {
+	now := time.Now().Unix()
+	if p.Exp != 0 && now >= p.Exp {
+		return errors.New("ssoclient/remote: token expired")
+	}
+	if p.Nbf != 0 && now < p.Nbf {
+		return errors.New("ssoclient/remote: token not yet valid")
+	}
+	return nil
+}
+
+// subjectFromPayload maps verified claims to the public Subject shape.
+func subjectFromPayload(p jwtPayload) *ssoclient.Subject {
 	subj := &ssoclient.Subject{
 		ID:        p.Sub,
 		ExpiresAt: p.Exp,
@@ -140,7 +162,7 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*ssoclien
 	if p.Scope != "" {
 		subj.Scopes = strings.Split(p.Scope, " ")
 	}
-	return subj, nil
+	return subj
 }
 
 // Logout posts to the configured URL when set. Without a URL, only the

@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -209,28 +208,9 @@ func (s *Store) PutTenant(ctx context.Context, t *tenant.Tenant) error {
 		return err
 	}
 	now := time.Now().UTC().UnixNano()
-
-	settingsJSON := ""
-	if len(t.Settings) > 0 {
-		raw, err := json.Marshal(t.Settings)
-		if err != nil {
-			return fmt.Errorf("tenant/sqlite: marshal settings: %w", err)
-		}
-		settingsJSON = string(raw)
-	}
-
-	allowedRegionsJSON, err := marshalRegions(t.AllowedRegions)
+	cols, err := encodeTenantColumns(t, now)
 	if err != nil {
 		return err
-	}
-
-	createdAt := now
-	if !t.CreatedAt.IsZero() {
-		createdAt = t.CreatedAt.UnixNano()
-	}
-	enforceWrites := 0
-	if t.EnforceWrites {
-		enforceWrites = 1
 	}
 	// UPSERT: on conflict by id, preserve CREATED_AT (matches the
 	// memory peer's behavior — operator updates don't reset the
@@ -247,7 +227,7 @@ func (s *Store) PutTenant(ctx context.Context, t *tenant.Tenant) error {
             allowed_regions_json = excluded.allowed_regions_json,
             enforce_writes = excluded.enforce_writes,
             updated_at = excluded.updated_at`,
-		t.ID, t.Slug, t.Name, string(t.Status), settingsJSON, t.HomeRegion, allowedRegionsJSON, enforceWrites, createdAt, now,
+		t.ID, t.Slug, t.Name, string(t.Status), cols.settingsJSON, t.HomeRegion, cols.allowedRegionsJSON, cols.enforceWrites, cols.createdAt, now,
 	)
 	if err != nil {
 		// Slug collisions surface as UNIQUE constraint violations;
@@ -317,53 +297,21 @@ func (s *Store) PutDomain(ctx context.Context, d *tenant.Domain) error {
 	if err := d.Validate(); err != nil {
 		return err
 	}
-	// Verify the referenced tenant exists. Same semantics as the
-	// memory peer + matches what admin RPCs expect (ErrTenantNotFound,
-	// not a generic FK violation).
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM tenants WHERE id = ?`, d.TenantID).Scan(&exists); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return tenant.ErrTenantNotFound
-		}
-		return fmt.Errorf("tenant/sqlite: verify tenant: %w", err)
+	if err := s.verifyTenantExists(ctx, d.TenantID); err != nil {
+		return err
 	}
 
 	host := normalizeHost(d.Hostname)
+	if err := s.checkDomainConflict(ctx, host, d.TenantID); err != nil {
+		return err
+	}
+
 	now := time.Now().UTC().UnixNano()
-	createdAt := now
-	if !d.CreatedAt.IsZero() {
-		createdAt = d.CreatedAt.UnixNano()
+	cols, err := encodeDomainColumns(d, now)
+	if err != nil {
+		return err
 	}
-
-	// Hostname collisions across tenants → ErrDomainExists. Same
-	// tenant updating its own hostname → upsert.
-	row := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_domains WHERE hostname = ?`, host)
-	var existingTenantID string
-	switch err := row.Scan(&existingTenantID); {
-	case errors.Is(err, sql.ErrNoRows):
-		// Fresh insert path.
-	case err != nil:
-		return fmt.Errorf("tenant/sqlite: check domain conflict: %w", err)
-	default:
-		if existingTenantID != d.TenantID {
-			return tenant.ErrDomainExists
-		}
-	}
-
-	brandingJSON := ""
-	if len(d.Branding) > 0 {
-		raw, err := json.Marshal(d.Branding)
-		if err != nil {
-			return fmt.Errorf("tenant/sqlite: marshal branding: %w", err)
-		}
-		brandingJSON = string(raw)
-	}
-
-	isApex := 0
-	if d.IsApex {
-		isApex = 1
-	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
         INSERT INTO tenant_domains (
             hostname, tenant_id, default_client_id, is_apex,
             branding_json, created_at, updated_at
@@ -374,11 +322,44 @@ func (s *Store) PutDomain(ctx context.Context, d *tenant.Domain) error {
             is_apex = excluded.is_apex,
             branding_json = excluded.branding_json,
             updated_at = excluded.updated_at`,
-		host, d.TenantID, d.DefaultClientID, isApex,
-		brandingJSON, createdAt, now,
+		host, d.TenantID, d.DefaultClientID, cols.isApex,
+		cols.brandingJSON, cols.createdAt, now,
 	)
 	if err != nil {
 		return fmt.Errorf("tenant/sqlite: put domain: %w", err)
+	}
+	return nil
+}
+
+// verifyTenantExists confirms the referenced tenant row is present. Same
+// semantics as the memory peer + matches what admin RPCs expect
+// (ErrTenantNotFound, not a generic FK violation).
+func (s *Store) verifyTenantExists(ctx context.Context, tenantID string) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM tenants WHERE id = ?`, tenantID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return tenant.ErrTenantNotFound
+		}
+		return fmt.Errorf("tenant/sqlite: verify tenant: %w", err)
+	}
+	return nil
+}
+
+// checkDomainConflict rejects a hostname already owned by a different tenant
+// with ErrDomainExists. A hostname owned by the same tenant (or unclaimed)
+// falls through to the upsert path.
+func (s *Store) checkDomainConflict(ctx context.Context, host, tenantID string) error {
+	row := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_domains WHERE hostname = ?`, host)
+	var existingTenantID string
+	switch err := row.Scan(&existingTenantID); {
+	case errors.Is(err, sql.ErrNoRows):
+		// Fresh insert path.
+	case err != nil:
+		return fmt.Errorf("tenant/sqlite: check domain conflict: %w", err)
+	default:
+		if existingTenantID != tenantID {
+			return tenant.ErrDomainExists
+		}
 	}
 	return nil
 }
@@ -389,137 +370,6 @@ func (s *Store) DeleteDomain(ctx context.Context, hostname string) error {
 		return fmt.Errorf("tenant/sqlite: delete domain: %w", err)
 	}
 	return nil
-}
-
-// --- helpers ---
-
-func scanTenant(id string, row interface{ Scan(...any) error }) (*tenant.Tenant, error) {
-	var slug, name, status, settingsJSON, homeRegion, allowedRegionsJSON string
-	var enforceWrites int
-	var createdNs, updatedNs int64
-	if err := row.Scan(&slug, &name, &status, &settingsJSON, &homeRegion, &allowedRegionsJSON, &enforceWrites, &createdNs, &updatedNs); err != nil {
-		return nil, err
-	}
-	t := &tenant.Tenant{
-		ID:            id,
-		Slug:          slug,
-		Name:          name,
-		Status:        tenant.Status(status),
-		HomeRegion:    homeRegion,
-		EnforceWrites: enforceWrites == 1,
-		CreatedAt:     time.Unix(0, createdNs).UTC(),
-		UpdatedAt:     time.Unix(0, updatedNs).UTC(),
-	}
-	if settingsJSON != "" {
-		if err := json.Unmarshal([]byte(settingsJSON), &t.Settings); err != nil {
-			return nil, fmt.Errorf("tenant/sqlite: unmarshal settings: %w", err)
-		}
-	}
-	if err := unmarshalRegions(allowedRegionsJSON, &t.AllowedRegions); err != nil {
-		return nil, err
-	}
-	return t, nil
-}
-
-// unmarshalRegions decodes the allowed_regions_json TEXT column into a
-// []string. The column's NOT NULL DEFAULT '[]' means a backfilled v1 row
-// decodes to an empty non-nil slice; we normalize that back to nil so a
-// round-trip of an unconstrained tenant stays the zero value (matches the
-// settings_json "" -> nil map handling).
-func unmarshalRegions(raw string, dst *[]string) error {
-	if raw == "" || raw == "[]" {
-		*dst = nil
-		return nil
-	}
-	if err := json.Unmarshal([]byte(raw), dst); err != nil {
-		return fmt.Errorf("tenant/sqlite: unmarshal allowed_regions: %w", err)
-	}
-	if len(*dst) == 0 {
-		*dst = nil
-	}
-	return nil
-}
-
-// marshalRegions encodes AllowedRegions for the allowed_regions_json
-// column. Nil/empty marshals to '[]' so the column's NOT NULL invariant
-// holds (mirrors the column DEFAULT).
-func marshalRegions(regions []string) (string, error) {
-	if len(regions) == 0 {
-		return "[]", nil
-	}
-	raw, err := json.Marshal(regions)
-	if err != nil {
-		return "", fmt.Errorf("tenant/sqlite: marshal allowed_regions: %w", err)
-	}
-	return string(raw), nil
-}
-
-func scanDomain(host string, row interface{ Scan(...any) error }) (*tenant.Domain, error) {
-	var tenantID, defaultClientID, brandingJSON string
-	var isApexInt int
-	var createdNs, updatedNs int64
-	if err := row.Scan(&tenantID, &defaultClientID, &isApexInt, &brandingJSON, &createdNs, &updatedNs); err != nil {
-		return nil, err
-	}
-	d := &tenant.Domain{
-		Hostname:        host,
-		TenantID:        tenantID,
-		DefaultClientID: defaultClientID,
-		IsApex:          isApexInt == 1,
-		CreatedAt:       time.Unix(0, createdNs).UTC(),
-		UpdatedAt:       time.Unix(0, updatedNs).UTC(),
-	}
-	if brandingJSON != "" {
-		if err := json.Unmarshal([]byte(brandingJSON), &d.Branding); err != nil {
-			return nil, fmt.Errorf("tenant/sqlite: unmarshal branding: %w", err)
-		}
-	}
-	return d, nil
-}
-
-func scanDomainRows(rows *sql.Rows) ([]*tenant.Domain, error) {
-	var out []*tenant.Domain
-	for rows.Next() {
-		var host, tenantID, defaultClientID, brandingJSON string
-		var isApexInt int
-		var createdNs, updatedNs int64
-		if err := rows.Scan(&host, &tenantID, &defaultClientID, &isApexInt, &brandingJSON, &createdNs, &updatedNs); err != nil {
-			return nil, fmt.Errorf("tenant/sqlite: scan domain: %w", err)
-		}
-		d := &tenant.Domain{
-			Hostname:        host,
-			TenantID:        tenantID,
-			DefaultClientID: defaultClientID,
-			IsApex:          isApexInt == 1,
-			CreatedAt:       time.Unix(0, createdNs).UTC(),
-			UpdatedAt:       time.Unix(0, updatedNs).UTC(),
-		}
-		if brandingJSON != "" {
-			if err := json.Unmarshal([]byte(brandingJSON), &d.Branding); err != nil {
-				return nil, fmt.Errorf("tenant/sqlite: unmarshal branding: %w", err)
-			}
-		}
-		out = append(out, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("tenant/sqlite: rows: %w", err)
-	}
-	if out == nil {
-		out = []*tenant.Domain{}
-	}
-	// Sort for deterministic order (LIST callers + tests rely on it).
-	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
-	return out, nil
-}
-
-// normalizeHost mirrors the memory peer's RFC-1035 hostname
-// normalization (case-insensitive + strip trailing dot) so the
-// two backends agree on equivalence classes.
-func normalizeHost(h string) string {
-	if len(h) > 0 && h[len(h)-1] == '.' {
-		h = h[:len(h)-1]
-	}
-	return strings.ToLower(h)
 }
 
 // Compile-time interface assertion.
