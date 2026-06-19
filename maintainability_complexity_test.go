@@ -122,7 +122,6 @@ var funcLenExemptions = map[string]int{
 	"federation/registration_metadata.go:MetadataToClient":           53,
 	"handlers.go:(*Server).handleAuthzPolicyBundle":                  58,
 	"mesh_authz.go:(*Server).MeshAuthorize":                          154,
-	"middleware/trusted_proxy.go:(*TrustedProxies).resolve":          52,
 	"oauth/dcr_validate.go:ValidateDCRMetadata":                      52,
 	"oauth/handle_ciba.go:HandleBackchannelAuth":                     166,
 	"oauth/handle_introspect.go:HandleIntrospect":                    93,
@@ -167,8 +166,6 @@ var funcLenExemptions = map[string]int{
 	"server_token_exchange.go:(*Server).handleTokenExchangeGrant":    398,
 	"server_userinfo.go:(*Server).handleUserInfo":                    146,
 	"server_userinfo.go:projectUserInfoForOIDC":                      68,
-	"signing_key_aggregation_loop.go:(*Server).tryAdoptIntoIssuer":   51,
-	"sso_newserver.go:NewServer":                                     94,
 }
 
 func TestMaintainability_CyclomaticComplexity(t *testing.T) {

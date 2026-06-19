@@ -76,16 +76,25 @@ func (tp *TrustedProxies) resolve(r *http.Request) string {
 
 	// Split into individual hops; rightmost is nearest to the server.
 	parts := strings.Split(xff, ",")
-	hops := tp.hops
+	return tp.walkChain(parts)
+}
 
-	// Walk right-to-left. For each hop:
-	//   - If it is trusted and the hops budget allows, skip it.
-	//   - If it is untrusted, it is the real client — return it.
-	//   - If the hop is unparseable, stop here (malformed input) and
-	//     treat the entry one position to the right as the boundary.
-	// After the loop we know the first i where we stopped; the entry
-	// at parts[i] (or parts[0] when we exhausted the whole list) is
-	// the real client.
+// walkChain walks the X-Forwarded-For hops in parts right-to-left and
+// returns the resolved real client IP. For each hop:
+//   - If it is trusted and the hops budget allows, skip it.
+//   - If it is untrusted, it is the real client — return it.
+//   - If the hop is unparseable, stop here (malformed input) and
+//     treat the entry one position to the right as the boundary.
+//
+// After the loop we know the first i where we stopped; the entry
+// at parts[i] (or parts[0] when we exhausted the whole list) is
+// the real client.
+//
+// Exhausting the whole list without finding an untrusted hop (all
+// IPs are in trusted CIDRs) returns the leftmost entry, the closest
+// approximation to the original client.
+func (tp *TrustedProxies) walkChain(parts []string) string {
+	hops := tp.hops
 	for i := len(parts) - 1; i >= 0; i-- {
 		raw := strings.TrimSpace(parts[i])
 		ip := net.ParseIP(raw)
@@ -114,10 +123,6 @@ func (tp *TrustedProxies) resolve(r *http.Request) string {
 		// First untrusted hop encountered — this is the real client.
 		return raw
 	}
-
-	// Exhausted the whole list without finding an untrusted hop (all
-	// IPs are in trusted CIDRs). The leftmost entry is the closest
-	// approximation to the original client.
 	return strings.TrimSpace(parts[0])
 }
 

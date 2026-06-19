@@ -283,53 +283,74 @@ func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
 func (s *Server) tryAdoptIntoIssuer(replicaID, name string, ti core.TokenIssuer, jwk core.JWK) (adopted, decodeFailed, supported bool) {
 	switch {
 	case isEdDSAJWK(jwk):
-		ad, ok := ti.(interface {
-			AdoptVerifyKey(string, ed25519.PublicKey) error
-		})
-		if !ok {
-			return false, false, false
-		}
-		pub, err := decodeEd25519JWK(jwk)
-		if err != nil {
-			s.logger.Error("signingkeys: undecodable peer key, skipping",
-				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
-			return false, true, true
-		}
-		return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
-
+		return s.tryAdoptEd25519(replicaID, name, ti, jwk)
 	case isECJWK(jwk):
-		ad, ok := ti.(interface {
-			AdoptVerifyKey(string, *ecdsa.PublicKey) error
-		})
-		if !ok {
-			return false, false, false
-		}
-		pub, err := decodeECDSAJWK(jwk)
-		if err != nil {
-			s.logger.Error("signingkeys: undecodable peer key, skipping",
-				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
-			return false, true, true
-		}
-		return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
-
+		return s.tryAdoptECDSA(replicaID, name, ti, jwk)
 	case isRSAJWK(jwk):
-		ad, ok := ti.(interface {
-			AdoptVerifyKey(string, *rsa.PublicKey) error
-		})
-		if !ok {
-			return false, false, false
-		}
-		pub, err := decodeRSAJWK(jwk)
-		if err != nil {
-			s.logger.Error("signingkeys: undecodable peer key, skipping",
-				"replica_id", replicaID, "kid", jwk.Kid, "error", err)
-			return false, true, true
-		}
-		return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
-
+		return s.tryAdoptRSA(replicaID, name, ti, jwk)
 	default:
 		return false, false, false
 	}
+}
+
+// tryAdoptEd25519 decodes an OKP JWK and adopts it verify-only into ti. The
+// alg-match gate happens in adoptPeerKey BEFORE this is reached; the
+// type-assert -> decode -> adopt ordering here is preserved verbatim so a
+// wrong-shape/undecodable key is NEVER installed.
+func (s *Server) tryAdoptEd25519(replicaID, name string, ti core.TokenIssuer, jwk core.JWK) (adopted, decodeFailed, supported bool) {
+	ad, ok := ti.(interface {
+		AdoptVerifyKey(string, ed25519.PublicKey) error
+	})
+	if !ok {
+		return false, false, false
+	}
+	pub, err := decodeEd25519JWK(jwk)
+	if err != nil {
+		s.logger.Error("signingkeys: undecodable peer key, skipping",
+			"replica_id", replicaID, "kid", jwk.Kid, "error", err)
+		return false, true, true
+	}
+	return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
+}
+
+// tryAdoptECDSA decodes an EC JWK and adopts it verify-only into ti. The
+// alg-match gate happens in adoptPeerKey BEFORE this is reached; the
+// type-assert -> decode -> adopt ordering here is preserved verbatim so a
+// wrong-shape/undecodable key is NEVER installed.
+func (s *Server) tryAdoptECDSA(replicaID, name string, ti core.TokenIssuer, jwk core.JWK) (adopted, decodeFailed, supported bool) {
+	ad, ok := ti.(interface {
+		AdoptVerifyKey(string, *ecdsa.PublicKey) error
+	})
+	if !ok {
+		return false, false, false
+	}
+	pub, err := decodeECDSAJWK(jwk)
+	if err != nil {
+		s.logger.Error("signingkeys: undecodable peer key, skipping",
+			"replica_id", replicaID, "kid", jwk.Kid, "error", err)
+		return false, true, true
+	}
+	return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
+}
+
+// tryAdoptRSA decodes an RSA JWK and adopts it verify-only into ti. The
+// alg-match gate happens in adoptPeerKey BEFORE this is reached; the
+// type-assert -> decode -> adopt ordering here is preserved verbatim so a
+// wrong-shape/undecodable key is NEVER installed.
+func (s *Server) tryAdoptRSA(replicaID, name string, ti core.TokenIssuer, jwk core.JWK) (adopted, decodeFailed, supported bool) {
+	ad, ok := ti.(interface {
+		AdoptVerifyKey(string, *rsa.PublicKey) error
+	})
+	if !ok {
+		return false, false, false
+	}
+	pub, err := decodeRSAJWK(jwk)
+	if err != nil {
+		s.logger.Error("signingkeys: undecodable peer key, skipping",
+			"replica_id", replicaID, "kid", jwk.Kid, "error", err)
+		return false, true, true
+	}
+	return s.adoptOne(replicaID, name, jwk.Kid, func() error { return ad.AdoptVerifyKey(jwk.Kid, pub) }), false, true
 }
 
 // adoptOne runs an issuer's AdoptVerifyKey and logs a rejection.
