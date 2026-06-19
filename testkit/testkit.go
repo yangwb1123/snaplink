@@ -103,52 +103,15 @@ func (c *config) markDefaults() { c.usersAreDefault = true }
 // NewServer builds and starts the harness. It never fails for well-formed
 // options, so it returns just *Harness for ergonomic test setup.
 func NewServer(opts ...Option) *Harness {
-	cfg := config{
-		issuerName:   DefaultIssuer,
-		clientID:     DefaultClientID,
-		clientSecret: DefaultClientSecret,
-		scopes:       []string{"openid"},
-		users:        map[string]string{DefaultUsername: DefaultPassword},
-	}
-	cfg.markDefaults()
-	for _, o := range opts {
-		o(&cfg)
-	}
+	cfg := resolveConfig(opts...)
 
 	issuer := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer(cfg.issuerName),
 		defaultimpl.WithEd25519TokenTTL(5*time.Minute),
 	)
-
-	users := defaultimpl.NewMemoryUserProvider()
-	for u := range cfg.users {
-		_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: u})
-	}
-
-	clients := defaultimpl.NewMemoryClientStore()
-	clients.AddSeed(&sso.Client{
-		ID:                    cfg.clientID,
-		Secret:                cfg.clientSecret,
-		AllowedScopes:         cfg.scopes,
-		AllowedAuthenticators: []string{authenticators.MethodPassword},
-		TokenStrategy:         "jwt",
-		Active:                true,
-	})
-
-	// Snapshot the credentials so the closure validates by value, not by a
-	// later-mutated map.
-	creds := make(map[string]string, len(cfg.users))
-	for u, p := range cfg.users {
-		creds[u] = p
-	}
-	pw := authenticators.NewPasswordAuthenticator(
-		authenticators.PasswordVerifierFunc(func(_ context.Context, u, p string) (*sso.AuthResult, error) {
-			if want, ok := creds[u]; ok && p != "" && want == p {
-				return &sso.AuthResult{UserID: u}, nil
-			}
-			return nil, errors.New("testkit: bad credentials")
-		}),
-	)
+	users := seedUsers(cfg)
+	clients := seedClient(cfg)
+	pw := newPasswordAuthenticator(cfg)
 
 	srv := sso.NewServer(
 		sso.WithIssuer(cfg.issuerName),
@@ -169,6 +132,63 @@ func NewServer(opts ...Option) *Harness {
 		clientSecret: cfg.clientSecret,
 		server:       ts,
 	}
+}
+
+// resolveConfig seeds the defaults then applies caller options. markDefaults
+// must run before options so the first WithUser replaces the seed user.
+func resolveConfig(opts ...Option) config {
+	cfg := config{
+		issuerName:   DefaultIssuer,
+		clientID:     DefaultClientID,
+		clientSecret: DefaultClientSecret,
+		scopes:       []string{"openid"},
+		users:        map[string]string{DefaultUsername: DefaultPassword},
+	}
+	cfg.markDefaults()
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return cfg
+}
+
+// seedUsers registers every configured user with a fresh memory provider.
+func seedUsers(cfg config) *defaultimpl.MemoryUserProvider {
+	users := defaultimpl.NewMemoryUserProvider()
+	for u := range cfg.users {
+		_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: u})
+	}
+	return users
+}
+
+// seedClient registers the single confidential client used by the harness.
+func seedClient(cfg config) *defaultimpl.MemoryClientStore {
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID:                    cfg.clientID,
+		Secret:                cfg.clientSecret,
+		AllowedScopes:         cfg.scopes,
+		AllowedAuthenticators: []string{authenticators.MethodPassword},
+		TokenStrategy:         "jwt",
+		Active:                true,
+	})
+	return clients
+}
+
+// newPasswordAuthenticator builds the password verifier over a snapshot of the
+// credentials, so the closure validates by value, not by a later-mutated map.
+func newPasswordAuthenticator(cfg config) *authenticators.PasswordAuthenticator {
+	creds := make(map[string]string, len(cfg.users))
+	for u, p := range cfg.users {
+		creds[u] = p
+	}
+	return authenticators.NewPasswordAuthenticator(
+		authenticators.PasswordVerifierFunc(func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if want, ok := creds[u]; ok && p != "" && want == p {
+				return &sso.AuthResult{UserID: u}, nil
+			}
+			return nil, errors.New("testkit: bad credentials")
+		}),
+	)
 }
 
 // Close shuts down the HTTP server. Idempotent.

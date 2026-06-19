@@ -62,27 +62,51 @@ type ExportOptions struct {
 // fails to List; partial snapshots are never returned (it's all or
 // nothing — bad data downstream is worse than a bounced export).
 func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot, error) {
-	ns := s.Namespace
-	if ns == "" {
-		ns = "sso-server"
-	}
-
-	id, err := newSnapshotID()
+	ns := s.namespace()
+	snap, err := s.newSnapshot(ns, opts)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot: id: %w", err)
-	}
-	snap := &Snapshot{
-		SchemaVersion:   SchemaVersion,
-		SnapshotID:      id,
-		TakenAtUnix:     timeNow().Unix(),
-		SourceNamespace: ns,
-		SourceNodeID:    opts.SourceNodeID,
+		return nil, err
 	}
 
 	if err := s.exportBootstrapState(ctx, snap, ns); err != nil {
 		return nil, err
 	}
+	if err := s.exportResources(ctx, snap, opts); err != nil {
+		return nil, err
+	}
 
+	s.applyRedaction(snap, opts)
+	return snap, nil
+}
+
+// namespace resolves the configured bootstrap namespace, defaulting to
+// "sso-server" when unset.
+func (s *Snapshotter) namespace() string {
+	if s.Namespace == "" {
+		return "sso-server"
+	}
+	return s.Namespace
+}
+
+// newSnapshot allocates a fresh Snapshot envelope with a generated ID and
+// the current timestamp.
+func (s *Snapshotter) newSnapshot(ns string, opts ExportOptions) (*Snapshot, error) {
+	id, err := newSnapshotID()
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: id: %w", err)
+	}
+	return &Snapshot{
+		SchemaVersion:   SchemaVersion,
+		SnapshotID:      id,
+		TakenAtUnix:     timeNow().Unix(),
+		SourceNamespace: ns,
+		SourceNodeID:    opts.SourceNodeID,
+	}, nil
+}
+
+// exportResources polls each wired backend in the order downstream
+// enumeration depends on.
+func (s *Snapshotter) exportResources(ctx context.Context, snap *Snapshot, opts ExportOptions) error {
 	// Clients first — also gives us the clientID list permissions /
 	// menus / assignments need to enumerate. When the Clients store is nil
 	// (or excluded), clientIDs stays empty and permissions/menus
@@ -90,32 +114,29 @@ func (s *Snapshotter) Export(ctx context.Context, opts ExportOptions) (*Snapshot
 	// presumably already has clients seeded.
 	clientIDs, err := s.exportClients(ctx, snap, opts)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := s.exportUsers(ctx, snap, opts); err != nil {
-		return nil, err
+		return err
 	}
 	if err := s.exportPermissions(ctx, snap, opts, clientIDs); err != nil {
-		return nil, err
+		return err
 	}
-	if err := s.exportNetPolicy(ctx, snap, opts); err != nil {
-		return nil, err
-	}
+	return s.exportNetPolicy(ctx, snap, opts)
+}
 
-	// Redaction is the LAST export step. The effective redactor is the
-	// per-call override when set, else the Snapshotter default; nil on
-	// both means no redaction and a byte-identical (backward-compatible)
-	// export. Some ClientStore backends (the in-memory one) return live
-	// pointers from List, so we deep-copy every client into export-local
-	// objects BEFORE handing the snapshot to the redactor — that
-	// guarantees redaction never zeros a secret on the running server's
-	// in-memory client.
+// applyRedaction runs the LAST export step. The effective redactor is the
+// per-call override when set, else the Snapshotter default; nil on both
+// means no redaction and a byte-identical (backward-compatible) export.
+// Some ClientStore backends (the in-memory one) return live pointers from
+// List, so we deep-copy every client into export-local objects BEFORE
+// handing the snapshot to the redactor — that guarantees redaction never
+// zeros a secret on the running server's in-memory client.
+func (s *Snapshotter) applyRedaction(snap *Snapshot, opts ExportOptions) {
 	if r := effectiveRedactor(opts.Redactor, s.DefaultExportRedactor); r != nil {
 		copyClientsForRedaction(snap)
 		r.Redact(snap)
 	}
-
-	return snap, nil
 }
 
 // exportBootstrapState records the tracker's applied version — only

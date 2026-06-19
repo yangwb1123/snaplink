@@ -113,7 +113,6 @@ var funcLenExemptions = map[string]int{
 	"caep/receiver_receive.go:(*Receiver).Receive":                       198,
 	"caep/revoker.go:(*userProviderResolver).ResolveLocalSubject":        51,
 	"cmd/sso-server/build_stores.go:buildApp":                            77,
-	"cmd/sso-server/main.go:main":                                        84,
 	"defaultimpl/ecdsa_issue.go:(*ECDSAJWTIssuer).Issue":                 82,
 	"defaultimpl/ecdsa_validate.go:(*ECDSAJWTIssuer).Validate":           101,
 	"defaultimpl/ed25519_issue.go:(*Ed25519JWTIssuer).Issue":             88,
@@ -127,7 +126,6 @@ var funcLenExemptions = map[string]int{
 	"federation/registration_metadata.go:MetadataToClient":               53,
 	"handlers.go:(*Server).handleAuthzPolicyBundle":                      58,
 	"mesh_authz.go:(*Server).MeshAuthorize":                              154,
-	"metrics/metrics_ctor.go:NewWithRegistry":                            293,
 	"middleware/trusted_proxy.go:(*TrustedProxies).resolve":              52,
 	"oauth/bind.go:formIntoStruct":                                       51,
 	"oauth/dcr_validate.go:ValidateDCRMetadata":                          52,
@@ -177,9 +175,7 @@ var funcLenExemptions = map[string]int{
 	"signing_key_aggregation_loop.go:(*Server).tryAdoptIntoIssuer":       51,
 	"signingkeys/etcd/etcd_keepalive.go:(*Registry).Publish":             57,
 	"signingkeys/etcd/etcd_keepalive.go:(*Registry).supervisedKeepAlive": 107,
-	"snapshot/snapshotter.go:(*Snapshotter).Export":                      56,
 	"sso_newserver.go:NewServer":                                         94,
-	"testkit/testkit.go:NewServer":                                       68,
 }
 
 func TestMaintainability_CyclomaticComplexity(t *testing.T) {
