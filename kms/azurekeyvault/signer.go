@@ -3,14 +3,10 @@ package azurekeyvault
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rsa"
-	"encoding/asn1"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"sync"
 	"time"
 
@@ -248,109 +244,6 @@ func (s *Signer) loadPublic(ctx context.Context) (crypto.PublicKey, error) {
 	return s.cached, nil
 }
 
-// jwkToPublic assembles a stdlib public key from the vault's JSON Web Key.
-// Azure returns the key components as raw big-endian octet strings (the JWK
-// base64url decoded form): RSA modulus N + exponent E, or EC affine
-// coordinates X/Y on a named curve. RSA-HSM / EC-HSM keys (the HSM-backed,
-// non-exportable, FIPS-gate variants) carry the SAME public components and
-// are accepted identically. Symmetric (oct) and the non-JWS P-256K curve are
-// rejected with ErrUnsupportedKey.
-func jwkToPublic(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
-	if jwk == nil || jwk.Kty == nil {
-		return nil, fmt.Errorf("azurekeyvault: %w: key bundle has no key type", ErrUnsupportedKey)
-	}
-	switch *jwk.Kty {
-	case azkeys.KeyTypeRSA, azkeys.KeyTypeRSAHSM:
-		if len(jwk.N) == 0 || len(jwk.E) == 0 {
-			return nil, fmt.Errorf("azurekeyvault: %w: RSA JWK missing modulus or exponent", ErrUnsupportedKey)
-		}
-		// E is a big-endian octet string; fold it into an int. RSA public
-		// exponents (65537) fit comfortably, but guard against a value that
-		// would overflow the platform int rather than truncate it.
-		eBig := new(big.Int).SetBytes(jwk.E)
-		if !eBig.IsInt64() || eBig.Int64() > int64(int(^uint(0)>>1)) || eBig.Sign() <= 0 {
-			return nil, fmt.Errorf("azurekeyvault: %w: RSA public exponent out of range", ErrUnsupportedKey)
-		}
-		// Validate the exponent is a cryptographically valid RSA public
-		// exponent on the FULL value (before the int truncation below). Unlike
-		// awskms/gcpkms, which parse a DER SubjectPublicKeyInfo through
-		// x509.ParsePKIXPublicKey and inherit its exponent checks, this module
-		// parses the RAW JWK N/E and so bypasses x509's validation — it MUST
-		// reject these itself. e<3 (e=1 is the identity exponent: ciphertext ==
-		// plaintext, trivially forgeable; e=2 is below the minimum) or an even e
-		// (RSA requires gcd(e, phi(N))==1, and phi(N) is even, so an even e is
-		// never coprime → invalid) is never a valid RSA public exponent. This
-		// keeps legitimate small odd exponents (e=3, e=65537). A misbehaving /
-		// compromised / misconfigured vault returning E=0x01 would otherwise
-		// yield an rsa.PublicKey{E:1} published in JWKS → forgeable tokens.
-		if eBig.Cmp(big.NewInt(3)) < 0 || eBig.Bit(0) == 0 {
-			return nil, fmt.Errorf("azurekeyvault: %w: invalid RSA public exponent (must be odd and >= 3)", ErrUnsupportedKey)
-		}
-		n := new(big.Int).SetBytes(jwk.N)
-		// Defense-in-depth modulus floor: reject a sub-2048-bit RSA key. The
-		// production path is already saved by cryptosigner.RSA's
-		// N.BitLen()>=2048 startup check, but a DIRECT crypto.Signer consumer of
-		// this Signer bypasses that — so floor it locally too, mirroring the
-		// cryptosigner + spiffe trust-bundle 2048-bit floor (RFC 7518 §3.3).
-		if n.BitLen() < minRSABits {
-			return nil, fmt.Errorf("azurekeyvault: %w: RSA modulus is %d bits, want >= %d", ErrUnsupportedKey, n.BitLen(), minRSABits)
-		}
-		return &rsa.PublicKey{
-			N: n,
-			E: int(eBig.Int64()),
-		}, nil
-	case azkeys.KeyTypeEC, azkeys.KeyTypeECHSM:
-		if jwk.Crv == nil {
-			return nil, fmt.Errorf("azurekeyvault: %w: EC JWK missing curve", ErrUnsupportedKey)
-		}
-		curve, err := curveForName(*jwk.Crv)
-		if err != nil {
-			return nil, err
-		}
-		if len(jwk.X) == 0 || len(jwk.Y) == 0 {
-			return nil, fmt.Errorf("azurekeyvault: %w: EC JWK missing X or Y coordinate", ErrUnsupportedKey)
-		}
-		pub := &ecdsa.PublicKey{
-			Curve: curve,
-			X:     new(big.Int).SetBytes(jwk.X),
-			Y:     new(big.Int).SetBytes(jwk.Y),
-		}
-		// Reject a point that is not actually on the curve — a malformed JWK
-		// must fail loud, never produce a key that signs garbage. IsOnCurve is
-		// the direct on-curve validator for a raw JWK X/Y: it rejects off-curve
-		// points, out-of-range coordinates (each must lie in [0, P)), and the
-		// point at infinity (0,0) — the three checks that matter here, all
-		// empirically confirmed. Go 1.26 marks elliptic.Curve.IsOnCurve
-		// Deprecated ("low-level unsafe API"), but it remains functionally
-		// correct: awskms/gcpkms sidestep it because they parse a DER
-		// SubjectPublicKeyInfo via x509.ParsePKIXPublicKey (which validates
-		// internally), whereas this module parses the raw EC components, so the
-		// explicit on-curve check is necessary, not optional.
-		if !curve.IsOnCurve(pub.X, pub.Y) {
-			return nil, fmt.Errorf("azurekeyvault: %w: EC public point is not on curve %s", ErrUnsupportedKey, curve.Params().Name)
-		}
-		return pub, nil
-	default:
-		return nil, fmt.Errorf("azurekeyvault: %w: key type %s", ErrUnsupportedKey, *jwk.Kty)
-	}
-}
-
-// curveForName maps the Azure JWK curve name to the stdlib elliptic.Curve.
-// Only the three NIST curves that carry a JWS ECDSA alg are supported;
-// P-256K (secp256k1) is not a JWS-standard curve and is rejected.
-func curveForName(name azkeys.CurveName) (elliptic.Curve, error) {
-	switch name {
-	case azkeys.CurveNameP256:
-		return elliptic.P256(), nil
-	case azkeys.CurveNameP384:
-		return elliptic.P384(), nil
-	case azkeys.CurveNameP521:
-		return elliptic.P521(), nil
-	default:
-		return nil, fmt.Errorf("azurekeyvault: %w: EC curve %s (only P-256/P-384/P-521 carry a JWS alg)", ErrUnsupportedKey, name)
-	}
-}
-
 // Public implements crypto.Signer. It returns the parsed *ecdsa.PublicKey /
 // *rsa.PublicKey, fetching + caching it from the vault on first call. On a
 // vault or parse error it returns nil (the crypto.Signer interface has no
@@ -445,93 +338,6 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 	// RSA: Azure returns the raw PKCS#1 v1.5 / PSS signature — already the
 	// crypto.Signer (and JWS) form.
 	return sig, nil
-}
-
-// signatureAlgorithm maps the public key type + requested hash + padding to
-// the Azure SignatureAlgorithm. For EC it also returns the curve (so Sign can
-// convert the raw R||S to DER); for RSA the returned curve is nil. The
-// hash<->curve pairing is enforced fail-closed.
-//
-//	P-256 + SHA-256          -> ES256  (curve = P-256)
-//	P-384 + SHA-384          -> ES384  (curve = P-384)
-//	P-521 + SHA-512          -> ES512  (curve = P-521)
-//	RSA   + SHA-256, !pss    -> RS256  (curve = nil)
-//	RSA   + SHA-256,  pss    -> PS256  (curve = nil)
-func signatureAlgorithm(pub crypto.PublicKey, hash crypto.Hash, pss bool) (azkeys.SignatureAlgorithm, elliptic.Curve, error) {
-	switch pk := pub.(type) {
-	case *ecdsa.PublicKey:
-		// The curve fixes the JWS hash. Reject any other pairing fail-closed —
-		// matching the pkcs11/awskms/gcpkms peers — so a direct crypto.Signer
-		// caller cannot sign a digest that would verify under a different hash
-		// than the ES* alg the JWKS publishes. The !=want check also subsumes
-		// the HashFunc()==0 (Ed25519-shaped) rejection for EC keys.
-		switch pk.Curve {
-		case elliptic.P256():
-			if hash != crypto.SHA256 {
-				return "", nil, fmt.Errorf("azurekeyvault: %w: P-256 key requires SHA-256 (ES256), got %v", ErrUnsupportedKey, hash)
-			}
-			return azkeys.SignatureAlgorithmES256, elliptic.P256(), nil
-		case elliptic.P384():
-			if hash != crypto.SHA384 {
-				return "", nil, fmt.Errorf("azurekeyvault: %w: P-384 key requires SHA-384 (ES384), got %v", ErrUnsupportedKey, hash)
-			}
-			return azkeys.SignatureAlgorithmES384, elliptic.P384(), nil
-		case elliptic.P521():
-			if hash != crypto.SHA512 {
-				return "", nil, fmt.Errorf("azurekeyvault: %w: P-521 key requires SHA-512 (ES512), got %v", ErrUnsupportedKey, hash)
-			}
-			return azkeys.SignatureAlgorithmES512, elliptic.P521(), nil
-		default:
-			return "", nil, fmt.Errorf("azurekeyvault: %w: unsupported ECDSA curve %s", ErrUnsupportedKey, pk.Curve.Params().Name)
-		}
-	case *rsa.PublicKey:
-		// The JWS RSA issuers sign over SHA-256 only (RS256 / PS256). The RSA
-		// key size (2048/3072/4096) is orthogonal to the hash.
-		if hash != crypto.SHA256 {
-			return "", nil, fmt.Errorf("azurekeyvault: %w: RSA with hash %v (only SHA-256 / RS256|PS256 supported)", ErrUnsupportedKey, hash)
-		}
-		if pss {
-			return azkeys.SignatureAlgorithmPS256, nil, nil
-		}
-		return azkeys.SignatureAlgorithmRS256, nil, nil
-	default:
-		// EdDSA / Ed25519 lands here (Public() never returns an ed25519 key —
-		// jwkToPublic rejects non-EC/RSA — but a hypothetical key type is
-		// caught regardless): Azure Key Vault has no EdDSA key type.
-		return "", nil, fmt.Errorf("azurekeyvault: %w: public key type %T (Azure Key Vault has no Ed25519/EdDSA key)", ErrUnsupportedKey, pub)
-	}
-}
-
-// ecdsaDERSignature is the ASN.1 SEQUENCE { r INTEGER, s INTEGER } the stdlib
-// crypto.Signer ECDSA contract mandates (and ecdsa.VerifyASN1 consumes).
-type ecdsaDERSignature struct{ R, S *big.Int }
-
-// rawECDSAToDER converts Azure's raw fixed-width R||S signature (RFC 7518
-// §3.4 / IEEE-P1363, what Key Vault returns for an ES* Sign) into the ASN.1
-// DER form the crypto.Signer ECDSA contract requires. The raw signature is
-// exactly 2*ceil(bits/8) bytes — R then S, each left-padded to the curve's
-// coordinate octet length (P-256 -> 32, P-384 -> 48, P-521 -> 66) — so we
-// split it in half and DER-encode the two integers. It rejects a length that
-// does not match the curve rather than emit a signature no verifier accepts.
-// This is the INVERSE of cryptosigner's derToJWSSignature: doing it here lets
-// this type stay a faithful crypto.Signer that round-trips against
-// ecdsa.VerifyASN1, then the bridge re-splits DER -> R||S for the JWS wire.
-func rawECDSAToDER(raw []byte, curve elliptic.Curve) ([]byte, error) {
-	coordLen := (curve.Params().BitSize + 7) / 8
-	if len(raw) != 2*coordLen {
-		return nil, fmt.Errorf("azurekeyvault: raw ECDSA signature length %d, want %d (2*%d for %s)",
-			len(raw), 2*coordLen, coordLen, curve.Params().Name)
-	}
-	r := new(big.Int).SetBytes(raw[:coordLen])
-	sv := new(big.Int).SetBytes(raw[coordLen:])
-	if r.Sign() <= 0 || sv.Sign() <= 0 {
-		return nil, errors.New("azurekeyvault: vault returned non-positive R or S")
-	}
-	der, err := asn1.Marshal(ecdsaDERSignature{R: r, S: sv})
-	if err != nil {
-		return nil, fmt.Errorf("azurekeyvault: marshal ECDSA DER: %w", err)
-	}
-	return der, nil
 }
 
 // Interface guards:

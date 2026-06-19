@@ -190,8 +190,8 @@ var funcLenExemptions = map[string]int{
 	"signingkeys/etcd/etcd_keepalive.go:(*Registry).Publish":             57,
 	"signingkeys/etcd/etcd_keepalive.go:(*Registry).supervisedKeepAlive": 107,
 	"snapshot/snapshotter.go:(*Snapshotter).Export":                      56,
-	"sso.go:NewServer":             94,
-	"testkit/testkit.go:NewServer": 68,
+	"sso_newserver.go:NewServer":                                         94,
+	"testkit/testkit.go:NewServer":                                       68,
 }
 
 func TestMaintainability_CyclomaticComplexity(t *testing.T) {
