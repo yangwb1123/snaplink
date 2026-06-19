@@ -58,20 +58,20 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	clientStore := defaultimpl.NewMemoryClientStore()
-	for _, c := range cfg.Clients {
-		clientStore.AddSeed(&sso.Client{
-			ID:                    c.ID,
-			Secret:                c.Secret,
-			Name:                  c.Name,
-			RedirectURIs:          c.RedirectURIs,
-			AllowedScopes:         c.AllowedScopes,
-			AllowedAuthenticators: c.AllowedAuthenticators,
-			TokenStrategy:         c.TokenStrategy,
-			Active:                c.Active,
-		})
-	}
+	opts := buildServerOptions(cfg)
+	server := sso.NewServer(opts...)
+	handler := server.Handler()
 
+	printEndpoints(cfg)
+	reg := registerSelf()
+	defer func() { _ = reg.Close() }()
+
+	log.Fatal(http.ListenAndServe(cfg.Server.Listen, handler))
+}
+
+// buildServerOptions assembles the full option set from config: core wiring
+// plus the opt-in audit, permission, authenticator, and MFA-demo blocks.
+func buildServerOptions(cfg *config.Config) []sso.Option {
 	opts := append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithTracingMiddleware(),
@@ -85,28 +85,68 @@ func main() {
 			defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
 		)),
 		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
-		sso.WithClientStore(clientStore),
+		sso.WithClientStore(buildClientStore(cfg)),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager(cfg.Server.SessionTTL)),
 	)
 
-	if cfg.Audit.Enabled {
-		recorder := audit.New(
-			audit.NewMemorySink(cfg.Audit.MemoryCapacity),
-			audit.WithErrorHandler(func(err error) { log.Printf("audit: %v", err) }),
-		)
-		opts = append(opts, sso.WithAuditRecorder(recorder))
-		if cfg.Audit.APIEnabled {
-			opts = append(opts, sso.WithAuditAPI())
-		}
-	}
+	opts = appendAuditOptions(opts, cfg)
+	opts = appendPermissionOptions(opts, cfg)
+	opts = appendAuthenticatorOptions(opts, cfg)
+	return opts
+}
 
-	if provider := cfg.BuildPermissionProvider(); provider != nil {
-		opts = append(opts, sso.WithPermissionProvider(provider))
-		if cfg.Permissions.EmbedInLogin {
-			opts = append(opts, sso.WithEmbedPermissionsInLogin())
-		}
+// buildClientStore seeds an in-memory client store from the config clients.
+func buildClientStore(cfg *config.Config) *defaultimpl.MemoryClientStore {
+	clientStore := defaultimpl.NewMemoryClientStore()
+	for _, c := range cfg.Clients {
+		clientStore.AddSeed(&sso.Client{
+			ID:                    c.ID,
+			Secret:                c.Secret,
+			Name:                  c.Name,
+			RedirectURIs:          c.RedirectURIs,
+			AllowedScopes:         c.AllowedScopes,
+			AllowedAuthenticators: c.AllowedAuthenticators,
+			TokenStrategy:         c.TokenStrategy,
+			Active:                c.Active,
+		})
 	}
+	return clientStore
+}
 
+// appendAuditOptions wires the memory audit recorder (and optional API) when
+// auditing is enabled in config.
+func appendAuditOptions(opts []sso.Option, cfg *config.Config) []sso.Option {
+	if !cfg.Audit.Enabled {
+		return opts
+	}
+	recorder := audit.New(
+		audit.NewMemorySink(cfg.Audit.MemoryCapacity),
+		audit.WithErrorHandler(func(err error) { log.Printf("audit: %v", err) }),
+	)
+	opts = append(opts, sso.WithAuditRecorder(recorder))
+	if cfg.Audit.APIEnabled {
+		opts = append(opts, sso.WithAuditAPI())
+	}
+	return opts
+}
+
+// appendPermissionOptions wires the permission provider (and optional
+// login-embedding) when a provider is configured.
+func appendPermissionOptions(opts []sso.Option, cfg *config.Config) []sso.Option {
+	provider := cfg.BuildPermissionProvider()
+	if provider == nil {
+		return opts
+	}
+	opts = append(opts, sso.WithPermissionProvider(provider))
+	if cfg.Permissions.EmbedInLogin {
+		opts = append(opts, sso.WithEmbedPermissionsInLogin())
+	}
+	return opts
+}
+
+// appendAuthenticatorOptions wires the config-enabled authenticators plus the
+// TOTP authenticator and the optional MFA_DEMO step-up block.
+func appendAuthenticatorOptions(opts []sso.Option, cfg *config.Config) []sso.Option {
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	for _, a := range buildAuthenticators(cfg) {
 		opts = append(opts, sso.WithAuthenticator(a))
@@ -133,10 +173,12 @@ func main() {
 		)
 		log.Printf("MFA_DEMO=1 — every login goes through TOTP step-up")
 	}
+	return opts
+}
 
-	server := sso.NewServer(opts...)
-	handler := server.Handler()
-
+// printEndpoints lists the live endpoints, branching on the audit and
+// permission features that were enabled in config.
+func printEndpoints(cfg *config.Config) {
 	fmt.Printf("SSO server on %s (issuer=%s)\n", cfg.Server.Listen, cfg.Server.Issuer)
 	fmt.Println("Endpoints:")
 	fmt.Printf("  POST %s\n", sso.PathLogin)
@@ -156,11 +198,13 @@ func main() {
 		fmt.Printf("  GET  %s?client_id=...\n", sso.PathMyMenus)
 		fmt.Printf("  GET  %s?client_id=...\n", sso.PathMyRoles)
 	}
+}
 
-	// Service discovery: register self in an in-memory registry. Swap
-	// memory.New() for etcd.New(...) when you have an etcd cluster.
+// registerSelf registers this instance in an in-memory service registry and
+// returns it so main can defer Close. Swap memory.New() for etcd.New(...)
+// when you have an etcd cluster.
+func registerSelf() *memory.Registry {
 	reg := memory.New()
-	defer func() { _ = reg.Close() }()
 	self := &registry.Service{
 		ID:      "sso-1",
 		Name:    "sso",
@@ -173,8 +217,7 @@ func main() {
 		log.Fatalf("registry: %v", err)
 	}
 	fmt.Printf("Registered as %s/%s @ %s\n", self.Name, self.ID, self.Endpoint())
-
-	log.Fatal(http.ListenAndServe(cfg.Server.Listen, handler))
+	return reg
 }
 
 // buildAuthenticators returns the enabled set of authenticators based on the
@@ -184,67 +227,89 @@ func buildAuthenticators(cfg *config.Config) []sso.Authenticator {
 	codeStore := authenticators.NewMemoryCodeStore()
 
 	if a := cfg.Authenticators.Password; a != nil && a.Enabled {
-		auths = append(auths, authenticators.NewPasswordAuthenticator(
-			authenticators.PasswordVerifierFunc(func(_ context.Context, user, pass string) (*sso.AuthResult, error) {
-				if user == demoUser && pass == demoPassword {
-					return &sso.AuthResult{UserID: "user-" + user, ExternalID: user}, nil
-				}
-				return nil, errors.New("bad credentials")
-			}),
-		))
+		auths = append(auths, buildPasswordAuth())
 	}
-
 	if a := cfg.Authenticators.Phone; a != nil && a.Enabled {
-		auths = append(auths, authenticators.NewPhoneAuthenticator(
-			codeStore,
-			authenticators.SMSSenderFunc(func(_ context.Context, phone, code string) error {
-				log.Printf("[sms stub] -> %s : %s", phone, code)
-				return nil
-			}),
-			authenticators.WithPhoneCodeLength(a.CodeLength),
-			authenticators.WithPhoneCodeTTL(a.CodeTTL),
-		))
+		auths = append(auths, buildPhoneAuth(codeStore, a))
 	}
-
 	if a := cfg.Authenticators.Email; a != nil && a.Enabled {
-		auths = append(auths, authenticators.NewEmailAuthenticator(
-			codeStore,
-			authenticators.EmailSenderFunc(func(_ context.Context, email, code string) error {
-				log.Printf("[email stub] -> %s : %s", email, code)
-				return nil
-			}),
-			authenticators.WithEmailCodeLength(a.CodeLength),
-			authenticators.WithEmailCodeTTL(a.CodeTTL),
-		))
+		auths = append(auths, buildEmailAuth(codeStore, a))
 	}
-
 	if a := cfg.Authenticators.TempToken; a != nil && a.Enabled {
-		store := authenticators.NewMemoryTempTokenStore()
-		tt := authenticators.NewTempTokenAuthenticator(store, a.TTL)
-		if t, err := tt.Issue(context.Background(), &sso.Subject{ID: "user-bob"}); err == nil {
-			log.Printf("[temp_token demo] try: -d '{\"provider\":\"temp_token\",\"credential\":{\"token\":\"%s\"}}'", t)
-		}
-		auths = append(auths, tt)
+		auths = append(auths, buildTempTokenAuth(a))
 	}
-
 	if a := cfg.Authenticators.KeyPair; a != nil && a.Enabled {
-		store := authenticators.NewMemoryPublicKeyStore()
-		pub, _, _ := ed25519.GenerateKey(rand.Reader)
-		store.Register(demoKeyID, pub, &sso.Subject{ID: "service-001"})
-		auths = append(auths, authenticators.NewKeyPairAuthenticator(store, a.MaxClockSkew))
+		auths = append(auths, buildKeyPairAuth(a))
 	}
-
 	if a := cfg.Authenticators.APIKey; a != nil && a.Enabled {
-		store := authenticators.NewMemoryAPIKeyStore()
-		store.Register(demoAPIKeyID, demoAPISecret, &sso.Subject{ID: "service-demo"})
-		auths = append(auths, authenticators.NewAPIKeyAuthenticator(store))
+		auths = append(auths, buildAPIKeyAuth())
 	}
-
 	if a := cfg.Authenticators.Certificate; a != nil && a.Enabled {
-		roots := x509.NewCertPool()
-		// In production: load a.TrustedCAFiles into roots via x509.NewCertPool().
-		auths = append(auths, authenticators.NewCertificateAuthenticator(roots))
+		auths = append(auths, buildCertificateAuth())
 	}
 
 	return auths
+}
+
+func buildPasswordAuth() sso.Authenticator {
+	return authenticators.NewPasswordAuthenticator(
+		authenticators.PasswordVerifierFunc(func(_ context.Context, user, pass string) (*sso.AuthResult, error) {
+			if user == demoUser && pass == demoPassword {
+				return &sso.AuthResult{UserID: "user-" + user, ExternalID: user}, nil
+			}
+			return nil, errors.New("bad credentials")
+		}),
+	)
+}
+
+func buildPhoneAuth(codeStore authenticators.CodeStore, a *config.CodeAuthConfig) sso.Authenticator {
+	return authenticators.NewPhoneAuthenticator(
+		codeStore,
+		authenticators.SMSSenderFunc(func(_ context.Context, phone, code string) error {
+			log.Printf("[sms stub] -> %s : %s", phone, code)
+			return nil
+		}),
+		authenticators.WithPhoneCodeLength(a.CodeLength),
+		authenticators.WithPhoneCodeTTL(a.CodeTTL),
+	)
+}
+
+func buildEmailAuth(codeStore authenticators.CodeStore, a *config.CodeAuthConfig) sso.Authenticator {
+	return authenticators.NewEmailAuthenticator(
+		codeStore,
+		authenticators.EmailSenderFunc(func(_ context.Context, email, code string) error {
+			log.Printf("[email stub] -> %s : %s", email, code)
+			return nil
+		}),
+		authenticators.WithEmailCodeLength(a.CodeLength),
+		authenticators.WithEmailCodeTTL(a.CodeTTL),
+	)
+}
+
+func buildTempTokenAuth(a *config.TempTokenConfig) sso.Authenticator {
+	store := authenticators.NewMemoryTempTokenStore()
+	tt := authenticators.NewTempTokenAuthenticator(store, a.TTL)
+	if t, err := tt.Issue(context.Background(), &sso.Subject{ID: "user-bob"}); err == nil {
+		log.Printf("[temp_token demo] try: -d '{\"provider\":\"temp_token\",\"credential\":{\"token\":\"%s\"}}'", t)
+	}
+	return tt
+}
+
+func buildKeyPairAuth(a *config.KeyPairConfig) sso.Authenticator {
+	store := authenticators.NewMemoryPublicKeyStore()
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	store.Register(demoKeyID, pub, &sso.Subject{ID: "service-001"})
+	return authenticators.NewKeyPairAuthenticator(store, a.MaxClockSkew)
+}
+
+func buildAPIKeyAuth() sso.Authenticator {
+	store := authenticators.NewMemoryAPIKeyStore()
+	store.Register(demoAPIKeyID, demoAPISecret, &sso.Subject{ID: "service-demo"})
+	return authenticators.NewAPIKeyAuthenticator(store)
+}
+
+func buildCertificateAuth() sso.Authenticator {
+	roots := x509.NewCertPool()
+	// In production: load a.TrustedCAFiles into roots via x509.NewCertPool().
+	return authenticators.NewCertificateAuthenticator(roots)
 }

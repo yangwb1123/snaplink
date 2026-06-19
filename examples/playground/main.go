@@ -70,9 +70,42 @@ func main() {
 	ctx := context.Background()
 	issuerName := "http://localhost" + *listen
 
+	users := seedUsers(ctx)
+	clients := seedClients(issuerName)
+	perms := seedPermissions(ctx)
+	mfaProvider := buildMFAProvider()
+
+	issuer := defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519Issuer(issuerName),
+		defaultimpl.WithEd25519TokenTTL(10*time.Minute),
+	)
+	auditSink := audit.NewMemorySink(500)
+
+	srv := sso.NewServer(buildServerOptions(serverDeps{
+		issuerName:  issuerName,
+		users:       users,
+		clients:     clients,
+		perms:       perms,
+		mfaProvider: mfaProvider,
+		issuer:      issuer,
+		auditSink:   auditSink,
+	})...)
+
+	root := buildRootHandler(srv.Handler(), auditSink, buildAlgSamples(issuerName))
+
+	banner(*listen, issuerName)
+	log.Fatal(http.ListenAndServe(*listen, root))
+}
+
+// seedUsers creates the in-memory user provider seeded with the demo user.
+func seedUsers(ctx context.Context) *defaultimpl.MemoryUserProvider {
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: demoUser, Name: "Alice Example", Email: "alice@example.com"})
+	return users
+}
 
+// seedClients seeds the demo client and the MFA-required client.
+func seedClients(issuerName string) *defaultimpl.MemoryClientStore {
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: demoClient, Secret: demoSecret, Active: true,
@@ -88,8 +121,12 @@ func main() {
 		AllowedScopes:         []string{"openid", "profile"},
 		RedirectURIs:          []string{issuerName + "/callback"},
 	})
+	return clients
+}
 
-	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+// buildPasswordAuth wires the demo password verifier.
+func buildPasswordAuth() sso.Authenticator {
+	return authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
 		func(_ context.Context, username, password string) (*sso.AuthResult, error) {
 			if username == demoUser && password == demoPassword {
 				return &sso.AuthResult{UserID: demoUser, Provider: "password"}, nil
@@ -97,16 +134,20 @@ func main() {
 			return nil, errors.New("invalid credentials")
 		},
 	))
+}
 
-	// TOTP MFA: enroll alice with the RFC test secret; the provider
-	// verifies codes at /auth/mfa.
+// buildMFAProvider enrolls alice with the RFC test secret; the provider
+// verifies codes at /auth/mfa.
+func buildMFAProvider() spi.MFAProvider {
 	totpStore := authenticators.NewMemoryTOTPStore()
 	totpStore.Set(demoUser, demoTOTPSecret)
-	mfaProvider := authenticators.NewTOTPMFAProvider(authenticators.NewTOTPAuthenticator(totpStore))
+	return authenticators.NewTOTPMFAProvider(authenticators.NewTOTPAuthenticator(totpStore))
+}
 
-	// Permissions: a role + menu tree assigned to alice, embedded in the
-	// login response (WithEmbedPermissionsInLogin) and queryable at
-	// /permissions|roles|menus/me.
+// seedPermissions assigns alice a role + menu tree, embedded in the login
+// response (WithEmbedPermissionsInLogin) and queryable at
+// /permissions|roles|menus/me.
+func seedPermissions(ctx context.Context) *permissions.MemoryProvider {
 	perms := permissions.NewMemoryProvider()
 	_ = perms.AddRole(ctx, demoClient, permissions.Role{
 		Code: "editor", Name: "Editor",
@@ -120,23 +161,33 @@ func main() {
 		{ID: "admin", Name: "Admin (hidden)", Path: "/admin", Permission: "admin:all"},
 	})
 	_ = perms.AssignRoles(ctx, demoUser, demoClient, []string{"editor"})
+	return perms
+}
 
-	issuer := defaultimpl.NewEd25519JWTIssuer(
-		defaultimpl.WithEd25519Issuer(issuerName),
-		defaultimpl.WithEd25519TokenTTL(10*time.Minute),
-	)
+// serverDeps groups the pre-built collaborators that buildServerOptions wires
+// into the playground server.
+type serverDeps struct {
+	issuerName  string
+	users       sso.UserProvider
+	clients     sso.ClientStore
+	perms       *permissions.MemoryProvider
+	mfaProvider spi.MFAProvider
+	issuer      *defaultimpl.Ed25519JWTIssuer
+	auditSink   *audit.MemorySink
+}
 
-	auditSink := audit.NewMemorySink(500)
-
-	srv := sso.NewServer(
+// buildServerOptions assembles the full playground option set: core wiring,
+// OAuth/OIDC stores, and the opt-in features the UI demonstrates.
+func buildServerOptions(d serverDeps) []sso.Option {
+	return []sso.Option{
 		sso.WithRouter(sso.NewStdRouter()),
-		sso.WithIssuer(issuerName),
-		sso.WithUserProvider(users),
-		sso.WithClientStore(clients),
-		sso.WithAuthenticator(pw),
+		sso.WithIssuer(d.issuerName),
+		sso.WithUserProvider(d.users),
+		sso.WithClientStore(d.clients),
+		sso.WithAuthenticator(buildPasswordAuth()),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
-		sso.WithTokenIssuer(sso.TokenStrategyJWT, issuer),
-		sso.WithIDTokenIssuer(issuer),
+		sso.WithTokenIssuer(sso.TokenStrategyJWT, d.issuer),
+		sso.WithIDTokenIssuer(d.issuer),
 		sso.WithDefaultTokenStrategy(sso.TokenStrategyJWT),
 		// OAuth/OIDC stores so the matching endpoints are live.
 		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), 10*time.Minute),
@@ -145,23 +196,24 @@ func main() {
 		sso.WithPARStore(defaultimpl.NewMemoryPARStore(), 60*time.Second),
 		// Opt-in features the playground demonstrates.
 		sso.WithDynamicClientRegistration(oauth.DCRPolicy{AllowOpenRegistration: true, DefaultActive: true}),
-		sso.WithPermissionProvider(perms),
+		sso.WithPermissionProvider(d.perms),
 		sso.WithEmbedPermissionsInLogin(),
-		sso.WithJARM(issuer),
+		sso.WithJARM(d.issuer),
 		sso.WithRiskScorer(mfaForClientScorer{}),
-		sso.WithMFAProvider(mfaProvider),
+		sso.WithMFAProvider(d.mfaProvider),
 		sso.WithMFAChallengeStore(defaultimpl.NewMemoryMFAChallengeStore(), 5*time.Minute),
 		// FAPI 2.0 in INSPECTION mode: every non-compliant login is
 		// recorded as a fapi_compliance_violation (visible in the audit
 		// viewer) but never blocked — the ramp-up contract.
 		sso.WithFAPIProfile(sso.FAPIModeInspection),
-		sso.WithAuditRecorder(audit.New(auditSink)),
-	)
+		sso.WithAuditRecorder(audit.New(d.auditSink)),
+	}
+}
 
-	ssoHandler := srv.Handler()
-	algSamples := buildAlgSamples(issuerName)
-
-	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// buildRootHandler routes the playground-only debug endpoints (audit log,
+// multi-alg JWKS, static UI) and delegates everything else to the SDK handler.
+func buildRootHandler(ssoHandler http.Handler, auditSink *audit.MemorySink, algSamples map[string]any) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/", "/playground", "/index.html":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -174,9 +226,6 @@ func main() {
 			ssoHandler.ServeHTTP(w, r)
 		}
 	})
-
-	banner(*listen, issuerName)
-	log.Fatal(http.ListenAndServe(*listen, root))
 }
 
 // recentAudit returns the most recent audit events (newest first) as a

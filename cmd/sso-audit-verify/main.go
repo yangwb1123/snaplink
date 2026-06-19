@@ -152,33 +152,9 @@ func readFromURL(base, bearer string, limit, pageSize int, timeout time.Duration
 	var collected []*audit.Event
 	offset := 0
 	for {
-		u := *parsed
-		u.Path = parsed.Path + "/api/v1/audit/events"
-		q := u.Query()
-		q.Set("limit", strconv.Itoa(pageSize))
-		q.Set("offset", strconv.Itoa(offset))
-		u.RawQuery = q.Encode()
-		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+		page, err := fetchEventPage(client, parsed, bearer, pageSize, offset)
 		if err != nil {
-			return nil, fmt.Errorf("build request: %w", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+bearer)
-		req.Header.Set("Accept", "application/json")
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("fetch page (offset=%d): %w", offset, err)
-		}
-		body, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("read page body (offset=%d): %w", offset, readErr)
-		}
-		if resp.StatusCode/100 != 2 {
-			return nil, fmt.Errorf("page (offset=%d) http %d: %s", offset, resp.StatusCode, string(body))
-		}
-		page, err := parseEventList(body)
-		if err != nil {
-			return nil, fmt.Errorf("parse page (offset=%d): %w", offset, err)
+			return nil, err
 		}
 		collected = append(collected, page...)
 		if limit > 0 && len(collected) >= limit {
@@ -193,6 +169,40 @@ func readFromURL(base, bearer string, limit, pageSize int, timeout time.Duration
 	// API returns newest-first; flip for chain-order verification.
 	reverseEvents(collected)
 	return collected, nil
+}
+
+// fetchEventPage retrieves one /api/v1/audit/events page at the given offset.
+// Errors carry the offset so a multi-page failure pinpoints where it stopped.
+func fetchEventPage(client *http.Client, base *url.URL, bearer string, pageSize, offset int) ([]*audit.Event, error) {
+	u := *base
+	u.Path = base.Path + "/api/v1/audit/events"
+	q := u.Query()
+	q.Set("limit", strconv.Itoa(pageSize))
+	q.Set("offset", strconv.Itoa(offset))
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch page (offset=%d): %w", offset, err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read page body (offset=%d): %w", offset, readErr)
+	}
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("page (offset=%d) http %d: %s", offset, resp.StatusCode, string(body))
+	}
+	page, err := parseEventList(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse page (offset=%d): %w", offset, err)
+	}
+	return page, nil
 }
 
 func reverseEvents(s []*audit.Event) {

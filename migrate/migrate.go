@@ -145,20 +145,8 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Set the busy timeout on THIS connection so BEGIN IMMEDIATE waits
-	// for a contended write lock instead of failing fast — independent
-	// of DSN pragmas (notably: the mattn-style `_busy_timeout` query
-	// param is a no-op under modernc.org/sqlite). This is what lets
-	// replicas booting together serialize on the migration rather than
-	// erroring out.
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMS)); err != nil {
-		return fmt.Errorf("migrate(%s): set busy_timeout: %w", namespace, err)
-	}
-
-	// BEGIN IMMEDIATE grabs the write lock now, so two replicas booting
-	// together don't both read version 0 and double-apply.
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("migrate(%s): begin: %w", namespace, err)
+	if err := beginImmediate(ctx, conn, namespace); err != nil {
+		return err
 	}
 	committed := false
 	defer func() {
@@ -167,31 +155,67 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 		}
 	}()
 
+	current, err := ensureVersionTable(ctx, conn, namespace, table)
+	if err != nil {
+		return err
+	}
+	if err := applyPending(ctx, conn, namespace, table, current, migrations); err != nil {
+		return err
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("migrate(%s): commit: %w", namespace, err)
+	}
+	committed = true
+	return nil
+}
+
+// beginImmediate arms the pinned connection's busy timeout and opens the
+// write transaction up front. Setting busy_timeout on THIS connection makes
+// BEGIN IMMEDIATE wait for a contended write lock instead of failing fast —
+// independent of DSN pragmas (the mattn-style `_busy_timeout` query param is
+// a no-op under modernc.org/sqlite). BEGIN IMMEDIATE grabs the write lock now
+// so two replicas booting together don't both read version 0 and double-apply.
+func beginImmediate(ctx context.Context, conn *sql.Conn, namespace string) error {
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMS)); err != nil {
+		return fmt.Errorf("migrate(%s): set busy_timeout: %w", namespace, err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("migrate(%s): begin: %w", namespace, err)
+	}
+	return nil
+}
+
+// ensureVersionTable creates the per-namespace version table if absent and
+// returns the highest recorded version (0 on a fresh table). Runs inside the
+// migration transaction opened by beginImmediate.
+func ensureVersionTable(ctx context.Context, conn *sql.Conn, namespace, table string) (int, error) {
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s (
 			version    INTEGER PRIMARY KEY,
 			name       TEXT    NOT NULL,
 			applied_at INTEGER NOT NULL
 		)`, table)); err != nil {
-		return fmt.Errorf("migrate(%s): ensure version table: %w", namespace, err)
+		return 0, fmt.Errorf("migrate(%s): ensure version table: %w", namespace, err)
 	}
-
 	var current int
 	if err := conn.QueryRowContext(ctx, fmt.Sprintf(
 		`SELECT COALESCE(MAX(version), 0) FROM %s`, table)).Scan(&current); err != nil {
-		return fmt.Errorf("migrate(%s): read current version: %w", namespace, err)
+		return 0, fmt.Errorf("migrate(%s): read current version: %w", namespace, err)
 	}
+	return current, nil
+}
 
+// applyPending runs every migration whose Version exceeds current, in slice
+// order, recording each in the version table. Runs inside the migration
+// transaction so a mid-way failure rolls the whole batch back.
+func applyPending(ctx context.Context, conn *sql.Conn, namespace, table string, current int, migrations []Migration) error {
 	for _, m := range migrations {
 		if m.Version <= current {
 			continue
 		}
-		if m.Func != nil {
-			if err := m.Func(ctx, conn); err != nil {
-				return fmt.Errorf("migrate(%s): apply v%d %q (func): %w", namespace, m.Version, m.Name, err)
-			}
-		} else if _, err := conn.ExecContext(ctx, m.SQL); err != nil {
-			return fmt.Errorf("migrate(%s): apply v%d %q: %w", namespace, m.Version, m.Name, err)
+		if err := applyOne(ctx, conn, namespace, m); err != nil {
+			return err
 		}
 		if _, err := conn.ExecContext(ctx,
 			fmt.Sprintf(`INSERT INTO %s (version, name, applied_at) VALUES (?, ?, ?)`, table),
@@ -199,11 +223,21 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 			return fmt.Errorf("migrate(%s): record v%d: %w", namespace, m.Version, err)
 		}
 	}
+	return nil
+}
 
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("migrate(%s): commit: %w", namespace, err)
+// applyOne executes a single migration's forward step (Func or SQL). validate
+// guarantees exactly one of the two is set.
+func applyOne(ctx context.Context, conn *sql.Conn, namespace string, m Migration) error {
+	if m.Func != nil {
+		if err := m.Func(ctx, conn); err != nil {
+			return fmt.Errorf("migrate(%s): apply v%d %q (func): %w", namespace, m.Version, m.Name, err)
+		}
+		return nil
 	}
-	committed = true
+	if _, err := conn.ExecContext(ctx, m.SQL); err != nil {
+		return fmt.Errorf("migrate(%s): apply v%d %q: %w", namespace, m.Version, m.Name, err)
+	}
 	return nil
 }
 

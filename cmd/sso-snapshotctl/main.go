@@ -184,15 +184,9 @@ func runVerify(args []string) error {
 	if *dir == "" || *id == "" {
 		return errors.New("--dir and --id are required")
 	}
-	if *pass != "" && *passFile != "" {
-		return errors.New("--passphrase and --passphrase-file are mutually exclusive")
-	}
-	if *passFile != "" {
-		raw, err := os.ReadFile(*passFile)
-		if err != nil {
-			return fmt.Errorf("read passphrase file: %w", err)
-		}
-		*pass = strings.TrimRight(string(raw), "\r\n")
+	passphrase, err := resolvePassphrase(*pass, *passFile)
+	if err != nil {
+		return err
 	}
 
 	store, err := storagefile.New(*dir)
@@ -208,18 +202,9 @@ func runVerify(args []string) error {
 		return fmt.Errorf("peek: %w", err)
 	}
 
-	var sealer snapshot.Sealer = encryptionnone.New()
-	switch env.Algorithm {
-	case "", encryptionnone.New().Algorithm():
-		// None / unset — keep the no-op sealer.
-		if *pass != "" {
-			fmt.Fprintln(os.Stderr, "note: --passphrase ignored — envelope is unencrypted")
-		}
-	default:
-		if *pass == "" {
-			return fmt.Errorf("envelope is encrypted with %q; supply --passphrase or --passphrase-file", env.Algorithm)
-		}
-		sealer = encryptionpass.NewFromString(*pass)
+	sealer, err := sealerForEnvelope(env.Algorithm, passphrase)
+	if err != nil {
+		return err
 	}
 
 	pipe := &snapshot.Pipeline{Sealer: sealer}
@@ -227,6 +212,48 @@ func runVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load: %w", err)
 	}
+	printVerifyResult(env, snap)
+	return nil
+}
+
+// resolvePassphrase reconciles the mutually-exclusive --passphrase /
+// --passphrase-file flags into a single value, reading the file (trimming a
+// trailing newline) when that form is used.
+func resolvePassphrase(pass, passFile string) (string, error) {
+	if pass != "" && passFile != "" {
+		return "", errors.New("--passphrase and --passphrase-file are mutually exclusive")
+	}
+	if passFile == "" {
+		return pass, nil
+	}
+	raw, err := os.ReadFile(passFile)
+	if err != nil {
+		return "", fmt.Errorf("read passphrase file: %w", err)
+	}
+	return strings.TrimRight(string(raw), "\r\n"), nil
+}
+
+// sealerForEnvelope picks the unseal strategy for an envelope's encryption
+// algorithm. Unencrypted envelopes keep the no-op sealer (noting an ignored
+// passphrase); encrypted ones require a passphrase.
+func sealerForEnvelope(algorithm, pass string) (snapshot.Sealer, error) {
+	switch algorithm {
+	case "", encryptionnone.New().Algorithm():
+		if pass != "" {
+			fmt.Fprintln(os.Stderr, "note: --passphrase ignored — envelope is unencrypted")
+		}
+		return encryptionnone.New(), nil
+	default:
+		if pass == "" {
+			return nil, fmt.Errorf("envelope is encrypted with %q; supply --passphrase or --passphrase-file", algorithm)
+		}
+		return encryptionpass.NewFromString(pass), nil
+	}
+}
+
+// printVerifyResult renders the success summary for a loaded snapshot:
+// envelope metadata plus a per-resource item count.
+func printVerifyResult(env snapshot.SealedEnvelope, snap *snapshot.Snapshot) {
 	res := snap.Resources
 	counts := map[string]int{
 		"clients":     len(res.Clients),
@@ -250,5 +277,4 @@ func runVerify(args []string) error {
 	for _, k := range []string{"clients", "users", "roles", "assignments", "menus", "netpolicy"} {
 		fmt.Printf("                    %-12s %d\n", k+":", counts[k])
 	}
-	return nil
 }

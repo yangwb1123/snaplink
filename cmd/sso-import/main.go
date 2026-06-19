@@ -63,15 +63,82 @@ type importedUser struct {
 	HashFormat string
 }
 
+// importFlags holds the parsed command-line configuration for an import run.
+type importFlags struct {
+	dsn       string
+	format    string
+	file      string
+	dryRun    bool
+	batchSize int
+}
+
 func main() {
+	cfg := parseFlags(os.Args[1:])
+
+	r, err := openInput(cfg.file)
+	if err != nil {
+		fatalf("open input: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	users, err := parseInput(cfg.format, r)
+	if err != nil {
+		fatalf("parse %s: %v", cfg.format, err)
+	}
+
+	if cfg.dryRun {
+		runDryRun(users)
+		return
+	}
+
+	db, err := openDB(cfg.dsn)
+	if err != nil {
+		fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := runImport(context.Background(), db, users, cfg.batchSize); err != nil {
+		fatalf("import: %v", err)
+	}
+}
+
+// parseFlags parses argv into importFlags, enforcing required-flag rules. It
+// exits the process (status 2) on parse or validation failure, matching the
+// original flag.ExitOnError + Usage behavior.
+func parseFlags(args []string) importFlags {
 	fs := flag.NewFlagSet(progName, flag.ExitOnError)
 	dsn := fs.String("dsn", "", "SQLite DSN for the SSO user store (required unless --dry-run)")
 	format := fs.String("format", "", "input format: auth0 | keycloak | csv (required)")
 	file := fs.String("file", "-", "path to the import file, or - for stdin")
 	dryRun := fs.Bool("dry-run", false, "print what would be imported without writing")
 	batchSize := fs.Int("batch-size", 100, "rows per transaction (ignored for dry-run)")
+	fs.Usage = usageFunc(fs)
 
-	fs.Usage = func() {
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
+	if *format == "" {
+		fmt.Fprintln(os.Stderr, progName+": --format is required")
+		fs.Usage()
+		os.Exit(2)
+	}
+	if !*dryRun && *dsn == "" {
+		fmt.Fprintln(os.Stderr, progName+": --dsn is required (or pass --dry-run to skip writing)")
+		fs.Usage()
+		os.Exit(2)
+	}
+	return importFlags{
+		dsn:       *dsn,
+		format:    *format,
+		file:      *file,
+		dryRun:    *dryRun,
+		batchSize: *batchSize,
+	}
+}
+
+// usageFunc returns the flag-set usage printer for the CLI.
+func usageFunc(fs *flag.FlagSet) func() {
+	return func() {
 		fmt.Fprintf(os.Stderr, `%s — bulk user import from Auth0 / Keycloak / CSV into SSO SQLite.
 
 Usage:
@@ -90,46 +157,6 @@ Examples:
   %s --dsn file:/var/lib/sso/sso.db --format auth0 --file users.json
   cat realm.json | %s --dsn ./sso.db --format keycloak --file -
 `, progName, progName)
-	}
-
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		os.Exit(2)
-	}
-	if *format == "" {
-		fmt.Fprintln(os.Stderr, progName+": --format is required")
-		fs.Usage()
-		os.Exit(2)
-	}
-	if !*dryRun && *dsn == "" {
-		fmt.Fprintln(os.Stderr, progName+": --dsn is required (or pass --dry-run to skip writing)")
-		fs.Usage()
-		os.Exit(2)
-	}
-
-	r, err := openInput(*file)
-	if err != nil {
-		fatalf("open input: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-
-	users, err := parseInput(*format, r)
-	if err != nil {
-		fatalf("parse %s: %v", *format, err)
-	}
-
-	if *dryRun {
-		runDryRun(users)
-		return
-	}
-
-	db, err := openDB(*dsn)
-	if err != nil {
-		fatalf("open db: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	if err := runImport(context.Background(), db, users, *batchSize); err != nil {
-		fatalf("import: %v", err)
 	}
 }
 
