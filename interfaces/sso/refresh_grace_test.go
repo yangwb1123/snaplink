@@ -1,13 +1,14 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/internal/handler"
 	"testing"
 	"time"
+
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 )
 
 func TestRefreshGraceCache(t *testing.T) {
-	c := handler.NewRefreshGraceCache(time.Minute)
+	c := tokengrant.NewRefreshGraceCache(time.Minute)
 	now := time.Now()
 	resp := map[string]any{"access_token": "a1", "refresh_token": "r2"}
 	c.Remember("old", resp, now)
@@ -36,7 +37,7 @@ func TestRefreshGraceCache(t *testing.T) {
 	}
 
 	// nil receiver + empty token are safe no-ops.
-	var nilC *handler.RefreshGraceCache
+	var nilC *tokengrant.RefreshGraceCache
 	if _, ok := nilC.Lookup("x", now); ok {
 		t.Error("nil cache lookup should miss")
 	}

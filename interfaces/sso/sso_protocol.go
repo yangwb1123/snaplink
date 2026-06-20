@@ -7,7 +7,7 @@ import (
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -44,7 +44,7 @@ type protocolState struct {
 	authCodeTTL                    time.Duration
 	refreshTokenStore              oauth.RefreshTokenStore
 	refreshTokenTTL                time.Duration
-	refreshGrace                   *handler.RefreshGraceCache
+	refreshGrace                   *tokengrant.RefreshGraceCache
 	idTokenIssuer                  oidc.IDTokenIssuer
 	deviceCodeStore                oauth.DeviceCodeStore
 	deviceCodeTTL                  time.Duration

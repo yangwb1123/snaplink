@@ -3,11 +3,13 @@ package sso
 
 import (
 	"context"
-	"github.com/snaplink/sso/shared/security"
 	"time"
+
+	"github.com/snaplink/sso/shared/security"
 
 	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -261,17 +263,17 @@ func (s *Server) populateHandlerDepsCallbacks(d *handler.ServerDeps) {
 
 // Accessors exposing the issuance/refresh-family primitives to the extracted
 // token-grant handlers in internal/handler (which *Server satisfies via the
-// handler.AuthCodeGrantDeps interface). These are thin wrappers over the
+// tokengrant.AuthCodeGrantDeps interface). These are thin wrappers over the
 // existing root methods — the issuance IMPLEMENTATIONS stay in root; only the
 // grant orchestration moved. The compile-time guard below proves *Server
 // implements every method the interface needs (the interface pattern's safety
 // vs. a nil-able Deps struct).
-var _ handler.AuthCodeGrantDeps = (*Server)(nil)
-var _ handler.RefreshGrantDeps = (*Server)(nil)
-var _ handler.DeviceGrantDeps = (*Server)(nil)
-var _ handler.CIBAGrantDeps = (*Server)(nil)
-var _ handler.TokenExchangeDeps = (*Server)(nil)
-var _ handler.ClientCredentialsDeps = (*Server)(nil)
+var _ tokengrant.AuthCodeGrantDeps = (*Server)(nil)
+var _ tokengrant.RefreshGrantDeps = (*Server)(nil)
+var _ tokengrant.DeviceGrantDeps = (*Server)(nil)
+var _ tokengrant.CIBAGrantDeps = (*Server)(nil)
+var _ tokengrant.TokenExchangeDeps = (*Server)(nil)
+var _ tokengrant.ClientCredentialsDeps = (*Server)(nil)
 
 // SPIFFEValidator exposes the SPIFFE JWT-SVID validator (nil when WithSPIFFEJWTSVID
 // is unwired — the SVID fallback is then skipped).
@@ -282,7 +284,7 @@ func (s *Server) SPIFFEAudience() string { return s.spiffeAudience }
 
 // HandleDeviceSecretExchange delegates the Native SSO device-secret actor branch
 // of token-exchange to the root implementation (server_native_sso.go).
-func (s *Server) HandleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, client *Client, req handler.TokenExchangeRequest) {
+func (s *Server) HandleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, client *Client, req tokengrant.TokenExchangeRequest) {
 	s.handleDeviceSecretExchange(ctx, idTokenClaims, rawIDToken, deviceSecret, client, req)
 }
 
@@ -292,7 +294,7 @@ func (s *Server) RecordCIBADecision(ctx HandlerContext, clientID, subjectID stri
 }
 
 // RefreshGrace exposes the refresh double-submit grace cache (nil when unwired).
-func (s *Server) RefreshGrace() *handler.RefreshGraceCache { return s.refreshGrace }
+func (s *Server) RefreshGrace() *tokengrant.RefreshGraceCache { return s.refreshGrace }
 
 // RecordRefreshTokenReuse emits the family-reuse audit event (token replayed
 // after rotation → family killed).

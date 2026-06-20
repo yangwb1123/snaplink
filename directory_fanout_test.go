@@ -48,17 +48,12 @@ var dirFileCountExemptions = map[string]int{
 	"domains/federation":                24,
 	"infrastructure/defaultimpl":        62,
 	"infrastructure/defaultimpl/sqlite": 34,
-	"interfaces/grpcserver":             12,
 	"interfaces/snapshot":               14,
 	"interfaces/sso":                    54,
-	"internal/handler":                  16,
 	"platform/audit":                    23,
 	"protocols/oauth":                   24,
-	"protocols/oidc":                    13,
 	"protocols/scim":                    19,
-	"protocols/selfservice":             11,
 	"shared/core":                       21,
-	"shared/security":                   13,
 }
 
 // "." is the module root: one subdir per architectural layer (shared/domains/
@@ -177,7 +172,7 @@ func checkDirBudget(t *testing.T, kind string, threshold int, value func(dirFano
 // caps (only) when you remove exemptions, so a new over-cap dir cannot be
 // silently grandfathered.
 const (
-	maxDirFileExemptions   = 17
+	maxDirFileExemptions   = 12
 	maxDirSubdirExemptions = 1
 )
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -305,7 +305,7 @@ func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, c
 //
 // or a standard token response on success.
 func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, deviceCode string) {
-	handler.HandleDeviceGrant(s, ctx, client, deviceCode)
+	tokengrant.HandleDeviceGrant(s, ctx, client, deviceCode)
 }
 
 // normalizeUserCode delegates to oauth.NormalizeUserCode.

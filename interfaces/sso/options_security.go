@@ -3,8 +3,7 @@ package sso
 import (
 	"time"
 
-	"github.com/snaplink/sso/internal/handler"
-
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/caep"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -327,7 +326,7 @@ func WithRefreshTokenStore(store oauth.RefreshTokenStore, ttl time.Duration) Opt
 func WithRefreshRotationGrace(window time.Duration) Option {
 	return func(s *Server) {
 		if window > 0 {
-			s.refreshGrace = handler.NewRefreshGraceCache(window)
+			s.refreshGrace = tokengrant.NewRefreshGraceCache(window)
 		}
 	}
 }

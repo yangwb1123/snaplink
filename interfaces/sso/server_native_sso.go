@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -56,7 +56,7 @@ func (s *Server) issueDeviceSecret(ctx context.Context, subject, sid, clientID s
 //
 // idTokenClaims is the validated subject_token; rawIDToken is its compact JWS
 // (needed to read the alg header + ds_hash claim, which TokenClaims omits).
-func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, client *Client, req handler.TokenExchangeRequest) {
+func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, client *Client, req tokengrant.TokenExchangeRequest) {
 	fail := func(reason string) {
 		s.recordNativeSSOFailure(ctx, client.ID, idTokenClaims.Subject, reason)
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
@@ -79,7 +79,7 @@ func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *T
 // goes through the passed-in fail closure (recordNativeSSOFailure + uniform
 // 400 invalid_grant), so each cause is oracle-collapsed identically. Returns
 // the consumed binding and true only when the full ladder passes.
-func (s *Server) validateDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, req handler.TokenExchangeRequest, fail func(string)) (*DeviceSecret, bool) {
+func (s *Server) validateDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, req tokengrant.TokenExchangeRequest, fail func(string)) (*DeviceSecret, bool) {
 	// The subject_token MUST be an id_token for this path.
 	if req.SubjectTokenType != TokenTypeIDToken {
 		fail("subject_token_type not id_token")
@@ -126,7 +126,7 @@ func (s *Server) validateDeviceSecretExchange(ctx HandlerContext, idTokenClaims 
 // by ITS allowlist and validates requested resources. Both failure paths route
 // through fail (uniform invalid_grant). An id_token has no scopes, so there is
 // no subject-subset to narrow against.
-func authorizeNativeSSOScopesResources(req handler.TokenExchangeRequest, client *Client, fail func(string)) ([]string, []string, bool) {
+func authorizeNativeSSOScopesResources(req tokengrant.TokenExchangeRequest, client *Client, fail func(string)) ([]string, []string, bool) {
 	var requested []string
 	if req.Scope != "" {
 		requested = strings.Fields(req.Scope)

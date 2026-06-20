@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -73,7 +73,7 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	case GrantCIBA:
 		s.handleCIBATokenGrant(ctx, client, req.AuthReqID, dpopJKT, mtlsX5T)
 	case GrantTokenExchange:
-		s.handleTokenExchangeGrant(ctx, client, handler.TokenExchangeRequest{
+		s.handleTokenExchangeGrant(ctx, client, tokengrant.TokenExchangeRequest{
 			SubjectToken:       req.SubjectToken,
 			SubjectTokenType:   req.SubjectTokenType,
 			ActorToken:         req.ActorToken,
@@ -85,7 +85,7 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 			ACRValues:          req.ACRValues,
 		})
 	case GrantClientCredentials:
-		handler.HandleClientCredentialsGrant(s, ctx, client, scopes, req.Resource, dpopJKT, mtlsX5T)
+		tokengrant.HandleClientCredentialsGrant(s, ctx, client, scopes, req.Resource, dpopJKT, mtlsX5T)
 	default:
 		ctx.JSON(http.StatusBadRequest, map[string]any{
 			KeyError:           ErrUnsupportedGrantType,
@@ -296,25 +296,25 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 
 // handleAuthCodeTokenGrant delegates the authorization_code token exchange.
 func (s *Server) handleAuthCodeTokenGrant(ctx HandlerContext, client *Client, req oauth.TokenRequest, scopes []string, dpopJKT, mtlsX5T string) {
-	handler.HandleAuthCodeGrant(s, ctx, client, req, scopes, dpopJKT, mtlsX5T)
+	tokengrant.HandleAuthCodeGrant(s, ctx, client, req, scopes, dpopJKT, mtlsX5T)
 }
 
 // handleRefreshTokenGrant delegates the RFC 6749 §6 refresh_token grant (the
 // refresh-family / rotation-velocity primitives are implemented in root).
 func (s *Server) handleRefreshTokenGrant(ctx HandlerContext, client *Client, refreshToken, scope, dpopJKT, mtlsX5T string) {
-	handler.HandleRefreshGrant(s, ctx, client, refreshToken, scope, dpopJKT, mtlsX5T)
+	tokengrant.HandleRefreshGrant(s, ctx, client, refreshToken, scope, dpopJKT, mtlsX5T)
 }
 
 // handleCIBATokenGrant delegates the OIDC CIBA poll/ping token grant.
 func (s *Server) handleCIBATokenGrant(ctx HandlerContext, client *Client, authReqID, dpopJKT, mtlsX5T string) {
-	handler.HandleCIBAGrant(s, ctx, client, authReqID, dpopJKT, mtlsX5T)
+	tokengrant.HandleCIBAGrant(s, ctx, client, authReqID, dpopJKT, mtlsX5T)
 }
 
 // handleTokenExchangeGrant delegates the RFC 8693 token-exchange grant (the
 // SPIFFE / JTI-replay primitives + Native SSO device-secret sub-exchange are in
 // root).
-func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, req handler.TokenExchangeRequest) {
-	handler.HandleTokenExchangeGrant(s, ctx, client, req)
+func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, req tokengrant.TokenExchangeRequest) {
+	tokengrant.HandleTokenExchangeGrant(s, ctx, client, req)
 }
 
 // mergeTargets merges resource + audience indicators (RFC 8693 + RFC 8707) into a
