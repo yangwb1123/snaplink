@@ -15,7 +15,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // hmacSHA256 is the symmetric-forgery primitive the alg-confusion tests use

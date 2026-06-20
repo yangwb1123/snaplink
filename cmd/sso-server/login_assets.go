@@ -3,7 +3,7 @@ package main
 import (
 	"io/fs"
 
-	"github.com/snaplink/sso/web"
+	"github.com/snaplink/sso/interfaces/web"
 )
 
 // loginSubFS returns a sub-filesystem rooted at the login/ entry of the

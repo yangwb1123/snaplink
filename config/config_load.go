@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/cors"
-	"github.com/snaplink/sso/ratelimit"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/interfaces/cors"
+	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // Load reads and parses a YAML config file, then applies defaults.

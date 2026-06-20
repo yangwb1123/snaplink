@@ -14,7 +14,7 @@ import (
 // exampleBlobPath reuses the webauthn package's example MDS blob fixture (a
 // real JWS signed by metadata.ExampleMDSRoot) — single source of truth, no
 // duplicate 16KB fixture.
-const exampleBlobPath = "../../authenticators/webauthn/testdata/example_mds_blob.jws"
+const exampleBlobPath = "../../domains/authenticators/webauthn/testdata/example_mds_blob.jws"
 
 // writeCustomRootFile writes ExampleMDSRoot (the base64 DER body) to a temp
 // file so the cmd CustomRootFile-reading path can be exercised.

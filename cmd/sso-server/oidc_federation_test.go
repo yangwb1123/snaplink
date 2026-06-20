@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/authenticators"
 )
 
 func TestBuildAuthenticators_OIDCFederationWiresProviderByName(t *testing.T) {

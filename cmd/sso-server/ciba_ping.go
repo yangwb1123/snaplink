@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/oauth"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // defaultCIBAPingTimeout bounds a single ping POST. Kept short: the ping

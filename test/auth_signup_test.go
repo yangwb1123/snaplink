@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func newSignupHarness(t *testing.T, enabled bool) (*httptest.Server, *defaultimpl.MemoryUserProvider, *defaultimpl.MemoryPasswordCredentialStore) {

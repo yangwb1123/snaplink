@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/platform/audit"
 )
 
 // shutdownApp tears down the lifecycle goroutines + closers a fully-featured

@@ -5,19 +5,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/bootstrap"
-	"github.com/snaplink/sso/bootstrap/builtin"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/platform/bootstrap"
+	"github.com/snaplink/sso/platform/bootstrap/builtin"
+	"github.com/snaplink/sso/shared/spi"
 
-	bootstrapfile "github.com/snaplink/sso/bootstrap/file"
-	"github.com/snaplink/sso/bootstrap/lock"
+	bootstrapfile "github.com/snaplink/sso/platform/bootstrap/file"
+	"github.com/snaplink/sso/platform/bootstrap/lock"
 
-	lockEtcd "github.com/snaplink/sso/bootstrap/lock/etcd"
+	lockEtcd "github.com/snaplink/sso/platform/bootstrap/lock/etcd"
 
-	lockFile "github.com/snaplink/sso/bootstrap/lock/file"
+	lockFile "github.com/snaplink/sso/platform/bootstrap/lock/file"
 
-	lockNoop "github.com/snaplink/sso/bootstrap/lock/noop"
 	"github.com/snaplink/sso/config"
+	lockNoop "github.com/snaplink/sso/platform/bootstrap/lock/noop"
 )
 
 func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/ratelimit"
+	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // TestAppendReadyCheck_MemoryNoOps proves the type-assertion gate

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/geo"
-	"github.com/snaplink/sso/geo/static"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/geo/static"
 )
 
 // stubProvider always returns the configured info / err. Used to

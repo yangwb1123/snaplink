@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/region"
-	"github.com/snaplink/sso/tenant"
-	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/tenant"
+	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // These cover the data-residency WRITE-gate on the /token grant endpoint

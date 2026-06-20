@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/spi"
+import "github.com/snaplink/sso/shared/spi"
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // stubDiscoveryProvider is a minimal spi.MFAProvider that lets the

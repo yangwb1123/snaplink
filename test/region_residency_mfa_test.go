@@ -10,12 +10,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/region"
-	"github.com/snaplink/sso/spi"
-	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/region"
+	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // The /auth/mfa second leg mints tokens NOW (finishLogin), from the serving

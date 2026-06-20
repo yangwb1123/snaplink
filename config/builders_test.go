@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/permissions"
 )
 
 // ---------- BuildPermissionProvider ----------

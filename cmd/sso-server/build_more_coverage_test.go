@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // -----------------------------------------------------------------------------

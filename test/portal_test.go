@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	sso "github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/web"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	sso "github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/interfaces/web"
 )
 
 func portalFS(t *testing.T) fs.FS {

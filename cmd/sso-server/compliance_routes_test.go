@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/core"
 )
 
 func complianceTestDeps(t *testing.T) (*complianceDeps, *audit.MemorySink) {

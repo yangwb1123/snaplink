@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func TestClient_IsRedirectURIValid(t *testing.T) {

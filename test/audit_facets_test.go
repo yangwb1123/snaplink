@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
 )
 
 // TestAuditFacets_ReturnsCounts exercises GET /api/v1/audit/facets against

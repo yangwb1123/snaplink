@@ -38,9 +38,21 @@ Enforces the dependency-direction invariants `AGENTS.md` declares (parsed via
 
 - `oauth` MUST NOT import `oidc` — prevents the `oauth`↔`oidc` cycle.
 - `core` MUST import **no** internal package — it is the SPI/types/sentinels leaf.
-- `oidc` MUST NOT import `oauth` — *currently grandfathered* for two pre-existing
-  files (`handle_silent_renewal.go`, `handle_end_session.go`); one-way, so no
-  compile cycle. **Reconcile**: either drop those imports or update AGENTS.md §2.
+- `oidc` MUST NOT import `oauth` — fully enforced, **zero exemptions**. The two
+  formerly-grandfathered files were decoupled (`oidc.SubjectRefreshRevoker` for
+  refresh revocation; `core.CloneRawJSON` for RAR cloning), so the rule now holds
+  with no grandfathered files.
+
+### 3. Cognitive layer boundaries — `architecture_layer_test.go`
+
+Enforces the seven-layer cognitive model (ADR-0006, `docs/architecture/DIRECTORY_MAP.md`):
+`shared < platform < domains < protocols < infrastructure < interfaces < composition`.
+A package may import only its own layer or a lower (more-shared) one; an upward
+import — or an **unclassified** package — fails the build. This is the erosion
+guard the flat layout otherwise lacks (the compiler stops cycles, not the
+one-way-rule violations that precede them), and it runs over the existing tree
+with no import-path moves. Pre-existing upward edges are grandfathered in a
+shrink-only `layerExemptions` (9 at adoption, mostly the root god-package fan-in).
 
 ## The ratchet rule (important)
 

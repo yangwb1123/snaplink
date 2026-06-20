@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 const sampleTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"

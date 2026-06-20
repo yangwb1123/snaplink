@@ -2,9 +2,9 @@
 
 Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§4 invariants are gates — violations are regressions.**
 
-**Agent OS:** [BOOTSTRAP.md](BOOTSTRAP.md) (project context) → [HARNESS.md](HARNESS.md) (auto-checks) → [EVALUATION.md](EVALUATION.md) (quality gates) → [Skills](skills/) (refactor patterns)
+**Agent OS:** [BOOTSTRAP.md](BOOTSTRAP.md) (project context) → [HARNESS.md](HARNESS.md) (auto-checks) → [EVALUATION.md](EVALUATION.md) (quality gates) → [Skills](docs/skills/) (refactor patterns)
 
-**Reference:** [Config](docs/config-reference.md) | [Features](docs/feature-matrix.md) | [Observability](docs/observability.md) | [Errors](docs/error-codes.md) | [OpenAPI](docs/openapi.yaml)
+**Reference:** [Config](docs/config-reference.md) | [Features](docs/feature-matrix.md) | [Observability](docs/observability.md) | [Errors](docs/error-codes.md) | [OpenAPI](docs/openapi.yaml) | [ADRs](docs/adr/) | [Arch rules](.arch/rules.yaml) | [Prompts](.prompts/)
 
 ---
 
@@ -23,12 +23,17 @@ Operational guide for AI agents. Follows [agents.md](https://agents.md). User in
 
 ### 0.2 Dependency Direction
 
+Packages live under their architectural layer directory (the first path segment
+IS the layer); imports point one-way toward the shared kernel — see
+[DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md), enforced by
+`architecture_layer_test.go`.
+
 ```
-handlers.go → oauth/ → security/ → core/
-handlers.go → oidc/  → security/ → core/
+interfaces/sso → protocols/oauth → shared/security → shared/core
+interfaces/sso → protocols/oidc  → shared/security → shared/core
 ```
 
-**Prohibits:** `oauth/ → oidc/`, `oidc/ → oauth/`, `cmd/ ← any`.
+**Prohibits:** `protocols/oauth → protocols/oidc`, `protocols/oidc → protocols/oauth`, `cmd/ ← any`, and any upward (toward-interfaces) layer import.
 
 ### 0.3 Post-Edit Verification
 
@@ -78,6 +83,12 @@ tracing → ratelimit → bodyLimit → metrics → CORS → router
 ---
 
 ## 2. Module Map
+
+> Packages are physically grouped under layer dirs: `shared/{core,spi,security}`,
+> `domains/*`, `protocols/{oauth,oidc,scim,fapi,caep,selfservice,compliance}`,
+> `platform/*`, `interfaces/*` (incl. `interfaces/sso` — the public Server API),
+> `infrastructure/{defaultimpl,ldap,kerberos,radius,saml,redis,extauthz,kms/*}`.
+> The names below are the package leaf; prefix with its layer for the import path.
 
 | Package | Purpose | Key Invariants |
 |---|---|---|

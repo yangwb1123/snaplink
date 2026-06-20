@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/permissions"
-	"github.com/snaplink/sso/region"
-	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/domains/region"
+	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // These tests exercise the dep-free s.MeshAuthorize seam (Phase A of gRPC

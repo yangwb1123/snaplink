@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func newOpMetadataHarness(t *testing.T, opts ...sso.Option) *httptest.Server {

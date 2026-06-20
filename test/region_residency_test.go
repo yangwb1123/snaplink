@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/geo"
-	geostatic "github.com/snaplink/sso/geo/static"
-	"github.com/snaplink/sso/region"
-	"github.com/snaplink/sso/tenant"
-	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/tenant"
+	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/geo"
+	geostatic "github.com/snaplink/sso/platform/geo/static"
 )
 
 // These are the live integration tests for the data-residency feature: a

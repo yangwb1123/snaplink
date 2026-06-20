@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // HandleLivez serves GET /livez — always 200 with {"status":"alive"}.

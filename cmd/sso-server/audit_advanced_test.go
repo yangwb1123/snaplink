@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/platform/audit"
 )
 
 func TestBuildApp_AuditHashChainStampsRecordedEvents(t *testing.T) {

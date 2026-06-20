@@ -9,17 +9,17 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/authenticators/webauthn"
-	"github.com/snaplink/sso/oauth"
-	"github.com/snaplink/sso/oidc"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/spi"
 
-	webauthnsqlite "github.com/snaplink/sso/authenticators/webauthn/sqlite"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/metrics"
-	"github.com/snaplink/sso/region"
+	webauthnsqlite "github.com/snaplink/sso/domains/authenticators/webauthn/sqlite"
+	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/platform/metrics"
 )
 
 func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {

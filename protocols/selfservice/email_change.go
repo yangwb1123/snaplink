@@ -1,0 +1,104 @@
+package selfservice
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
+)
+
+// HandleMyEmailChange serves POST /me/email/change — the first leg of a verified
+// email change for the AUTHENTICATED bearer. Body: {new_email}. It mints a
+// single-use token bound to (subject, new_email) and delivers it to the NEW
+// address (proving the user controls it). Returns 200 {status:"sent"}. This is
+// the verification flow PATCH /me deliberately routes email edits through.
+// Credential-adjacent: no-store headers.
+func HandleMyEmailChange(d Deps, ctx core.HandlerContext, userID string) {
+	middleware.TokenNoStoreHeaders(ctx)
+	var req struct {
+		NewEmail string `json:"new_email"`
+	}
+	newEmail := ""
+	if err := oauth.BindParams(ctx, &req); err == nil {
+		newEmail = strings.TrimSpace(req.NewEmail)
+	}
+	// A new email is required + must look like an address (minimal sanity — full
+	// validation is the deliverability of the token, which only the real owner
+	// receives).
+	if newEmail == "" || !strings.Contains(newEmail, "@") {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	rctx := ctx.Request().Context()
+	token, err := d.GenerateAuthCodeBytes()
+	if err != nil {
+		d.Logger().Error("email change: mint token failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	ttl := d.EmailChangeTTL()
+	if ttl <= 0 {
+		ttl = core.DefaultEmailChangeTTL
+	}
+	if err := d.EmailChangeStore().Issue(rctx, &core.EmailChangeToken{
+		Token: token, UserID: userID, NewEmail: newEmail, ExpiresAt: time.Now().Add(ttl),
+	}); err != nil {
+		d.Logger().Error("email change: store issue failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	if err := d.EmailChangeSender().SendEmailChangeToken(rctx, newEmail, token); err != nil {
+		d.Logger().Error("email change: delivery failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	if d.Auditor() != nil {
+		evt := &audit.Event{Type: audit.EventEmailChangeRequested, Outcome: audit.OutcomeSuccess, ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+		d.Auditor().Record(rctx, evt)
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"status": "sent"})
+}
+
+// HandleMyEmailVerify serves POST /me/email/verify — the second leg. Body:
+// {token}. It consumes the token (single-use), checks it belongs to the
+// authenticated bearer (a token delivered to a new address can only be
+// completed by the user who started the change), and commits the new email via
+// the UserProvider. Oracle-safe: unknown/expired/consumed token, or a token
+// for a different user, ALL collapse to one email_change_invalid (400).
+func HandleMyEmailVerify(d Deps, ctx core.HandlerContext, userID string) {
+	middleware.TokenNoStoreHeaders(ctx)
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := oauth.BindParams(ctx, &req); err != nil || req.Token == "" {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrEmailChangeInvalid))
+		return
+	}
+	rctx := ctx.Request().Context()
+	tok, err := d.EmailChangeStore().Consume(rctx, req.Token)
+	if err != nil || tok.UserID != userID {
+		// Unknown/expired/consumed, or someone else's token — one response.
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrEmailChangeInvalid))
+		return
+	}
+	u, err := d.UserProvider().GetByID(rctx, userID)
+	if err != nil || u == nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrEmailChangeInvalid))
+		return
+	}
+	u.Email = tok.NewEmail
+	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
+		d.Logger().Error("email change: commit failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	if d.Auditor() != nil {
+		evt := &audit.Event{Type: audit.EventEmailChanged, Outcome: audit.OutcomeSuccess, ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+		d.Auditor().Record(rctx, evt)
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "email": tok.NewEmail})
+}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/defaultimpl/sqlite"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 )
 
 // ---- parser tests ----

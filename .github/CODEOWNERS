@@ -13,7 +13,7 @@ oidc/ @snaplink/auth
 security/ @snaplink/security
 
 # Infrastructure
-deploy/ @snaplink/infra
+ops/deploy/ @snaplink/infra
 cmd/ @snaplink/infra
 
 # CI/CD

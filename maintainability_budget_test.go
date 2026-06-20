@@ -1,4 +1,4 @@
-package sso
+package archgate
 
 import (
 	"bytes"
@@ -34,10 +34,10 @@ import (
 const maxFileLines = 500
 
 // fileSizeExemptions is the frozen backlog of files that exceeded maxFileLines
-// when this gate was introduced. SHRINK THIS LIST; never grow it.
-var fileSizeExemptions = map[string]bool{
-	"sso.go": true,
-}
+// when this gate was introduced. SHRINK THIS LIST; never grow it. Now EMPTY:
+// sso.go (the last entry) was decomposed into anonymously-embedded sub-structs
+// (sso_wiring.go, sso_cluster.go, …), so every production file is under budget.
+var fileSizeExemptions = map[string]bool{}
 
 // skipDirs are not part of this module's hand-written production surface.
 var skipDirs = map[string]bool{

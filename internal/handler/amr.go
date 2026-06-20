@@ -3,7 +3,7 @@ package handler
 import (
 	"slices"
 
-	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // amrForResult returns the RFC 8176 Authentication Methods References for a

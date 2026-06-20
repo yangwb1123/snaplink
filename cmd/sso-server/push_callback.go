@@ -9,10 +9,10 @@ import (
 	"path"
 	"strings"
 
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // pushCallbackDeps bundles the dependencies the push approval

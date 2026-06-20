@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/geo"
-	"github.com/snaplink/sso/tenant"
+	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/platform/geo"
 )
 
 // -----------------------------------------------------------------------------

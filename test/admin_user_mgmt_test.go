@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // newAdminUserMgmtHarness wires a server with consent + MFA-enrollment stores

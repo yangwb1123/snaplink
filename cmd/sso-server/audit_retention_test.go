@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/audit"
-	auditsqlite "github.com/snaplink/sso/audit/sqlite"
+	"github.com/snaplink/sso/platform/audit"
+	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
 )
 
 // TestRunAuditRetention_PrunesOldEventsAtInterval proves the

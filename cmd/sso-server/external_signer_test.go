@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/metrics"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // staticSigner returns a fixed crypto.Signer — a stand-in for a KMS/HSM

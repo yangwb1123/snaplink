@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/anomaly"
-	"github.com/snaplink/sso/audit"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/defaultimpl/detectors"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/detectors"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/spi"
 
-	sqlitestores "github.com/snaplink/sso/defaultimpl/sqlite"
-	"github.com/snaplink/sso/metrics"
+	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/platform/metrics"
 )
 
 // anomalyRuntime bundles the lifecycle-owned anomaly resources cmd

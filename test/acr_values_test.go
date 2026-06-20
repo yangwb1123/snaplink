@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	sso "github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/oauth"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	sso "github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 )
 
 const (

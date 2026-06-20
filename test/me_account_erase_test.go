@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/compliance"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/compliance"
 )
 
 func newAccountEraseHarness(t *testing.T, withErase bool) (*httptest.Server, *defaultimpl.MemoryUserProvider, func() string) {

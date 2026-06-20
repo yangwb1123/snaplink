@@ -24,11 +24,11 @@ race: ## Run tests with the race detector.
 	$(GO) test -race -count=1 ./...
 
 bench: ## Run benchmarks.
-	$(GO) test -run='^$$' -bench=. -benchmem ./defaultimpl/ ./oauth/ ./ratelimit/ ./security/
+	$(GO) test -run='^$$' -bench=. -benchmem ./infrastructure/defaultimpl/ ./protocols/oauth/ ./interfaces/ratelimit/ ./shared/security/
 
 load-test: ## Load-test /token (requires k6).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
-	k6 run deploy/loadtest/token.js
+	k6 run ops/deploy/loadtest/token.js
 
 vet: ## Static analysis.
 	$(GO) vet ./...

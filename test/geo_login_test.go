@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/geo"
-	"github.com/snaplink/sso/geo/static"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/geo/static"
 )
 
 // stubAuthenticator returns a fixed AuthResult so the geo

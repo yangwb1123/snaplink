@@ -17,12 +17,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/metrics"
-	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/metrics"
 )
 
 // buildTenantMetricsHarness builds a metrics-enabled server with three

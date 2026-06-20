@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // These tests pin Bug 3: the SDK exposes WithKeyPairNonceStore /

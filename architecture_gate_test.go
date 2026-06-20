@@ -1,4 +1,4 @@
-package sso
+package archgate
 
 import (
 	"fmt"
@@ -30,21 +30,17 @@ type importRule struct {
 
 var importRules = []importRule{
 	{
-		fromDir:   "oauth/",
-		forbidden: "github.com/snaplink/sso/oidc",
+		fromDir:   "protocols/oauth/",
+		forbidden: "github.com/snaplink/sso/protocols/oidc",
 		why:       "oauth MUST NOT import oidc — would create the oauth<->oidc cycle (AGENTS.md §Coding Conventions)",
 	},
 	{
-		fromDir:   "oidc/",
-		forbidden: "github.com/snaplink/sso/oauth",
-		why:       "oidc MUST NOT import oauth (AGENTS.md §2 OIDC Layer). Two files predate this gate and are one-way (no compile cycle); grandfathered so the rule can't spread.",
-		exempt: map[string]bool{
-			"oidc/handle_silent_renewal.go": true,
-			"oidc/handle_end_session.go":    true,
-		},
+		fromDir:   "protocols/oidc/",
+		forbidden: "github.com/snaplink/sso/protocols/oauth",
+		why:       "oidc MUST NOT import oauth (AGENTS.md §2 OIDC Layer). The two formerly-grandfathered files were decoupled (oidc.SubjectRefreshRevoker for refresh revocation; core.CloneRawJSON for RAR cloning), so this rule now has ZERO exemptions.",
 	},
 	{
-		fromDir:   "core/",
+		fromDir:   "shared/core/",
 		forbidden: "github.com/snaplink/sso/",
 		why:       "core is the dependency-free SPI/types/sentinels leaf — it must import NO internal package (AGENTS.md §1 package layout)",
 	},

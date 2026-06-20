@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	meteringmemory "github.com/snaplink/sso/metering/memory"
+	meteringmemory "github.com/snaplink/sso/domains/metering/memory"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // TestTenantUsageRoute_ResolvesAtDocumentedPath guards the group-prefix

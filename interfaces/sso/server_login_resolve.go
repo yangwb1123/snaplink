@@ -1,0 +1,260 @@
+package sso
+
+import (
+	"encoding/json"
+	"errors"
+	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/protocols/oidc"
+	"net/http"
+	"strings"
+
+	"github.com/snaplink/sso/internal/auth/login"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/security"
+)
+
+// resolveLoginRequest handles JAR request_uri URL-fetch and PAR consume. Returns
+// true if the request is fully handled (caller should return immediately).
+func (s *Server) resolveLoginRequest(ctx HandlerContext, req *login.Request) bool {
+	if req.RequestURI != "" && security.IsJARFetchableURI(req.RequestURI) {
+		return s.fetchJARRequestURI(ctx, req)
+	}
+	if req.RequestURI != "" {
+		return s.consumePARRequest(ctx, req)
+	}
+	return false
+}
+
+// fetchJARRequestURI resolves an RFC 9101 request_uri pointing at a fetchable
+// URL: validate the client + per-client request_uri allowlist, fetch the signed
+// request object, and stash it on req.Request for downstream verification.
+// Returns true (response written) on any failure; false on success.
+func (s *Server) fetchJARRequestURI(ctx HandlerContext, req *login.Request) bool {
+	if s.jarFetcher == nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
+	if req.ClientID == "" || s.clientStore == nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
+	c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
+	if !security.IsRequestURIAllowed(req.RequestURI, c.AllowedRequestURIs) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
+	body, err := s.jarFetcher.Fetch(ctx.Request().Context(), req.RequestURI)
+	if err != nil {
+		s.logErrorCtx(ctx, "jar fetch failed", "error", err, "client", req.ClientID, "uri", req.RequestURI)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
+	req.Request = string(body)
+	return false
+}
+
+// consumePARRequest consumes an RFC 9126 pushed authorization request and merges
+// its stored parameters into req. Returns true (response written) on a missing
+// PAR store or an unknown/expired request_uri; false on success.
+func (s *Server) consumePARRequest(ctx HandlerContext, req *login.Request) bool {
+	if s.parStore == nil {
+		ctx.JSON(http.StatusNotImplemented, s.authzErrorBody(ctx, ErrPARNotConfigured))
+		return true
+	}
+	stored, err := s.parStore.Consume(ctx.Request().Context(), req.RequestURI)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
+	mergeStoredPARRequest(req, stored)
+	return false
+}
+
+// mergeStoredPARRequest merges a consumed PAR record's non-empty fields into req.
+// RFC 9126: the pushed parameters are authoritative over caller-supplied ones.
+func mergeStoredPARRequest(req *login.Request, stored *oauth.PARRequest) {
+	if stored.ClientID != "" {
+		req.ClientID = stored.ClientID
+	}
+	if stored.ResponseType != "" {
+		req.ResponseType = stored.ResponseType
+	}
+	if stored.RedirectURI != "" {
+		req.RedirectURI = stored.RedirectURI
+	}
+	if len(stored.Scope) > 0 {
+		req.Scope = stored.Scope
+	}
+	if stored.State != "" {
+		req.State = stored.State
+	}
+	if stored.Nonce != "" {
+		req.Nonce = stored.Nonce
+	}
+	if stored.CodeChallenge != "" {
+		req.CodeChallenge = stored.CodeChallenge
+		req.CodeChallengeMethod = stored.CodeChallengeMethod
+	}
+	if len(stored.Resource) > 0 {
+		req.Resource = stored.Resource
+	}
+	if len(stored.AuthorizationDetails) > 0 {
+		req.AuthorizationDetails = oauth.CloneRawJSON(stored.AuthorizationDetails)
+	}
+	if stored.LoginHint != "" {
+		req.LoginHint = stored.LoginHint
+	}
+	if stored.ResponseMode != "" {
+		req.ResponseMode = stored.ResponseMode
+	}
+	if stored.ACRValues != "" {
+		req.ACRValues = stored.ACRValues
+	}
+	if stored.UILocales != "" {
+		req.UILocales = stored.UILocales
+	}
+	if len(stored.Claims) > 0 {
+		req.Claims = oauth.CloneRawJSON(stored.Claims)
+	}
+}
+
+// handlePromptNone handles the OIDC prompt=none silent renewal branch.
+// It validates the client, checks residency, authorizes scopes, and
+// delegates to handleSilentRenewal. Always writes a response (either
+// renewed tokens or login_required).
+func (s *Server) handlePromptNone(ctx HandlerContext, prompts []string, req *login.Request) {
+	if req.ClientID == "" {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMissingClientID))
+		return
+	}
+	if s.clientStore == nil {
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
+		return
+	}
+	c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidClient))
+		return
+	}
+	if !c.Active {
+		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
+		return
+	}
+	if !clientTenantOK(ctx, c) {
+		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
+		return
+	}
+	if s.residencyGateLogin(ctx, c.ID, "silent_renewal", c.TenantID) {
+		return
+	}
+	granted, scopeErr := oauth.GrantedScopes(req.Scope, c)
+	if scopeErr != nil {
+		s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", ErrInvalidScope)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+		return
+	}
+	req.Scope = granted
+	s.handleSilentRenewal(ctx, prompts, oidc.SilentRenewalRequest{
+		ClientID:             req.ClientID,
+		Scope:                req.Scope,
+		State:                req.State,
+		Nonce:                req.Nonce,
+		Resource:             req.Resource,
+		AuthorizationDetails: req.AuthorizationDetails,
+		IDTokenHint:          req.IDTokenHint,
+		MaxAge:               req.MaxAge,
+	}, c)
+}
+
+// PathHomeRealm is the opt-in B2B home-realm-discovery endpoint: given a login
+// identifier (email), it returns the enterprise connection serving that domain
+// so the login UI routes the user to their organization's upstream IdP.
+const PathHomeRealm = "/auth/home-realm"
+
+// Home-realm-discovery response keys.
+const (
+	keyHRFound        = "found"
+	keyHRConnectionID = "connection_id"
+	keyHRType         = "type"
+	keyHRTenantID     = "tenant_id"
+	keyHRDisplayName  = "display_name"
+	// keyHRConnectionRequired marks an /auth/login provider-discovery response
+	// that resolved to an enterprise connection: the client MUST authenticate
+	// via the named connection's upstream IdP rather than the provider list.
+	keyHRConnectionRequired = "connection_required"
+)
+
+// resolveHomeRealm does B2B home-realm discovery for the interactive login
+// flow: it maps a login hint (email) to the enterprise connection serving its
+// domain. Returns false when no store is wired, the hint is empty, or no
+// connection matches — the caller then offers the normal provider list, so a
+// build without WithConnectionStore is byte-identical.
+func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connections.Connection, bool) {
+	if s.connectionStore == nil || strings.TrimSpace(loginHint) == "" {
+		return nil, false
+	}
+	conn, err := connections.Resolve(ctx.Request().Context(), s.connectionStore, loginHint)
+	if err != nil {
+		return nil, false
+	}
+	return conn, true
+}
+
+// WithConnectionStore wires per-organization enterprise connections (B2B) and
+// mounts the home-realm-discovery endpoint (PathHomeRealm). Nil/unset = the
+// endpoint is NOT mounted (byte-identical). The store maps email domains to a
+// tenant's upstream IdP connection; a login UI calls this to route a user to
+// their org's IdP. (Wiring a resolved connection into the actual upstream login
+// flow is a separate step.)
+func WithConnectionStore(store connections.Store) Option {
+	return func(s *Server) { s.connectionStore = store }
+}
+
+// handleHomeRealm resolves a login identifier (email/domain) to the enterprise
+// connection serving it and returns the routing decision WITHOUT any connection
+// secrets — only the id + display metadata a UI needs to start the federated
+// flow. A miss returns {"found": false} (fall back to the default login); this
+// is a routing decision (which IdP), NOT a credential oracle.
+func (s *Server) handleHomeRealm(ctx HandlerContext) {
+	r := ctx.Request()
+	hint := strings.TrimSpace(r.URL.Query().Get("login_hint"))
+	if hint == "" {
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			var b struct {
+				LoginHint  string `json:"login_hint"`
+				Identifier string `json:"identifier"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			if hint = strings.TrimSpace(b.LoginHint); hint == "" {
+				hint = strings.TrimSpace(b.Identifier)
+			}
+		} else {
+			_ = r.ParseForm()
+			if hint = strings.TrimSpace(r.FormValue("login_hint")); hint == "" {
+				hint = strings.TrimSpace(r.FormValue("identifier"))
+			}
+		}
+	}
+
+	conn, err := connections.Resolve(r.Context(), s.connectionStore, hint)
+	if errors.Is(err, connections.ErrNoConnection) {
+		ctx.JSON(http.StatusOK, map[string]any{keyHRFound: false})
+		return
+	}
+	if err != nil {
+		s.logErrorCtx(ctx, "home-realm discovery failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		keyHRFound:        true,
+		keyHRConnectionID: conn.ID,
+		keyHRType:         string(conn.Type),
+		keyHRTenantID:     conn.TenantID,
+		keyHRDisplayName:  conn.DisplayName,
+	})
+}

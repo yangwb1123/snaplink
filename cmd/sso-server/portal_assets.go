@@ -3,7 +3,7 @@ package main
 import (
 	"io/fs"
 
-	"github.com/snaplink/sso/web"
+	"github.com/snaplink/sso/interfaces/web"
 )
 
 // portalSubFS returns a sub-filesystem rooted at the portal/ entry of the

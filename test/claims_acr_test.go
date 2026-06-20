@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	sso "github.com/snaplink/sso"
+	sso "github.com/snaplink/sso/interfaces/sso"
 )
 
 // claimsACRLogin posts to /auth/login requesting an ACR through the OIDC

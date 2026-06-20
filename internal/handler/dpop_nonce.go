@@ -4,11 +4,12 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"time"
 )
+
 type HMACNonceProvider struct {
 	key []byte
 	ttl time.Duration

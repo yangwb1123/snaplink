@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/ratelimit"
-	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/snaplink/sso/shared/security"
 )
 
 func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {

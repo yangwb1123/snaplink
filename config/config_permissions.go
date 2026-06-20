@@ -3,7 +3,7 @@ package config
 import (
 	"context"
 
-	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/domains/permissions"
 )
 
 type PermissionsConfig struct {

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/compliance"
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/oauth"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // selfServiceDataExportOption wires GET /me/data-export (GDPR Art. 15 self-

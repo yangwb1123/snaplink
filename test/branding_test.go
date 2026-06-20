@@ -8,10 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	sso "github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/tenant"
-	tenantmemory "github.com/snaplink/sso/tenant/memory"
+	"github.com/snaplink/sso/domains/tenant"
+	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	sso "github.com/snaplink/sso/interfaces/sso"
 )
 
 const brandingHost = "acme.example"

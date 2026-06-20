@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // idTokenExchangeAlgs is the alg allowlist for verifying the exchanged

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/netpolicy"
-	"github.com/snaplink/sso/netpolicy/memory"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/platform/netpolicy/memory"
 )
 
 // netHarness wires a Server with the netpolicy API enabled, a memory store,

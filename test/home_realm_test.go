@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/connections"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func newHomeRealmServer(t *testing.T, withConnections bool) *httptest.Server {

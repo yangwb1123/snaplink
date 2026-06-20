@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"golang.org/x/crypto/bcrypt"
 )
 

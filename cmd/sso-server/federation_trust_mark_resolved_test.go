@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
 )
 
 // These cover the cmd boot-error guards added for the OpenID Federation 1.0

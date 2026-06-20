@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/domains/permissions"
 )
 
 func TestBuildPermissionsProvider_DisabledReturnsNil(t *testing.T) {

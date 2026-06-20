@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 func TestHTTPCIBAPingNotifier_PostsToEndpoint(t *testing.T) {

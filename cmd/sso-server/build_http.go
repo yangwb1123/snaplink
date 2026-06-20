@@ -6,13 +6,13 @@ import (
 	"net/http"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/snaplink/sso"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/oauth"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/spi"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/grpcserver"
+	"github.com/snaplink/sso/interfaces/grpcserver"
 )
 
 func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handler, error) {

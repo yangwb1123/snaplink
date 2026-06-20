@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/snaplink/sso/authenticators/webauthn"
+	"github.com/snaplink/sso/domains/authenticators/webauthn"
 )
 
 func webauthnBeginRegistrationHandler(h *webauthn.Helper) http.HandlerFunc {

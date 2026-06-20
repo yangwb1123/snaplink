@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/cors"
+	"github.com/snaplink/sso/interfaces/cors"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func TestCORSE2E_AllowedOriginGetsAllowOriginHeader(t *testing.T) {

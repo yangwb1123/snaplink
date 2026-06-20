@@ -101,29 +101,29 @@ BANNED_FILES = [
 # Files that ARE allowed in root (server composition)
 EXEMPT = {
     # Core server
-    "sso.go",                      # Server struct + routes
-    "handler.go",                  # Login orchestrator
-    "handlers.go",                 # Discovery delegators
-    "server_extensions.go",        # DPoP, mTLS, JAR, JWE, BCL, FCL
-    "mesh_authz.go",               # Mesh authorization
-    "signing_key_aggregation.go",  # Key aggregation loop
+    "interfaces/sso/sso.go",                      # Server struct + routes
+    "interfaces/sso/handler.go",                  # Login orchestrator
+    "interfaces/sso/handlers.go",                 # Discovery delegators
+    "interfaces/sso/server_extensions.go",        # DPoP, mTLS, JAR, JWE, BCL, FCL
+    "interfaces/sso/mesh_authz.go",               # Mesh authorization
+    "interfaces/sso/signing_key_aggregation.go",  # Key aggregation loop
     "storage_health.go",           # Storage health check
     
     # Accessors & aliases
-    "accessors.go",                # Field accessors for Deps
-    "aliases.go",                  # Re-exports
+    "interfaces/sso/accessors.go",                # Field accessors for Deps
+    "interfaces/sso/aliases.go",                  # Re-exports
     
     # Options (server configuration)
-    "options.go",
-    "options_misc.go",
-    "options_passwd.go",
-    "options_security.go",
+    "interfaces/sso/options.go",
+    "interfaces/sso/options_misc.go",
+    "interfaces/sso/options_passwd.go",
+    "interfaces/sso/options_security.go",
     
     # Server internals
-    "server_routes.go",            # Route registration
-    "server_helpers.go",           # Internal helpers
-    "server_validation.go",        # Validation logic
-    "server_health.go",            # Health endpoints
+    "interfaces/sso/server_routes.go",            # Route registration
+    "interfaces/sso/server_helpers.go",           # Internal helpers
+    "interfaces/sso/server_validation.go",        # Validation logic
+    "interfaces/sso/server_health.go",            # Health endpoints
     
     # Constants & types
     "types.go",

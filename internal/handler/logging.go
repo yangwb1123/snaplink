@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 var tracer = audit.NewTracer()

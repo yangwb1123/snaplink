@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/netpolicy"
-	"github.com/snaplink/sso/netpolicy/memory"
+	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/platform/netpolicy/memory"
 )
 
 // NetworkConfig configures the network-classification control plane.

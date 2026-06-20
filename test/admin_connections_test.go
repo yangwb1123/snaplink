@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/connections"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func newAdminConnectionsHarness(t *testing.T) (*httptest.Server, connections.Store) {

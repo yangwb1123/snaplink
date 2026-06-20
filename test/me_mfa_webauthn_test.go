@@ -11,10 +11,10 @@ import (
 	"time"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/authenticators/webauthn"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // newCompositeMFAHarness wires a server whose /me/mfa store composes a TOTP

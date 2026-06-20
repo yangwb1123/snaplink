@@ -3,12 +3,12 @@ package main
 import (
 	"net/http"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/admin"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/permissions"
-	"github.com/snaplink/sso/scim"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/scim"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // SCIM 2.0 mount prefix. Mounted on the SSO router (so it shares the

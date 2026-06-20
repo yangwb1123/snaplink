@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/platform/audit"
 )
 
 const progName = "sso-audit-verify"

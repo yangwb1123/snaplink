@@ -3,7 +3,7 @@ package main
 import (
 	"log/slog"
 
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/shared/spi"
 
 	"github.com/snaplink/sso/config"
 )

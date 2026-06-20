@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/oauth"
+import "github.com/snaplink/sso/protocols/oauth"
 
 import (
 	"context"
@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 const (

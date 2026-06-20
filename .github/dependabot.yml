@@ -41,7 +41,7 @@ updates:
       - gcpkms
 
   - package-ecosystem: docker
-    directory: "/deploy/compose"
+    directory: "/ops/deploy/compose"
     schedule:
       interval: monthly
     labels:

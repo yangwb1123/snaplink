@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // newBufSlogLogger builds a slogLogger writing JSON records into buf, so a

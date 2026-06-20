@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/migrate"
+	"github.com/snaplink/sso/platform/migrate"
 
 	_ "modernc.org/sqlite"
 )

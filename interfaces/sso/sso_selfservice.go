@@ -1,0 +1,143 @@
+package sso
+
+import (
+	"io/fs"
+	"sync"
+	"time"
+
+	"github.com/snaplink/sso/domains/metering"
+	"github.com/snaplink/sso/internal/auth/consent"
+	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/snaplink/sso/shared/spi"
+)
+
+// selfServiceState holds consent, signup, password-reset, email-change, MFA enrollment, data export/erasure, invitations, usage, JWKS body cache, and SPA-FS fields.
+type selfServiceState struct {
+	// consentStore persists end-user consent decisions (WithConsentStore).
+	// When nil all consent checks are skipped — behavior is byte-identical
+	// to a build without the feature.
+	consentStore ConsentStore
+
+	// scopeDescriptions maps a scope name to an operator-defined human
+	// description (WithScopeDescriptions). Surfaced in the consent_required
+	// response so the consent UI can render meaningful text for custom scopes
+	// instead of the raw name. Nil/empty ⇒ no descriptions emitted.
+	scopeDescriptions map[string]string
+
+	// tenantUserStore persists explicit B2B org membership (WithTenantUserStore).
+	// Nil ⇒ the admin roster + self-service /me/organizations endpoints are NOT
+	// mounted — byte-identical to a build without it.
+	tenantUserStore TenantUserStore
+
+	// jitMembership opts into auto-provisioning org membership on login
+	// (WithJITMembership): a user logging in via a tenant-bound client who isn't
+	// yet on that tenant's roster is added as a member. Requires tenantUserStore.
+	jitMembership bool
+
+	// invitationStore persists single-use org-invitation tokens
+	// (WithInvitationStore); invitationSender delivers them (WithInvitationSender).
+	// The send + list endpoints mount only with the store; accept also requires a
+	// tenantUserStore (the redeemed invite grants membership). Nil ⇒ none mounted.
+	invitationStore  InvitationStore
+	invitationSender spi.InvitationSender
+
+	// passwordCredentialStore backs POST /me/password (WithPasswordCredentialStore).
+	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
+	passwordCredentialStore PasswordCredentialStore
+
+	// Forgot-password / account-recovery flow (POST /auth/forgot-password +
+	// /auth/reset-password). All wired via WithPasswordReset*; the routes mount
+	// only when passwordResetStore AND passwordCredentialStore are both set —
+	// byte-identical to a build without them.
+	passwordResetStore            PasswordResetStore
+	passwordResetTTL              time.Duration
+	passwordResetResolver         spi.PasswordResetResolver
+	passwordResetDeliveryResolver spi.PasswordResetDeliveryResolver
+	passwordResetSender           spi.PasswordResetSender
+
+	// dataExporter backs GET /me/data-export — GDPR Art. 15 self-service export
+	// of the bearer's OWN data (WithSelfServiceDataExport). Nil ⇒ not mounted.
+	dataExporter *compliance.Exporter
+
+	// accountEraser backs POST /me/account/erase — GDPR Art. 17 self-service
+	// erasure of the bearer's OWN account (WithSelfServiceAccountErasure).
+	// Irreversible; nil ⇒ not mounted (default-off — self-deletion is a
+	// deliberate operator choice, not always desirable for managed accounts).
+	accountEraser *compliance.Eraser
+
+	// Verified email change (POST /me/email/change + /me/email/verify). Mounts
+	// only when the store + sender + a UserProvider are all wired.
+	emailChangeStore  EmailChangeStore
+	emailChangeTTL    time.Duration
+	emailChangeSender spi.EmailChangeSender
+
+	// signupEnabled gates POST /auth/register (opt-in self-service signup).
+	// Mounts only when also a UserProvider + PasswordCredentialStore are wired
+	// (signup creates the user + sets the password). Default-off.
+	signupEnabled bool
+
+	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
+	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
+	mfaEnrollmentStore MFAEnrollmentStore
+
+	// totpEnroller backs POST /me/mfa/totp/{begin,confirm} (WithTOTPEnroller).
+	// The enrollment routes mount only when this AND an mfaEnrollmentStore that
+	// implements TOTPEnrollmentWriter are both wired — byte-identical off.
+	totpEnroller TOTPEnroller
+
+	// webauthnRegistrar backs POST /me/mfa/webauthn/{begin,finish} (authenticated
+	// self-service passkey registration, WithWebAuthnRegistrar). Nil ⇒ routes
+	// not mounted (byte-identical off).
+	webauthnRegistrar WebAuthnRegistrar
+
+	// selfEditableAttrs is the operator allowlist of User.Attributes keys a
+	// user MAY change via PATCH /me (WithSelfEditableProfileAttributes). Empty
+	// (the default) ⇒ PATCH /me may edit the display name only; any attributes
+	// in the request are ignored. The allowlist is the escalation guard: it
+	// keeps users from writing authz-relevant attribute keys (roles, tenant,
+	// risk flags) the operator stores alongside presentation data.
+	selfEditableAttrs map[string]struct{}
+
+	// consentChallenges holds server-issued single-use consent challenge tokens.
+	// Each entry is bound to (UserID, ClientID, Scopes) and expires after
+	// consent.ChallengeTTL. Thread-safe via consent.ChallengeStore.
+	consentChallenges *consent.ChallengeStore
+
+	// usageAggregator backs GET /api/v1/admin/tenants/:id/usage
+	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —
+	// byte-identical to a build without it.
+	usageAggregator metering.Aggregator
+
+	// jwksBodyCache holds the pre-marshaled JWKS document, valid for
+	// jwksCacheTTL. When jwksCacheTTL == 0 the cache is disabled and every
+	// serial poll runs the full issuer-walk + marshal (concurrent bursts still
+	// share one result via jwksFlight). Invalidated by InvalidateJWKSBodyCache
+	// when the key set changes (local rotation, peer adoption, client DCR).
+	// Thread-safe: reads hold jwksBodyMu RLock, writes hold it exclusively;
+	// zero-value jwksBodyExp ensures an uninitialized cache is always expired.
+	jwksBodyMu    sync.RWMutex
+	jwksBodyCache []byte
+	jwksBodyExp   time.Time
+
+	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
+	// an embedded or OS filesystem at /admin/. The console is a standalone
+	// single-page app — it communicates with the server only via the standard
+	// /api/v1/admin/* REST endpoints, which require a Bearer token with
+	// admin:read or admin:write scope. Nil (the default) leaves /admin/
+	// unmounted — byte-identical to a build without the console.
+	adminConsoleFS fs.FS
+
+	// hostedLoginFS, when non-nil, serves the hosted-login SPA from an
+	// embedded or OS filesystem at /login/. The SPA calls /auth/login over
+	// JSON — zero protocol changes to the OAuth/OIDC surface. Nil (the
+	// default) leaves /login/ unmounted — byte-identical to a build without
+	// it. Typically wired by the operator's cmd binary via go:embed.
+	hostedLoginFS fs.FS
+
+	// portalFS, when non-nil, serves the end-user self-service portal SPA from
+	// an embedded or OS filesystem at /portal/. The portal is a standalone
+	// browser client that calls /me, /sessions/me, /consents/me, /me/password
+	// and /me/mfa with the end-user's own Bearer token. Nil (the default)
+	// leaves /portal/ unmounted — byte-identical to a build without it.
+	portalFS fs.FS
+}

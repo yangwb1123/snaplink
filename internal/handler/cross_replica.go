@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/snaplink/sso/cluster"
-	"github.com/snaplink/sso/metrics"
-	"github.com/snaplink/sso/spi"
+	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // CrossReplicaDeps is the interface for cross-replica revocation.

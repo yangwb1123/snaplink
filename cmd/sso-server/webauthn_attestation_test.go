@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/authenticators/webauthn"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/snaplink/sso/platform/audit"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 )

@@ -19,7 +19,7 @@ def run() -> int:
     print("=== Exemption Sync ===")
     print(f"  script exemptions: {len(exempts)}")
     ec = 0
-    for f in ["handlers.go", "server_extensions.go", "sso.go", "accessors.go"]:
+    for f in ["interfaces/sso/handlers.go", "interfaces/sso/server_extensions.go", "interfaces/sso/sso.go", "interfaces/sso/accessors.go"]:
         if any(f in e for e in exempts):
             print(f"  [+] {f} in script exemptions")
         else:

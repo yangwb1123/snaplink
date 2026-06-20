@@ -1,0 +1,107 @@
+# .arch/rules.yaml — Architecture rules MANIFEST (descriptive mirror).
+#
+# This file is NOT the source of truth and is NOT read by any tool. It is a
+# single human-/agent-readable index of the guardrails that ARE enforced, each
+# mapped to its authoritative enforcer (a committed Go test and/or a checks/*.py
+# module invoked through `python cli.py`). If a value here ever disagrees with
+# the enforcer, THE ENFORCER WINS — fix this file, never the reverse.
+#
+# Adapted for snaplink, which is an OAuth2/OIDC SSO *library + binary*: package
+# import paths are a published API contract, so the directory discipline is
+# about ROOT cleanliness + dependency DIRECTION, not a fixed `max_dirs` count
+# and not a protocol retree. Rationale in docs/adr/.
+
+meta:
+  repo_kind: go-library-plus-binary        # public import paths == API contract
+  source_of_truth:
+    thresholds: checks/*.py
+    boundaries_filesize_complexity: >-
+      committed *_test.go — architecture_gate_test.go,
+      maintainability_budget_test.go, maintainability_complexity_test.go
+    orchestrator: cli.py                    # Makefile + Taskfile.yml delegate here
+  explicitly_not_used:                      # see ADR-0004
+    - "scripts/*.sh gate stubs (clobbered by `cli.py harness` regeneration)"
+    - "a duplicate .github/workflows/architecture.yml (gates ride the existing race step)"
+    - "a second machine-read threshold config (checks/*.py already own the numbers)"
+
+file:
+  max_lines: 500
+  excludes: ["_test.go", "gen/proto/**", "*.pb.go (generated)"]
+  ratchet: "exemption list may only shrink; new violation fails; stale exemption fails"
+  enforced_by:
+    committed_test: "go test -run TestMaintainability_FileSizeBudget ./..."
+    cli: "python cli.py check-filesize   # WARNING: regenerates scaffolding first"
+    source: "checks/filesize.py (MAX_LINES = 500)"
+
+complexity:
+  cyclomatic_max: 15        # checks/complexity.py MAX_CYCLO; also committed test
+  cognitive_max: 20         # checks/complexity.py MAX_COGNIT
+  function_length_max: 50   # committed maintainability_complexity_test.go
+  golangci:                 # .golangci.yml via `make lint` (separate CI job, not `make ci`)
+    funlen: "60 lines / 40 statements"
+    gocyclo: 15
+    gocognit: 20
+  regenerate_exemptions: "SEED_MAINTAINABILITY=1 go test -run TestSeedMaintainabilityExemptions -v ."
+  enforced_by:
+    committed_test: "go test -run TestMaintainability_ ./..."
+    cli: "python cli.py complexity"
+    source: "checks/complexity.py"
+
+root:
+  max_files_non_exempt: 15  # checks/root_files.py (MAX = 15); surfaced in `cli.py accept` [U8]
+  allowed: >-
+    server-composition files only: sso.go, server_*.go, accessors*.go,
+    options*.go, handlers.go, handler.go, aliases.go, mesh_authz.go,
+    signing_key_aggregation*.go, storage_health.go, sso_*.go
+  forbidden_in_root: ["*_handler.go", "*_service.go", "*_store.go", "*_grant.go", "business logic"]
+  no_fixed_max_dirs: true   # 53 domain dirs are intentional (SPI-per-concern). See ADR-0001.
+  enforced_by:
+    cli: "python cli.py check-root   # checks/root_business_code.py"
+
+architecture:
+  # snaplink's REAL layering — NOT interfaces->application->domain.
+  dependency_direction: "handlers -> oauth|oidc -> security -> core ; infrastructure(defaultimpl) -> core"
+  invariants:
+    - "core MUST import no internal package (the SPI/types/sentinels leaf)"
+    - "oauth MUST NOT import oidc"
+    - "oidc MUST NOT import oauth (2 files grandfathered under a shrink-only ratchet)"
+    - "nothing may import cmd/"
+  enforced_by:
+    committed_test: "go test -run TestArchitecture_ImportBoundaries ./..."
+    cli: "python cli.py architecture"
+    source: ["architecture_gate_test.go", "checks/architecture.py"]
+  # Cognitive-layer overlay (ADR-0006): a package may import only its own layer
+  # or a LOWER-rank one. Enforced over the flat tree; no public path moves.
+  layers:
+    order: ["shared(0)", "platform(1)", "domains(2)", "protocols(3)", "infrastructure(4)", "interfaces(5)", "composition(6)"]
+    rule: "import target rank MUST be <= importer rank (one-way toward the shared kernel)"
+    map: docs/architecture/DIRECTORY_MAP.md
+    enforced_by:
+      committed_test: "go test -run TestArchitecture_LayerBoundaries ./..."
+      source: architecture_layer_test.go  # layerName() classification + shrink-only layerExemptions
+    seeded_debt: "9 grandfathered upward edges (mostly root god-package fan-in); shrink-only"
+
+fanin:
+  numeric_cap: none
+  rationale: >-
+    A types/SPI kernel SHOULD have high fan-in (core <- 219 files, audit <- 160).
+    Capping fan-in would penalise the healthiest, most-reused packages. God-object
+    risk is caught instead via fan-OUT discipline (root-business-code gate) plus the
+    size/complexity budgets. See ADR-0004.
+
+protocols:
+  decision: "Keep oauth/ oidc/ saml/ scim/ FLAT at their current import paths. Do NOT group under protocols/."
+  rationale: >-
+    A rename breaks the public API for every embedder AND silently disables the
+    path-keyed architecture gate (its fromDir prefixes are literal). See ADR-0003.
+
+verification:
+  safe_post_edit:           # none of these regenerate scaffolding
+    - "go build ./... && go vet ./..."
+    - "go test -run 'TestMaintainability_|TestArchitecture_ImportBoundaries' ./..."
+    - "python cli.py check-root && python cli.py complexity && python cli.py architecture && python cli.py check-invariants"
+  regenerates_scaffolding__commit_first:
+    - "python cli.py harness"
+    - "python cli.py check-filesize"
+    - "python cli.py generate"
+  full_ci: "make ci   # = fmt vet race build proto-lint ci-modules; gates ride the `race` step"

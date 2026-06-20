@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/caep"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/defaultimpl"
-	sqlitestores "github.com/snaplink/sso/defaultimpl/sqlite"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/protocols/caep"
 )
 
 // writeJWKSFile materializes a minimal valid single-key JWKS document (a real

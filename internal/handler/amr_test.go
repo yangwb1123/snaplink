@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // TestAmrForResult locks the RFC 8176 amr derivation: recorded AuthMethods win

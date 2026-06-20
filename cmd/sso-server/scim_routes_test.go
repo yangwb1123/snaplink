@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/permissions"
-	"github.com/snaplink/sso/scim"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/scim"
 )
 
 // scimTestServer builds a bare *sso.Server, materializes its router via

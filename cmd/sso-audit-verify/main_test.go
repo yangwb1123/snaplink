@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/audit"
+	"github.com/snaplink/sso/platform/audit"
 )
 
 // TestReadFromFile_PlainArray — the simplest input shape:

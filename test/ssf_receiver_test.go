@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/caep"
-	"github.com/snaplink/sso/core"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/oauth"
-	"github.com/snaplink/sso/security"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/caep"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // Full-server companion to caep/receiver_test.go: it proves the HTTP wiring

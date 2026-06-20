@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/spi"
+import "github.com/snaplink/sso/shared/spi"
 
 // MFA orchestration end-to-end. Exercises:
 //   - spi.RiskScorer spi.DecisionRequireMFA + spi.MFAProvider wired → /auth/login
@@ -33,11 +33,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/audit"
-	"github.com/snaplink/sso/authenticators"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
 )
 
 // totpStubStore is an in-memory authenticators.TOTPStore for the

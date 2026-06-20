@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso"
-	"github.com/snaplink/sso/defaultimpl"
-	"github.com/snaplink/sso/permissions"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // newAuthzBundleHarness builds an SSO server with a permissions provider

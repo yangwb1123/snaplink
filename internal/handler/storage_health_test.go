@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/core"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // storageHealthResponse mirrors the JSON shape HandleStorageHealth emits so the

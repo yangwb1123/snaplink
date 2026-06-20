@@ -3,7 +3,7 @@ package ssotest
 import (
 	"testing"
 
-	"github.com/snaplink/sso"
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 func TestReadBuildInfo_CachesAndReturnsConsistently(t *testing.T) {
