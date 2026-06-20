@@ -384,24 +384,6 @@ func TestNewRecorderSink_ZeroScoreOmitted(t *testing.T) {
 	}
 }
 
-func TestSetAnomalyMeta_SkipsEmptyLazilyAllocates(t *testing.T) {
-	// Empty value → no-op, no allocation. First non-empty value lazily
-	// allocates the map.
-	e := &audit.Event{}
-	setAnomalyMeta(e, "k", "")
-	if e.Metadata != nil {
-		t.Fatalf("empty value must not allocate metadata; got %v", e.Metadata)
-	}
-	setAnomalyMeta(e, "k1", "v1")
-	if e.Metadata == nil || e.Metadata["k1"] != "v1" {
-		t.Fatalf("non-empty value must set metadata; got %v", e.Metadata)
-	}
-	setAnomalyMeta(e, "k2", "v2")
-	if e.Metadata["k2"] != "v2" {
-		t.Fatalf("second key not set; got %v", e.Metadata)
-	}
-}
-
 func TestInspect_NeverInfluencesDispatchCaller(t *testing.T) {
 	// Hard invariant: anomaly detection MUST NOT feed back into the auth
 	// decision. Dispatch is fire-and-forget — it returns no result and

@@ -301,6 +301,16 @@ func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETReque
 	}
 }
 
+// contentTypeSecEvent is the SSF push-delivery Content-Type for the SET body:
+// the SET media type (RFC 8417 §2.3) with the application/ prefix. Derived from
+// SecurityEventTokenTyp so the wire content-type and the JOSE typ header can
+// never drift apart.
+const contentTypeSecEvent = "application/" + SecurityEventTokenTyp
+
+// metaReceiverEndpoint is the audit-meta key carrying the receiver URL on a
+// broadcast-failure event.
+const metaReceiverEndpoint = "receiver"
+
 // post delivers the SET to the receiver. Per the SSF push-delivery
 // profile the body is the compact JWS with content-type
 // application/secevent+jwt. A non-2xx is an error (the SET was not
@@ -310,10 +320,10 @@ func (t *Transmitter) post(ctx context.Context, endpoint, auth, set string) erro
 	if err != nil {
 		return err
 	}
-	httpReq.Header.Set("Content-Type", "application/secevent+jwt")
-	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set(core.HeaderContentType, contentTypeSecEvent)
+	httpReq.Header.Set("Accept", core.ContentTypeJSON)
 	if auth != "" {
-		httpReq.Header.Set("Authorization", auth)
+		httpReq.Header.Set(core.HeaderAuthorization, auth)
 	}
 	resp, err := t.httpClient.Do(httpReq)
 	if err != nil {
@@ -345,7 +355,7 @@ func (t *Transmitter) fail(clientID, endpoint, reason string) {
 			ClientID: clientID,
 			Reason:   reason,
 		}
-		audit.SetMeta(e, "receiver", endpoint)
+		audit.SetMeta(e, metaReceiverEndpoint, endpoint)
 		t.recorder.Record(context.Background(), e)
 	}
 }

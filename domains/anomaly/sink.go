@@ -60,27 +60,14 @@ func NewRecorderSink(recorder *audit.Recorder) Sink {
 			Reason:   a.Type,
 			TraceID:  event.TraceID,
 		}
-		setAnomalyMeta(e, "anomaly.severity", string(a.Severity))
+		audit.SetMeta(e, "anomaly.severity", string(a.Severity))
 		if a.Score > 0 {
-			setAnomalyMeta(e, "anomaly.score", strconv.Itoa(a.Score))
+			audit.SetMeta(e, "anomaly.score", strconv.Itoa(a.Score))
 		}
 		for k, v := range a.Evidence {
-			setAnomalyMeta(e, k, v)
+			audit.SetMeta(e, k, v)
 		}
 		recorder.Record(ctx, e)
 		return nil
 	})
-}
-
-// setAnomalyMeta is the same setMeta pattern from audit_handler.go,
-// duplicated here to avoid widening the package's exported surface
-// just for the anomaly path. Skips empty values + lazily allocates.
-func setAnomalyMeta(e *audit.Event, k, v string) {
-	if v == "" {
-		return
-	}
-	if e.Metadata == nil {
-		e.Metadata = make(map[string]string, 4)
-	}
-	e.Metadata[k] = v
 }

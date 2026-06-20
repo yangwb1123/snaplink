@@ -5,6 +5,7 @@ const (
 	PathHealth         = "/health"
 	PathLivez          = "/livez"
 	PathReadyz         = "/readyz"
+	PathMetrics        = "/metrics"
 	PathLogin          = "/auth/login"
 	PathMFAComplete    = "/auth/mfa"
 	PathSendCode       = "/auth/send-code"

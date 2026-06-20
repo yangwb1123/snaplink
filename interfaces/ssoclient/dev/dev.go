@@ -80,7 +80,7 @@ var (
 func warn(ctor string) {
 	warnOnce.Do(func() {
 		fmt.Fprintf(os.Stderr,
-			"⚠️  ssoclient/dev: AUTH BYPASS ACTIVE — %s constructed. DO NOT USE IN PRODUCTION.\n",
+			"ssoclient/dev: AUTH BYPASS ACTIVE — %s constructed. DO NOT USE IN PRODUCTION.\n",
 			ctor,
 		)
 	})
