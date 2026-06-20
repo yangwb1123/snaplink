@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // Part 1 — exp-bounded deny-set. White-box (package defaultimpl) so the tests
@@ -85,7 +85,7 @@ func TestEd25519Revoke_HonoredUpToExp(t *testing.T) {
 	iss := NewEd25519JWTIssuer(WithEd25519MaxClockSkew(time.Hour))
 
 	// A live token with a comfortably-future exp.
-	live, err := iss.Issue(ctx, &sso.Subject{ID: "u-live", TTL: time.Hour}, nil)
+	live, err := iss.Issue(ctx, &core.Subject{ID: "u-live", TTL: time.Hour}, nil)
 	if err != nil {
 		t.Fatalf("issue live: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestEd25519Revoke_HonoredUpToExp(t *testing.T) {
 	// so it must NOT linger in the deny-set (memory bounded). The live entry
 	// above must SURVIVE the same prune (prune-not-early).
 	beforeStale := time.Now()
-	stale, err := iss.Issue(ctx, &sso.Subject{ID: "u-stale", TTL: time.Nanosecond}, nil)
+	stale, err := iss.Issue(ctx, &core.Subject{ID: "u-stale", TTL: time.Nanosecond}, nil)
 	if err != nil {
 		t.Fatalf("issue stale: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestECDSARevoke_HonoredUpToExp(t *testing.T) {
 	ctx := context.Background()
 	iss := NewECDSAJWTIssuer(WithECDSAMaxClockSkew(time.Hour))
 
-	live, err := iss.Issue(ctx, &sso.Subject{ID: "u-live", TTL: time.Hour}, nil)
+	live, err := iss.Issue(ctx, &core.Subject{ID: "u-live", TTL: time.Hour}, nil)
 	if err != nil {
 		t.Fatalf("issue live: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestECDSARevoke_HonoredUpToExp(t *testing.T) {
 	}
 
 	beforeStale := time.Now()
-	stale, err := iss.Issue(ctx, &sso.Subject{ID: "u-stale", TTL: time.Nanosecond}, nil)
+	stale, err := iss.Issue(ctx, &core.Subject{ID: "u-stale", TTL: time.Nanosecond}, nil)
 	if err != nil {
 		t.Fatalf("issue stale: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRSARevoke_HonoredUpToExp(t *testing.T) {
 	ctx := context.Background()
 	iss := NewRSAJWTIssuer(WithRSAMaxClockSkew(time.Hour))
 
-	live, err := iss.Issue(ctx, &sso.Subject{ID: "u-live", TTL: time.Hour}, nil)
+	live, err := iss.Issue(ctx, &core.Subject{ID: "u-live", TTL: time.Hour}, nil)
 	if err != nil {
 		t.Fatalf("issue live: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRSARevoke_HonoredUpToExp(t *testing.T) {
 	}
 
 	beforeStale := time.Now()
-	stale, err := iss.Issue(ctx, &sso.Subject{ID: "u-stale", TTL: time.Nanosecond}, nil)
+	stale, err := iss.Issue(ctx, &core.Subject{ID: "u-stale", TTL: time.Nanosecond}, nil)
 	if err != nil {
 		t.Fatalf("issue stale: %v", err)
 	}

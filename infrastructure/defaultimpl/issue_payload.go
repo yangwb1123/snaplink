@@ -8,6 +8,10 @@ import (
 	"github.com/snaplink/sso/interfaces/sso"
 )
 
+// defaultTokenTTL is the fallback access-token lifetime shared by the
+// Ed25519/ECDSA/RSA JWS issuers when no per-issuer TTL is configured.
+const defaultTokenTTL = time.Hour
+
 // buildAccessPayload assembles the full RFC 9068 §2.2 access-token claim set
 // (base claims + the optional-claims projection) into the signer-independent
 // ed25519Payload. Shared verbatim across the Ed25519/ECDSA/RSA issuers — the
