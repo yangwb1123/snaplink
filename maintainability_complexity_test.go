@@ -335,3 +335,22 @@ func emitSeed(name string, metrics []funcMetric, threshold int, value func(funcM
 	// stdout without the t.Log file:line prefix.
 	fmt.Printf("//SEED-BEGIN %s\n%s\n//SEED-END %s\n", name, strings.Join(lines, "\n"), name)
 }
+
+// Ratchet latch: the exemption backlogs may only SHRINK. A contributor cannot
+// silence a freshly-introduced violation by ADDING its own exemption in the same
+// commit — that pushes the count over the frozen cap and fails the build. Lower
+// these caps (only) when you remove exemptions. This closes the ratchet-bypass
+// hole so the per-function budgets are binding for NEW code, not just existing.
+const (
+	maxCycloExemptions   = 36
+	maxFuncLenExemptions = 65
+)
+
+func TestMaintainability_ExemptionsDoNotGrow(t *testing.T) {
+	if n := len(cycloExemptions); n > maxCycloExemptions {
+		t.Errorf("cycloExemptions grew to %d (cap %d) — do NOT add a new exemption to grandfather a new function; extract sub-functions instead. Lower the cap only when removing exemptions.", n, maxCycloExemptions)
+	}
+	if n := len(funcLenExemptions); n > maxFuncLenExemptions {
+		t.Errorf("funcLenExemptions grew to %d (cap %d) — extract sub-functions instead of self-exempting a new long function.", n, maxFuncLenExemptions)
+	}
+}

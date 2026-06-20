@@ -65,3 +65,8 @@ not a DDD "audit domain" — hence platform.
 3. Keep imports pointing down the stack. A needed upward dependency means the
    abstraction belongs lower (move the interface to `shared/core` / `shared/spi`),
    not that the rule should bend.
+4. Keep directory depth ≤ 3 — flatten a new backend/variant into the parent name
+   (`webauthnsqlite`), don't nest a 4th level (gate: `maxdepth_test.go`).
+5. Stay within the budgets (file ≤ 500 lines, function ≤ 50 / cyclo ≤ 15) and
+   **never add a maintainability exemption for new code** — the lists are
+   count-capped and only shrink. Full contributor rule: AGENTS.md §0.6.

@@ -18,6 +18,7 @@ Operational guide for AI agents. Follows [agents.md](https://agents.md). User in
 | Function lines | ≤ 50 | Extract sub-functions |
 | Cyclomatic complexity | ≤ 15 | Run `skills/refactor-high-complexity.md` |
 | If-nesting depth | ≤ 3 | Guard clauses / early return |
+| Directory depth | ≤ 3 | Flatten (merge leaf dir into parent name); `gen/`, `ops/deploy/`, `testdata` exempt |
 
 **Cardinal rule:** If your edit pushes a file OVER 500 lines, you MUST split first, then continue. Refactoring always outranks feature work (480+ line file you'll exceed → refactor pre-existing violation first).
 
@@ -60,6 +61,18 @@ Root only allows server composition files. No `*_handler.go`, `*_service.go`, `*
 | Root file count > 15 non-exempt | Run `skills/hexagonal-extraction.md` |
 | Business code in root | Run `skills/hexagonal-extraction.md` |
 | Mocks where Memory* exists | Use real `MemoryProvider`/`MemorySink`/`memory.Registry` |
+
+### 0.6 Adding New Feature Code (every new package/file MUST satisfy these)
+
+The repo is a **physically layered tree** ([DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md)). New code follows the SAME conventions as every existing layer — they are GATES, not guidelines (committed in `package archgate`: `architecture_layer_test`, `architecture_gate`, `maxdepth_test`, `maintainability_*`).
+
+1. **Place by responsibility, under its layer dir:** `shared/` (core/spi/security — kernel, no impls, `core` import-free) · `domains/` (business: tenant, federation, authenticators…) · `protocols/` (oauth, oidc, scim, fapi, caep, selfservice, compliance) · `platform/` (cross-cutting: cluster, metrics, audit-mechanism, geo…) · `interfaces/` (delivery edge + `interfaces/sso` public Server API — no business logic) · `infrastructure/` (defaultimpl + vendor/nested modules).
+2. **Imports point DOWN only** (toward `shared/core`). No upward import; do not add a new `layerExemptions` entry.
+3. **Directory depth ≤ 3** — flatten a new backend/variant into the parent name (`webauthnsqlite`, `encryptionaesgcm`), don't nest a 4th level.
+4. **File ≤ 500 lines, function ≤ 50 lines & cyclomatic ≤ 15** — if your edit would breach, SPLIT FIRST (refactoring outranks features). The near-budget files (e.g. `protocols/oauth/handle_register.go` at 500) must be split before adding to them.
+5. **NEVER add a new maintainability exemption** to grandfather your own new violation — the exemption lists are count-capped (`maxCycloExemptions`/`maxFuncLenExemptions`/`maxFileSizeExemptions`) and only shrink; adding one fails the build.
+6. **Classify any new top-level (or `internal/`) package** in `layerName()` (`architecture_layer_test.go`) — an unclassified package fails the gate by design.
+7. **Before done:** `go build ./... && go vet ./...` then `go test -run 'TestMaintainability_|TestArchitecture_' .` — all pass with no new exemptions.
 
 ---
 
