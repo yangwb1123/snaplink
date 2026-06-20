@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 // WebAuthn id_token was signed by the shared key — the last surface that
 // bypassed WithTenantTokenIssuer. These tests drive issueWebAuthnToken
 // directly (the WebAuthn ceremony itself is exercised elsewhere) over a
-// real *sso.Server wired through mountWebAuthnRoutes, proving the id_token
+// real *sso.Server wired through MountWebAuthnRoutes, proving the id_token
 // is signed by the TENANT's key and that misconfigured/opaque tenant
 // strategies fail closed rather than falling back to the shared key.
 //
@@ -55,10 +55,10 @@ func webauthnJOSEKid(t *testing.T, token string) string {
 
 // newWebAuthnTenantDeps builds a *sso.Server with a default issuer, a
 // distinct tenant issuer mapped via WithTenantTokenIssuer, and an opaque
-// (session) strategy, then returns webauthnDeps wired through the real
-// mountWebAuthnRoutes path so deps.IDTokenIssuerForClient == the server's
+// (session) strategy, then returns WebAuthnDeps wired through the real
+// MountWebAuthnRoutes path so deps.IDTokenIssuerForClient == the server's
 // per-tenant selector. clients are seeded into the shared client store.
-func newWebAuthnTenantDeps(t *testing.T, def, tenantA *defaultimpl.Ed25519JWTIssuer, session sso.TokenIssuer, clients ...*sso.Client) *webauthnDeps {
+func newWebAuthnTenantDeps(t *testing.T, def, tenantA *defaultimpl.Ed25519JWTIssuer, session sso.TokenIssuer, clients ...*sso.Client) *WebAuthnDeps {
 	t.Helper()
 	clientStore := defaultimpl.NewMemoryClientStore()
 	for _, c := range clients {
@@ -102,7 +102,7 @@ func newWebAuthnTenantDeps(t *testing.T, def, tenantA *defaultimpl.Ed25519JWTIss
 	if err != nil {
 		t.Fatalf("NewHelper: %v", err)
 	}
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		Helper:        h,
 		ClientStore:   clientStore,
 		TokenIssuers:  issuers,
@@ -110,15 +110,15 @@ func newWebAuthnTenantDeps(t *testing.T, def, tenantA *defaultimpl.Ed25519JWTIss
 		IDTokenIssuer: def,
 	}
 	// Handler() runs Mount(), which must precede Handle() — the route
-	// registration mountWebAuthnRoutes performs.
+	// registration MountWebAuthnRoutes performs.
 	_ = srv.Handler()
 	// Exercise the production wiring: this is where the per-tenant selector
 	// and the encryption hook get attached from *sso.Server.
-	if err := mountWebAuthnRoutes(srv, deps); err != nil {
-		t.Fatalf("mountWebAuthnRoutes: %v", err)
+	if err := MountWebAuthnRoutes(srv, deps); err != nil {
+		t.Fatalf("MountWebAuthnRoutes: %v", err)
 	}
 	if deps.IDTokenIssuerForClient == nil {
-		t.Fatal("mountWebAuthnRoutes did not wire IDTokenIssuerForClient")
+		t.Fatal("MountWebAuthnRoutes did not wire IDTokenIssuerForClient")
 	}
 	return deps
 }
@@ -224,7 +224,7 @@ func TestWebAuthnIDToken_UnregisteredTenantFailsClosed(t *testing.T) {
 	}
 }
 
-// Backward-compat: an embedder that constructs webauthnDeps WITHOUT the
+// Backward-compat: an embedder that constructs WebAuthnDeps WITHOUT the
 // per-tenant selector (IDTokenIssuerForClient nil) gets byte-identical
 // legacy behavior — the shared IDTokenIssuer signs every client's
 // id_token, tenant or not.
@@ -238,8 +238,8 @@ func TestWebAuthnIDToken_LegacyNoSelectorUsesSharedIssuer(t *testing.T) {
 		AllowedScopes: []string{sso.ScopeOpenID},
 	}
 	_ = store.Add(context.Background(), c)
-	// No mountWebAuthnRoutes → IDTokenIssuerForClient stays nil.
-	deps := &webauthnDeps{
+	// No MountWebAuthnRoutes → IDTokenIssuerForClient stays nil.
+	deps := &WebAuthnDeps{
 		ClientStore:   store,
 		TokenIssuers:  map[string]sso.TokenIssuer{"jwt": def},
 		DefaultStrat:  "jwt",

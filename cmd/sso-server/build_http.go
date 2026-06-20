@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/snaplink/sso/cmd/sso-server/serverwebauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -81,7 +82,7 @@ func mountWebAuthnHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 	if a.webauthnHelper == nil {
 		return nil
 	}
-	deps := &webauthnDeps{
+	deps := &serverwebauthn.WebAuthnDeps{
 		Helper:            a.webauthnHelper,
 		ClientStore:       a.clientStore,
 		TokenIssuers:      a.tokenIssuers,
@@ -103,14 +104,14 @@ func mountWebAuthnHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 		deps.RegionResolver = a.regionResolver
 		deps.ResidencyDecision = a.server.ResidencyDecision
 	}
-	if err := mountWebAuthnRoutes(a.server, deps); err != nil {
+	if err := serverwebauthn.MountWebAuthnRoutes(a.server, deps); err != nil {
 		return fmt.Errorf("mount webauthn: %w", err)
 	}
 	logger.Info("webauthn routes mounted",
-		"register_begin", pathWebAuthnRegistrationBegin,
-		"register_finish", pathWebAuthnRegistrationFinish,
-		"login_begin", pathWebAuthnLoginBegin,
-		"login_finish", pathWebAuthnLoginFinish,
+		"register_begin", serverwebauthn.PathWebAuthnRegistrationBegin,
+		"register_finish", serverwebauthn.PathWebAuthnRegistrationFinish,
+		"login_begin", serverwebauthn.PathWebAuthnLoginBegin,
+		"login_finish", serverwebauthn.PathWebAuthnLoginFinish,
 	)
 	return nil
 }

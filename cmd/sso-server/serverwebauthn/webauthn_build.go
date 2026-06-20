@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"github.com/snaplink/sso/platform/metrics"
 )
 
-func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
+func BuildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
 	if !cfg.Enabled {
 		return nil, nil, nil, nil
 	}
@@ -71,7 +71,7 @@ func buildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 
 // logWebAuthnEnabled emits the WebAuthn startup banner, rendering the policy /
 // conveyance / MDS source labels without leaking secret material. Split out so
-// buildWebAuthnHelper stays a thin store-assembly sequence.
+// BuildWebAuthnHelper stays a thin store-assembly sequence.
 func logWebAuthnEnabled(cfg config.WebAuthnConfig, logger spi.Logger, userDesc, sessionDesc string, policy *webauthn.AttestationPolicy, mds metadata.Provider) {
 	logger.Info("webauthn enabled",
 		"rp_id", cfg.RPID,
@@ -236,13 +236,13 @@ func buildWebAuthnSessionStore(cfg config.WebAuthnBackendConfig) (webauthn.Sessi
 // WebAuthn ceremony endpoint paths. Public so embedders writing
 // docs / client code can reference them.
 const (
-	pathWebAuthnRegistrationBegin  = "/webauthn/registration/begin"
-	pathWebAuthnRegistrationFinish = "/webauthn/registration/finish"
-	pathWebAuthnLoginBegin         = "/webauthn/login/begin"
-	pathWebAuthnLoginFinish        = "/webauthn/login/finish"
+	PathWebAuthnRegistrationBegin  = "/webauthn/registration/begin"
+	PathWebAuthnRegistrationFinish = "/webauthn/registration/finish"
+	PathWebAuthnLoginBegin         = "/webauthn/login/begin"
+	PathWebAuthnLoginFinish        = "/webauthn/login/finish"
 )
 
-// webauthnDeps bundles everything the ceremony handlers need.
+// WebAuthnDeps bundles everything the ceremony handlers need.
 // Helper drives the WebAuthn protocol; ClientStore + TokenIssuers
 // are optional — when supplied, /webauthn/login/finish accepts a
 // `client_id` query parameter and issues a token for the
@@ -257,7 +257,7 @@ const (
 // oidc.IDTokenIssuer is wired, the response carries an id_token. Either
 // missing dep silently degrades to the next-lower disclosure (just
 // like /auth/login when those backends aren't configured).
-type webauthnDeps struct {
+type WebAuthnDeps struct {
 	Helper            *webauthn.Helper
 	ClientStore       sso.ClientStore
 	TokenIssuers      map[string]sso.TokenIssuer
@@ -283,9 +283,9 @@ type webauthnDeps struct {
 	// fail-closed selector: err != nil ⇒ a misconfigured/unregistered
 	// tenant issuer; emit=false ⇒ the tenant strategy can't mint
 	// id_tokens (omit, never sign with the shared key). Nil-safe: when
-	// unset (embedders constructing webauthnDeps directly) the handler
+	// unset (embedders constructing WebAuthnDeps directly) the handler
 	// falls back to IDTokenIssuer for byte-identical legacy behavior.
-	// Set in mountWebAuthnRoutes from *sso.Server.
+	// Set in MountWebAuthnRoutes from *sso.Server.
 	IDTokenIssuerForClient func(c *sso.Client) (oidc.IDTokenIssuer, bool, error)
 
 	// IssuerForClient selects the per-tenant ACCESS-token issuer so a
@@ -295,9 +295,9 @@ type webauthnDeps struct {
 	// client's WebAuthn access token could land on a different key than its
 	// id_token). Mirrors the server's resolution order (tenant → client
 	// strategy → default) and fail-closed error. Nil-safe: when unset
-	// (embedders constructing webauthnDeps directly) the handler falls back
+	// (embedders constructing WebAuthnDeps directly) the handler falls back
 	// to the TokenStrategy lookup below for byte-identical legacy behavior.
-	// Set in mountWebAuthnRoutes from *sso.Server.
+	// Set in MountWebAuthnRoutes from *sso.Server.
 	IssuerForClient func(c *sso.Client) (string, sso.TokenIssuer, error)
 
 	// EncryptIDToken routes a freshly-signed id_token through the
@@ -305,7 +305,7 @@ type webauthnDeps struct {
 	// ("", false) when the client opted into encryption but it
 	// failed, so the caller omits the id_token rather than leaking
 	// cleartext). Nil-safe: nil means no encryption layer wired, so
-	// the signed token passes through. Set in mountWebAuthnRoutes.
+	// the signed token passes through. Set in MountWebAuthnRoutes.
 	EncryptIDToken func(ctx context.Context, client *sso.Client, signed string) (string, bool)
 
 	// RegionResolver + ResidencyDecision close the data-residency hole on the
@@ -328,7 +328,7 @@ type webauthnDeps struct {
 	ResidencyDecision func(ctx context.Context, tenantID string, servingRegion region.ID, isWrite bool) (string, bool)
 }
 
-// mountWebAuthnRoutes registers the four ceremony endpoints on the
+// MountWebAuthnRoutes registers the four ceremony endpoints on the
 // SSO router. Begin endpoints accept JSON {"username", "display_name"};
 // Finish endpoints take session_id from the ?session_id= query
 // parameter and the WebAuthn attestation/assertion response in the

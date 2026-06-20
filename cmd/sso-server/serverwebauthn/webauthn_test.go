@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"bytes"
@@ -19,9 +19,9 @@ import (
 )
 
 func TestBuildWebAuthnHelper_Disabled(t *testing.T) {
-	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{}, quietLogger())
+	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper disabled: %v", err)
+		t.Fatalf("BuildWebAuthnHelper disabled: %v", err)
 	}
 	if h != nil {
 		t.Fatal("disabled config must return nil helper")
@@ -29,7 +29,7 @@ func TestBuildWebAuthnHelper_Disabled(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_RequiresRPID(t *testing.T) {
-	_, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	_, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPOrigins: []string{"https://sso.example.com"},
 	}, quietLogger())
@@ -39,7 +39,7 @@ func TestBuildWebAuthnHelper_RequiresRPID(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_RequiresAtLeastOneOrigin(t *testing.T) {
-	_, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	_, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled: true,
 		RPID:    "example.com",
 	}, quietLogger())
@@ -49,13 +49,13 @@ func TestBuildWebAuthnHelper_RequiresAtLeastOneOrigin(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_DefaultsMemoryBackends(t *testing.T) {
-	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
 	}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper: %v", err)
+		t.Fatalf("BuildWebAuthnHelper: %v", err)
 	}
 	if h == nil {
 		t.Fatal("helper nil when subsystem enabled")
@@ -85,7 +85,7 @@ func TestBuildWebAuthnUserStore_UnknownBackend(t *testing.T) {
 
 func TestBuildWebAuthnHelper_SQLiteBackends(t *testing.T) {
 	dir := t.TempDir()
-	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -95,7 +95,7 @@ func TestBuildWebAuthnHelper_SQLiteBackends(t *testing.T) {
 		},
 	}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper sqlite: %v", err)
+		t.Fatalf("BuildWebAuthnHelper sqlite: %v", err)
 	}
 	if h == nil {
 		t.Fatal("helper nil with sqlite backends")
@@ -121,8 +121,8 @@ func newWebAuthnTestServer(t *testing.T) (*httptest.Server, *webauthn.Helper) {
 		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
 	)
 	httpHandler := srv.Handler()
-	if err := mountWebAuthnRoutes(srv, &webauthnDeps{Helper: h}); err != nil {
-		t.Fatalf("mountWebAuthnRoutes: %v", err)
+	if err := MountWebAuthnRoutes(srv, &WebAuthnDeps{Helper: h}); err != nil {
+		t.Fatalf("MountWebAuthnRoutes: %v", err)
 	}
 	ts := httptest.NewServer(httpHandler)
 	t.Cleanup(ts.Close)
@@ -132,7 +132,7 @@ func newWebAuthnTestServer(t *testing.T) (*httptest.Server, *webauthn.Helper) {
 func TestWebAuthnHTTP_BeginRegistrationReturnsOptionsAndSession(t *testing.T) {
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: "alice@example.com", DisplayName: "Alice"})
-	resp, err := http.Post(ts.URL+pathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestWebAuthnHTTP_BeginRegistrationReturnsOptionsAndSession(t *testing.T) {
 func TestWebAuthnHTTP_BeginRequiresUsername(t *testing.T) {
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: ""})
-	resp, err := http.Post(ts.URL+pathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestWebAuthnHTTP_BeginRequiresUsername(t *testing.T) {
 
 func TestWebAuthnHTTP_BeginRejectsEmptyBody(t *testing.T) {
 	ts, _ := newWebAuthnTestServer(t)
-	resp, err := http.Post(ts.URL+pathWebAuthnRegistrationBegin, "application/json", strings.NewReader(""))
+	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestWebAuthnHTTP_BeginRejectsEmptyBody(t *testing.T) {
 
 func TestWebAuthnHTTP_FinishRequiresSessionID(t *testing.T) {
 	ts, _ := newWebAuthnTestServer(t)
-	resp, err := http.Post(ts.URL+pathWebAuthnRegistrationFinish, "application/json", strings.NewReader("{}"))
+	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationFinish, "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestWebAuthnHTTP_FinishRequiresSessionID(t *testing.T) {
 
 func TestWebAuthnHTTP_FinishUnknownSessionReturns404(t *testing.T) {
 	ts, _ := newWebAuthnTestServer(t)
-	resp, err := http.Post(ts.URL+pathWebAuthnRegistrationFinish+"?session_id=ghost", "application/json", strings.NewReader("{}"))
+	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationFinish+"?session_id=ghost", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestWebAuthnHTTP_BeginLoginUnknownUserReturns404(t *testing.T) {
 	// as bad session_id so a probe can't enumerate registered users.
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: "ghost@example.com"})
-	resp, err := http.Post(ts.URL+pathWebAuthnLoginBegin, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+PathWebAuthnLoginBegin, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestWebAuthnHTTP_BeginLoginUnknownUserReturns404(t *testing.T) {
 func TestWebAuthnHTTP_AllRoutesCacheControlNoStore(t *testing.T) {
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: "alice"})
-	resp, err := http.Post(ts.URL+pathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -268,14 +268,14 @@ func newWebAuthnIssuingTestServer(t *testing.T, client *sso.Client) (*httptest.S
 		sso.WithDefaultTokenStrategy("jwt"),
 	)
 	httpHandler := srv.Handler()
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		Helper:       h,
 		ClientStore:  clientStore,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": issuer},
 		DefaultStrat: "jwt",
 	}
-	if err := mountWebAuthnRoutes(srv, deps); err != nil {
-		t.Fatalf("mountWebAuthnRoutes: %v", err)
+	if err := MountWebAuthnRoutes(srv, deps); err != nil {
+		t.Fatalf("MountWebAuthnRoutes: %v", err)
 	}
 	ts := httptest.NewServer(httpHandler)
 	t.Cleanup(ts.Close)
@@ -283,7 +283,7 @@ func newWebAuthnIssuingTestServer(t *testing.T, client *sso.Client) (*httptest.S
 }
 
 func TestIssueWebAuthnToken_UnknownClientReturnsInvalidClient(t *testing.T) {
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  defaultimpl.NewMemoryClientStore(),
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat: "jwt",
@@ -307,7 +307,7 @@ func TestIssueWebAuthnToken_InactiveClientReturnsInvalidClient(t *testing.T) {
 		TokenStrategy: "jwt",
 		AllowedScopes: []string{"openid"},
 	})
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  store,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat: "jwt",
@@ -327,7 +327,7 @@ func TestIssueWebAuthnToken_MissingIssuerReturnsServerError(t *testing.T) {
 		TokenStrategy: "session",
 		AllowedScopes: []string{"openid"},
 	})
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  store,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat: "jwt",
@@ -351,7 +351,7 @@ func TestIssueWebAuthnToken_HappyPath(t *testing.T) {
 		TokenStrategy: "jwt",
 		AllowedScopes: []string{"openid", "profile"},
 	})
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  store,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))},
 		DefaultStrat: "jwt",
@@ -385,7 +385,7 @@ func TestIssueWebAuthnToken_ScopeGate(t *testing.T) {
 			ID: "wa-app", Active: true, TokenStrategy: "jwt", AllowedScopes: allowed,
 		})
 		issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
-		deps := &webauthnDeps{
+		deps := &WebAuthnDeps{
 			ClientStore:   store,
 			TokenIssuers:  map[string]sso.TokenIssuer{"jwt": issuer},
 			DefaultStrat:  "jwt",
@@ -427,7 +427,7 @@ func TestIssueWebAuthnToken_DefaultStrategyFallback(t *testing.T) {
 		TokenStrategy: "", // intentionally blank
 		AllowedScopes: []string{"openid"},
 	})
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  store,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat: "jwt",
@@ -461,7 +461,7 @@ func TestWebAuthnHTTP_FinishLoginIssuesTokenWhenClientIDProvided(t *testing.T) {
 	// Ceremony login against an unknown user — should 404 the same
 	// session_invalid envelope regardless of client_id presence.
 	body, _ := json.Marshal(webauthnBeginRequest{Username: "ghost@example.com"})
-	resp, err := http.Post(ts.URL+pathWebAuthnLoginBegin+"?client_id=wa-app", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+PathWebAuthnLoginBegin+"?client_id=wa-app", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestWebAuthnHTTP_FinishLoginWithoutClientIDStaysCredentialOnly(t *testing.T
 
 	// Hit Finish with bad session — confirms it stays in the v1 envelope
 	// shape (no token fields would even be considered).
-	resp, err := http.Post(ts.URL+pathWebAuthnLoginFinish+"?session_id=ghost", "application/json", strings.NewReader("{}"))
+	resp, err := http.Post(ts.URL+PathWebAuthnLoginFinish+"?session_id=ghost", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestIssueWebAuthnToken_IssuesIDTokenWhenOpenIDScopeAndIssuerWired(t *testin
 		AllowedScopes: []string{"openid", "profile"},
 	})
 	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:   store,
 		TokenIssuers:  map[string]sso.TokenIssuer{"jwt": jwtIssuer},
 		DefaultStrat:  "jwt",
@@ -534,7 +534,7 @@ func TestIssueWebAuthnToken_NoIDTokenWithoutOpenIDScope(t *testing.T) {
 		AllowedScopes: []string{"profile"},
 	})
 	jwtIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:   store,
 		TokenIssuers:  map[string]sso.TokenIssuer{"jwt": jwtIssuer},
 		DefaultStrat:  "jwt",
@@ -561,7 +561,7 @@ func TestIssueWebAuthnToken_NoIDTokenWithoutIssuer(t *testing.T) {
 		TokenStrategy: "jwt",
 		AllowedScopes: []string{"openid"},
 	})
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  store,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat: "jwt",
@@ -585,7 +585,7 @@ func TestIssueWebAuthnToken_IssuesRefreshTokenWhenStoreWired(t *testing.T) {
 		AllowedScopes: []string{"openid"},
 	})
 	refreshStore := defaultimpl.NewMemoryRefreshTokenStore()
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:       store,
 		TokenIssuers:      map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat:      "jwt",
@@ -627,7 +627,7 @@ func TestIssueWebAuthnToken_NoRefreshTokenWithoutStore(t *testing.T) {
 		TokenStrategy: "jwt",
 		AllowedScopes: []string{"openid"},
 	})
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  store,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat: "jwt",
@@ -653,7 +653,7 @@ func TestIssueWebAuthnToken_ClientRefreshTTLOverride(t *testing.T) {
 		RefreshTokenTTL: 30 * time.Minute,
 	})
 	refreshStore := defaultimpl.NewMemoryRefreshTokenStore()
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:       store,
 		TokenIssuers:      map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
 		DefaultStrat:      "jwt",

@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"encoding/base64"
@@ -37,7 +37,7 @@ func webauthnBeginRegistrationHandler(h *webauthn.Helper) http.HandlerFunc {
 	}
 }
 
-func webauthnFinishRegistrationHandler(deps *webauthnDeps) http.HandlerFunc {
+func webauthnFinishRegistrationHandler(deps *WebAuthnDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("session_id")
 		if sessionID == "" {
@@ -119,7 +119,7 @@ func webauthnBeginLoginHandler(h *webauthn.Helper) http.HandlerFunc {
 	}
 }
 
-func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
+func webauthnFinishLoginHandler(deps *WebAuthnDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("session_id")
 		if sessionID == "" {
@@ -162,7 +162,7 @@ func webauthnFinishLoginHandler(deps *webauthnDeps) http.HandlerFunc {
 // issuance failure post-assertion is still a verified user, so the failure is
 // labelled via the existing http_requests_total status_class signal, NOT a
 // double-counted assertion failure.
-func applyWebAuthnTokenIssuance(w http.ResponseWriter, r *http.Request, deps *webauthnDeps, clientID, userName string, resp *webauthnFinishLoginResponse) bool {
+func applyWebAuthnTokenIssuance(w http.ResponseWriter, r *http.Request, deps *WebAuthnDeps, clientID, userName string, resp *webauthnFinishLoginResponse) bool {
 	result, err := issueWebAuthnToken(r, deps, clientID, userName)
 	if err != nil {
 		status, code := webauthnIssueErrorStatus(err)

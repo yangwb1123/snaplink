@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"context"
@@ -28,11 +28,11 @@ import (
 // Real *sso.Server + memory tenant store throughout — no mocks (AGENTS.md §8).
 
 // newWebAuthnResidencyDeps builds a *sso.Server with a memory tenant store
-// (seeded with seedTenant) + residency enabled, then returns webauthnDeps wired
+// (seeded with seedTenant) + residency enabled, then returns WebAuthnDeps wired
 // with the given resolver and the server's ResidencyDecision seam (mirroring
 // cmd's conditional wiring). When resolver is nil BOTH residency hooks are left
 // nil — the byte-identical "residency not enforced for WebAuthn" path.
-func newWebAuthnResidencyDeps(t *testing.T, seedTenant *tenant.Tenant, client *sso.Client, resolver region.Resolver) *webauthnDeps {
+func newWebAuthnResidencyDeps(t *testing.T, seedTenant *tenant.Tenant, client *sso.Client, resolver region.Resolver) *WebAuthnDeps {
 	t.Helper()
 	tstore := tenantmemory.New()
 	if seedTenant != nil {
@@ -52,7 +52,7 @@ func newWebAuthnResidencyDeps(t *testing.T, seedTenant *tenant.Tenant, client *s
 		sso.WithTenantStore(tstore),
 		sso.WithTenantResidencyCheck(time.Minute),
 	)
-	deps := &webauthnDeps{
+	deps := &WebAuthnDeps{
 		ClientStore:  clientStore,
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": issuer},
 		DefaultStrat: "jwt",

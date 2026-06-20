@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"net/http"
@@ -10,7 +10,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 )
 
-func recordWebAuthnRegistered(deps *webauthnDeps, r *http.Request, cred *gw.Credential) {
+func recordWebAuthnRegistered(deps *WebAuthnDeps, r *http.Request, cred *gw.Credential) {
 	if deps == nil || deps.AuditRecorder == nil {
 		return
 	}
@@ -29,7 +29,7 @@ func recordWebAuthnRegistered(deps *webauthnDeps, r *http.Request, cred *gw.Cred
 // recordWebAuthnAttestationDenied emits the failure audit event for an
 // attestation-policy rejection, carrying the rejected AAGUID + the gating
 // mode + the operator-side reason. Nil-safe when no recorder is wired.
-func recordWebAuthnAttestationDenied(deps *webauthnDeps, r *http.Request, denied *webauthn.AttestationDeniedError) {
+func recordWebAuthnAttestationDenied(deps *WebAuthnDeps, r *http.Request, denied *webauthn.AttestationDeniedError) {
 	if deps == nil || deps.AuditRecorder == nil {
 		return
 	}
@@ -55,7 +55,7 @@ func recordWebAuthnAttestationDenied(deps *webauthnDeps, r *http.Request, denied
 // recordWebAuthnRegistration increments the registration counter
 // for the given outcome. Nil-safe: when metrics are disabled
 // (deps.Metrics nil), emit is silently skipped.
-func recordWebAuthnRegistration(deps *webauthnDeps, outcome string) {
+func recordWebAuthnRegistration(deps *WebAuthnDeps, outcome string) {
 	if deps == nil || deps.Metrics == nil {
 		return
 	}
@@ -64,7 +64,7 @@ func recordWebAuthnRegistration(deps *webauthnDeps, outcome string) {
 
 // recordWebAuthnAssertion mirrors recordWebAuthnRegistration for the
 // login-finish path.
-func recordWebAuthnAssertion(deps *webauthnDeps, outcome string) {
+func recordWebAuthnAssertion(deps *WebAuthnDeps, outcome string) {
 	if deps == nil || deps.Metrics == nil {
 		return
 	}

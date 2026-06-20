@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverassets"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/platform/audit"
 )
@@ -466,9 +467,9 @@ func TestWriteAdminPasswordFile_MissingDirErrors(t *testing.T) {
 
 func TestAssetSubFS_RootIndexResolvable(t *testing.T) {
 	cases := map[string]fs.FS{
-		"admin":  adminSubFS(),
-		"login":  loginSubFS(),
-		"portal": portalSubFS(),
+		"admin":  serverassets.AdminSubFS(),
+		"login":  serverassets.LoginSubFS(),
+		"portal": serverassets.PortalSubFS(),
 	}
 	for name, sub := range cases {
 		if sub == nil {

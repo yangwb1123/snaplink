@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"context"
@@ -18,12 +18,12 @@ import (
 	"github.com/snaplink/sso/protocols/oidc"
 )
 
-// buildWebAuthnHelper assembles the helper + stores from YAML.
+// BuildWebAuthnHelper assembles the helper + stores from YAML.
 // Returns (nil, nil, nil, nil) when the subsystem is disabled — the
 // caller skips the wiring. Returns the underlying stores so cmd can
 // register their Ping method as a /readyz dependency.
 
-func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
+func MountWebAuthnRoutes(srv *sso.Server, deps *WebAuthnDeps) error {
 	if deps == nil || deps.Helper == nil {
 		return nil
 	}
@@ -39,10 +39,10 @@ func mountWebAuthnRoutes(srv *sso.Server, deps *webauthnDeps) error {
 		path    string
 		handler http.HandlerFunc
 	}{
-		{pathWebAuthnRegistrationBegin, webauthnBeginRegistrationHandler(deps.Helper)},
-		{pathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(deps)},
-		{pathWebAuthnLoginBegin, webauthnBeginLoginHandler(deps.Helper)},
-		{pathWebAuthnLoginFinish, webauthnFinishLoginHandler(deps)},
+		{PathWebAuthnRegistrationBegin, webauthnBeginRegistrationHandler(deps.Helper)},
+		{PathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(deps)},
+		{PathWebAuthnLoginBegin, webauthnBeginLoginHandler(deps.Helper)},
+		{PathWebAuthnLoginFinish, webauthnFinishLoginHandler(deps)},
 	}
 	for _, r := range routes {
 		if err := srv.Handle(http.MethodPost, r.path, r.handler); err != nil {
@@ -116,15 +116,15 @@ type webauthnIssueResult struct {
 // this client's WebAuthn id_token, returning (issuer, emit, err) with the
 // same fail-closed contract the server's selector uses.
 //
-// When mounted via mountWebAuthnRoutes, deps.IDTokenIssuerForClient is the
+// When mounted via MountWebAuthnRoutes, deps.IDTokenIssuerForClient is the
 // server's per-tenant selector, so a tenant's id_token is signed by the
 // tenant's key (an unregistered tenant issuer errors; an opaque/non-OIDC
 // tenant strategy yields emit=false → the caller omits, never the shared
-// key). When that closure is unset — an embedder constructing webauthnDeps
+// key). When that closure is unset — an embedder constructing WebAuthnDeps
 // directly without the server seam — fall back to the shared
 // deps.IDTokenIssuer for byte-identical legacy behavior (emit tracks
 // whether one is wired).
-func idTokenIssuerForWebAuthn(deps *webauthnDeps, client *sso.Client) (oidc.IDTokenIssuer, bool, error) {
+func idTokenIssuerForWebAuthn(deps *WebAuthnDeps, client *sso.Client) (oidc.IDTokenIssuer, bool, error) {
 	if deps.IDTokenIssuerForClient != nil {
 		return deps.IDTokenIssuerForClient(client)
 	}
@@ -147,7 +147,7 @@ func idTokenIssuerForWebAuthn(deps *webauthnDeps, client *sso.Client) (oidc.IDTo
 // (per-tenant via idTokenIssuerForWebAuthn), an id_token does. Either
 // dep missing degrades silently — same shape /auth/login uses when the
 // corresponding backend isn't configured.
-func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID string) (*webauthnIssueResult, error) {
+func issueWebAuthnToken(r *http.Request, deps *WebAuthnDeps, clientID, userID string) (*webauthnIssueResult, error) {
 	ctx := r.Context()
 	client, err := deps.ClientStore.Get(ctx, clientID)
 	if err != nil {
@@ -200,7 +200,7 @@ func issueWebAuthnToken(r *http.Request, deps *webauthnDeps, clientID, userID st
 // the WebAuthn subject (AMR carries "webauthn" so resource servers can branch on
 // auth strength), and mints the access token. Returns both the raw token (its
 // AccessToken seeds the id_token's at_hash) and the seeded result projection.
-func issueWebAuthnAccessToken(ctx context.Context, deps *webauthnDeps, client *sso.Client, userID string, authTime time.Time, scopes []string) (*sso.Token, *webauthnIssueResult, error) {
+func issueWebAuthnAccessToken(ctx context.Context, deps *WebAuthnDeps, client *sso.Client, userID string, authTime time.Time, scopes []string) (*sso.Token, *webauthnIssueResult, error) {
 	issuer, err := resolveWebAuthnIssuer(deps, client)
 	if err != nil {
 		return nil, nil, err
@@ -233,7 +233,7 @@ func issueWebAuthnAccessToken(ctx context.Context, deps *webauthnDeps, client *s
 // nil ⇒ no check ⇒ byte-identical pre-residency behavior. FAIL-OPEN consistent
 // with the region middleware's nonfatal contract: a resolver error yields an
 // empty serving region, which ResidencyDecision treats as unconstrained.
-func webAuthnResidencyGate(r *http.Request, deps *webauthnDeps, client *sso.Client) error {
+func webAuthnResidencyGate(r *http.Request, deps *WebAuthnDeps, client *sso.Client) error {
 	if deps.RegionResolver == nil || deps.ResidencyDecision == nil {
 		return nil
 	}
@@ -248,9 +248,9 @@ func webAuthnResidencyGate(r *http.Request, deps *webauthnDeps, client *sso.Clie
 // tenant-aware selector (tenant → client strategy → default) so a tenant
 // client's WebAuthn access token is signed with the same key as its id_token +
 // its tokens from /auth/login + /token. When the hook is unset (embedders
-// constructing webauthnDeps directly) fall back to the per-client strategy
+// constructing WebAuthnDeps directly) fall back to the per-client strategy
 // lookup for byte-identical legacy behavior.
-func resolveWebAuthnIssuer(deps *webauthnDeps, client *sso.Client) (sso.TokenIssuer, error) {
+func resolveWebAuthnIssuer(deps *WebAuthnDeps, client *sso.Client) (sso.TokenIssuer, error) {
 	if deps.IssuerForClient != nil {
 		_, issuer, ierr := deps.IssuerForClient(client)
 		if ierr != nil {
@@ -278,7 +278,7 @@ func resolveWebAuthnIssuer(deps *webauthnDeps, client *sso.Client) (sso.TokenIss
 // uses. The issuer is resolved PER-TENANT so a tenant's id_token is signed by
 // the tenant's key (same key as its access + id tokens elsewhere), not the
 // shared key; a misconfigured/unregistered tenant issuer fails closed (500).
-func issueWebAuthnIDToken(ctx context.Context, deps *webauthnDeps, client *sso.Client, userID string, authTime time.Time, accessToken string) (string, error) {
+func issueWebAuthnIDToken(ctx context.Context, deps *WebAuthnDeps, client *sso.Client, userID string, authTime time.Time, accessToken string) (string, error) {
 	idIssuer, emit, resErr := idTokenIssuerForWebAuthn(deps, client)
 	if resErr != nil {
 		return "", fmt.Errorf("%w: %v", errWebAuthnIDToken, resErr)
@@ -312,7 +312,7 @@ func issueWebAuthnIDToken(ctx context.Context, deps *webauthnDeps, client *sso.C
 // mintWebAuthnRefreshToken generates a cryptographically random
 // refresh token + persists it. TTL preference: per-client override
 // > deps.RefreshTokenTTL > sso.DefaultRefreshTokenTTL.
-func mintWebAuthnRefreshToken(ctx context.Context, deps *webauthnDeps, client *sso.Client, userID string, scopes []string) (string, error) {
+func mintWebAuthnRefreshToken(ctx context.Context, deps *WebAuthnDeps, client *sso.Client, userID string, scopes []string) (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("random: %w", err)

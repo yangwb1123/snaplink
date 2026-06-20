@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"context"
@@ -102,7 +102,7 @@ func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
 
 func TestBuildWebAuthnHelper_AttestationConfigPlumbedThrough(t *testing.T) {
 	// A valid attestation block builds the helper.
-	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -113,14 +113,14 @@ func TestBuildWebAuthnHelper_AttestationConfigPlumbedThrough(t *testing.T) {
 		},
 	}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper with attestation: %v", err)
+		t.Fatalf("BuildWebAuthnHelper with attestation: %v", err)
 	}
 	if h == nil {
 		t.Fatal("helper nil with valid attestation config")
 	}
 
 	// An invalid conveyance is rejected at build time.
-	if _, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	if _, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:     true,
 		RPID:        "example.com",
 		RPOrigins:   []string{"https://sso.example.com"},
@@ -130,7 +130,7 @@ func TestBuildWebAuthnHelper_AttestationConfigPlumbedThrough(t *testing.T) {
 	}
 
 	// An invalid policy is rejected at build time.
-	if _, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	if _, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:     true,
 		RPID:        "example.com",
 		RPOrigins:   []string{"https://sso.example.com"},
@@ -144,13 +144,13 @@ func TestBuildWebAuthnHelper_DefaultAttestationOff(t *testing.T) {
 	// No attestation block ⇒ the helper builds exactly as before (the
 	// default-off byte-identical path). buildWebAuthnAttestationPolicy
 	// returns nil, so no policy is attached.
-	h, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
 	}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper: %v", err)
+		t.Fatalf("BuildWebAuthnHelper: %v", err)
 	}
 	if h == nil {
 		t.Fatal("helper nil")
@@ -169,7 +169,7 @@ func TestHelperAttestationPolicyEnabled_GatesSuccessAudit(t *testing.T) {
 	// active. Prove the gate the handler keys off: a helper built with no
 	// attestation block reports disabled (→ byte-identical, no success
 	// audit); one with a policy reports enabled.
-	off, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	off, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -181,7 +181,7 @@ func TestHelperAttestationPolicyEnabled_GatesSuccessAudit(t *testing.T) {
 		t.Fatal("helper without attestation policy must report disabled")
 	}
 
-	on, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	on, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -201,7 +201,7 @@ func TestHelperAttestationPolicyEnabled_GatesSuccessAudit(t *testing.T) {
 
 func TestRecordWebAuthnRegistered_EmitsAAGUID(t *testing.T) {
 	sink := audit.NewMemorySink(8)
-	deps := &webauthnDeps{AuditRecorder: audit.New(sink)}
+	deps := &WebAuthnDeps{AuditRecorder: audit.New(sink)}
 	cred := &gw.Credential{ID: []byte("c1")}
 	cred.Authenticator.AAGUID = testRawAAGUID
 
@@ -226,7 +226,7 @@ func TestRecordWebAuthnRegistered_EmitsAAGUID(t *testing.T) {
 
 func TestRecordWebAuthnAttestationDenied_EmitsAAGUIDAndMode(t *testing.T) {
 	sink := audit.NewMemorySink(8)
-	deps := &webauthnDeps{AuditRecorder: audit.New(sink)}
+	deps := &WebAuthnDeps{AuditRecorder: audit.New(sink)}
 	denied := &webauthn.AttestationDeniedError{
 		AAGUID: testAAGUIDCanonical,
 		Mode:   webauthn.AttestationPolicyAllowlist,
@@ -267,7 +267,7 @@ func TestRecordWebAuthnAttestationDenied_EmitsAAGUIDAndMode(t *testing.T) {
 // an AAGUID-list miss.
 func TestRecordWebAuthnAttestationDenied_NoneReason(t *testing.T) {
 	sink := audit.NewMemorySink(8)
-	deps := &webauthnDeps{AuditRecorder: audit.New(sink)}
+	deps := &WebAuthnDeps{AuditRecorder: audit.New(sink)}
 	denied := &webauthn.AttestationDeniedError{
 		Mode:   webauthn.AttestationPolicyDenylist,
 		Reason: webauthn.ReasonAttestationFormatNone,
@@ -288,7 +288,7 @@ func TestRecordWebAuthnAttestationDenied_NoneReason(t *testing.T) {
 // when no recorder is wired (an embedder without an audit pipeline) — the
 // default-off byte-identical path.
 func TestRecordWebAuthn_NilRecorderSafe(t *testing.T) {
-	deps := &webauthnDeps{} // no AuditRecorder
+	deps := &WebAuthnDeps{} // no AuditRecorder
 	r := httptest.NewRequest("POST", "/webauthn/registration/finish", nil)
 	cred := &gw.Credential{ID: []byte("c1")}
 	// Must not panic.

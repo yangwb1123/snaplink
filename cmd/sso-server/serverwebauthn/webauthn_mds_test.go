@@ -1,4 +1,4 @@
-package main
+package serverwebauthn
 
 import (
 	"os"
@@ -14,7 +14,7 @@ import (
 // exampleBlobPath reuses the webauthn package's example MDS blob fixture (a
 // real JWS signed by metadata.ExampleMDSRoot) — single source of truth, no
 // duplicate 16KB fixture.
-const exampleBlobPath = "../../domains/authenticators/webauthn/testdata/example_mds_blob.jws"
+const exampleBlobPath = "../../../domains/authenticators/webauthn/testdata/example_mds_blob.jws"
 
 // writeCustomRootFile writes ExampleMDSRoot (the base64 DER body) to a temp
 // file so the cmd CustomRootFile-reading path can be exercised.
@@ -115,20 +115,20 @@ func TestBuildWebAuthnHelper_MDSWiresThrough(t *testing.T) {
 	rootPath := writeCustomRootFile(t)
 
 	// Without MDS → gw.Config.MDS nil.
-	off, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	off, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
 	}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper (no mds): %v", err)
+		t.Fatalf("BuildWebAuthnHelper (no mds): %v", err)
 	}
 	if off.MDSEnabled() {
 		t.Fatal("no MDS source must leave the helper without MDS (gw.Config.MDS nil)")
 	}
 
 	// With MDS → gw.Config.MDS set.
-	on, _, _, err := buildWebAuthnHelper(config.WebAuthnConfig{
+	on, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -140,7 +140,7 @@ func TestBuildWebAuthnHelper_MDSWiresThrough(t *testing.T) {
 		},
 	}, quietLogger())
 	if err != nil {
-		t.Fatalf("buildWebAuthnHelper (mds): %v", err)
+		t.Fatalf("BuildWebAuthnHelper (mds): %v", err)
 	}
 	if !on.MDSEnabled() {
 		t.Fatal("configured MDS source must reach gw.Config.MDS")
