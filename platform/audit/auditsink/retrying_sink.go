@@ -1,10 +1,12 @@
-package audit
+package auditsink
 
 import (
 	"context"
 	"errors"
 	"math/rand/v2"
 	"time"
+
+	"github.com/snaplink/sso/platform/audit/auditspi"
 )
 
 // DefaultRetryMaxAttempts caps how many times the worker tries to
@@ -49,7 +51,7 @@ func DefaultTransientClassifier(err error) bool { return err != nil }
 // synchronous on the caller's goroutine and short-circuiting feels
 // correct (a Get failure usually means "not found", not "try again").
 type RetryingSink struct {
-	inner       Sink
+	inner       auditspi.Sink
 	maxAttempts int
 	initial     time.Duration
 	max         time.Duration
@@ -105,7 +107,7 @@ func WithRetryClassifier(c TransientErrorClassifier) RetryOption {
 
 // NewRetryingSink wraps inner with bounded retry + exponential
 // backoff. Apply RetryOptions to tune attempts / timing.
-func NewRetryingSink(inner Sink, opts ...RetryOption) *RetryingSink {
+func NewRetryingSink(inner auditspi.Sink, opts ...RetryOption) *RetryingSink {
 	r := &RetryingSink{
 		inner:       inner,
 		maxAttempts: DefaultRetryMaxAttempts,
@@ -128,7 +130,7 @@ func NewRetryingSink(inner Sink, opts ...RetryOption) *RetryingSink {
 // responsibility for matching ctx lifetime to acceptable max latency.
 // AsyncSink's deliver passes context.Background plus a per-event
 // timeout, which is the right shape here.
-func (r *RetryingSink) Record(ctx context.Context, e *Event) error {
+func (r *RetryingSink) Record(ctx context.Context, e *auditspi.Event) error {
 	var lastErr error
 	for attempt := 0; attempt < r.maxAttempts; attempt++ {
 		select {
@@ -169,12 +171,12 @@ func (r *RetryingSink) backoff(attempt int) time.Duration {
 }
 
 // Get delegates to the inner sink.
-func (r *RetryingSink) Get(ctx context.Context, id string) (*Event, error) {
+func (r *RetryingSink) Get(ctx context.Context, id string) (*auditspi.Event, error) {
 	return r.inner.Get(ctx, id)
 }
 
 // Query delegates to the inner sink.
-func (r *RetryingSink) Query(ctx context.Context, q Query) ([]*Event, error) {
+func (r *RetryingSink) Query(ctx context.Context, q auditspi.Query) ([]*auditspi.Event, error) {
 	return r.inner.Query(ctx, q)
 }
 

@@ -1,4 +1,4 @@
-package audit
+package auditsink
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/snaplink/sso/platform/audit/auditspi"
 )
 
 // DefaultWebhookTimeout is applied when WebhookOptions.Timeout is zero.
@@ -58,9 +60,9 @@ func NewWebhookSink(url string, opts ...WebhookOption) *WebhookSink {
 	return w
 }
 
-func (w *WebhookSink) Record(ctx context.Context, e *Event) error {
+func (w *WebhookSink) Record(ctx context.Context, e *auditspi.Event) error {
 	if e.ID == "" {
-		e.ID = newEventID()
+		e.ID = auditspi.NewEventID()
 	}
 	body, err := json.Marshal(e)
 	if err != nil {
@@ -88,10 +90,10 @@ func (w *WebhookSink) Record(ctx context.Context, e *Event) error {
 	return nil
 }
 
-func (*WebhookSink) Get(_ context.Context, _ string) (*Event, error) {
+func (*WebhookSink) Get(_ context.Context, _ string) (*auditspi.Event, error) {
 	return nil, ErrSinkWriteOnly
 }
 
-func (*WebhookSink) Query(_ context.Context, _ Query) ([]*Event, error) {
+func (*WebhookSink) Query(_ context.Context, _ auditspi.Query) ([]*auditspi.Event, error) {
 	return nil, ErrSinkWriteOnly
 }

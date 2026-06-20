@@ -50,7 +50,7 @@ var dirFileCountExemptions = map[string]int{
 	"infrastructure/defaultimpl/sqlite": 34,
 	"interfaces/snapshot":               14,
 	"interfaces/sso":                    54,
-	"platform/audit":                    23,
+	"platform/audit":                    16,
 	"protocols/scim":                    19,
 	"shared/core":                       21,
 }

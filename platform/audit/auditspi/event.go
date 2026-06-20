@@ -1,7 +1,7 @@
 // Package audit provides tamper-evident audit logging with hash-chain
 // verification. Events are recorded via a Recorder which feeds one or
 // more Sinks (memory ring buffer, SQLite, webhook).
-package audit
+package auditspi
 
 import "time"
 

@@ -1,4 +1,4 @@
-package audit
+package auditspi
 
 // Admin control-plane mutation events. Every mutating RPC on the
 // ClientAdmin / UserAdmin / TokenAdmin / PermissionAdmin services emits

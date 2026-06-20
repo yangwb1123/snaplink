@@ -2,8 +2,6 @@ package audit
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"sort"
 	"sync"
 )
@@ -158,10 +156,4 @@ func (m *MemorySink) RecordBatch(_ context.Context, events []*Event) error {
 		}
 	}
 	return nil
-}
-
-func newEventID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
 }

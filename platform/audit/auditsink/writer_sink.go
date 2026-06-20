@@ -1,4 +1,4 @@
-package audit
+package auditsink
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"sync"
+
+	"github.com/snaplink/sso/platform/audit/auditspi"
 )
 
 // ErrSinkWriteOnly is returned by sinks that only stream events outward and
@@ -31,9 +33,9 @@ func NewWriterSink(w io.Writer) *WriterSink {
 	return &WriterSink{w: w}
 }
 
-func (s *WriterSink) Record(_ context.Context, e *Event) error {
+func (s *WriterSink) Record(_ context.Context, e *auditspi.Event) error {
 	if e.ID == "" {
-		e.ID = newEventID()
+		e.ID = auditspi.NewEventID()
 	}
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -47,10 +49,10 @@ func (s *WriterSink) Record(_ context.Context, e *Event) error {
 	return err
 }
 
-func (*WriterSink) Get(_ context.Context, _ string) (*Event, error) {
+func (*WriterSink) Get(_ context.Context, _ string) (*auditspi.Event, error) {
 	return nil, ErrSinkWriteOnly
 }
 
-func (*WriterSink) Query(_ context.Context, _ Query) ([]*Event, error) {
+func (*WriterSink) Query(_ context.Context, _ auditspi.Query) ([]*auditspi.Event, error) {
 	return nil, ErrSinkWriteOnly
 }

@@ -1,4 +1,4 @@
-package audit
+package auditspi
 
 // EventType identifies the kind of event being recorded. Custom types are
 // allowed — the constants below are the ones the sso package emits itself.

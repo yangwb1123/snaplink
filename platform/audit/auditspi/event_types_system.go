@@ -1,4 +1,4 @@
-package audit
+package auditspi
 
 // Bootstrap framework events — one per Step run/skip on first boot
 // (or whenever a new Step is added later).

@@ -1,6 +1,10 @@
-package audit
+package auditsink
 
-import "context"
+import (
+	"context"
+
+	"github.com/snaplink/sso/platform/audit/auditspi"
+)
 
 // BatchSink is an optional extension of [Sink] for sinks that can persist
 // multiple events in a single operation — a single SQLite transaction instead
@@ -11,10 +15,10 @@ import "context"
 // worker drains the queue in bursts and calls RecordBatch instead of
 // per-event Record, collapsing the per-transaction overhead.
 type BatchSink interface {
-	Sink
+	auditspi.Sink
 	// RecordBatch persists all events in a single atomic operation.
 	// It MUST be equivalent to calling Record for each event in order and
 	// MUST return a non-nil error only when NO event was persisted (partial
 	// writes are not representable — the caller retries the whole batch).
-	RecordBatch(ctx context.Context, events []*Event) error
+	RecordBatch(ctx context.Context, events []*auditspi.Event) error
 }
