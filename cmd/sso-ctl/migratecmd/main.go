@@ -32,7 +32,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const progName = "sso-migrate"
+const progName = "sso-ctl migrate"
 
 // Run is the migrate subcommand entry point. args is the argument slice with
 // the leading program name already stripped (i.e. the dispatcher's os.Args[2:]

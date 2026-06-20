@@ -32,7 +32,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 )
 
-const progName = "sso-audit-verify"
+const progName = "sso-ctl audit-verify"
 
 // usage prints the standard "<prog> — <desc> / Usage / Flags" banner.
 // Wired as the FlagSet's Usage so -h and parse errors render it. The

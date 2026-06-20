@@ -1,0 +1,100 @@
+// Package configcmd is the offline config-validation subcommand for sso-ctl.
+// It loads a server config file through the SAME loader the server uses
+// (file source -> defaults -> validate) so operators can catch config errors
+// in CI / a deploy pre-check without starting the server.
+//
+// Subcommands:
+//
+//	sso-ctl config validate --file config.yaml
+//	sso-ctl config validate --file config.yaml --print
+//
+// validate exits 0 when the config loads and passes validation, 1 otherwise.
+// --print additionally dumps the fully-resolved config (after defaults are
+// applied) as JSON, so operators can see exactly what the server would run.
+package configcmd
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/snaplink/sso/config"
+)
+
+const progName = "sso-ctl config"
+
+// Run is the config subcommand entry point. args has the leading program name
+// stripped (the dispatcher's os.Args[2:]). It returns the process exit code.
+func Run(args []string) int {
+	if len(args) < 1 {
+		usage()
+		return 2
+	}
+	switch args[0] {
+	case "validate":
+		return runValidate(args[1:])
+	case "-h", "--help", "help":
+		usage()
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, progName+": unknown subcommand %q\n", args[0])
+		usage()
+		return 2
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, progName+` — offline server-config validation.
+
+Usage:
+  `+progName+` validate --file <config.yaml> [--print]
+
+Subcommands:
+  validate   Load and validate a config file (same loader the server uses).
+
+Flags:
+  --file     Path to the config file (required).
+  --print    Also print the fully-resolved config (after defaults) as JSON.
+
+Examples:
+  `+progName+` validate --file ./config.yaml
+  `+progName+` validate --file /etc/sso/config.yaml --print`)
+}
+
+func runValidate(args []string) int {
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	file := fs.String("file", "", "path to the config file (required)")
+	printResolved := fs.Bool("print", false, "print the fully-resolved config as JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *file == "" {
+		fmt.Fprintln(os.Stderr, progName+": --file is required")
+		usage()
+		return 2
+	}
+
+	cfg, err := config.Load(*file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, progName+": invalid config: %v\n", err)
+		return 1
+	}
+	fmt.Printf("config OK: %s\n", *file)
+	if *printResolved {
+		if err := printConfig(os.Stdout, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, progName+": render config: %v\n", err)
+			return 1
+		}
+	}
+	return 0
+}
+
+// printConfig writes the resolved config as indented JSON. Factored out so the
+// rendering is unit-testable without capturing os.Stdout.
+func printConfig(w io.Writer, cfg *config.Config) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(cfg)
+}

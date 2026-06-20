@@ -13,9 +13,9 @@
 //
 // Usage:
 //
-//	sso-import --dsn file:/var/lib/sso/sso.db --format auth0 --file export.json
-//	sso-import --dsn file:/var/lib/sso/sso.db --format csv  --file users.csv --dry-run
-//	cat export.json | sso-import --dsn ./sso.db --format keycloak --file -
+//	sso-ctl import --dsn file:/var/lib/sso/sso.db --format auth0 --file export.json
+//	sso-ctl import --dsn file:/var/lib/sso/sso.db --format csv  --file users.csv --dry-run
+//	cat export.json | sso-ctl import --dsn ./sso.db --format keycloak --file -
 //
 // The tool writes one user per row into the "users" table via an upsert
 // (CREATE OR UPDATE semantics). Password hashes are stored in the
@@ -42,7 +42,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const progName = "sso-import"
+const progName = "sso-ctl import"
 
 // importedUser is the normalised representation of one user extracted from
 // any of the supported source formats. Hash and HashFormat are optional —

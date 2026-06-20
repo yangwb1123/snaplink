@@ -31,7 +31,7 @@ import (
 	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
 )
 
-const progName = "sso-snapshotctl"
+const progName = "sso-ctl snapshot"
 
 // Run executes the snapshot subcommand with args (program name already
 // stripped) and returns the process exit code. Mirrors the original

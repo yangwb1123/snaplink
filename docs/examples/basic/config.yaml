@@ -1,5 +1,5 @@
 server:
-  issuer: snaplink-sso
+  issuer: http://localhost:8080
   base_url: http://localhost:8080
   listen: ":8080"
   session_ttl: 24h

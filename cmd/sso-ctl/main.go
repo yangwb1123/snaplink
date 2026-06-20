@@ -17,6 +17,8 @@ import (
 	"os"
 
 	"github.com/snaplink/sso/cmd/sso-ctl/auditverify"
+	"github.com/snaplink/sso/cmd/sso-ctl/configcmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/hashcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/importcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/migratecmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/snapshotcmd"
@@ -38,6 +40,12 @@ func main() {
 		os.Exit(migratecmd.Run(os.Args[2:]))
 	case "snapshot":
 		os.Exit(snapshotcmd.Run(os.Args[2:]))
+	case "config":
+		os.Exit(configcmd.Run(os.Args[2:]))
+	case "hash":
+		os.Exit(hashcmd.Run(os.Args[2:]))
+	case "version", "-v", "--version":
+		writeVersion(os.Stdout)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -58,6 +66,9 @@ Commands:
   import         Bulk-import users from auth0 / keycloak / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.
   snapshot       Inspect and verify sealed state snapshots.
+  config         Validate a server config file offline (deploy pre-check).
+  hash           Produce a server-compatible password hash (admin seeding).
+  version        Print the toolbelt version and build revision.
 
 Run "%s <command> -h" for command-specific flags.
 `, progName, progName, progName)
