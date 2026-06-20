@@ -62,49 +62,71 @@ func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *T
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
 	}
 
+	binding, ok := s.validateDeviceSecretExchange(ctx, idTokenClaims, rawIDToken, deviceSecret, req, fail)
+	if !ok {
+		return
+	}
+	scopes, resources, ok := authorizeNativeSSOScopesResources(req, client, fail)
+	if !ok {
+		return
+	}
+	s.issueNativeSSOTokens(ctx, idTokenClaims, client, scopes, resources, binding)
+}
+
+// validateDeviceSecretExchange runs the Native SSO deny ladder (subject_token
+// type → id_token alg/ds_hash readability → constant-time ds_hash binding →
+// single-use Consume → subject/session match), in order. Every early return
+// goes through the passed-in fail closure (recordNativeSSOFailure + uniform
+// 400 invalid_grant), so each cause is oracle-collapsed identically. Returns
+// the consumed binding and true only when the full ladder passes.
+func (s *Server) validateDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, req handler.TokenExchangeRequest, fail func(string)) (*DeviceSecret, bool) {
 	// The subject_token MUST be an id_token for this path.
 	if req.SubjectTokenType != TokenTypeIDToken {
 		fail("subject_token_type not id_token")
-		return
+		return nil, false
 	}
 	alg, err := idTokenAlg(rawIDToken)
 	if err != nil {
 		fail("id_token header unreadable")
-		return
+		return nil, false
 	}
 	storedDsHash, err := idTokenDsHash(rawIDToken)
 	if err != nil || storedDsHash == "" {
 		fail("id_token missing ds_hash")
-		return
+		return nil, false
 	}
 	// Bind the secret to the id_token: ds_hash MUST equal the left-half hash of
 	// the presented device_secret (constant-time).
 	expected := dsHash(alg, deviceSecret)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(storedDsHash)) != 1 {
 		fail("ds_hash mismatch")
-		return
+		return nil, false
 	}
 	// Validate + consume the secret (single-use). Missing/expired/consumed all
 	// collapse to invalid_grant.
 	binding, err := s.deviceSecretStore.Consume(ctx.Request().Context(), deviceSecret)
 	if err != nil {
 		fail("device_secret not found")
-		return
+		return nil, false
 	}
 	// The secret must belong to the same subject the id_token asserts, and —
 	// when both sides carry a session id — the same session.
 	if binding.Subject != idTokenClaims.Subject {
 		fail("subject mismatch")
-		return
+		return nil, false
 	}
 	if binding.SID != "" && idTokenClaims.SID != "" && binding.SID != idTokenClaims.SID {
 		fail("session mismatch")
-		return
+		return nil, false
 	}
+	return binding, true
+}
 
-	// Scopes: the requesting app's requested scope bounded by ITS allowlist
-	// (device_sso + openid bypass it). An id_token has no scopes, so there is
-	// no subject-subset to narrow against.
+// authorizeNativeSSOScopesResources bounds the requesting app's requested scope
+// by ITS allowlist and validates requested resources. Both failure paths route
+// through fail (uniform invalid_grant). An id_token has no scopes, so there is
+// no subject-subset to narrow against.
+func authorizeNativeSSOScopesResources(req handler.TokenExchangeRequest, client *Client, fail func(string)) ([]string, []string, bool) {
 	var requested []string
 	if req.Scope != "" {
 		requested = strings.Fields(req.Scope)
@@ -112,19 +134,54 @@ func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *T
 	scopes, scopeErr := oauth.GrantedScopes(requested, client)
 	if scopeErr != nil {
 		fail("scope not allowed")
-		return
+		return nil, nil, false
 	}
 	resources := mergeTargets(req.Resource, req.Audience)
 	if !client.AreResourcesAllowed(resources) {
 		fail("resource not allowed")
+		return nil, nil, false
+	}
+	return scopes, resources, true
+}
+
+// issueNativeSSOTokens mints the access token (plus optional id_token and
+// rotated device_secret) and writes the success response. The TWO 500 paths
+// (ErrNoTokenStrategy for issuer misconfiguration, ErrInternal for issuance
+// failure) stay DISTINCT from the invalid_grant ladder — they are operational
+// faults, not credential oracles.
+func (s *Server) issueNativeSSOTokens(ctx HandlerContext, idTokenClaims *TokenClaims, client *Client, scopes, resources []string, binding *DeviceSecret) {
+	token, strategy, issuedSub, ok := s.mintNativeSSOAccessToken(ctx, idTokenClaims, client, scopes, resources)
+	if !ok {
 		return
 	}
 
+	// Mint a fresh device_secret for the requesting app (rotation — the old one
+	// was consumed) when device_sso is in the granted scopes.
+	var newDeviceSecret string
+	if slices.Contains(scopes, ScopeDeviceSSO) {
+		if ds, dsErr := s.issueDeviceSecret(ctx.Request().Context(), issuedSub, idTokenClaims.SID, client.ID); dsErr != nil {
+			s.logger.Error("native sso device secret reissue failed", "error", dsErr, "client", client.ID)
+		} else {
+			newDeviceSecret = ds
+		}
+	}
+
+	resp := s.buildNativeSSOResponse(ctx, idTokenClaims, client, scopes, token, strategy, issuedSub, newDeviceSecret)
+	s.recordTokenIssued(ctx, client.ID, strategy, issuedSub)
+	s.recordNativeSSOExchange(ctx, client.ID, issuedSub, binding.ClientID)
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// mintNativeSSOAccessToken resolves the issuer + pairwise subject and mints the
+// access token. The two 500 returns (ErrNoTokenStrategy, ErrInternal) are
+// written here and signalled via ok=false so the caller stops without emitting
+// a success body.
+func (s *Server) mintNativeSSOAccessToken(ctx HandlerContext, idTokenClaims *TokenClaims, client *Client, scopes, resources []string) (*Token, string, string, bool) {
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
 		// Misconfiguration, not a credential failure.
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
-		return
+		return nil, "", "", false
 	}
 	localSub, _ := s.resolveLocalSubject(ctx.Request().Context(), idTokenClaims.Subject)
 	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, localSub)
@@ -142,20 +199,15 @@ func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *T
 	if err != nil {
 		s.logErrorCtx(ctx, "native sso token issuance failed", "strategy", strategy, "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
-		return
+		return nil, "", "", false
 	}
+	return token, strategy, issuedSub, true
+}
 
-	// Mint a fresh device_secret for the requesting app (rotation — the old one
-	// was consumed) when device_sso is in the granted scopes.
-	var newDeviceSecret string
-	if slices.Contains(scopes, ScopeDeviceSSO) {
-		if ds, dsErr := s.issueDeviceSecret(ctx.Request().Context(), issuedSub, idTokenClaims.SID, client.ID); dsErr != nil {
-			s.logger.Error("native sso device secret reissue failed", "error", dsErr, "client", client.ID)
-		} else {
-			newDeviceSecret = ds
-		}
-	}
-
+// buildNativeSSOResponse assembles the success response map: the access token
+// envelope, an optional id_token (when openid is granted and emission is
+// enabled), and the rotated device_secret when present.
+func (s *Server) buildNativeSSOResponse(ctx HandlerContext, idTokenClaims *TokenClaims, client *Client, scopes []string, token *Token, strategy, issuedSub, newDeviceSecret string) map[string]any {
 	resp := map[string]any{
 		KeyAccessToken:     token.AccessToken,
 		KeyIssuedTokenType: TokenTypeAccessToken,
@@ -187,9 +239,7 @@ func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *T
 	if newDeviceSecret != "" {
 		resp[KeyDeviceSecret] = newDeviceSecret
 	}
-	s.recordTokenIssued(ctx, client.ID, strategy, issuedSub)
-	s.recordNativeSSOExchange(ctx, client.ID, issuedSub, binding.ClientID)
-	ctx.JSON(http.StatusOK, resp)
+	return resp
 }
 
 // dsHash computes the Native SSO ds_hash for a device_secret: the base64url

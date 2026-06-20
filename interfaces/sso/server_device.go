@@ -43,55 +43,17 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
 		return
 	}
-	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
-	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
-		return
-	}
-	if !client.Active {
-		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
-		return
-	}
-	if !clientTenantOK(ctx, client) {
-		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
-		return
-	}
-	if !client.AreResourcesAllowed(req.Resource) {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+	client, ok := s.resolveDeviceCodeClient(ctx, req.ClientID, req.Resource)
+	if !ok {
 		return
 	}
 
-	deviceCode, err := generateDeviceCodeBytes()
-	if err != nil {
-		s.logger.Error("device code generation failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+	deviceCode, userCode, scopes, ok := s.mintDeviceCodeArtifacts(ctx, client, req.Scope)
+	if !ok {
 		return
 	}
-	userCode, err := generateUserCodeBytes()
-	if err != nil {
-		s.logger.Error("user code generation failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
-		return
-	}
-
 	ttl, interval := s.resolveDeviceCodeTTL(client)
-	// Scope authorization at device-authorization REQUEST time (not at
-	// redemption): the client is fully authenticated here and
-	// AllowedScopes is in scope, so an unapproved-scope device request is
-	// rejected up front in the device flow's own shape — no double-check
-	// at /token. The captured DeviceCode.Scopes is the GRANTED set
-	// (validated, or defaulted to the client's allowlist when empty), so
-	// the eventual token carries its entitled scope.
-	scopes, err := oauth.GrantedScopes(splitScope(req.Scope), client)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
-		return
-	}
 
-	// Store the normalized (dashless, uppercase) form as the lookup
-	// key so /device/verify accepts the user_code with OR without the
-	// cosmetic dash. The dashed form goes back to the device for
-	// display only.
 	dc := &oauth.DeviceCode{
 		DeviceCode: deviceCode,
 		UserCode:   normalizeUserCode(userCode),
@@ -102,13 +64,34 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		Resources:  append([]string(nil), req.Resource...),
 		ExpiresAt:  time.Now().Add(ttl),
 	}
+	if !s.issueDeviceCode(ctx, dc) {
+		return
+	}
+	s.respondDeviceCode(ctx, deviceCode, userCode, ttl, interval)
+}
+
+// issueDeviceCode persists the assembled DeviceCode and records the issuance
+// audit event. dc carries the normalized (dashless, uppercase) UserCode as its
+// lookup key so /device/verify accepts the user_code with OR without the
+// cosmetic dash; the dashed form goes back to the device for display only. A
+// store failure maps to 500 internal_error (with the original log line) and
+// returns false. The recordDeviceCodeIssued audit call stays immediately after
+// a successful Issue — same order as before the extraction.
+func (s *Server) issueDeviceCode(ctx HandlerContext, dc *oauth.DeviceCode) bool {
 	if err := s.deviceCodeStore.Issue(ctx.Request().Context(), dc); err != nil {
 		s.logger.Error("device code issue failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
-		return
+		return false
 	}
-	s.recordDeviceCodeIssued(ctx, client.ID)
+	s.recordDeviceCodeIssued(ctx, dc.ClientID)
+	return true
+}
 
+// respondDeviceCode writes the RFC 8628 device-authorization success body
+// (device_code + user_code + verification_uri[_complete] + expires_in +
+// interval). The verification URIs derive from this request via
+// buildDeviceVerificationURI; the body shape is unchanged.
+func (s *Server) respondDeviceCode(ctx HandlerContext, deviceCode, userCode string, ttl, interval time.Duration) {
 	base, complete := s.buildDeviceVerificationURI(ctx.Request(), userCode)
 
 	ctx.JSON(http.StatusOK, map[string]any{
@@ -116,9 +99,67 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		"user_code":                 userCode,
 		"verification_uri":          base,
 		"verification_uri_complete": complete,
-		"expires_in":                int(ttl.Seconds()),
+		KeyExpiresIn:                int(ttl.Seconds()),
 		"interval":                  int(interval.Seconds()),
 	})
+}
+
+// resolveDeviceCodeClient looks up the device-flow client and applies the
+// authentication / authorization guards in their original order: unknown
+// client (401 invalid_client), inactive client (403 inactive_client), tenant
+// mismatch (403 tenant_mismatch), disallowed resource (400 invalid_target). On
+// any rejection it writes the response and returns ok=false.
+func (s *Server) resolveDeviceCodeClient(ctx HandlerContext, clientID string, resource []string) (*Client, bool) {
+	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return nil, false
+	}
+	if !client.Active {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
+		return nil, false
+	}
+	if !clientTenantOK(ctx, client) {
+		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		return nil, false
+	}
+	if !client.AreResourcesAllowed(resource) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		return nil, false
+	}
+	return client, true
+}
+
+// mintDeviceCodeArtifacts generates the device_code + user_code bytes and
+// resolves the granted scope set. Generation failures map to 500
+// (internal_error); scope rejection maps to 400 invalid_scope. On any failure
+// it writes the response and returns ok=false.
+//
+// Scope authorization happens at device-authorization REQUEST time (not at
+// redemption): the client is fully authenticated here and AllowedScopes is in
+// scope, so an unapproved-scope device request is rejected up front in the
+// device flow's own shape — no double-check at /token. The captured
+// DeviceCode.Scopes is the GRANTED set (validated, or defaulted to the client's
+// allowlist when empty), so the eventual token carries its entitled scope.
+func (s *Server) mintDeviceCodeArtifacts(ctx HandlerContext, client *Client, scope string) (string, string, []string, bool) {
+	deviceCode, err := generateDeviceCodeBytes()
+	if err != nil {
+		s.logger.Error("device code generation failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return "", "", nil, false
+	}
+	userCode, err := generateUserCodeBytes()
+	if err != nil {
+		s.logger.Error("user code generation failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return "", "", nil, false
+	}
+	scopes, err := oauth.GrantedScopes(splitScope(scope), client)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+		return "", "", nil, false
+	}
+	return deviceCode, userCode, scopes, true
 }
 
 // resolveDeviceCodeTTL resolves the device-code TTL and poll interval with
@@ -174,14 +215,8 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 		return
 	}
 
-	bearer := bearerToken(ctx.Request())
-	if bearer == "" {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
-		return
-	}
-	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
-	if err != nil || claims == nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+	claims, ok := s.authenticateDeviceVerifyBearer(ctx)
+	if !ok {
 		return
 	}
 
@@ -207,28 +242,54 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 		return
 	}
 
-	provider := ""
-	if attrProvider, ok := claims.Extra["provider"]; ok {
-		provider = attrProvider
-	}
-
-	// dc.UserCode is already the normalized form (we store dashless);
-	// approval/denial routes back through the same key.
-	if req.Approve {
-		if err := s.deviceCodeStore.Approve(ctx.Request().Context(),
-			dc.UserCode, claims.Subject, provider, claims.Extra); err != nil {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
-			return
-		}
-	} else {
-		if err := s.deviceCodeStore.Deny(ctx.Request().Context(), dc.UserCode); err != nil {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
-			return
-		}
+	if !s.applyDeviceDecision(ctx, dc, claims, req.Approve) {
+		return
 	}
 	s.recordDeviceCodeDecision(ctx, claims.Subject, dc.ClientID, req.Approve)
 
 	ctx.JSON(http.StatusOK, map[string]any{KeyStatus: StatusOK})
+}
+
+// authenticateDeviceVerifyBearer extracts and validates the caller's bearer for
+// the device-verify endpoint. A missing bearer yields 401 missing_token; a
+// validation failure (or nil claims) yields 401 invalid_token — the two paths
+// stay distinct. On any failure it writes the response and returns ok=false.
+func (s *Server) authenticateDeviceVerifyBearer(ctx HandlerContext) (*TokenClaims, bool) {
+	bearer := bearerToken(ctx.Request())
+	if bearer == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		return nil, false
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
+	if err != nil || claims == nil {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		return nil, false
+	}
+	return claims, true
+}
+
+// applyDeviceDecision routes the user's approve/deny decision back through the
+// normalized user_code key. dc.UserCode is already the normalized form (we store
+// dashless). Both Approve and Deny failures collapse to an identical 400
+// invalid_grant. On failure it writes the response and returns false.
+func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, claims *TokenClaims, approve bool) bool {
+	provider := ""
+	if attrProvider, ok := claims.Extra["provider"]; ok {
+		provider = attrProvider
+	}
+	if approve {
+		if err := s.deviceCodeStore.Approve(ctx.Request().Context(),
+			dc.UserCode, claims.Subject, provider, claims.Extra); err != nil {
+			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			return false
+		}
+		return true
+	}
+	if err := s.deviceCodeStore.Deny(ctx.Request().Context(), dc.UserCode); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		return false
+	}
+	return true
 }
 
 // handleDeviceTokenGrant is the device's poll path on /token. Called

@@ -328,9 +328,17 @@ func (s *Server) handleAuthzPolicyBundle(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 		return
 	}
+	s.serveAuthzPolicyBundle(ctx, clientID, base, bundle)
+}
 
-	// ttl <= 0 disables both the in-process cache AND the ETag /
-	// Cache-Control headers — every pull renders fresh.
+// serveAuthzPolicyBundle renders the built bundle: it computes the
+// content-based ETag, writes the cache entry, and emits the response
+// tail. Split out of handleAuthzPolicyBundle to keep both functions
+// under the per-function budgets — behavior is unchanged.
+//
+// ttl <= 0 disables BOTH the in-process cache AND the ETag /
+// Cache-Control headers — every pull renders fresh.
+func (s *Server) serveAuthzPolicyBundle(ctx HandlerContext, clientID, base string, bundle *permissions.PolicyBundle) {
 	if s.authzPolicyBundleCacheTTL <= 0 {
 		ctx.JSON(http.StatusOK, bundle)
 		return

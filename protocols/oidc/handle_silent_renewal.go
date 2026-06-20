@@ -60,84 +60,9 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 	if !PromptHasNone(prompts) {
 		return false
 	}
-	// §3.1.2.1: "none" cannot be combined with any other prompt
-	// value; mixing them is meaningless ("don't show UI AND show
-	// login UI") and the spec mandates invalid_request.
-	if len(prompts) > 1 {
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBodyDesc(ctx, core.ErrInvalidRequest, "prompt=none must not be combined with other prompt values"))
-		return true
-	}
-	if req.IDTokenHint == "" {
-		// Without a hint we have no way to identify which user the
-		// silent renewal targets; the only spec-correct answer is
-		// login_required (§3.1.2.6).
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-		return true
-	}
-	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), req.IDTokenHint)
-	if err != nil || claims == nil {
-		// A bad-signature hint is indistinguishable from "no session"
-		// on the wire (§3.1.2.6's login_required is the catch-all for
-		// "AS needs user reauth"). Don't leak which failure mode
-		// triggered it.
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-		return true
-	}
-	// The hint's client_id binding MUST match the requesting client
-	// — a hint minted for client A can't be redeemed by client B for
-	// a silent renewal (cross-RP confused deputy defense).
-	hintedClientID := claims.ClientID
-	if hintedClientID == "" && len(claims.Audience) > 0 {
-		hintedClientID = claims.Audience[0]
-	}
-	if hintedClientID != "" && hintedClientID != client.ID {
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-		return true
-	}
-	// OIDC Core §3.1.2.1 max_age: when the RP sets it, the AS MUST
-	// reauthenticate if the elapsed time since auth_time exceeds the
-	// value. prompt=none can't reauthenticate (no UI allowed), so the
-	// only spec-correct response is login_required — telling the
-	// iframe to fall back to the visible login flow. max_age=0
-	// collapses to "always reauthenticate"; nil = no constraint. A
-	// zero auth_time means the original token was minted without
-	// RFC 9068 claim population — treat as unverifiable freshness
-	// and reject the silent renewal.
-	if req.MaxAge != nil {
-		if claims.AuthTime.IsZero() {
-			ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-			return true
-		}
-		if time.Since(claims.AuthTime) > time.Duration(*req.MaxAge)*time.Second {
-			ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-			return true
-		}
-	}
-
-	sessionMgr := d.SessionMgr()
-	if sessionMgr == nil {
-		// No session manager wired = no notion of "active session";
-		// safest default is login_required so a misconfigured silent
-		// flow falls back cleanly.
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-		return true
-	}
-	sessions, err := sessionMgr.ListByUser(ctx.Request().Context(), claims.Subject)
-	if err != nil || len(sessions) == 0 {
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-		return true
-	}
-	hasLive := false
-	for _, sess := range sessions {
-		if sess == nil || sess.Revoked || sess.IsExpired() {
-			continue
-		}
-		hasLive = true
-		break
-	}
-	if !hasLive {
-		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
-		return true
+	claims, handled, proceed := silentRenewalReject(d, ctx, prompts, req, client)
+	if !proceed {
+		return handled
 	}
 
 	// Issue the renewed access token. Note the explicit reuse of
@@ -145,13 +70,49 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 	// does NOT represent a fresh end-user auth event, so downstream
 	// services consuming RFC 9068 claims see the original factor
 	// strength rather than a misleading "just-authenticated" timestamp.
+	token, strategy, scopes, ok := issueSilentRenewalToken(d, ctx, req, client, claims)
+	if !ok {
+		// issueSilentRenewalToken already wrote the 500 wire body.
+		return true
+	}
+
+	resp := buildSilentRenewalResponse(d, ctx, req, token, strategy)
+
+	// OIDC id_token: when openid scope present + ID token issuer is
+	// wired, mint a fresh id_token alongside. The nonce echoes the
+	// request nonce per §3.1.3.7 (the RP correlates this renewed
+	// token with its current auth round trip). The issuer is resolved
+	// per-tenant so a tenant's silent-renewal id_token is signed by the
+	// same key as its access + login id_tokens (fail closed on a
+	// misconfigured/unregistered tenant issuer: omit rather than fall
+	// back to the shared key).
+	if ScopeContainsOpenID(scopes) {
+		emitSilentRenewalIDToken(d, ctx, req, client, claims, token, resp)
+	}
+
+	// Silent renewal reuses the original session; emit a token-issued
+	// event at the same shape as a fresh login success so auditors
+	// see continuous activity per (client, subject).
+	d.RecordLoginSuccess(ctx, client.ID, "silent_renewal", strategy, claims.Subject, "")
+	ctx.JSON(http.StatusOK, resp)
+	return true
+}
+
+// issueSilentRenewalToken mints the renewed access token. It returns
+// ok=false (after writing the 500 wire body — ErrNoTokenStrategy when no
+// issuer is wired for the client, ErrInternal when issuance fails) so the
+// caller bails. The returned scopes are the request scopes, or the hint's
+// original scopes when the caller didn't repeat them, preserving the
+// renewed token's authority. AuthTime/AMR/ACR/SID/Actor are reused from
+// the hint claims verbatim — silent renewal is NOT a fresh auth event.
+func issueSilentRenewalToken(d SilentRenewalDeps, ctx core.HandlerContext, req SilentRenewalRequest, client *core.Client, claims *core.TokenClaims) (token *core.Token, strategy string, scopes []string, ok bool) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		d.SrvLogger().Error("no token strategy for client during silent renewal", "client", client.ID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.AuthzErrorBody(ctx, core.ErrNoTokenStrategy))
-		return true
+		return nil, "", nil, false
 	}
-	scopes := req.Scope
+	scopes = req.Scope
 	if len(scopes) == 0 {
 		// Caller didn't repeat the original scopes — preserve what
 		// the hint token carried so the renewed token has the same
@@ -159,7 +120,7 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 		// subset in the request.)
 		scopes = claims.Scopes
 	}
-	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
+	token, err = ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID:                   claims.Subject,
 		Resources:            req.Resource,
 		ClientID:             client.ID,
@@ -178,9 +139,122 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 	if err != nil {
 		d.SrvLogger().Error("silent renewal token issuance failed", "strategy", strategy, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.AuthzErrorBody(ctx, core.ErrInternal))
+		return nil, "", nil, false
+	}
+	return token, strategy, scopes, true
+}
+
+// silentRenewalReject runs the prompt=none precondition gauntlet. It is
+// tri-state: proceed=true means every check passed and the caller mints
+// the renewed token (claims is non-nil). proceed=false hands control back
+// to the caller via handled — handled=true means a terminal JSON response
+// was already written (caller MUST bail and return true); handled=false is
+// reserved for the !PromptHasNone short-circuit, which the caller already
+// applies before invoking this, so within this function handled is always
+// true when proceed is false. Each rejection writes its own wire body so
+// the AuthzErrorBody(ErrLoginRequired) / AuthzErrorBodyDesc(invalid_request)
+// pairing stays glued to its branch.
+func silentRenewalReject(d SilentRenewalDeps, ctx core.HandlerContext, prompts []string, req SilentRenewalRequest, client *core.Client) (claims *core.TokenClaims, handled bool, proceed bool) {
+	// §3.1.2.1: "none" cannot be combined with any other prompt
+	// value; mixing them is meaningless ("don't show UI AND show
+	// login UI") and the spec mandates invalid_request.
+	if len(prompts) > 1 {
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBodyDesc(ctx, core.ErrInvalidRequest, "prompt=none must not be combined with other prompt values"))
+		return nil, true, false
+	}
+	if req.IDTokenHint == "" {
+		// Without a hint we have no way to identify which user the
+		// silent renewal targets; the only spec-correct answer is
+		// login_required (§3.1.2.6).
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return nil, true, false
+	}
+	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), req.IDTokenHint)
+	if err != nil || claims == nil {
+		// A bad-signature hint is indistinguishable from "no session"
+		// on the wire (§3.1.2.6's login_required is the catch-all for
+		// "AS needs user reauth"). Don't leak which failure mode
+		// triggered it.
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return nil, true, false
+	}
+	// The hint's client_id binding MUST match the requesting client
+	// — a hint minted for client A can't be redeemed by client B for
+	// a silent renewal (cross-RP confused deputy defense).
+	hintedClientID := claims.ClientID
+	if hintedClientID == "" && len(claims.Audience) > 0 {
+		hintedClientID = claims.Audience[0]
+	}
+	if hintedClientID != "" && hintedClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return nil, true, false
+	}
+	if !silentRenewalFreshnessOK(d, ctx, req, claims) {
+		return nil, true, false
+	}
+	if !silentRenewalSessionLive(d, ctx, claims) {
+		return nil, true, false
+	}
+	return claims, true, true
+}
+
+// silentRenewalFreshnessOK enforces OIDC Core §3.1.2.1 max_age. When the
+// RP sets it, the AS MUST reauthenticate if the elapsed time since
+// auth_time exceeds the value. prompt=none can't reauthenticate (no UI
+// allowed), so the only spec-correct response is login_required — telling
+// the iframe to fall back to the visible login flow. max_age=0 collapses
+// to "always reauthenticate"; nil = no constraint. A zero auth_time means
+// the original token was minted without RFC 9068 claim population — treat
+// as unverifiable freshness and reject the silent renewal. Returns false
+// (after writing login_required) when the renewal must be rejected.
+func silentRenewalFreshnessOK(d SilentRenewalDeps, ctx core.HandlerContext, req SilentRenewalRequest, claims *core.TokenClaims) bool {
+	if req.MaxAge == nil {
 		return true
 	}
+	if claims.AuthTime.IsZero() {
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return false
+	}
+	if time.Since(claims.AuthTime) > time.Duration(*req.MaxAge)*time.Second {
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return false
+	}
+	return true
+}
 
+// silentRenewalSessionLive verifies the End-User still has at least one
+// live (non-revoked, non-expired) session. Returns false (after writing
+// login_required) when no session manager is wired, the lookup errors/is
+// empty, or every session is dead — all collapse to login_required so a
+// misconfigured or stale silent flow falls back cleanly.
+func silentRenewalSessionLive(d SilentRenewalDeps, ctx core.HandlerContext, claims *core.TokenClaims) bool {
+	sessionMgr := d.SessionMgr()
+	if sessionMgr == nil {
+		// No session manager wired = no notion of "active session";
+		// safest default is login_required so a misconfigured silent
+		// flow falls back cleanly.
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return false
+	}
+	sessions, err := sessionMgr.ListByUser(ctx.Request().Context(), claims.Subject)
+	if err != nil || len(sessions) == 0 {
+		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+		return false
+	}
+	for _, sess := range sessions {
+		if sess == nil || sess.Revoked || sess.IsExpired() {
+			continue
+		}
+		return true
+	}
+	ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
+	return false
+}
+
+// buildSilentRenewalResponse assembles the base token response (access
+// token + RFC 9207 iss + optional state). The id_token is added separately
+// by emitSilentRenewalIDToken.
+func buildSilentRenewalResponse(d SilentRenewalDeps, ctx core.HandlerContext, req SilentRenewalRequest, token *core.Token, strategy string) map[string]any {
 	resp := map[string]any{
 		core.KeyAccessToken:   token.AccessToken,
 		core.KeyTokenType:     token.TokenType,
@@ -192,42 +266,38 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 	if req.State != "" {
 		resp[core.KeyState] = req.State
 	}
+	return resp
+}
 
-	// OIDC id_token: when openid scope present + ID token issuer is
-	// wired, mint a fresh id_token alongside. The nonce echoes the
-	// request nonce per §3.1.3.7 (the RP correlates this renewed
-	// token with its current auth round trip). The issuer is resolved
-	// per-tenant so a tenant's silent-renewal id_token is signed by the
-	// same key as its access + login id_tokens (fail closed on a
-	// misconfigured/unregistered tenant issuer: omit rather than fall
-	// back to the shared key).
-	if ScopeContainsOpenID(scopes) {
-		idIssuer, emit, resErr := d.IDTokenIssuerForClient(client)
-		if resErr != nil {
-			d.SrvLogger().Error("silent renewal id_token issuer resolution failed; omitting id_token", "error", resErr, "client", client.ID)
-		} else if emit {
-			idTok, idErr := idIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
-				Subject:     claims.Subject,
-				Audience:    client.ID,
-				Nonce:       req.Nonce,
-				AuthTime:    claims.AuthTime,
-				ACR:         claims.ACR,
-				AMR:         append([]string(nil), claims.AMR...),
-				SID:         claims.SID,
-				AccessToken: token.AccessToken,
-			})
-			if idErr != nil {
-				d.SrvLogger().Error("silent renewal id_token issuance failed", "error", idErr)
-			} else if enc, ok := d.EncryptIDTokenForClient(ctx.Request().Context(), client, idTok); ok {
-				resp[core.KeyIDToken] = enc
-			}
-		}
+// emitSilentRenewalIDToken mints a fresh id_token and writes it into resp
+// when the per-tenant issuer permits emission. Fail closed: a tenant
+// issuer resolution error or an issuance error omits the id_token (rather
+// than falling back to the shared key or leaking cleartext) while leaving
+// the access token in resp untouched.
+func emitSilentRenewalIDToken(d SilentRenewalDeps, ctx core.HandlerContext, req SilentRenewalRequest, client *core.Client, claims *core.TokenClaims, token *core.Token, resp map[string]any) {
+	idIssuer, emit, resErr := d.IDTokenIssuerForClient(client)
+	if resErr != nil {
+		d.SrvLogger().Error("silent renewal id_token issuer resolution failed; omitting id_token", "error", resErr, "client", client.ID)
+		return
 	}
-
-	// Silent renewal reuses the original session; emit a token-issued
-	// event at the same shape as a fresh login success so auditors
-	// see continuous activity per (client, subject).
-	d.RecordLoginSuccess(ctx, client.ID, "silent_renewal", strategy, claims.Subject, "")
-	ctx.JSON(http.StatusOK, resp)
-	return true
+	if !emit {
+		return
+	}
+	idTok, idErr := idIssuer.IssueIDToken(ctx.Request().Context(), &IDTokenRequest{
+		Subject:     claims.Subject,
+		Audience:    client.ID,
+		Nonce:       req.Nonce,
+		AuthTime:    claims.AuthTime,
+		ACR:         claims.ACR,
+		AMR:         append([]string(nil), claims.AMR...),
+		SID:         claims.SID,
+		AccessToken: token.AccessToken,
+	})
+	if idErr != nil {
+		d.SrvLogger().Error("silent renewal id_token issuance failed", "error", idErr)
+		return
+	}
+	if enc, ok := d.EncryptIDTokenForClient(ctx.Request().Context(), client, idTok); ok {
+		resp[core.KeyIDToken] = enc
+	}
 }

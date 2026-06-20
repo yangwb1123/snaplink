@@ -26,6 +26,32 @@ type mfaResumeState struct {
 // Audit: emits mfa_required (success outcome — primary credential was
 // fine, the user just hasn't completed step-up yet).
 func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
+	id, ok := s.persistMFAChallenge(ctx, result, req, client)
+	if !ok {
+		return
+	}
+
+	s.recordMFARequiredAudit(ctx, result, client, id)
+
+	methods := s.mfaProvider.SupportedMethods()
+	// Metric: count one challenge per issuance, labeled by the FIRST
+	// supported method (the user picks among them downstream). Zero
+	// traffic when metrics aren't wired.
+	if s.metrics != nil && len(methods) > 0 {
+		s.metrics.MFAChallengesTotal.WithLabelValues(methods[0]).Inc()
+	}
+
+	resp := s.buildMFAChallengeResponse(ctx, result, req, id, methods)
+	// HTTP 200 (not 400) — the primary credential was accepted; the
+	// pending state is a normal step in the flow, not an error.
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// persistMFAChallenge marshals the frozen login state, mints a single-use
+// challenge ID, and stores it. Returns the ID and ok=true on success; on
+// any of the three failures (marshal, mint, store) it writes the verbatim
+// 500 ErrInternal response and returns ok=false.
+func (s *Server) persistMFAChallenge(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) (string, bool) {
 	// Set CredentialHealth explicitly: AuthResult.CredentialHealth is
 	// json:"-", so the embedded Result drops it; this side channel
 	// preserves it for the post-step-up audit in finishLogin.
@@ -33,13 +59,13 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 	if err != nil {
 		s.logger.Error("mfa: failed to marshal resume state", "error", err, "client", client.ID, "user", result.UserID)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
-		return
+		return "", false
 	}
 	id, err := newMFAChallengeID()
 	if err != nil {
 		s.logger.Error("mfa: failed to mint challenge id", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
-		return
+		return "", false
 	}
 	ttl := s.mfaChallengeTTL
 	if ttl <= 0 {
@@ -57,29 +83,33 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 	if err := s.mfaChallengeStore.Put(ctx.Request().Context(), challenge); err != nil {
 		s.logger.Error("mfa: failed to persist challenge", "error", err, "client", client.ID, "user", result.UserID)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return "", false
+	}
+	return id, true
+}
+
+// recordMFARequiredAudit emits the mfa_required audit event (no-op without
+// auditor). Outcome is success — the primary credential was fine, the user
+// just hasn't completed step-up yet.
+func (s *Server) recordMFARequiredAudit(ctx HandlerContext, result *AuthResult, client *Client, id string) {
+	if s.auditor == nil {
 		return
 	}
-
-	if s.auditor != nil {
-		evt := &audit.Event{
-			Type:     audit.EventMFARequired,
-			Outcome:  audit.OutcomeSuccess,
-			ActorID:  result.UserID,
-			ClientID: client.ID,
-			Provider: result.Provider,
-			ActorIP:  audit.ClientIP(ctx.Request()),
-		}
-		audit.SetMeta(evt, KeyMFAChallengeID, id)
-		s.auditor.Record(ctx.Request().Context(), evt)
+	evt := &audit.Event{
+		Type:     audit.EventMFARequired,
+		Outcome:  audit.OutcomeSuccess,
+		ActorID:  result.UserID,
+		ClientID: client.ID,
+		Provider: result.Provider,
+		ActorIP:  audit.ClientIP(ctx.Request()),
 	}
+	audit.SetMeta(evt, KeyMFAChallengeID, id)
+	s.auditor.Record(ctx.Request().Context(), evt)
+}
 
-	methods := s.mfaProvider.SupportedMethods()
-	// Metric: count one challenge per issuance, labeled by the FIRST
-	// supported method (the user picks among them downstream). Zero
-	// traffic when metrics aren't wired.
-	if s.metrics != nil && len(methods) > 0 {
-		s.metrics.MFAChallengesTotal.WithLabelValues(methods[0]).Inc()
-	}
+// buildMFAChallengeResponse assembles the mfa_required response body, running
+// the per-method spi.MFABeginner dispatch.
+func (s *Server) buildMFAChallengeResponse(ctx HandlerContext, result *AuthResult, req login.Request, id string, methods []string) map[string]any {
 	resp := map[string]any{
 		KeyError:          ErrMFARequired, // top-level error field so SPAs treating non-2xx-but-pending uniformly still surface it
 		KeyMFAChallengeID: id,
@@ -114,9 +144,7 @@ func (s *Server) issueMFAChallenge(ctx HandlerContext, result *AuthResult, req l
 	if req.State != "" {
 		resp[KeyState] = req.State
 	}
-	// HTTP 200 (not 400) — the primary credential was accepted; the
-	// pending state is a normal step in the flow, not an error.
-	ctx.JSON(http.StatusOK, resp)
+	return resp
 }
 
 // handleMFAComplete is the POST /auth/mfa endpoint. The client presents
@@ -155,30 +183,63 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 	// every other return point.
 	_ = outcome
 
-	var req struct {
-		ChallengeID string            `json:"mfa_challenge_id"`
-		Method      string            `json:"mfa_method"`
-		Params      map[string]string `json:"params"`
-		// Top-level convenience fields the flat-form callers prefer
-		// (HTML forms, simple clients). When Params is empty we
-		// collect the per-method known fields from these.
-		Code      string `json:"code"`      // totp
-		Assertion string `json:"assertion"` // webauthn
-	}
-	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
-		return
-	}
-	if req.ChallengeID == "" || req.Method == "" {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+	req, ok := s.parseMFACompleteRequest(ctx)
+	if !ok {
 		return
 	}
 
+	challenge, ok := s.verifyMFAFactor(ctx, req)
+	if !ok {
+		return
+	}
+	outcome = "success"
+
+	// Factor verified — decode the frozen state, re-validate the client, and
+	// resume the standard post-risk login flow.
+	s.resumeLoginAfterMFA(ctx, challenge, req.Method, req.ChallengeID)
+}
+
+// mfaCompleteRequest is the POST /auth/mfa payload. Method + ChallengeID are
+// mandatory; the flat Code/Assertion convenience fields are folded into Params
+// downstream for the opaque spi.MFAProvider dispatch.
+type mfaCompleteRequest struct {
+	ChallengeID string            `json:"mfa_challenge_id"`
+	Method      string            `json:"mfa_method"`
+	Params      map[string]string `json:"params"`
+	// Top-level convenience fields the flat-form callers prefer
+	// (HTML forms, simple clients). When Params is empty we
+	// collect the per-method known fields from these.
+	Code      string `json:"code"`      // totp
+	Assertion string `json:"assertion"` // webauthn
+}
+
+// parseMFACompleteRequest binds + validates the /auth/mfa payload. Any bind
+// error or missing challenge/method collapses to the verbatim 400 mfa_invalid
+// (no audit — these are pre-challenge-lookup malformed requests, not factor
+// failures) and returns ok=false.
+func (s *Server) parseMFACompleteRequest(ctx HandlerContext) (mfaCompleteRequest, bool) {
+	var req mfaCompleteRequest
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return req, false
+	}
+	if req.ChallengeID == "" || req.Method == "" {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return req, false
+	}
+	return req, true
+}
+
+// verifyMFAFactor consumes the single-use challenge and verifies the presented
+// factor. Both the challenge-lookup miss and the factor-verify failure collapse
+// to the verbatim 400 mfa_invalid (detail ONLY in the mfa_failure audit) and
+// return ok=false. On success it returns the consumed challenge.
+func (s *Server) verifyMFAFactor(ctx HandlerContext, req mfaCompleteRequest) (*spi.MFAChallenge, bool) {
 	challenge, err := s.mfaChallengeStore.Consume(ctx.Request().Context(), req.ChallengeID)
 	if err != nil || challenge == nil {
 		s.recordMFAFailure(ctx, "", req.ChallengeID, req.Method, "challenge_invalid")
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
-		return
+		return nil, false
 	}
 
 	// Flat -> Params normalization. The dispatch into spi.MFAProvider is opaque —
@@ -190,14 +251,10 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 		s.recordMFAFailure(ctx, challenge.SubjectID, req.ChallengeID, req.Method, err.Error())
 		s.recordMFACompletion(req.Method, "failure")
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
-		return
+		return nil, false
 	}
 	s.recordMFACompletion(req.Method, "success")
-	outcome = "success"
-
-	// Factor verified — decode the frozen state, re-validate the client, and
-	// resume the standard post-risk login flow.
-	s.resumeLoginAfterMFA(ctx, challenge, req.Method, req.ChallengeID)
+	return challenge, true
 }
 
 // resumeLoginAfterMFA decodes the frozen pre-step-up state, folds the verified

@@ -176,9 +176,75 @@ func (m *meshHeaderRecorder) Write(b []byte) (int, error) { return len(b), nil }
 // ctx is the request context (deadlines/cancellation/values for the issuer +
 // permissions lookups). req carries the wire-level request material.
 func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) MeshAuthorizeResult {
-	// Build the synthetic request the reused helpers read from. Method +
-	// Header + Host + URL.Path + TLS reproduce every field DPoP/mTLS/issuer/
-	// region resolution touch.
+	if ctx == nil { // Background so downstream lookups see a real context
+		ctx = context.Background()
+	}
+	hr := buildMeshSyntheticRequest(ctx, req)
+	rec := newMeshHeaderRecorder()
+	hctx := core.NewContext(rec, hr)
+	// Stash the serving region so the read-side residency gate sees it.
+	s.stashMeshServingRegion(hctx)
+	res := MeshAuthorizeResult{challengeHeader: rec.header}
+
+	// DENY ladder — same order + oracle-collapse as /userinfo: missing token →
+	// bare challenge (empty DenyCode); every other deny → ErrInvalidToken.
+	tokenString := bearerToken(hr)
+	if tokenString == "" {
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), "", "") // RFC 6750 §3.1 bare challenge
+		res.DenyCode = ""
+		return res
+	}
+	claims, _, err := s.validateAnyToken(ctx, tokenString)
+	if err != nil {
+		return s.meshDenyInvalidToken(hctx, res, "The access token is invalid or expired")
+	}
+	// Sender-constraint: a bound token without a matching proof/cert collapses
+	// to the same invalid_token DENY — binding is not probeable.
+	if derr := s.verifyDPoPBearer(hctx, claims); derr != nil {
+		if errors.Is(derr, ErrDPoPNonceRequired) {
+			// RFC 9449 §8 handshake. Stamp + read back the nonce for the gRPC
+			// transport; the HTTP path replays challengeHeader (byte-identical).
+			s.stampDPoPNonce(hctx)
+			setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
+			res.DenyCode = ErrInvalidToken
+			res.DPoPNonce = rec.header.Get(HeaderDPoPNonce)
+			return res
+		}
+		s.logger.Error("mesh authorize dpop bearer verification failed", "error", derr, "subject", claims.Subject)
+		return s.meshDenyInvalidToken(hctx, res, "DPoP proof missing or thumbprint mismatch")
+	}
+	if merr := s.verifyMTLSBearer(hctx, claims); merr != nil {
+		s.logger.Error("mesh authorize mtls bearer verification failed", "error", merr, "subject", claims.Subject)
+		return s.meshDenyInvalidToken(hctx, res, "Client certificate missing or thumbprint mismatch")
+	}
+	// Data-residency READ-gate — after bearer + sender-constraint; oracle-safe.
+	if _, denied := s.residencyDeniedForAccess(hctx, claims); denied {
+		return s.meshDenyInvalidToken(hctx, res, "Access denied")
+	}
+	res.Allowed = true // ALLOW — derive identity from the validated token only
+	s.deriveMeshIdentity(ctx, claims, &res)
+	return res
+}
+
+// meshDenyInvalidToken emits the oracle-collapsed invalid_token DENY shared by
+// every non-missing-token rung of the ladder (validation, DPoP/mTLS
+// sender-constraint, residency): the SAME setBearerChallenge(ErrInvalidToken,
+// desc) the inline ladder wrote, then stamps res.DenyCode = ErrInvalidToken and
+// returns res. desc is the only per-rung input; the wire code is fixed so no
+// cause is probeable.
+func (s *Server) meshDenyInvalidToken(hctx HandlerContext, res MeshAuthorizeResult, desc string) MeshAuthorizeResult {
+	setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, desc)
+	res.DenyCode = ErrInvalidToken
+	return res
+}
+
+// buildMeshSyntheticRequest reconstructs the synthetic *http.Request the reused
+// /userinfo-path helpers read from. Method + Header + Host + URL.Path + TLS
+// reproduce every field DPoP/mTLS/issuer/region resolution touch; the bound ctx
+// carries the caller's deadline/cancellation into validateAnyToken / the
+// ClientStore / permissions lookups. Behavior is byte-identical to the former
+// inline assembly.
+func buildMeshSyntheticRequest(ctx context.Context, req MeshAuthorizeRequest) *http.Request {
 	hr := &http.Request{
 		Method: req.Method,
 		Header: cloneMeshHeader(req.Header),
@@ -214,120 +280,33 @@ func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) Me
 	// Bind the request context so the synthetic request carries the caller's
 	// deadline/cancellation into validateAnyToken / the ClientStore /
 	// permissions lookups.
-	if ctx != nil {
-		hr = hr.WithContext(ctx)
-	} else {
-		ctx = context.Background()
-	}
+	return hr.WithContext(ctx)
+}
 
-	rec := newMeshHeaderRecorder()
-	hctx := core.NewContext(rec, hr)
-
-	// Resolve + stash the serving region on the synthetic context exactly as
-	// region.Middleware would for the real request, so the read-side
-	// residency gate sees the same region. The resolver + AllowedRegions
-	// backstop are pure functions of the request headers, so re-resolving
-	// against the synthetic request (identical headers) is equivalent to the
-	// middleware run on the real one — and it makes MeshAuthorize
-	// self-contained for the gRPC path, where no region middleware ran. A
-	// nil resolver stashes nothing (residency disabled ⇒ byte-identical).
-	s.stashMeshServingRegion(hctx)
-
-	res := MeshAuthorizeResult{challengeHeader: rec.header}
-
-	// Misconfiguration (no token issuer) is handled by the transport wrapper
-	// as a 500 — here a missing issuer simply makes validateAnyToken fail,
-	// which the wrapper never reaches because it checks requireDeps first.
-
-	tokenString := bearerToken(hr)
-	if tokenString == "" {
-		// RFC 6750 §3.1 — no credentials presented. Bare Bearer challenge
-		// (no error=). DENY with an empty DenyCode (the missing-vs-invalid
-		// distinction /userinfo already exposes).
-		setBearerChallenge(hctx, s.resolveIssuer(hctx), "", "")
-		res.DenyCode = ""
-		return res
-	}
-
-	claims, _, err := s.validateAnyToken(ctx, tokenString)
-	if err != nil {
-		// Opaque validation failure → invalid_token, identical to /userinfo
-		// (no oracle leak).
-		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "The access token is invalid or expired")
-		res.DenyCode = ErrInvalidToken
-		return res
-	}
-
-	// Sender-constraint enforcement, mirrored EXACTLY from /userinfo so a
-	// stolen DPoP- or mTLS-bound token cannot be replayed as a plain bearer.
-	// A bound token (cnf.jkt / cnf.x5t#S256) without a matching proof /
-	// client cert collapses to the same invalid_token DENY as any other
-	// invalid bearer — binding is not probeable.
-	if derr := s.verifyDPoPBearer(hctx, claims); derr != nil {
-		if errors.Is(derr, ErrDPoPNonceRequired) {
-			// RFC 9449 §8 — challenge for a fresh nonce. Stamp it onto the
-			// recorder so the HTTP wrapper replays the DPoP-Nonce +
-			// use_dpop_nonce challenge headers verbatim. Still a DENY
-			// (invalid_token wire code class for the HTTP path's challenge).
-			s.stampDPoPNonce(hctx)
-			setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
-			res.DenyCode = ErrInvalidToken
-			// Surface the fresh nonce VALUE on the result for transports that
-			// cannot read the unexported challengeHeader (the gRPC path):
-			// stampDPoPNonce wrote it to the recorder's DPoP-Nonce header, so
-			// read back the SAME value it emitted. The HTTP path ignores this
-			// field (it replays challengeHeader), so HTTP output is unchanged;
-			// the gRPC DENY uses it to emit the DPoP-Nonce + use_dpop_nonce
-			// handshake a mesh-only DPoP client needs to reissue. Empty if no
-			// nonce provider is wired (stampDPoPNonce no-ops) — then this is
-			// an ordinary missing-proof DENY, not the handshake case.
-			res.DPoPNonce = rec.header.Get(HeaderDPoPNonce)
-			return res
-		}
-		s.logger.Error("mesh authorize dpop bearer verification failed", "error", derr, "subject", claims.Subject)
-		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "DPoP proof missing or thumbprint mismatch")
-		res.DenyCode = ErrInvalidToken
-		return res
-	}
-	if merr := s.verifyMTLSBearer(hctx, claims); merr != nil {
-		s.logger.Error("mesh authorize mtls bearer verification failed", "error", merr, "subject", claims.Subject)
-		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "Client certificate missing or thumbprint mismatch")
-		res.DenyCode = ErrInvalidToken
-		return res
-	}
-
-	// Data-residency READ-gate. Binary ALLOW/DENY: a residency-denied
-	// request takes the DENY path (invalid_token, oracle-safe — no detail,
-	// no X-Auth-* derived). Runs AFTER bearer + sender-constraint. Zero-cost
-	// + byte-identical when residency is disabled.
-	if _, denied := s.residencyDeniedForAccess(hctx, claims); denied {
-		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrInvalidToken, "Access denied")
-		res.DenyCode = ErrInvalidToken
-		return res
-	}
-
-	// ALLOW. Derive the identity from the validated token only.
-	res.Allowed = true
+// deriveMeshIdentity populates the ALLOW-side identity on res from the validated
+// token claims ONLY — never from the inbound request. Optional roles are added
+// only when a permissions provider is wired AND the lookup succeeds with a
+// non-empty result; a lookup failure is non-fatal (ALLOW still holds, roles
+// omitted), mirroring the inline handler's behavior exactly.
+func (s *Server) deriveMeshIdentity(ctx context.Context, claims *core.TokenClaims, res *MeshAuthorizeResult) {
 	res.Subject = claims.Subject
 	res.ClientID = claims.ClientID
 	res.Scopes = claims.Scopes
 	if !claims.ExpiresAt.IsZero() {
 		res.ExpiresAt = claims.ExpiresAt.Unix()
 	}
-	// Optional roles — only when a permissions provider is wired AND the
-	// lookup succeeds with a non-empty result. Lookup failure is non-fatal:
-	// ALLOW still holds (the token is valid); we simply omit roles. Mirrors
-	// the inline handler's behavior exactly.
-	if s.permissions != nil && claims.Subject != "" {
-		if roles, rerr := s.permissions.Roles(ctx, claims.Subject, claims.ClientID); rerr == nil && len(roles) > 0 {
-			codes := make([]string, 0, len(roles))
-			for _, r := range roles {
-				codes = append(codes, r.Code)
-			}
-			res.Roles = codes
-		}
+	if s.permissions == nil || claims.Subject == "" {
+		return
 	}
-	return res
+	roles, rerr := s.permissions.Roles(ctx, claims.Subject, claims.ClientID)
+	if rerr != nil || len(roles) == 0 {
+		return
+	}
+	codes := make([]string, 0, len(roles))
+	for _, r := range roles {
+		codes = append(codes, r.Code)
+	}
+	res.Roles = codes
 }
 
 // stashMeshServingRegion resolves the serving region for the synthetic mesh

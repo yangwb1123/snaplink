@@ -115,25 +115,51 @@ func (s *Server) computeDiscoverySnapshot(ctx context.Context) *clientDiscoveryS
 			snap.fpHash = core.ClientSetFingerprint(clients)
 		}
 	}
+	proj := projectClientFields(clients, s.idTokenIssuer != nil)
+	snap.requirePAR = proj.requirePAR
+	snap.frontchannelLogout = proj.frontchannelLogout
+	snap.requireSignedRequestObject = proj.requireSignedRequestObject
+	snap.scopes = proj.scopes
+	snap.authorizationDetailTypes = proj.authorizationDetailTypes
+	return snap
+}
+
+// discoveryClientProjection holds the discovery-relevant aggregate fields
+// derived from the client set by projectClientFields.
+type discoveryClientProjection struct {
+	scopes                     []string
+	authorizationDetailTypes   []string
+	requirePAR                 bool
+	requireSignedRequestObject bool
+	frontchannelLogout         bool
+}
+
+// projectClientFields derives the aggregate discovery fields from the client
+// set. hasIDTokenIssuer seeds the openid scope (mirrors the snapshot's
+// idTokenIssuer-gated default). requireSignedRequestObject starts true only
+// when the set is non-empty and a nil client forces it false (an unreadable
+// client can't be proven to require signed requests) and is otherwise skipped
+// — identical to the original inline loop.
+func projectClientFields(clients []*core.Client, hasIDTokenIssuer bool) discoveryClientProjection {
 	scopesSeen := map[string]struct{}{}
-	if s.idTokenIssuer != nil {
+	if hasIDTokenIssuer {
 		scopesSeen[ScopeOpenID] = struct{}{}
 	}
 	adTypesSeen := map[string]struct{}{}
-	allRequireSignedRequestObject := len(clients) > 0
+	proj := discoveryClientProjection{requireSignedRequestObject: len(clients) > 0}
 	for _, c := range clients {
 		if c == nil {
-			allRequireSignedRequestObject = false
+			proj.requireSignedRequestObject = false
 			continue
 		}
 		if c.RequirePAR {
-			snap.requirePAR = true
+			proj.requirePAR = true
 		}
 		if !c.RequireSignedRequestObject {
-			allRequireSignedRequestObject = false
+			proj.requireSignedRequestObject = false
 		}
 		if c.FrontchannelLogoutURI != "" {
-			snap.frontchannelLogout = true
+			proj.frontchannelLogout = true
 		}
 		for _, sc := range c.AllowedScopes {
 			if sc != "" {
@@ -146,12 +172,11 @@ func (s *Server) computeDiscoverySnapshot(ctx context.Context) *clientDiscoveryS
 			}
 		}
 	}
-	snap.requireSignedRequestObject = allRequireSignedRequestObject
-	snap.scopes = sortedKeys(scopesSeen)
+	proj.scopes = sortedKeys(scopesSeen)
 	if len(adTypesSeen) > 0 {
-		snap.authorizationDetailTypes = sortedKeys(adTypesSeen)
+		proj.authorizationDetailTypes = sortedKeys(adTypesSeen)
 	}
-	return snap
+	return proj
 }
 
 func sortedKeys(m map[string]struct{}) []string {

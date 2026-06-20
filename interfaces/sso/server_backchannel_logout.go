@@ -225,16 +225,25 @@ func (s *Server) fanOutBackchannelLogout(ctx HandlerContext, originClient *Clien
 		s.sendBackchannelLogout(ctx, originClient, subject, sid)
 		return
 	}
+	targets := s.collectBackchannelTargets(ctx, clientIDs, originClient, subject)
+	if len(targets) == 0 {
+		return
+	}
+	s.dispatchBackchannelFanOut(ctx, targets, subject, sid)
+}
+
+// collectBackchannelTargets deduplicates clientIDs (origin client
+// appended first so it survives dedup), then filters to the
+// BCL-capable subset. Filtering happens BEFORE worker spin-up so we
+// know exactly how many to wait on and Forget calls for non-BCL
+// clients fire immediately (no goroutine spin-up cost for them).
+func (s *Server) collectBackchannelTargets(ctx HandlerContext, clientIDs []string, originClient *Client, subject string) []*Client {
 	// Always include the origin client even if the index missed it
 	// (e.g. the very first login on a new replica before propagation).
 	seen := make(map[string]struct{}, len(clientIDs)+1)
 	if originClient != nil {
 		clientIDs = append(clientIDs, originClient.ID)
 	}
-	// Deduplicate + filter to the BCL-capable subset BEFORE spawning
-	// workers so we know exactly how many to wait on and Forget calls
-	// for non-BCL clients happen immediately (no goroutine spin-up
-	// cost for them).
 	targets := make([]*Client, 0, len(clientIDs))
 	for _, cid := range clientIDs {
 		if cid == "" {
@@ -253,18 +262,19 @@ func (s *Server) fanOutBackchannelLogout(ctx HandlerContext, originClient *Clien
 		}
 		targets = append(targets, c)
 	}
-	if len(targets) == 0 {
-		return
-	}
-	// Parallel fan-out with bounded concurrency. Serial loop would
-	// stack each RP's `DefaultBackchannelLogoutTimeout` (5s default)
-	// linearly — a user with 10 RPs and one slow RP would block
-	// /end_session for 50s before unblocking. Bounded worker pool
-	// keeps p99 at roughly timeout × ceil(N / max) while avoiding
-	// the 50+-connection burst a naive unbounded goroutine-per-RP
-	// would emit. The Forget call follows the notification (success
-	// or failure) on the same worker — see sendBackchannelLogout
-	// for the audit recording contract.
+	return targets
+}
+
+// dispatchBackchannelFanOut runs the bounded-concurrency worker pool
+// over targets. Serial loop would stack each RP's
+// `DefaultBackchannelLogoutTimeout` (5s default) linearly — a user
+// with 10 RPs and one slow RP would block /end_session for 50s before
+// unblocking. Bounded worker pool keeps p99 at roughly
+// timeout × ceil(N / max) while avoiding the 50+-connection burst a
+// naive unbounded goroutine-per-RP would emit. The Forget call follows
+// the notification (success or failure) on the same worker — see
+// sendBackchannelLogout for the audit recording contract.
+func (s *Server) dispatchBackchannelFanOut(ctx HandlerContext, targets []*Client, subject string, sid string) {
 	max := s.backchannelLogoutMaxConcurrent
 	if max <= 0 {
 		max = DefaultBackchannelLogoutMaxConcurrent

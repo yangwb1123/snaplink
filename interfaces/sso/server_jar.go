@@ -173,28 +173,8 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 	if len(parts) != 3 {
 		return nil, errors.New("jar: malformed JWT (expected 3 segments)")
 	}
-
-	// The `typ` header is JAR-specific (RFC 9101 §10.8) and is NOT
-	// VerifyCompactJWS's concern, so it is checked here. `alg`, `kid`,
-	// the kty/crv↔alg consistency, and the signature itself are ALL
-	// owned by VerifyCompactJWS below — this header parse is only to
-	// reach `typ` and MUST NOT be trusted for any security decision (it
-	// reads an UNVERIFIED segment).
-	hraw, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("jar: header decode: %w", err)
-	}
-	var h struct {
-		Typ string `json:"typ"`
-	}
-	if err := json.Unmarshal(hraw, &h); err != nil {
-		return nil, fmt.Errorf("jar: header parse: %w", err)
-	}
-	switch h.Typ {
-	case "", "JWT", JARTypHeader:
-		// ok
-	default:
-		return nil, fmt.Errorf("jar: typ %q not supported", h.Typ)
+	if err := parseJARTypHeader(parts[0]); err != nil {
+		return nil, err
 	}
 
 	// Signature verification through the shared, alg-confusion-safe
@@ -211,12 +191,53 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 		return nil, fmt.Errorf("jar: payload parse: %w", err)
 	}
 
+	if err := validateJARClaims(&p, client, asIssuer); err != nil {
+		return nil, err
+	}
+
+	if done, err := enforceJARReplay(ctx, &p, replay, replayFailClosed); done {
+		return &p, err
+	}
+
+	return &p, nil
+}
+
+// parseJARTypHeader checks the JAR-specific `typ` header (RFC 9101 §10.8).
+//
+// The `typ` header is JAR-specific (RFC 9101 §10.8) and is NOT
+// VerifyCompactJWS's concern, so it is checked here. `alg`, `kid`,
+// the kty/crv↔alg consistency, and the signature itself are ALL
+// owned by VerifyCompactJWS in verifyJAR — this header parse is only to
+// reach `typ` and MUST NOT be trusted for any security decision (it
+// reads an UNVERIFIED segment).
+func parseJARTypHeader(headerSeg string) error {
+	hraw, err := base64.RawURLEncoding.DecodeString(headerSeg)
+	if err != nil {
+		return fmt.Errorf("jar: header decode: %w", err)
+	}
+	var h struct {
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(hraw, &h); err != nil {
+		return fmt.Errorf("jar: header parse: %w", err)
+	}
+	switch h.Typ {
+	case "", "JWT", JARTypHeader:
+		return nil
+	default:
+		return fmt.Errorf("jar: typ %q not supported", h.Typ)
+	}
+}
+
+// validateJARClaims enforces the RFC 9101 §6.3 control-claim gates on the
+// already-signature-verified payload: exp/nbf, aud, iss, and client_id.
+func validateJARClaims(p *jarPayload, client *Client, asIssuer string) error {
 	now := time.Now().Unix()
 	if p.Exp != 0 && now >= p.Exp {
-		return nil, errors.New("jar: JWT expired")
+		return errors.New("jar: JWT expired")
 	}
 	if p.Nbf != 0 && now < p.Nbf {
-		return nil, errors.New("jar: JWT not yet valid")
+		return errors.New("jar: JWT not yet valid")
 	}
 
 	// aud must include the AS — guards against a JWT crafted for
@@ -224,47 +245,57 @@ func verifyJAR(ctx context.Context, rawJWT string, client *Client, asIssuer stri
 	// legacy compat (skip check; operators with strict needs can
 	// gate this via a future config flag).
 	if len(p.Aud) > 0 && asIssuer != "" && !slices.Contains([]string(p.Aud), asIssuer) {
-		return nil, fmt.Errorf("jar: aud does not include %q", asIssuer)
+		return fmt.Errorf("jar: aud does not include %q", asIssuer)
 	}
 	if p.Iss != "" && p.Iss != client.ID {
-		return nil, fmt.Errorf("jar: iss %q != client_id %q", p.Iss, client.ID)
+		return fmt.Errorf("jar: iss %q != client_id %q", p.Iss, client.ID)
 	}
 	if p.ClientID != "" && p.ClientID != client.ID {
-		return nil, fmt.Errorf("jar: client_id %q in JWT does not match %q", p.ClientID, client.ID)
+		return fmt.Errorf("jar: client_id %q in JWT does not match %q", p.ClientID, client.ID)
 	}
+	return nil
+}
 
-	// RFC 9101 §10.8 replay protection. When the operator has
-	// wired a security.JTIReplayStore and the JWT carries a jti, refuse to
-	// process a JWT whose jti has been seen within its expiry
-	// window. The defense is opt-in (store nil) so legacy
-	// deployments aren't broken; production should always wire
-	// it. Empty jti skips the check — RFC 9101 makes jti
-	// OPTIONAL but recommends it, so we don't synthesize one.
-	if replay != nil && p.JTI != "" {
-		expiresAt := time.Unix(p.Exp, 0)
-		if p.Exp == 0 || expiresAt.Before(time.Now()) {
-			expiresAt = time.Now().Add(security.DefaultJTIReplayWindow)
-		}
-		first, err := replay.MarkSeen(ctx, p.JTI, expiresAt)
-		if err != nil {
-			// Store error: MarkSeen couldn't confirm the jti is
-			// unseen. Default fail-OPEN — a broken replay store
-			// shouldn't lock out legitimate clients (availability
-			// over replay defense). Fail-CLOSED (opt-in) instead
-			// treats store-uncertainty AS a replay and rejects with
-			// the SAME error a detected replay returns, so the wire
-			// shape is identical (no store-health oracle).
-			if replayFailClosed {
-				return nil, errors.New("jar: jti replay detected")
-			}
-			return &p, nil
-		}
-		if !first {
-			return nil, errors.New("jar: jti replay detected")
-		}
+// enforceJARReplay applies RFC 9101 §10.8 jti replay protection.
+//
+// Returns (done, err): when done is true the caller MUST stop and return
+// (&p, err) — preserving the tri-state where a fail-OPEN store error yields
+// SUCCESS (done=true, err=nil → &p, nil) while a detected replay or a
+// fail-CLOSED store error yields the identical "jar: jti replay detected"
+// error. done=false means the replay check passed (or was skipped) and the
+// caller continues.
+//
+// When the operator has wired a security.JTIReplayStore and the JWT carries a
+// jti, refuse to process a JWT whose jti has been seen within its expiry
+// window. The defense is opt-in (store nil) so legacy deployments aren't
+// broken; production should always wire it. Empty jti skips the check — RFC
+// 9101 makes jti OPTIONAL but recommends it, so we don't synthesize one.
+func enforceJARReplay(ctx context.Context, p *jarPayload, replay security.JTIReplayStore, replayFailClosed bool) (bool, error) {
+	if replay == nil || p.JTI == "" {
+		return false, nil
 	}
-
-	return &p, nil
+	expiresAt := time.Unix(p.Exp, 0)
+	if p.Exp == 0 || expiresAt.Before(time.Now()) {
+		expiresAt = time.Now().Add(security.DefaultJTIReplayWindow)
+	}
+	first, err := replay.MarkSeen(ctx, p.JTI, expiresAt)
+	if err != nil {
+		// Store error: MarkSeen couldn't confirm the jti is
+		// unseen. Default fail-OPEN — a broken replay store
+		// shouldn't lock out legitimate clients (availability
+		// over replay defense). Fail-CLOSED (opt-in) instead
+		// treats store-uncertainty AS a replay and rejects with
+		// the SAME error a detected replay returns, so the wire
+		// shape is identical (no store-health oracle).
+		if replayFailClosed {
+			return true, errors.New("jar: jti replay detected")
+		}
+		return true, nil
+	}
+	if !first {
+		return true, errors.New("jar: jti replay detected")
+	}
+	return false, nil
 }
 
 // bindOAuthParams delegates to oauth.BindParams. Kept as an unexported

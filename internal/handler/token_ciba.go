@@ -42,42 +42,8 @@ type CIBAGrantDeps interface {
 // (auth_req_id issued for a different client), or a standard token response on
 // success. AMR/AuthTime are set from the approval event per RFC 9068.
 func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, authReqID, dpopJKT, mtlsX5T string) {
-	if d.CIBAStore() == nil {
-		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrCIBANotConfigured))
-		return
-	}
-	if authReqID == "" {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-		return
-	}
-	r, err := d.CIBAStore().Get(ctx.Request().Context(), authReqID)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
-		return
-	}
-	if r.ClientID != client.ID {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-		return
-	}
-
-	now := time.Now()
-	if !r.LastPoll.IsZero() && r.Interval > 0 && now.Sub(r.LastPoll) < r.Interval {
-		_ = d.CIBAStore().UpdateLastPoll(ctx.Request().Context(), authReqID, now)
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrSlowDown))
-		return
-	}
-	_ = d.CIBAStore().UpdateLastPoll(ctx.Request().Context(), authReqID, now)
-
-	switch r.Status {
-	case oauth.CIBADenied:
-		_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
-		d.RecordCIBADecision(ctx, client.ID, r.SubjectID, false)
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAccessDenied))
-		return
-	case oauth.CIBAApproved:
-		// fall through to issuance below
-	default:
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAuthorizationPending))
+	r, now, ok := cibaPollGate(d, ctx, client, authReqID)
+	if !ok {
 		return
 	}
 
@@ -115,40 +81,110 @@ func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Clie
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	}
-	if d.RefreshTokenStore() != nil {
-		rt, err := d.IssueRefreshToken(ctx.Request().Context(),
-			r.SubjectID, client.ID, provider, r.Scopes, nil, "", r.Resources, nil, "", client.RefreshTokenTTL)
-		if err != nil {
-			d.SrvLogger().Error("refresh token issue failed", "error", err)
-		} else {
-			resp[core.KeyRefreshToken] = rt
-			d.RecordRefreshTokenIssued(ctx, client.ID, r.SubjectID, false)
-		}
-	}
-	if slices.Contains(r.Scopes, core.ScopeOpenID) {
-		idIssuer, emit, idErr := d.IDTokenIssuerForClient(client)
-		if idErr != nil {
-			d.SrvLogger().Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
-		} else if emit {
-			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:     issuedSub,
-				Audience:    client.ID,
-				Nonce:       r.Nonce,
-				AuthTime:    now,
-				AMR:         []string{provider},
-				AccessToken: token.AccessToken,
-			})
-			if err != nil {
-				d.SrvLogger().Error("id token issue failed", "error", err)
-			} else if enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-				resp[core.KeyIDToken] = enc
-				d.RecordIDTokenIssued(ctx, client.ID, r.SubjectID)
-			}
-		}
-	}
+	cibaIssueRefresh(d, ctx, client, r, provider, resp)
+	cibaIssueIDToken(d, ctx, client, r, provider, issuedSub, now, token.AccessToken, resp)
 	d.RecordTokenIssued(ctx, client.ID, strategy, r.SubjectID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), r.SubjectID, client.ID)
 	d.RecordCIBADecision(ctx, client.ID, r.SubjectID, true)
 	_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
 	ctx.JSON(http.StatusOK, resp)
+}
+
+// cibaPollGate runs the pre-issuance gauntlet: store configured, auth_req_id
+// present, lookup (expired_token on miss), client-binding (invalid_grant on
+// mismatch), poll-interval (slow_down), and the status switch. It preserves the
+// slow_down UpdateLastPoll side-effect ordering and the CIBADenied ->
+// Delete + RecordCIBADecision(false) + access_denied path. Returns ok=false
+// (response already written) unless the request is approved and ready to issue.
+func cibaPollGate(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, authReqID string) (*oauth.CIBARequest, time.Time, bool) {
+	var zero time.Time
+	if d.CIBAStore() == nil {
+		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrCIBANotConfigured))
+		return nil, zero, false
+	}
+	if authReqID == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return nil, zero, false
+	}
+	r, err := d.CIBAStore().Get(ctx.Request().Context(), authReqID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
+		return nil, zero, false
+	}
+	if r.ClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, zero, false
+	}
+
+	now := time.Now()
+	if !r.LastPoll.IsZero() && r.Interval > 0 && now.Sub(r.LastPoll) < r.Interval {
+		_ = d.CIBAStore().UpdateLastPoll(ctx.Request().Context(), authReqID, now)
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrSlowDown))
+		return nil, zero, false
+	}
+	_ = d.CIBAStore().UpdateLastPoll(ctx.Request().Context(), authReqID, now)
+
+	switch r.Status {
+	case oauth.CIBADenied:
+		_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
+		d.RecordCIBADecision(ctx, client.ID, r.SubjectID, false)
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAccessDenied))
+		return nil, zero, false
+	case oauth.CIBAApproved:
+		// fall through to issuance below
+	default:
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAuthorizationPending))
+		return nil, zero, false
+	}
+	return r, now, true
+}
+
+// cibaIssueRefresh mints and records the refresh token when a refresh store is
+// configured, mutating resp. Refresh issuance is fail-open: an error is logged
+// and the token simply omitted.
+func cibaIssueRefresh(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, provider string, resp map[string]any) {
+	if d.RefreshTokenStore() == nil {
+		return
+	}
+	rt, err := d.IssueRefreshToken(ctx.Request().Context(),
+		r.SubjectID, client.ID, provider, r.Scopes, nil, "", r.Resources, nil, "", client.RefreshTokenTTL)
+	if err != nil {
+		d.SrvLogger().Error("refresh token issue failed", "error", err)
+		return
+	}
+	resp[core.KeyRefreshToken] = rt
+	d.RecordRefreshTokenIssued(ctx, client.ID, r.SubjectID, false)
+}
+
+// cibaIssueIDToken mints, optionally encrypts, and records the id_token when the
+// openid scope was granted, mutating resp. ID Token issuance is fail-open per
+// RFC 9068: resolution/issue errors are logged and the id_token omitted.
+func cibaIssueIDToken(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, provider, issuedSub string, now time.Time, accessToken string, resp map[string]any) {
+	if !slices.Contains(r.Scopes, core.ScopeOpenID) {
+		return
+	}
+	idIssuer, emit, idErr := d.IDTokenIssuerForClient(client)
+	if idErr != nil {
+		d.SrvLogger().Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
+		return
+	}
+	if !emit {
+		return
+	}
+	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+		Subject:     issuedSub,
+		Audience:    client.ID,
+		Nonce:       r.Nonce,
+		AuthTime:    now,
+		AMR:         []string{provider},
+		AccessToken: accessToken,
+	})
+	if err != nil {
+		d.SrvLogger().Error("id token issue failed", "error", err)
+		return
+	}
+	if enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+		resp[core.KeyIDToken] = enc
+		d.RecordIDTokenIssued(ctx, client.ID, r.SubjectID)
+	}
 }

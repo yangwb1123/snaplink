@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
@@ -21,10 +20,7 @@ func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes
 	now := time.Now()
 	// Per-issuance TTL override (Client.AccessTokenTTL via Subject.TTL)
 	// wins over the issuer default. Matches the Ed25519 issuer.
-	effectiveTTL := j.tokenTTL
-	if subject.TTL > 0 {
-		effectiveTTL = subject.TTL
-	}
+	effectiveTTL := effectiveAccessTTL(subject, j.tokenTTL)
 	expiresAt := now.Add(effectiveTTL)
 
 	// RFC 9068 §2.1: header typ MUST be at+jwt for access tokens.
@@ -39,43 +35,7 @@ func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes
 	// Reuse the Ed25519 issuer's payload shape — the JSON claim set is
 	// algorithm-independent, so RFC 9068 §2.2 claim handling stays
 	// byte-for-byte identical across signers.
-	payload := ed25519Payload{
-		Iss:      j.issuer,
-		Sub:      subject.ID,
-		Exp:      expiresAt.Unix(),
-		Nbf:      now.Unix(),
-		Iat:      now.Unix(),
-		Scope:    strings.Join(scopes, " "),
-		Extra:    subject.Claims,
-		ClientID: subject.ClientID,
-		JTI:      jti,
-		ACR:      subject.ACR,
-		SID:      subject.SID,
-	}
-	if subject.ConfirmationJKT != "" || subject.ConfirmationX5TS256 != "" {
-		payload.CNF = &confirmationClaim{
-			JKT:     subject.ConfirmationJKT,
-			X5TS256: subject.ConfirmationX5TS256,
-		}
-	}
-	if !subject.AuthTime.IsZero() {
-		payload.AuthTime = subject.AuthTime.Unix()
-	}
-	if len(subject.AMR) > 0 {
-		payload.AMR = append([]string(nil), subject.AMR...)
-	}
-	if len(subject.AuthorizationDetails) > 0 {
-		payload.AuthorizationDetails = append(json.RawMessage(nil), subject.AuthorizationDetails...)
-	}
-	if chain := actorChainToWire(subject.Actor); chain != nil {
-		payload.Act = chain
-	}
-	if len(subject.RequestedClaims) > 0 {
-		payload.RequestedClaims = append(json.RawMessage(nil), subject.RequestedClaims...)
-	}
-	if len(subject.Resources) > 0 {
-		payload.Aud = audClaim(append([]string(nil), subject.Resources...))
-	}
+	payload := buildAccessPayload(j.issuer, subject, scopes, jti, now, expiresAt)
 
 	signingInput, err := ecdsaSigningInput(header, payload)
 	if err != nil {

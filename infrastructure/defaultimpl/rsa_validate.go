@@ -28,94 +28,89 @@ func (j *RSAJWTIssuer) Validate(_ context.Context, token string) (*sso.TokenClai
 		return nil, errors.New("rsa: token revoked")
 	}
 
-	// RFC 9068 §4: enforce alg + typ BEFORE signature verification. This
-	// issuer accepts ONLY its configured alg (RS256 xor PS256), so a token
-	// minted with the other RSA padding — or EdDSA / ES256 / `none` — is
-	// rejected here, never reaching the verify path. Strict kid->alg: the
-	// RP can't pick the verification algorithm.
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	h, err := j.parseAndGuardHeader(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("rsa: header decode: %w", err)
+		return nil, err
+	}
+	if err := j.verifyRSASignature(h, parts); err != nil {
+		return nil, err
+	}
+	p, err := j.decodeAndCheckClaims(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	return claimsFromPayload(p), nil
+}
+
+// parseAndGuardHeader base64-decodes + JSON-parses the JWS header and enforces
+// the strict alg match + typ allowlist.
+//
+// RFC 9068 §4: enforce alg + typ BEFORE signature verification. This
+// issuer accepts ONLY its configured alg (RS256 xor PS256), so a token
+// minted with the other RSA padding — or EdDSA / ES256 / `none` — is
+// rejected here, never reaching the verify path. Strict kid->alg: the
+// RP can't pick the verification algorithm.
+func (j *RSAJWTIssuer) parseAndGuardHeader(headerB64 string) (rsaHeader, error) {
+	headerBytes, err := base64.RawURLEncoding.DecodeString(headerB64)
+	if err != nil {
+		return rsaHeader{}, fmt.Errorf("rsa: header decode: %w", err)
 	}
 	var h rsaHeader
 	if err := json.Unmarshal(headerBytes, &h); err != nil {
-		return nil, fmt.Errorf("rsa: header parse: %w", err)
+		return rsaHeader{}, fmt.Errorf("rsa: header parse: %w", err)
 	}
 	if h.Alg != j.alg {
-		return nil, fmt.Errorf("rsa: alg %q not accepted (issuer signs %q)", h.Alg, j.alg)
+		return rsaHeader{}, fmt.Errorf("rsa: alg %q not accepted (issuer signs %q)", h.Alg, j.alg)
 	}
 	if h.Typ != "" {
 		if _, ok := supportedJWTTypes[h.Typ]; !ok {
-			return nil, fmt.Errorf("rsa: typ %q not in allowlist", h.Typ)
+			return rsaHeader{}, fmt.Errorf("rsa: typ %q not in allowlist", h.Typ)
 		}
 	}
+	return h, nil
+}
 
+// verifyRSASignature decodes the signature segment, looks up the verify key by
+// kid, and runs the RS256/PS256 verify (threaded j.alg so the PSS/PKCS1v15
+// selection is unchanged) over the signing input.
+func (j *RSAJWTIssuer) verifyRSASignature(h rsaHeader, parts []string) error {
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("rsa: signature decode: %w", err)
+		return fmt.Errorf("rsa: signature decode: %w", err)
 	}
 	signingInput := parts[0] + "." + parts[1]
 
 	pub := j.lookupVerifyKey(h.Kid)
 	if pub == nil {
-		return nil, errors.New("rsa: unknown kid")
+		return errors.New("rsa: unknown kid")
 	}
 	if !rsaVerifyJWS(pub, []byte(signingInput), sig, j.alg) {
-		return nil, errors.New("rsa: signature invalid")
+		return errors.New("rsa: signature invalid")
 	}
+	return nil
+}
 
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+// decodeAndCheckClaims base64-decodes + JSON-parses the payload and enforces
+// exp/nbf against the issuer's clock skew.
+func (j *RSAJWTIssuer) decodeAndCheckClaims(payloadB64 string) (ed25519Payload, error) {
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
 	if err != nil {
-		return nil, fmt.Errorf("rsa: payload decode: %w", err)
+		return ed25519Payload{}, fmt.Errorf("rsa: payload decode: %w", err)
 	}
 	var p ed25519Payload
 	if err := json.Unmarshal(payloadBytes, &p); err != nil {
-		return nil, fmt.Errorf("rsa: payload parse: %w", err)
+		return ed25519Payload{}, fmt.Errorf("rsa: payload parse: %w", err)
 	}
 
 	now := time.Now().Unix()
 	skew := int64(j.maxClockSkew.Seconds())
 	if p.Exp != 0 && now-skew >= p.Exp {
-		return nil, errors.New("rsa: token expired")
+		return ed25519Payload{}, errors.New("rsa: token expired")
 	}
 	if p.Nbf != 0 && now+skew < p.Nbf {
-		return nil, errors.New("rsa: token not yet valid")
+		return ed25519Payload{}, errors.New("rsa: token not yet valid")
 	}
-
-	claims := &sso.TokenClaims{
-		Subject:   p.Sub,
-		Issuer:    p.Iss,
-		Audience:  []string(p.Aud),
-		ExpiresAt: time.Unix(p.Exp, 0),
-		NotBefore: time.Unix(p.Nbf, 0),
-		IssuedAt:  time.Unix(p.Iat, 0),
-		Extra:     p.Extra,
-		ClientID:  p.ClientID,
-		JTI:       p.JTI,
-		ACR:       p.ACR,
-		AMR:       append([]string(nil), p.AMR...),
-		SID:       p.SID,
-	}
-	if p.CNF != nil {
-		claims.ConfirmationJKT = p.CNF.JKT
-		claims.ConfirmationX5TS256 = p.CNF.X5TS256
-	}
-	if len(p.AuthorizationDetails) > 0 {
-		claims.AuthorizationDetails = append(json.RawMessage(nil), p.AuthorizationDetails...)
-	}
-	if p.AuthTime > 0 {
-		claims.AuthTime = time.Unix(p.AuthTime, 0)
-	}
-	if p.Scope != "" {
-		claims.Scopes = strings.Split(p.Scope, " ")
-	}
-	if chain := wireChainToActor(p.Act); chain != nil {
-		claims.Actor = chain
-	}
-	if len(p.RequestedClaims) > 0 {
-		claims.RequestedClaims = append(json.RawMessage(nil), p.RequestedClaims...)
-	}
-	return claims, nil
+	return p, nil
 }
 
 // rsaVerifyJWS verifies an RS256 (PKCS1v15) or PS256 (PSS) signature over

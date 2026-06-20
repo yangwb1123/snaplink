@@ -30,6 +30,16 @@ type IntrospectDeps interface {
 	VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 }
 
+// introspectRequest is the bound form/JSON body for /token/introspect.
+type introspectRequest struct {
+	Token               string `json:"token"`
+	TokenTypeHint       string `json:"token_type_hint"` // "access_token" | "refresh_token"
+	ClientID            string `json:"client_id"`
+	ClientSecret        string `json:"client_secret"`
+	ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
+	ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+}
+
 // HandleIntrospect implements RFC 7662 OAuth 2.0 Token Introspection.
 // Returns active state + standard metadata claims for a presented
 // access or refresh token. Inactive tokens return {active: false}
@@ -48,14 +58,7 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	var req struct {
-		Token               string `json:"token"`
-		TokenTypeHint       string `json:"token_type_hint"` // "access_token" | "refresh_token"
-		ClientID            string `json:"client_id"`
-		ClientSecret        string `json:"client_secret"`
-		ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
-		ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
-	}
+	var req introspectRequest
 	if err := BindParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
@@ -69,11 +72,40 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 
 	clientStore := d.ClientStoreAccessor()
 
+	// Client auth: the assertion branch and the secret-creds branch both
+	// write the identical 401 invalid_client on failure (oracle-leak
+	// collapse). handled==true means a response was already written.
+	if handled := authenticateIntrospectClient(d, clientStore, ctx, &req); handled {
+		return
+	}
+
+	if req.Token == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+
+	if body, ok := resolveIntrospection(d, ctx, req.Token, req.TokenTypeHint); ok {
+		ctx.JSON(http.StatusOK, body)
+		return
+	}
+
+	// Unknown / expired / revoked → §2.2 mandates {active: false} only.
+	ctx.JSON(http.StatusOK, map[string]any{core.KeyActive: false})
+}
+
+// authenticateIntrospectClient runs the hint-independent client-auth gate
+// for /token/introspect. The RFC 7521/7523 JWT-assertion branch and the
+// secret-creds branch BOTH emit the identical 401 invalid_client on failure
+// — the oracle-leak collapse stays byte-for-byte. A wrong
+// client_assertion_type still yields 400 invalid_request. Returns
+// handled=true when it has already written the response (caller must return
+// immediately); false lets the caller proceed.
+func authenticateIntrospectClient(d IntrospectDeps, clientStore core.ClientStore, ctx core.HandlerContext, req *introspectRequest) (handled bool) {
 	// RFC 7521/7523 JWT bearer client auth on /token/introspect.
 	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
 		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
 			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-			return
+			return true
 		}
 		assertedID, err := d.VerifyJWTClientAssertion(
 			ctx.Request().Context(),
@@ -83,7 +115,7 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		)
 		if err != nil {
 			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return
+			return true
 		}
 		req.ClientID = assertedID
 		// Bypass the secret-based authenticate path entirely: JWT
@@ -94,45 +126,39 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		c, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
 		if err != nil || c == nil || !c.Active || !tenant.ClientOK(ctx, c) {
 			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return
+			return true
 		}
-	} else if err := authenticateIntrospectionClient(clientStore, ctx, req.ClientID, req.ClientSecret); err != nil {
+		return false
+	}
+	if err := authenticateIntrospectionClient(clientStore, ctx, req.ClientID, req.ClientSecret); err != nil {
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-		return
+		return true
 	}
+	return false
+}
 
-	if req.Token == "" {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-		return
+// resolveIntrospection applies the hint-driven try-order and returns the
+// first populated body. Resolution order is hint-driven: when the hint is
+// "refresh_token" try the refresh store first to avoid an unnecessary
+// access-token signature check, but ALWAYS fall back to the other tier so a
+// wrong hint doesn't mark a valid token inactive.
+func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint string) (map[string]any, bool) {
+	if hint == "refresh_token" {
+		if body, ok := introspectRefresh(d.RefreshTokenStore(), ctx, token); ok {
+			return body, true
+		}
+		if body, ok := introspectAccess(d, ctx, token); ok {
+			return body, true
+		}
+		return nil, false
 	}
-
-	// Resolution order is hint-driven: when the hint is
-	// "refresh_token" try the refresh store first to avoid an
-	// unnecessary access-token signature check, but always fall back
-	// to the other tier so a wrong hint doesn't mark a valid token
-	// inactive.
-	if req.TokenTypeHint == "refresh_token" {
-		if body, ok := introspectRefresh(d.RefreshTokenStore(), ctx, req.Token); ok {
-			ctx.JSON(http.StatusOK, body)
-			return
-		}
-		if body, ok := introspectAccess(d, ctx, req.Token); ok {
-			ctx.JSON(http.StatusOK, body)
-			return
-		}
-	} else {
-		if body, ok := introspectAccess(d, ctx, req.Token); ok {
-			ctx.JSON(http.StatusOK, body)
-			return
-		}
-		if body, ok := introspectRefresh(d.RefreshTokenStore(), ctx, req.Token); ok {
-			ctx.JSON(http.StatusOK, body)
-			return
-		}
+	if body, ok := introspectAccess(d, ctx, token); ok {
+		return body, true
 	}
-
-	// Unknown / expired / revoked → §2.2 mandates {active: false} only.
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyActive: false})
+	if body, ok := introspectRefresh(d.RefreshTokenStore(), ctx, token); ok {
+		return body, true
+	}
+	return nil, false
 }
 
 // introspectAccess validates the token as an access token via every
@@ -153,6 +179,15 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 		core.KeyTokenHint: "access_token",
 		core.KeyStrategy:  issuerName,
 	}
+	populateAccessIntrospectionBody(body, claims)
+	return body, true
+}
+
+// populateAccessIntrospectionBody copies the optional RFC 7662 / RFC 9068
+// claims onto an already-active access-token body. Purely additive: it
+// carries NO early-return / auth-gate semantics — the ValidateAnyToken auth
+// gate stays in introspectAccess.
+func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClaims) {
 	if !claims.ExpiresAt.IsZero() {
 		body[core.KeyExp] = claims.ExpiresAt.Unix()
 	}
@@ -193,7 +228,6 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	if len(claims.AMR) > 0 {
 		body[core.KeyAMR] = claims.AMR
 	}
-	return body, true
 }
 
 // introspectRefresh queries the optional RefreshTokenInspector.

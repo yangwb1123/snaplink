@@ -26,108 +26,29 @@ func verifyDPoPProof(
 	maxAge time.Duration,
 	clockSkew time.Duration,
 ) (*DPoPBinding, error) {
+	// Gate ORDER is load-bearing (DENY ladder): header+jwk parse → JWS
+	// verify → payload bind (htm/htu/iat) → nonce → replay → thumbprint.
+	// Each step short-circuits with its own DPoP-shaped error.
 	parts := strings.Split(proof, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("dpop: malformed proof JWT")
 	}
-	hraw, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("dpop: header decode: %w", err)
-	}
-	var h struct {
-		Typ string          `json:"typ"`
-		JWK json.RawMessage `json:"jwk"`
-	}
-	if err := json.Unmarshal(hraw, &h); err != nil {
-		return nil, fmt.Errorf("dpop: header parse: %w", err)
-	}
-	if h.Typ != dpopProofTyp {
-		return nil, fmt.Errorf("dpop: typ %q not %q", h.Typ, dpopProofTyp)
-	}
-	if len(h.JWK) == 0 {
-		return nil, errors.New("dpop: header missing jwk")
-	}
-	// The DPoP proof carries its OWN ephemeral public key in the header
-	// `jwk` (unlike JAR / private_key_jwt, which verify against the
-	// client's REGISTERED JWKS). Parse it into a core.JWK so the SAME
-	// alg-confusion-safe verifier checks it: alg gated against the
-	// asymmetric allowlist BEFORE verify, kty/crv↔alg consistency (an
-	// EC jwk with alg=RS256, or alg=none/HS*, fails closed), EC
-	// on-curve, RSA>=2048. The proof JWK has no kid; passed as the sole
-	// key, VerifyCompactJWS selects it for the empty-kid case.
-	proofJWK, err := parseDPoPHeaderJWK(h.JWK)
+	proofJWK, err := parseDPoPProofHeader(parts[0])
 	if err != nil {
 		return nil, err
 	}
 	if _, err := security.VerifyCompactJWS(proof, []JWK{proofJWK}, security.AsymmetricJWSAlgs()); err != nil {
 		return nil, fmt.Errorf("dpop: %w", err)
 	}
-	praw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	p, err := parseAndCheckDPoPPayload(parts[1], requestMethod, requestURL, maxAge, clockSkew)
 	if err != nil {
-		return nil, fmt.Errorf("dpop: payload decode: %w", err)
+		return nil, err
 	}
-	var p struct {
-		HTM   string `json:"htm"`
-		HTU   string `json:"htu"`
-		IAT   int64  `json:"iat"`
-		JTI   string `json:"jti"`
-		Nonce string `json:"nonce,omitempty"`
+	if err := enforceDPoPNonce(nonceProvider, p.Nonce); err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(praw, &p); err != nil {
-		return nil, fmt.Errorf("dpop: payload parse: %w", err)
-	}
-	if !strings.EqualFold(p.HTM, requestMethod) {
-		return nil, fmt.Errorf("dpop: htm %q != request method %q", p.HTM, requestMethod)
-	}
-	if normalizeDPoPHTU(p.HTU) != normalizeDPoPHTU(requestURL) {
-		return nil, fmt.Errorf("dpop: htu %q != request URL %q", p.HTU, requestURL)
-	}
-	now := time.Now().Unix()
-	if p.IAT == 0 {
-		return nil, errors.New("dpop: missing iat")
-	}
-	if p.IAT > now+int64(clockSkew.Seconds()) {
-		return nil, errors.New("dpop: iat in the future beyond clock skew")
-	}
-	if p.IAT < now-int64(maxAge.Seconds()) {
-		return nil, errors.New("dpop: proof too old")
-	}
-	if p.JTI == "" {
-		return nil, errors.New("dpop: missing jti")
-	}
-	// RFC 9449 §8 — when a nonce provider is wired, the proof MUST
-	// carry a `nonce` claim that Verify accepts. A missing or invalid
-	// nonce returns the ErrDPoPNonceRequired sentinel so handlers
-	// can stamp a fresh `DPoP-Nonce` header and respond with
-	// `use_dpop_nonce`. We do NOT distinguish missing-vs-invalid on
-	// the wire — both shapes look identical to the client, who just
-	// reads the new nonce header and retries.
-	if nonceProvider != nil {
-		if p.Nonce == "" {
-			return nil, ErrDPoPNonceRequired
-		}
-		if err := nonceProvider.Verify(p.Nonce); err != nil {
-			return nil, ErrDPoPNonceRequired
-		}
-	}
-	// Replay defense — when wired, refuse a second sighting of the
-	// same jti within the proof's max age. Without a store the
-	// iat-window check is the only protection (acceptable for
-	// single-replica deployments; production should wire the
-	// store).
-	if replay != nil {
-		first, err := replay.MarkSeen(ctx, "dpop:"+p.JTI, time.Now().Add(maxAge))
-		switch {
-		case err != nil:
-			// Store error — default fail-OPEN (continue). Fail-CLOSED
-			// (opt-in) rejects with the detected-replay error so the
-			// wire shape is identical (no store-health oracle).
-			if replayFailClosed {
-				return nil, errors.New("dpop: jti replay detected")
-			}
-		case !first:
-			return nil, errors.New("dpop: jti replay detected")
-		}
+	if err := enforceDPoPReplay(ctx, replay, replayFailClosed, p.JTI, maxAge); err != nil {
+		return nil, err
 	}
 
 	jkt, err := jwkThumbprintRFC7638(proofJWK)
@@ -135,6 +56,137 @@ func verifyDPoPProof(
 		return nil, fmt.Errorf("dpop: thumbprint: %w", err)
 	}
 	return &DPoPBinding{JKT: jkt}, nil
+}
+
+// parseDPoPProofHeader decodes the first JWS segment, enforces the DPoP
+// proof `typ`, and parses the embedded ephemeral `jwk` into a core.JWK.
+//
+// The DPoP proof carries its OWN ephemeral public key in the header `jwk`
+// (unlike JAR / private_key_jwt, which verify against the client's
+// REGISTERED JWKS). Parsing it into a core.JWK lets the SAME
+// alg-confusion-safe verifier check it: alg gated against the asymmetric
+// allowlist BEFORE verify, kty/crv↔alg consistency (an EC jwk with
+// alg=RS256, or alg=none/HS*, fails closed), EC on-curve, RSA>=2048. The
+// proof JWK has no kid; passed as the sole key, VerifyCompactJWS selects
+// it for the empty-kid case.
+func parseDPoPProofHeader(headerSegment string) (JWK, error) {
+	hraw, err := base64.RawURLEncoding.DecodeString(headerSegment)
+	if err != nil {
+		return JWK{}, fmt.Errorf("dpop: header decode: %w", err)
+	}
+	var h struct {
+		Typ string          `json:"typ"`
+		JWK json.RawMessage `json:"jwk"`
+	}
+	if err := json.Unmarshal(hraw, &h); err != nil {
+		return JWK{}, fmt.Errorf("dpop: header parse: %w", err)
+	}
+	if h.Typ != dpopProofTyp {
+		return JWK{}, fmt.Errorf("dpop: typ %q not %q", h.Typ, dpopProofTyp)
+	}
+	if len(h.JWK) == 0 {
+		return JWK{}, errors.New("dpop: header missing jwk")
+	}
+	return parseDPoPHeaderJWK(h.JWK)
+}
+
+// dpopProofPayload mirrors the RFC 9449 §4.2 proof claims this verifier
+// binds against the live request.
+type dpopProofPayload struct {
+	HTM   string `json:"htm"`
+	HTU   string `json:"htu"`
+	IAT   int64  `json:"iat"`
+	JTI   string `json:"jti"`
+	Nonce string `json:"nonce,omitempty"`
+}
+
+// parseAndCheckDPoPPayload decodes the second JWS segment and binds the
+// proof to the live request: htm == method, normalized htu == URL, iat
+// present and within [now-maxAge, now+clockSkew], and a non-empty jti.
+// Each failure keeps its original DPoP-shaped error verbatim.
+func parseAndCheckDPoPPayload(
+	payloadSegment string,
+	requestMethod string,
+	requestURL string,
+	maxAge time.Duration,
+	clockSkew time.Duration,
+) (dpopProofPayload, error) {
+	praw, err := base64.RawURLEncoding.DecodeString(payloadSegment)
+	if err != nil {
+		return dpopProofPayload{}, fmt.Errorf("dpop: payload decode: %w", err)
+	}
+	var p dpopProofPayload
+	if err := json.Unmarshal(praw, &p); err != nil {
+		return dpopProofPayload{}, fmt.Errorf("dpop: payload parse: %w", err)
+	}
+	if !strings.EqualFold(p.HTM, requestMethod) {
+		return dpopProofPayload{}, fmt.Errorf("dpop: htm %q != request method %q", p.HTM, requestMethod)
+	}
+	if normalizeDPoPHTU(p.HTU) != normalizeDPoPHTU(requestURL) {
+		return dpopProofPayload{}, fmt.Errorf("dpop: htu %q != request URL %q", p.HTU, requestURL)
+	}
+	now := time.Now().Unix()
+	if p.IAT == 0 {
+		return dpopProofPayload{}, errors.New("dpop: missing iat")
+	}
+	if p.IAT > now+int64(clockSkew.Seconds()) {
+		return dpopProofPayload{}, errors.New("dpop: iat in the future beyond clock skew")
+	}
+	if p.IAT < now-int64(maxAge.Seconds()) {
+		return dpopProofPayload{}, errors.New("dpop: proof too old")
+	}
+	if p.JTI == "" {
+		return dpopProofPayload{}, errors.New("dpop: missing jti")
+	}
+	return p, nil
+}
+
+// enforceDPoPNonce applies RFC 9449 §8 — when a nonce provider is wired,
+// the proof MUST carry a `nonce` claim that Verify accepts. A missing or
+// invalid nonce returns the ErrDPoPNonceRequired sentinel so handlers can
+// stamp a fresh `DPoP-Nonce` header and respond with `use_dpop_nonce`. We
+// do NOT distinguish missing-vs-invalid on the wire — both shapes look
+// identical to the client, who just reads the new nonce header and retries.
+func enforceDPoPNonce(nonceProvider DPoPNonceProvider, nonce string) error {
+	if nonceProvider == nil {
+		return nil
+	}
+	if nonce == "" {
+		return ErrDPoPNonceRequired
+	}
+	if err := nonceProvider.Verify(nonce); err != nil {
+		return ErrDPoPNonceRequired
+	}
+	return nil
+}
+
+// enforceDPoPReplay applies replay defense — when wired, refuse a second
+// sighting of the same jti within the proof's max age. Without a store the
+// iat-window check is the only protection (acceptable for single-replica
+// deployments; production should wire the store).
+func enforceDPoPReplay(
+	ctx context.Context,
+	replay security.JTIReplayStore,
+	replayFailClosed bool,
+	jti string,
+	maxAge time.Duration,
+) error {
+	if replay == nil {
+		return nil
+	}
+	first, err := replay.MarkSeen(ctx, "dpop:"+jti, time.Now().Add(maxAge))
+	switch {
+	case err != nil:
+		// Store error — default fail-OPEN (continue). Fail-CLOSED
+		// (opt-in) rejects with the detected-replay error so the
+		// wire shape is identical (no store-health oracle).
+		if replayFailClosed {
+			return errors.New("dpop: jti replay detected")
+		}
+	case !first:
+		return errors.New("dpop: jti replay detected")
+	}
+	return nil
 }
 
 // parseDPoPHeaderJWK decodes the DPoP proof header's `jwk` member into a

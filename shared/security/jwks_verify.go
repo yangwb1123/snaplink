@@ -70,18 +70,64 @@ const (
 // callers that must avoid an oracle (token-exchange) collapse ALL of
 // them into one opaque response.
 func VerifyCompactJWS(compact string, keys []core.JWK, allowedAlgs map[string]struct{}) ([]byte, error) {
+	if err := validateAlgAllowlist(allowedAlgs); err != nil {
+		return nil, err
+	}
+
+	payloadSeg, sigSeg, signingInput, headerSeg, err := splitCompactJWS(compact)
+	if err != nil {
+		return nil, err
+	}
+
+	alg, kid, err := parseJWSHeaderAlgKid(headerSeg, allowedAlgs)
+	if err != nil {
+		return nil, err
+	}
+
+	sig, err := base64.RawURLEncoding.DecodeString(sigSeg)
+	if err != nil {
+		return nil, fmt.Errorf("jws: signature decode: %w", err)
+	}
+
+	jwk, err := selectVerifyJWK(keys, kid)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyJWSWithJWK(alg, jwk, signingInput, sig); err != nil {
+		return nil, err
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(payloadSeg)
+	if err != nil {
+		return nil, fmt.Errorf("jws: payload decode: %w", err)
+	}
+	return payload, nil
+}
+
+// validateAlgAllowlist rejects an empty allowlist and any non-asymmetric
+// (symmetric / none) alg in it BEFORE any token parsing — refusing to
+// operate with an allowlist that could enable the public-key-as-HMAC
+// confusion attack rather than silently honoring it.
+func validateAlgAllowlist(allowedAlgs map[string]struct{}) error {
 	if len(allowedAlgs) == 0 {
-		return nil, errors.New("jws: empty alg allowlist")
+		return errors.New("jws: empty alg allowlist")
 	}
 	for alg := range allowedAlgs {
 		// A symmetric alg in the allowlist would let an attacker forge a
 		// token using a PUBLIC key as the HMAC secret. Refuse to operate
 		// with such an allowlist at all rather than silently honor it.
 		if !isAsymmetricJWSAlg(alg) {
-			return nil, fmt.Errorf("jws: non-asymmetric alg %q forbidden in allowlist", alg)
+			return fmt.Errorf("jws: non-asymmetric alg %q forbidden in allowlist", alg)
 		}
 	}
+	return nil
+}
 
+// splitCompactJWS scans the 3-segment compact JWS, validating it has exactly
+// two dots with a non-empty signature segment. Returns the payload segment,
+// signature segment, the signing input (header.payload bytes), and the header
+// segment.
+func splitCompactJWS(compact string) (payloadSeg, sigSeg string, signingInput []byte, headerSeg string, err error) {
 	dot1, dot2 := -1, -1
 	for i := 0; i < len(compact); i++ {
 		if compact[i] != '.' {
@@ -93,53 +139,42 @@ func VerifyCompactJWS(compact string, keys []core.JWK, allowedAlgs map[string]st
 		case dot2 < 0:
 			dot2 = i
 		default:
-			return nil, errors.New("jws: not a 3-segment compact JWS")
+			return "", "", nil, "", errors.New("jws: not a 3-segment compact JWS")
 		}
 	}
 	if dot1 < 0 || dot2 < 0 || dot2 == len(compact)-1 {
-		return nil, errors.New("jws: not a 3-segment compact JWS")
+		return "", "", nil, "", errors.New("jws: not a 3-segment compact JWS")
 	}
-	headerSeg := compact[:dot1]
-	payloadSeg := compact[dot1+1 : dot2]
-	sigSeg := compact[dot2+1:]
-	signingInput := []byte(compact[:dot2])
+	headerSeg = compact[:dot1]
+	payloadSeg = compact[dot1+1 : dot2]
+	sigSeg = compact[dot2+1:]
+	signingInput = []byte(compact[:dot2])
+	return payloadSeg, sigSeg, signingInput, headerSeg, nil
+}
 
+// parseJWSHeaderAlgKid base64url-decodes the header, unmarshals {alg,kid},
+// and applies the allowlist gate BEFORE any signature verification (RFC 9068
+// §4 discipline). `alg: none` lands here and is rejected because "none" is
+// never in the asymmetric allowlist.
+func parseJWSHeaderAlgKid(headerSeg string, allowedAlgs map[string]struct{}) (alg, kid string, err error) {
 	headerBytes, err := base64.RawURLEncoding.DecodeString(headerSeg)
 	if err != nil {
-		return nil, fmt.Errorf("jws: header decode: %w", err)
+		return "", "", fmt.Errorf("jws: header decode: %w", err)
 	}
 	var h struct {
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
 	}
 	if err := json.Unmarshal(headerBytes, &h); err != nil {
-		return nil, fmt.Errorf("jws: header parse: %w", err)
+		return "", "", fmt.Errorf("jws: header parse: %w", err)
 	}
 	// alg gate BEFORE any signature verification (RFC 9068 §4 discipline).
 	// `alg: none` lands here and is rejected because "none" is never in
 	// the asymmetric allowlist.
 	if _, ok := allowedAlgs[h.Alg]; !ok {
-		return nil, fmt.Errorf("jws: alg %q not in allowlist", h.Alg)
+		return "", "", fmt.Errorf("jws: alg %q not in allowlist", h.Alg)
 	}
-
-	sig, err := base64.RawURLEncoding.DecodeString(sigSeg)
-	if err != nil {
-		return nil, fmt.Errorf("jws: signature decode: %w", err)
-	}
-
-	jwk, err := selectVerifyJWK(keys, h.Kid)
-	if err != nil {
-		return nil, err
-	}
-	if err := verifyJWSWithJWK(h.Alg, jwk, signingInput, sig); err != nil {
-		return nil, err
-	}
-
-	payload, err := base64.RawURLEncoding.DecodeString(payloadSeg)
-	if err != nil {
-		return nil, fmt.Errorf("jws: payload decode: %w", err)
-	}
-	return payload, nil
+	return h.Alg, h.Kid, nil
 }
 
 // selectVerifyJWK resolves the verification key by kid. Empty kid is
@@ -168,72 +203,84 @@ func selectVerifyJWK(keys []core.JWK, kid string) (core.JWK, error) {
 func verifyJWSWithJWK(alg string, jwk core.JWK, signingInput, sig []byte) error {
 	switch alg {
 	case jwsAlgEdDSA:
-		pub, err := ed25519PublicFromJWK(jwk)
-		if err != nil {
-			return err
-		}
-		if !ed25519.Verify(pub, signingInput, sig) {
-			return errors.New("jws: EdDSA signature invalid")
-		}
-		return nil
-
+		return verifyEdDSA(jwk, signingInput, sig)
 	case jwsAlgES256, jwsAlgES384, jwsAlgES512:
-		pub, coordBytes, err := ecdsaPublicFromJWK(alg, jwk)
-		if err != nil {
-			return err
-		}
-		// JWS ES* signatures are the fixed-width R||S concatenation (RFC
-		// 7518 §3.4), NOT ASN.1 DER. Reject any other length so a DER
-		// signature is never silently accepted.
-		if len(sig) != 2*coordBytes {
-			return errors.New("jws: ES signature wrong length")
-		}
-		digest := digestOf(alg, signingInput)
-		r := new(big.Int).SetBytes(sig[:coordBytes])
-		s := new(big.Int).SetBytes(sig[coordBytes:])
-		if !ecdsa.Verify(pub, digest, r, s) {
-			return errors.New("jws: ES signature invalid")
-		}
-		return nil
-
+		return verifyECDSA(alg, jwk, signingInput, sig)
 	case jwsAlgRS256, jwsAlgRS384, jwsAlgRS512:
-		pub, err := rsaPublicFromJWK(jwk)
-		if err != nil {
-			return err
-		}
-		hash := hashForAlg(alg)
-		if err := rsa.VerifyPKCS1v15(pub, hash, digestOf(alg, signingInput), sig); err != nil {
-			return errors.New("jws: RS signature invalid")
-		}
-		return nil
-
+		return verifyRSAPKCS1v15(alg, jwk, signingInput, sig)
 	case jwsAlgPS256, jwsAlgPS384, jwsAlgPS512:
-		pub, err := rsaPublicFromJWK(jwk)
-		if err != nil {
-			return err
-		}
-		hash := hashForAlg(alg)
-		// Interop: standard PS256 signers (go-jose / golang-jwt, and thus
-		// SPIRE) sign with the MAXIMUM salt (PSSSaltLengthAuto = (keyBits-1)/8
-		// - hashLen - 2, e.g. 222 bytes for RSA-2048/SHA-256), NOT the
-		// hash-length salt. Verifying with PSSSaltLengthEqualsHash would
-		// reject every such valid SVID. PSSSaltLengthAuto on the VERIFY side
-		// auto-detects the salt length present in the signature, accepting the
-		// full RFC 7518 §3.5 valid range. This is verification-only; any
-		// signing path keeps its own salt choice.
-		if err := rsa.VerifyPSS(pub, hash, digestOf(alg, signingInput), sig, &rsa.PSSOptions{
-			SaltLength: rsa.PSSSaltLengthAuto,
-			Hash:       hash,
-		}); err != nil {
-			return errors.New("jws: PS signature invalid")
-		}
-		return nil
-
+		return verifyRSAPSS(alg, jwk, signingInput, sig)
 	default:
 		// Unreachable: the allowlist gate already rejected anything else.
 		// Kept as a fail-closed backstop.
 		return fmt.Errorf("jws: unsupported alg %q", alg)
 	}
+}
+
+func verifyEdDSA(jwk core.JWK, signingInput, sig []byte) error {
+	pub, err := ed25519PublicFromJWK(jwk)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(pub, signingInput, sig) {
+		return errors.New("jws: EdDSA signature invalid")
+	}
+	return nil
+}
+
+func verifyECDSA(alg string, jwk core.JWK, signingInput, sig []byte) error {
+	pub, coordBytes, err := ecdsaPublicFromJWK(alg, jwk)
+	if err != nil {
+		return err
+	}
+	// JWS ES* signatures are the fixed-width R||S concatenation (RFC
+	// 7518 §3.4), NOT ASN.1 DER. Reject any other length so a DER
+	// signature is never silently accepted.
+	if len(sig) != 2*coordBytes {
+		return errors.New("jws: ES signature wrong length")
+	}
+	digest := digestOf(alg, signingInput)
+	r := new(big.Int).SetBytes(sig[:coordBytes])
+	s := new(big.Int).SetBytes(sig[coordBytes:])
+	if !ecdsa.Verify(pub, digest, r, s) {
+		return errors.New("jws: ES signature invalid")
+	}
+	return nil
+}
+
+func verifyRSAPKCS1v15(alg string, jwk core.JWK, signingInput, sig []byte) error {
+	pub, err := rsaPublicFromJWK(jwk)
+	if err != nil {
+		return err
+	}
+	hash := hashForAlg(alg)
+	if err := rsa.VerifyPKCS1v15(pub, hash, digestOf(alg, signingInput), sig); err != nil {
+		return errors.New("jws: RS signature invalid")
+	}
+	return nil
+}
+
+func verifyRSAPSS(alg string, jwk core.JWK, signingInput, sig []byte) error {
+	pub, err := rsaPublicFromJWK(jwk)
+	if err != nil {
+		return err
+	}
+	hash := hashForAlg(alg)
+	// Interop: standard PS256 signers (go-jose / golang-jwt, and thus
+	// SPIRE) sign with the MAXIMUM salt (PSSSaltLengthAuto = (keyBits-1)/8
+	// - hashLen - 2, e.g. 222 bytes for RSA-2048/SHA-256), NOT the
+	// hash-length salt. Verifying with PSSSaltLengthEqualsHash would
+	// reject every such valid SVID. PSSSaltLengthAuto on the VERIFY side
+	// auto-detects the salt length present in the signature, accepting the
+	// full RFC 7518 §3.5 valid range. This is verification-only; any
+	// signing path keeps its own salt choice.
+	if err := rsa.VerifyPSS(pub, hash, digestOf(alg, signingInput), sig, &rsa.PSSOptions{
+		SaltLength: rsa.PSSSaltLengthAuto,
+		Hash:       hash,
+	}); err != nil {
+		return errors.New("jws: PS signature invalid")
+	}
+	return nil
 }
 
 // --- JWK → public key decoders (RFC 7518 §6) ---

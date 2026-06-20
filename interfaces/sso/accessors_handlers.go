@@ -156,83 +156,106 @@ func (s *Server) TOTPEnroller() core.TOTPEnroller { return s.totpEnroller }
 // NewMFAFactorID mints a random opaque factor id (same generator as login MFA challenges).
 func (s *Server) NewMFAFactorID() (string, error) { return newMFAChallengeID() }
 
-// BuildHandlerDeps populates handler.ServerDeps from Server fields.
+// BuildHandlerDeps populates handler.ServerDeps from Server fields. The 66
+// fields are assigned across three focused populate helpers (stores ->
+// subsystems -> server-method callbacks) purely to stay under the per-function
+// budget; the resulting struct is byte-identical to the original composite
+// literal (field assignment order is irrelevant — no field depends on another).
 func (s *Server) BuildHandlerDeps() *handler.ServerDeps {
-	return &handler.ServerDeps{
-		Logger:                         s.logger,
-		Auditor:                        s.auditor,
-		Metrics:                        s.metrics,
-		Permissions:                    s.permissions,
-		AnomalyRunner:                  s.anomalyRunner,
-		ClientStore:                    s.clientStore,
-		UserProvider:                   s.userProvider,
-		SessionMgr:                     s.sessionMgr,
-		ConsentStore:                   s.consentStore,
-		TenantUserStore:                s.tenantUserStore,
-		DeviceSecretStore:              s.deviceSecretStore,
-		AuthCodeStore:                  s.authCodeStore,
-		AuthCodeTTL:                    s.authCodeTTL,
-		RefreshTokenStore:              s.refreshTokenStore,
-		RefreshTokenTTL:                s.refreshTokenTTL,
-		DeviceCodeStore:                s.deviceCodeStore,
-		DeviceCodeTTL:                  s.deviceCodeTTL,
-		DeviceCodeInterval:             s.deviceCodeInterval,
-		DeviceVerifyBaseURL:            s.deviceVerifyBaseURL,
-		PARStore:                       s.parStore,
-		PARTTL:                         s.parTTL,
-		CIBAStore:                      s.cibaStore,
-		CIBARequestTTL:                 s.cibaRequestTTL,
-		CIBAPollInterval:               s.cibaPollInterval,
-		DCRPolicy:                      s.dcrPolicy,
-		TokenIssuers:                   s.tokenIssuers,
-		IDTokenIssuer:                  s.idTokenIssuer,
-		JARMSigner:                     s.jarmSigner,
-		AccountLockout:                 s.accountLockout,
-		JTIReplayStore:                 s.jtiReplayStore,
-		JTIReplayFailClosed:            s.jtiReplayFailClosed,
-		JARFetcher:                     s.jarFetcher,
-		JARDecrypter:                   s.jarDecrypter,
-		PairwiseStore:                  s.pairwiseStore,
-		SubjectClientIndex:             s.subjectClientIndex,
-		MFAProvider:                    s.mfaProvider,
-		MFAChallengeStore:              s.mfaChallengeStore,
-		MFAChallengeTTL:                s.mfaChallengeTTL,
-		OAuth21Strict:                  s.oauth21Strict,
-		EmbedPermissions:               s.embedPermissions,
-		FAPIValidator:                  s.fapiValidator,
-		ScopeDescriptions:              s.scopeDescriptions,
-		ConnectionStore:                s.connectionStore,
-		BackchannelLogoutMaxConcurrent: s.backchannelLogoutMaxConcurrent,
-		AllowDynamicClientRegistration: s.dcrPolicy != nil,
-		Issuer:                         s.issuer,
-		SupportedSigningAlgs:           s.supportedSigningAlgs,
-		CrossReplicaRevocation:         s.crossReplicaRevocation,
-		InvalidationBus:                s.invalidationBus,
-		AuthzErrorBody:                 s.authzErrorBody,
-		AuthzErrorBodyDesc:             s.authzErrorBodyDesc,
-		ResolveIssuer:                  s.resolveIssuer,
-		RecordLoginFailure:             s.recordLoginFailure,
-		RecordLoginSuccess:             s.recordLoginSuccess,
-		RecordTokenIssued:              s.recordTokenIssued,
-		RecordLogout:                   s.recordLogout,
-		RecordIDTokenIssued:            s.recordIDTokenIssued,
-		RecordRefreshTokenIssued:       s.recordRefreshTokenIssued,
-		MeSubjectOrChallenge:           s.meSubjectOrChallenge,
-		LogErrorCtx:                    s.logErrorCtx,
-		RevokeAcrossIssuers:            s.revokeAcrossIssuers,
-		ValidateToken:                  s.ValidateToken,
-		RecordTenantLoginAttempt:       s.recordTenantLoginAttempt,
-		RecordTenantTokenIssued:        s.recordTenantTokenIssued,
-		ReadyChecks: func() map[string]func(ctx context.Context) error {
-			m := make(map[string]func(ctx context.Context) error)
-			for _, rc := range s.readyChecks {
-				m[rc.Name] = rc.Check
-			}
-			return m
-		},
-		StorageHealthSources: func() []handler.StorageHealthSource {
-			return s.storageHealthSources
-		},
+	d := &handler.ServerDeps{}
+	s.populateHandlerDepsStores(d)
+	s.populateHandlerDepsSubsystems(d)
+	s.populateHandlerDepsCallbacks(d)
+	return d
+}
+
+// populateHandlerDepsStores assigns the logging/audit/metrics handles, the
+// credential/session stores, and their TTLs/intervals.
+func (s *Server) populateHandlerDepsStores(d *handler.ServerDeps) {
+	d.Logger = s.logger
+	d.Auditor = s.auditor
+	d.Metrics = s.metrics
+	d.Permissions = s.permissions
+	d.AnomalyRunner = s.anomalyRunner
+	d.ClientStore = s.clientStore
+	d.UserProvider = s.userProvider
+	d.SessionMgr = s.sessionMgr
+	d.ConsentStore = s.consentStore
+	d.TenantUserStore = s.tenantUserStore
+	d.DeviceSecretStore = s.deviceSecretStore
+	d.AuthCodeStore = s.authCodeStore
+	d.AuthCodeTTL = s.authCodeTTL
+	d.RefreshTokenStore = s.refreshTokenStore
+	d.RefreshTokenTTL = s.refreshTokenTTL
+	d.DeviceCodeStore = s.deviceCodeStore
+	d.DeviceCodeTTL = s.deviceCodeTTL
+	d.DeviceCodeInterval = s.deviceCodeInterval
+	d.DeviceVerifyBaseURL = s.deviceVerifyBaseURL
+	d.PARStore = s.parStore
+	d.PARTTL = s.parTTL
+	d.CIBAStore = s.cibaStore
+	d.CIBARequestTTL = s.cibaRequestTTL
+	d.CIBAPollInterval = s.cibaPollInterval
+	d.DCRPolicy = s.dcrPolicy
+}
+
+// populateHandlerDepsSubsystems assigns the issuers, lockout/replay/JAR/pairwise
+// security primitives, MFA, FAPI, the feature flags, and cluster wiring.
+func (s *Server) populateHandlerDepsSubsystems(d *handler.ServerDeps) {
+	d.TokenIssuers = s.tokenIssuers
+	d.IDTokenIssuer = s.idTokenIssuer
+	d.JARMSigner = s.jarmSigner
+	d.AccountLockout = s.accountLockout
+	d.JTIReplayStore = s.jtiReplayStore
+	d.JTIReplayFailClosed = s.jtiReplayFailClosed
+	d.JARFetcher = s.jarFetcher
+	d.JARDecrypter = s.jarDecrypter
+	d.PairwiseStore = s.pairwiseStore
+	d.SubjectClientIndex = s.subjectClientIndex
+	d.MFAProvider = s.mfaProvider
+	d.MFAChallengeStore = s.mfaChallengeStore
+	d.MFAChallengeTTL = s.mfaChallengeTTL
+	d.OAuth21Strict = s.oauth21Strict
+	d.EmbedPermissions = s.embedPermissions
+	d.FAPIValidator = s.fapiValidator
+	d.ScopeDescriptions = s.scopeDescriptions
+	d.ConnectionStore = s.connectionStore
+	d.BackchannelLogoutMaxConcurrent = s.backchannelLogoutMaxConcurrent
+	d.AllowDynamicClientRegistration = s.dcrPolicy != nil
+	d.Issuer = s.issuer
+	d.SupportedSigningAlgs = s.supportedSigningAlgs
+	d.CrossReplicaRevocation = s.crossReplicaRevocation
+	d.InvalidationBus = s.invalidationBus
+}
+
+// populateHandlerDepsCallbacks assigns the server-method closures the extracted
+// handlers call back into (authz error bodies, issuer resolution, audit
+// recorders, token validation, ready/storage-health probes).
+func (s *Server) populateHandlerDepsCallbacks(d *handler.ServerDeps) {
+	d.AuthzErrorBody = s.authzErrorBody
+	d.AuthzErrorBodyDesc = s.authzErrorBodyDesc
+	d.ResolveIssuer = s.resolveIssuer
+	d.RecordLoginFailure = s.recordLoginFailure
+	d.RecordLoginSuccess = s.recordLoginSuccess
+	d.RecordTokenIssued = s.recordTokenIssued
+	d.RecordLogout = s.recordLogout
+	d.RecordIDTokenIssued = s.recordIDTokenIssued
+	d.RecordRefreshTokenIssued = s.recordRefreshTokenIssued
+	d.MeSubjectOrChallenge = s.meSubjectOrChallenge
+	d.LogErrorCtx = s.logErrorCtx
+	d.RevokeAcrossIssuers = s.revokeAcrossIssuers
+	d.ValidateToken = s.ValidateToken
+	d.RecordTenantLoginAttempt = s.recordTenantLoginAttempt
+	d.RecordTenantTokenIssued = s.recordTenantTokenIssued
+	d.ReadyChecks = func() map[string]func(ctx context.Context) error {
+		m := make(map[string]func(ctx context.Context) error)
+		for _, rc := range s.readyChecks {
+			m[rc.Name] = rc.Check
+		}
+		return m
+	}
+	d.StorageHealthSources = func() []handler.StorageHealthSource {
+		return s.storageHealthSources
 	}
 }
 

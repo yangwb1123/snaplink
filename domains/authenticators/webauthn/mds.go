@@ -110,22 +110,9 @@ func BuildMDSProvider(src MDSSource) (metadata.Provider, error) {
 		return nil, err
 	}
 
-	// The decoder JWS-verifies the blob's x5c chain to the root. Default root
-	// = go-webauthn's built-in FIDO ProductionMDSRoot; CustomRootPEM swaps it
-	// for a test/non-prod root. WithIgnoreEntryParsingErrors lets the decode
-	// tolerate individual malformed entries (the production MDS occasionally
-	// carries entries this library version can't fully parse) WITHOUT
-	// dropping the whole blob — the chain signature is still verified, so the
-	// security property (root-validated metadata) holds; a single unparseable
-	// authenticator entry just isn't in the lookup set.
-	var dopts []metadata.DecoderOption
-	dopts = append(dopts, metadata.WithIgnoreEntryParsingErrors())
-	if root := strings.TrimSpace(src.CustomRootPEM); root != "" {
-		dopts = append(dopts, metadata.WithRootCertificate(root))
-	}
-	decoder, err := metadata.NewDecoder(dopts...)
+	decoder, err := buildMDSDecoder(src)
 	if err != nil {
-		return nil, fmt.Errorf("webauthn: build MDS decoder: %w", err)
+		return nil, err
 	}
 
 	// DecodeBytes verifies the JWS signature + chain — a tampered or
@@ -151,6 +138,27 @@ func BuildMDSProvider(src MDSSource) (metadata.Provider, error) {
 		return nil, fmt.Errorf("webauthn: build MDS provider: %w", err)
 	}
 	return provider, nil
+}
+
+// buildMDSDecoder constructs the metadata decoder that JWS-verifies the blob's
+// x5c chain to the root. Default root = go-webauthn's built-in FIDO
+// ProductionMDSRoot; CustomRootPEM swaps it for a test/non-prod root.
+// WithIgnoreEntryParsingErrors lets the decode tolerate individual malformed
+// entries (the production MDS occasionally carries entries this library version
+// can't fully parse) WITHOUT dropping the whole blob — the chain signature is
+// still verified, so the security property (root-validated metadata) holds; a
+// single unparseable authenticator entry just isn't in the lookup set.
+func buildMDSDecoder(src MDSSource) (*metadata.Decoder, error) {
+	var dopts []metadata.DecoderOption
+	dopts = append(dopts, metadata.WithIgnoreEntryParsingErrors())
+	if root := strings.TrimSpace(src.CustomRootPEM); root != "" {
+		dopts = append(dopts, metadata.WithRootCertificate(root))
+	}
+	decoder, err := metadata.NewDecoder(dopts...)
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: build MDS decoder: %w", err)
+	}
+	return decoder, nil
 }
 
 // loadMDSBlob returns the raw blob bytes from the configured source (file or

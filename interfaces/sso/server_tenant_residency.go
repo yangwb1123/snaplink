@@ -28,13 +28,11 @@ func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaim
 		// Unknown client or unbound client — nothing to gate on.
 		return nil
 	}
-	if s.tenantSuspensionCache != nil {
-		if suspended, fresh := s.tenantSuspensionCache.get(client.TenantID); fresh {
-			if suspended {
-				return ErrTenantSuspended
-			}
-			return nil
+	if suspended, decided := s.checkSuspensionCache(client.TenantID); decided {
+		if suspended {
+			return ErrTenantSuspended
 		}
+		return nil
 	}
 	t, err := s.tenantStore.GetTenant(ctx, client.TenantID)
 	if err != nil || t == nil {
@@ -49,6 +47,22 @@ func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaim
 		return ErrTenantSuspended
 	}
 	return nil
+}
+
+// checkSuspensionCache consults the per-tenant suspension cache. decided is
+// true ONLY on a fresh cache hit (suspended = the cached verdict); decided=false
+// (no cache wired, or a stale/missing entry) MUST fall through to the live
+// tenant-store path, keeping checkTenantNotSuspended's freshness + fail-open
+// semantics byte-identical.
+func (s *Server) checkSuspensionCache(tenantID string) (suspended bool, decided bool) {
+	if s.tenantSuspensionCache == nil {
+		return false, false
+	}
+	cached, fresh := s.tenantSuspensionCache.get(tenantID)
+	if !fresh {
+		return false, false
+	}
+	return cached, true
 }
 
 // DefaultTenantResidencyCacheTTL bounds how long a tenant's resolved
@@ -191,32 +205,51 @@ func (s *Server) checkTenantResidency(ctx context.Context, tenantID string, serv
 	if !s.tenantResidencyEnabled || servingRegion == "" || tenantID == "" {
 		return nil
 	}
-
-	policy, ok := region.ResidencyPolicy{}, false
-	if s.tenantResidencyCache != nil {
-		policy, ok = s.tenantResidencyCache.get(tenantID)
-	}
+	policy, ok := s.resolveResidencyPolicy(ctx, tenantID)
 	if !ok {
-		if s.tenantStore == nil {
-			return nil
-		}
-		t, err := s.tenantStore.GetTenant(ctx, tenantID)
-		if err != nil || t == nil {
-			// Fail open on store outage (or not-found tenant) — don't 4xx the
-			// world during a tenant store partition. Matches
-			// checkTenantNotSuspended.
-			if err != nil && s.logger != nil {
-				s.logger.Error("tenant residency check: tenant store lookup failed; failing open",
-					"error", err, "tenant", tenantID)
-			}
-			return nil
-		}
-		policy = residencyPolicyFromTenant(t)
-		if s.tenantResidencyCache != nil {
-			s.tenantResidencyCache.put(tenantID, policy)
+		return nil // unconstrained / fail-open — byte-identical to prior path.
+	}
+	return evaluateResidency(policy, servingRegion, isWrite)
+}
+
+// resolveResidencyPolicy returns the tenant's residency policy with ok=true
+// when one was obtained (cache hit or live tenant-store read). ok=false marks
+// every UNCONSTRAINED / FAIL-OPEN case — no store wired, store outage, or
+// not-found tenant — and MUST allow the request, mirroring
+// checkTenantNotSuspended's fail-open contract. A live read is cached if wired.
+func (s *Server) resolveResidencyPolicy(ctx context.Context, tenantID string) (region.ResidencyPolicy, bool) {
+	if s.tenantResidencyCache != nil {
+		if policy, hit := s.tenantResidencyCache.get(tenantID); hit {
+			return policy, true
 		}
 	}
+	if s.tenantStore == nil {
+		return region.ResidencyPolicy{}, false
+	}
+	t, err := s.tenantStore.GetTenant(ctx, tenantID)
+	if err != nil || t == nil {
+		// Fail open on store outage (or not-found tenant) — don't 4xx the
+		// world during a tenant store partition. Matches
+		// checkTenantNotSuspended.
+		if err != nil && s.logger != nil {
+			s.logger.Error("tenant residency check: tenant store lookup failed; failing open",
+				"error", err, "tenant", tenantID)
+		}
+		return region.ResidencyPolicy{}, false
+	}
+	policy := residencyPolicyFromTenant(t)
+	if s.tenantResidencyCache != nil {
+		s.tenantResidencyCache.put(tenantID, policy)
+	}
+	return policy, true
+}
 
+// evaluateResidency renders the residency verdict for a resolved policy. The
+// decision-ladder ORDER is load-bearing and MUST NOT change: empty HomeRegion
+// (unconstrained) → home-region-always-allowed → AllowedRegions check (BEFORE
+// EnforceWrites, so region_not_allowed fires before residency_violation) →
+// isWrite EnforceWrites write-gate → allowed.
+func evaluateResidency(policy region.ResidencyPolicy, servingRegion region.ID, isWrite bool) error {
 	if policy.HomeRegion == "" {
 		return nil
 	}

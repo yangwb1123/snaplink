@@ -231,7 +231,31 @@ func (s *Server) scheduleCoordinatedRetire(ctx context.Context, oldKID, deadline
 	deferral := s.clampRetireDeferral(now, deadlineRaw)
 	target := now.Add(deferral)
 
+	pr, outcome := s.armPendingRetire(oldKID, deferral, target)
+	if pr == nil {
+		// An earlier/equal target — we never shorten a deferral already granted.
+		return outcome
+	}
+
+	s.launchRetireWatcher(ctx, oldKID, pr)
+	return outcome
+}
+
+// armPendingRetire performs the ENTIRE pendingSigningRetireMu critical section
+// for scheduleCoordinatedRetire as ONE locked compare-and-extend: read the
+// existing deadline, decide (only ever EXTEND to a LATER target), stop+close the
+// old timer/watcher, and install the new pending entry. The mutex is held
+// start-to-finish so no racing arm/extend/run observes a half-installed state.
+//
+// Returns (nil, CutoverOutcomeNoop) when an existing deferral's deadline is
+// >= the new target — the only-extend fail-safe gate: an earlier/equal target
+// would shorten a window we already promised, so leave the longer one in place.
+// Otherwise returns the freshly-installed entry and CutoverOutcomeDeferred (no
+// prior entry) or CutoverOutcomeExtended (replaced a sooner one).
+func (s *Server) armPendingRetire(oldKID string, deferral time.Duration, target time.Time) (*pendingRetire, string) {
 	s.pendingSigningRetireMu.Lock()
+	defer s.pendingSigningRetireMu.Unlock()
+
 	if s.pendingSigningRetires == nil {
 		s.pendingSigningRetires = make(map[string]*pendingRetire)
 	}
@@ -242,8 +266,7 @@ func (s *Server) scheduleCoordinatedRetire(ctx context.Context, oldKID, deadline
 		// we already promised, which is exactly the narrowing the fail-safe gate
 		// forbids, so leave the longer one in place.
 		if !target.After(s.pendingSigningRetireDeadlines[oldKID]) {
-			s.pendingSigningRetireMu.Unlock()
-			return metrics.CutoverOutcomeNoop
+			return nil, metrics.CutoverOutcomeNoop
 		}
 		existing.timer.Stop()
 		close(existing.stopped) // release the old watcher goroutine
@@ -259,12 +282,14 @@ func (s *Server) scheduleCoordinatedRetire(ctx context.Context, oldKID, deadline
 		s.pendingSigningRetireDeadlines = make(map[string]time.Time)
 	}
 	s.pendingSigningRetireDeadlines[oldKID] = target
-	s.pendingSigningRetireMu.Unlock()
+	return pr, outcome
+}
 
-	// One watcher goroutine per armed timer, bound to the subscriber ctx so a
-	// clean shutdown (or a superseding EXTEND, via stopped) tears it down — no
-	// leaked goroutine, and a shutdown NEVER triggers a retire (fail-safe: a
-	// torn-down server leaves the kid verifiable).
+// launchRetireWatcher starts the single watcher goroutine for one armed timer,
+// bound to the subscriber ctx so a clean shutdown (or a superseding EXTEND, via
+// pr.stopped) tears it down — no leaked goroutine, and a shutdown NEVER triggers
+// a retire (fail-safe: a torn-down server leaves the kid verifiable).
+func (s *Server) launchRetireWatcher(ctx context.Context, oldKID string, pr *pendingRetire) {
 	go func() {
 		defer func() { _ = recover() }() // a panic in RetireKey can't crash the process
 		defer pr.timer.Stop()
@@ -278,8 +303,6 @@ func (s *Server) scheduleCoordinatedRetire(ctx context.Context, oldKID, deadline
 			s.runCoordinatedRetire(oldKID, pr)
 		}
 	}()
-
-	return outcome
 }
 
 // runCoordinatedRetire performs the deferred drop of the demoted kid and clears

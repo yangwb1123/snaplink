@@ -60,33 +60,40 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	info, err := d.AuthCodeStore().Consume(ctx.Request().Context(), req.Code)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	info, ok := authCodeValidate(d, ctx, client, req)
+	if !ok {
 		return
 	}
-	if info.ClientID != client.ID {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	resp, token, issuedSub, authTime, scopes, ok := authCodeIssueAccessToken(d, ctx, client, req, info, scopes, dpopJKT, mtlsX5T)
+	if !ok {
 		return
 	}
-	if info.RedirectURI != "" && req.RedirectURI != info.RedirectURI {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRedirectURI))
-		return
-	}
-	if info.CodeChallenge != "" {
-		if l := len(req.CodeVerifier); l < core.PKCEVerifierMinLen || l > core.PKCEVerifierMaxLen {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-			return
-		}
-		if !oauth.VerifyPKCE(info.CodeChallengeMethod, info.CodeChallenge, req.CodeVerifier) {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-			return
+	authCodeIssueRefresh(d, ctx, client, info, scopes, resp)
+	var deviceSecretValue string
+	if slices.Contains(info.Scopes, core.ScopeDeviceSSO) && d.DeviceSecretStore() != nil {
+		if ds, dsErr := d.IssueDeviceSecret(ctx.Request().Context(), info.UserID, info.SID, client.ID); dsErr != nil {
+			d.SrvLogger().Error("device secret issue failed", "error", dsErr, "client", client.ID, "user", info.UserID)
+		} else {
+			deviceSecretValue = ds
 		}
 	}
+	authCodeIssueIDToken(d, ctx, client, info, issuedSub, authTime, token.AccessToken, deviceSecretValue, resp)
+	if deviceSecretValue != "" {
+		resp[core.KeyDeviceSecret] = deviceSecretValue
+	}
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// authCodeIssueAccessToken resolves the issuer, applies the scope/resource
+// fallbacks and the pairwise subject, stamps auth_time from AuthCode.AuthTime
+// (the real /auth/login moment, falling back to now only when zero), issues the
+// access token (fail-CLOSED: a strategy or Issue error aborts the grant), and
+// seeds the response map. ok=false means a wire error was already written.
+func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, info *oauth.AuthCode, scopes []string, dpopJKT, mtlsX5T string) (map[string]any, *core.Token, string, time.Time, []string, bool) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
-		return
+		return nil, nil, "", time.Time{}, nil, false
 	}
 	scopes = info.Scopes
 	if len(scopes) == 0 {
@@ -117,7 +124,7 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
+		return nil, nil, "", time.Time{}, nil, false
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, info.UserID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
@@ -128,51 +135,94 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	}
-	if d.RefreshTokenStore() != nil {
-		rt, err := d.IssueRefreshToken(ctx.Request().Context(),
-			info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
-			info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
-		if err != nil {
-			d.SrvLogger().Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
-		} else {
-			resp[core.KeyRefreshToken] = rt
-			d.RecordRefreshTokenIssued(ctx, client.ID, info.UserID, false)
+	return resp, token, issuedSub, authTime, scopes, true
+}
+
+// authCodeValidate runs the oracle-collapse gauntlet: single-use Consume,
+// client-binding check, redirect_uri match, and PKCE. Returns ok=false (after
+// writing the wire response) when any check fails so the caller can return.
+//
+// Oracle-leak collapse: unknown/expired/consumed code, client mismatch, and
+// PKCE failure ALL return 400 invalid_grant. A redirect_uri mismatch keeps its
+// DISTINCT invalid_redirect_uri (not a credential oracle). PKCE is enforced
+// ONLY when info.CodeChallenge != ""; both the length-bounds violation and a
+// VerifyPKCE failure collapse to invalid_grant.
+func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest) (*oauth.AuthCode, bool) {
+	info, err := d.AuthCodeStore().Consume(ctx.Request().Context(), req.Code)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, false
+	}
+	if info.ClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, false
+	}
+	if info.RedirectURI != "" && req.RedirectURI != info.RedirectURI {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRedirectURI))
+		return nil, false
+	}
+	if info.CodeChallenge != "" {
+		if l := len(req.CodeVerifier); l < core.PKCEVerifierMinLen || l > core.PKCEVerifierMaxLen {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+			return nil, false
+		}
+		if !oauth.VerifyPKCE(info.CodeChallengeMethod, info.CodeChallenge, req.CodeVerifier) {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+			return nil, false
 		}
 	}
-	var deviceSecretValue string
-	if slices.Contains(info.Scopes, core.ScopeDeviceSSO) && d.DeviceSecretStore() != nil {
-		if ds, dsErr := d.IssueDeviceSecret(ctx.Request().Context(), info.UserID, info.SID, client.ID); dsErr != nil {
-			d.SrvLogger().Error("device secret issue failed", "error", dsErr, "client", client.ID, "user", info.UserID)
-		} else {
-			deviceSecretValue = ds
-		}
+	return info, true
+}
+
+// authCodeIssueRefresh fail-OPENs (log + continue): a refresh issuance error
+// never aborts the access-token response. Family seed "" starts a new family.
+func authCodeIssueRefresh(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.AuthCode, scopes []string, resp map[string]any) {
+	if d.RefreshTokenStore() == nil {
+		return
 	}
-	if slices.Contains(info.Scopes, core.ScopeOpenID) {
-		idIssuer, emit, idErr := d.IDTokenIssuerForClient(client)
-		if idErr != nil {
-			d.SrvLogger().Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", info.UserID)
-		} else if emit {
-			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:      issuedSub,
-				Audience:     client.ID,
-				Nonce:        info.Nonce,
-				AuthTime:     authTime,
-				AMR:          AmrOrProvider(info.AuthMethods, info.Provider),
-				ACR:          info.ACR,
-				Claims:       info.Attributes,
-				AccessToken:  token.AccessToken,
-				DeviceSecret: deviceSecretValue,
-			})
-			if err != nil {
-				d.SrvLogger().Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
-			} else if enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-				resp[core.KeyIDToken] = enc
-				d.RecordIDTokenIssued(ctx, client.ID, info.UserID)
-			}
-		}
+	rt, err := d.IssueRefreshToken(ctx.Request().Context(),
+		info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
+		info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
+	if err != nil {
+		d.SrvLogger().Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
+		return
 	}
-	if deviceSecretValue != "" {
-		resp[core.KeyDeviceSecret] = deviceSecretValue
+	resp[core.KeyRefreshToken] = rt
+	d.RecordRefreshTokenIssued(ctx, client.ID, info.UserID, false)
+}
+
+// authCodeIssueIDToken fail-OPENs (log + omit): issuer-resolution, issuance, or
+// encryption failure omits id_token rather than failing the grant. auth_time is
+// the caller-supplied AuthCode.AuthTime (the real /auth/login moment).
+func authCodeIssueIDToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.AuthCode, issuedSub string, authTime time.Time, accessToken, deviceSecretValue string, resp map[string]any) {
+	if !slices.Contains(info.Scopes, core.ScopeOpenID) {
+		return
 	}
-	ctx.JSON(http.StatusOK, resp)
+	idIssuer, emit, idErr := d.IDTokenIssuerForClient(client)
+	if idErr != nil {
+		d.SrvLogger().Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID, "user", info.UserID)
+		return
+	}
+	if !emit {
+		return
+	}
+	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+		Subject:      issuedSub,
+		Audience:     client.ID,
+		Nonce:        info.Nonce,
+		AuthTime:     authTime,
+		AMR:          AmrOrProvider(info.AuthMethods, info.Provider),
+		ACR:          info.ACR,
+		Claims:       info.Attributes,
+		AccessToken:  accessToken,
+		DeviceSecret: deviceSecretValue,
+	})
+	if err != nil {
+		d.SrvLogger().Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)
+		return
+	}
+	if enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+		resp[core.KeyIDToken] = enc
+		d.RecordIDTokenIssued(ctx, client.ID, info.UserID)
+	}
 }

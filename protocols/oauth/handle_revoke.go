@@ -29,6 +29,17 @@ type RevokeDeps interface {
 	SrvLogger() spi.Logger
 }
 
+// revokeRequest is the parsed body/form for HandleRevoke (RFC 7009),
+// including the RFC 7521/7523 JWT client-assertion fields.
+type revokeRequest struct {
+	Token               string `json:"token"`
+	TokenTypeHint       string `json:"token_type_hint"`
+	ClientID            string `json:"client_id"`
+	ClientSecret        string `json:"client_secret"`
+	ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
+	ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+}
+
 // HandleRevoke implements RFC 7009 OAuth 2.0 Token Revocation.
 //
 // Any registered active client may revoke — but the server MUST NOT
@@ -47,14 +58,7 @@ func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	var req struct {
-		Token               string `json:"token"`
-		TokenTypeHint       string `json:"token_type_hint"`
-		ClientID            string `json:"client_id"`
-		ClientSecret        string `json:"client_secret"`
-		ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
-		ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
-	}
+	var req revokeRequest
 	if err := BindParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
@@ -64,32 +68,7 @@ func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 		req.ClientSecret = secret
 	}
 
-	clientStore := d.ClientStoreAccessor()
-
-	// RFC 7521/7523 JWT bearer client auth on /token/revoke.
-	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
-		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-			return
-		}
-		assertedID, err := d.VerifyJWTClientAssertion(
-			ctx.Request().Context(),
-			req.ClientAssertion,
-			req.ClientID,
-			d.ResolveIssuer(ctx),
-		)
-		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return
-		}
-		req.ClientID = assertedID
-		c, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
-		if err != nil || c == nil || !c.Active || !tenant.ClientOK(ctx, c) {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return
-		}
-	} else if err := d.AuthenticateClientCreds(ctx, req.ClientID, req.ClientSecret); err != nil {
-		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+	if !authenticateRevokeClient(d, d.ClientStoreAccessor(), ctx, &req) {
 		return
 	}
 
@@ -109,6 +88,43 @@ func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 	}
 
 	ctx.JSON(http.StatusOK, map[string]any{})
+}
+
+// authenticateRevokeClient performs RFC 7009 client authentication for
+// /token/revoke: either RFC 7521/7523 JWT bearer assertion or
+// id+secret creds. On failure it writes the response and returns false;
+// EVERY auth failure collapses to an identical 401 invalid_client so a
+// caller can't probe client existence (a wrong-type assertion is the
+// only malformed-input case, surfaced as 400 invalid_request before any
+// lookup). On success req.ClientID is the authenticated client id.
+func authenticateRevokeClient(d RevokeDeps, clientStore core.ClientStore, ctx core.HandlerContext, req *revokeRequest) bool {
+	// RFC 7521/7523 JWT bearer client auth on /token/revoke.
+	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
+		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+			return false
+		}
+		assertedID, err := d.VerifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			d.ResolveIssuer(ctx),
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+			return false
+		}
+		req.ClientID = assertedID
+		c, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
+		if err != nil || c == nil || !c.Active || !tenant.ClientOK(ctx, c) {
+			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+			return false
+		}
+	} else if err := d.AuthenticateClientCreds(ctx, req.ClientID, req.ClientSecret); err != nil {
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+		return false
+	}
+	return true
 }
 
 // revokeAccess delegates to the existing per-issuer revocation chain.
@@ -153,32 +169,8 @@ func HandleRevokeAll(d RevokeDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	bearer := BearerToken(ctx.Request())
-	if bearer == "" {
-		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), "", "")
-		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrMissingToken))
-		return
-	}
-	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), bearer)
-	if err != nil || claims == nil || claims.Subject == "" {
-		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "The access token is invalid or expired")
-		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
-		return
-	}
-
-	clientID := ""
-	if len(claims.Audience) > 0 {
-		clientID = claims.Audience[0]
-	}
-
-	// OIDC §8 pairwise: refresh tokens are stored by local sub.
-	// Translate pairwise → local before the bulk delete so the
-	// caller's revoke-all actually finds anything.
-	lookupSub, perr := d.ResolveLocalSubject(ctx.Request().Context(), claims.Subject)
-	if perr != nil {
-		d.SrvLogger().Error("pairwise resolve failed at revoke-all", "error", perr, "subject", claims.Subject)
-		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Subject mapping unavailable")
-		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
+	lookupSub, clientID, ok := authenticateRevokeAllBearer(d, ctx)
+	if !ok {
 		return
 	}
 	deleted, err := idx.DeleteAllForSubject(ctx.Request().Context(), lookupSub, clientID)
@@ -192,11 +184,49 @@ func HandleRevokeAll(d RevokeDeps, ctx core.HandlerContext) {
 	// stops working immediately — without this, the bearer the caller
 	// just used would keep working until expiry, which is surprising
 	// for a "logout everywhere" semantic.
-	revoked, failed := d.RevokeAcrossIssuers(ctx.Request().Context(), bearer)
+	revoked, failed := d.RevokeAcrossIssuers(ctx.Request().Context(), BearerToken(ctx.Request()))
 	d.AuditPartialRevokeFailure(ctx, revoked, failed)
 
 	ctx.JSON(http.StatusOK, map[string]any{
 		core.KeyStatus:           core.StatusOK,
 		"refresh_tokens_revoked": deleted,
 	})
+}
+
+// authenticateRevokeAllBearer authenticates the bearer presented to the
+// "logout everywhere" endpoint and resolves the (local subject, client)
+// pair used for the bulk delete. On failure it writes the response and
+// returns ok=false, emitting the THREE distinct WWW-Authenticate
+// challenges verbatim: empty (missing token) -> invalid_token "The access
+// token is invalid or expired" -> invalid_token "Subject mapping
+// unavailable". clientID is derived from the first audience entry.
+func authenticateRevokeAllBearer(d RevokeDeps, ctx core.HandlerContext) (lookupSub, clientID string, ok bool) {
+	bearer := BearerToken(ctx.Request())
+	if bearer == "" {
+		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), "", "")
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrMissingToken))
+		return "", "", false
+	}
+	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), bearer)
+	if err != nil || claims == nil || claims.Subject == "" {
+		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "The access token is invalid or expired")
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
+		return "", "", false
+	}
+
+	if len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+
+	// OIDC §8 pairwise: refresh tokens are stored by local sub.
+	// Translate pairwise -> local before the bulk delete so the
+	// caller's revoke-all actually finds anything.
+	lookupSub, perr := d.ResolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		d.SrvLogger().Error("pairwise resolve failed at revoke-all", "error", perr, "subject", claims.Subject)
+		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Subject mapping unavailable")
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
+		return "", "", false
+	}
+	return lookupSub, clientID, true
 }

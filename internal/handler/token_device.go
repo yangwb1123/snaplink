@@ -50,37 +50,8 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	dc, err := store.GetByDeviceCode(ctx.Request().Context(), deviceCode)
-	if err != nil {
-		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
-			return
-		}
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-		return
-	}
-	// Bind: a device_code issued for client A can't be polled by client B.
-	if dc.ClientID != client.ID {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-		return
-	}
-
-	// slow_down: poll arrived within Interval of the previous poll.
-	now := time.Now()
-	if !dc.LastPoll.IsZero() && now.Sub(dc.LastPoll) < dc.Interval {
-		_ = store.UpdateLastPoll(ctx.Request().Context(), deviceCode, now)
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrSlowDown))
-		return
-	}
-	_ = store.UpdateLastPoll(ctx.Request().Context(), deviceCode, now)
-
-	if dc.Denied {
-		_ = store.Delete(ctx.Request().Context(), deviceCode)
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAccessDenied))
-		return
-	}
-	if !dc.Approved {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAuthorizationPending))
+	dc, ok := devicePollGate(d, ctx, store, client, deviceCode)
+	if !ok {
 		return
 	}
 
@@ -111,42 +82,103 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	}
-	if d.RefreshTokenStore() != nil {
-		// Device grant doesn't accept authorization_details today; pass nil so
-		// refresh rotations don't fabricate a binding the user never consented to.
-		rt, err := d.IssueRefreshToken(ctx.Request().Context(),
-			dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "", client.RefreshTokenTTL)
-		if err != nil {
-			d.SrvLogger().Error("refresh token issue failed", "error", err)
-		} else {
-			resp[core.KeyRefreshToken] = rt
-			d.RecordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
-		}
-	}
-	if slices.Contains(dc.Scopes, core.ScopeOpenID) {
-		idIssuer, emit, idErr := d.IDTokenIssuerForClient(client)
-		if idErr != nil {
-			d.SrvLogger().Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
-		} else if emit {
-			idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-				Subject:     issuedSub,
-				Audience:    client.ID,
-				Nonce:       dc.Nonce,
-				AuthTime:    time.Now(),
-				AMR:         []string{dc.Provider},
-				Claims:      dc.Attributes,
-				AccessToken: token.AccessToken,
-			})
-			if err != nil {
-				d.SrvLogger().Error("id token issue failed", "error", err)
-			} else if enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
-				resp[core.KeyIDToken] = enc
-				d.RecordIDTokenIssued(ctx, client.ID, dc.UserID)
-			}
-		}
-	}
+	deviceIssueRefresh(d, ctx, client, dc, resp)
+	deviceIssueIDToken(d, ctx, client, dc, issuedSub, token.AccessToken, resp)
 	d.RecordTokenIssued(ctx, client.ID, strategy, dc.UserID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), dc.UserID, client.ID)
 	_ = store.Delete(ctx.Request().Context(), deviceCode)
 	ctx.JSON(http.StatusOK, resp)
+}
+
+// devicePollGate runs the RFC 8628 §3.5 poll-state checks (lookup, client bind,
+// slow_down, denial, pending) and returns the device code only when it is
+// approved and ready to mint. Each non-success branch writes its own DISTINCT
+// wire response here, so behavior is byte-identical to the inline form.
+func devicePollGate(d DeviceGrantDeps, ctx core.HandlerContext, store oauth.DeviceCodeStore, client *core.Client, deviceCode string) (*oauth.DeviceCode, bool) {
+	dc, err := store.GetByDeviceCode(ctx.Request().Context(), deviceCode)
+	if err != nil {
+		// CRITICAL: unknown/expired device_code stays expired_token, NOT invalid_grant.
+		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
+			return nil, false
+		}
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, false
+	}
+	// Bind: a device_code issued for client A can't be polled by client B.
+	if dc.ClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, false
+	}
+
+	// slow_down: poll arrived within Interval of the previous poll.
+	now := time.Now()
+	if !dc.LastPoll.IsZero() && now.Sub(dc.LastPoll) < dc.Interval {
+		_ = store.UpdateLastPoll(ctx.Request().Context(), deviceCode, now)
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrSlowDown))
+		return nil, false
+	}
+	_ = store.UpdateLastPoll(ctx.Request().Context(), deviceCode, now)
+
+	if dc.Denied {
+		_ = store.Delete(ctx.Request().Context(), deviceCode)
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAccessDenied))
+		return nil, false
+	}
+	if !dc.Approved {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrAuthorizationPending))
+		return nil, false
+	}
+	return dc, true
+}
+
+// deviceIssueRefresh mints a refresh token (fail-open: a failure is logged and
+// the access token is still returned). Adds the token + records issuance on resp.
+func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, resp map[string]any) {
+	if d.RefreshTokenStore() == nil {
+		return
+	}
+	// Device grant doesn't accept authorization_details today; pass nil so
+	// refresh rotations don't fabricate a binding the user never consented to.
+	rt, err := d.IssueRefreshToken(ctx.Request().Context(),
+		dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "", client.RefreshTokenTTL)
+	if err != nil {
+		d.SrvLogger().Error("refresh token issue failed", "error", err)
+		return
+	}
+	resp[core.KeyRefreshToken] = rt
+	d.RecordRefreshTokenIssued(ctx, client.ID, dc.UserID, false)
+}
+
+// deviceIssueIDToken mints an id_token when openid was granted (fail-open:
+// resolution/issue failures are logged and the id_token is simply omitted).
+func deviceIssueIDToken(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, issuedSub, accessToken string, resp map[string]any) {
+	if !slices.Contains(dc.Scopes, core.ScopeOpenID) {
+		return
+	}
+	idIssuer, emit, idErr := d.IDTokenIssuerForClient(client)
+	if idErr != nil {
+		d.SrvLogger().Error("id token issuer resolution failed; omitting id_token", "error", idErr, "client", client.ID)
+		return
+	}
+	if !emit {
+		return
+	}
+	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
+		Subject:     issuedSub,
+		Audience:    client.ID,
+		Nonce:       dc.Nonce,
+		AuthTime:    time.Now(),
+		AMR:         []string{dc.Provider},
+		Claims:      dc.Attributes,
+		AccessToken: accessToken,
+	})
+	if err != nil {
+		d.SrvLogger().Error("id token issue failed", "error", err)
+		return
+	}
+	if enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken); ok {
+		resp[core.KeyIDToken] = enc
+		d.RecordIDTokenIssued(ctx, client.ID, dc.UserID)
+	}
 }

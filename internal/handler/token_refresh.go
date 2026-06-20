@@ -59,36 +59,8 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 	}
 	info, err := store.Consume(ctx.Request().Context(), refreshToken)
 	if err != nil {
-		// Refresh double-submit grace: if THIS token was rotated within the
-		// grace window, replay the SAME successor it already produced —
-		// idempotent, so a legitimate concurrent double-submit doesn't trip
-		// the family-reuse kill below (a logout storm). A genuine post-window
-		// replay finds no entry and falls through (BCP §4.13 unweakened).
-		if grace := d.RefreshGrace(); grace != nil {
-			if cached, ok := grace.Lookup(refreshToken, time.Now()); ok {
-				ctx.JSON(http.StatusOK, cached)
-				return
-			}
-		}
-		// OAuth Security BCP §4.13: a previously-consumed token presented again
-		// is a reuse signal. Kill the whole family (every sibling and
-		// descendant) before returning the wire error — an attacker who already
-		// rotated after stealing the leaf loses access to the active descendant.
-		if errors.Is(err, oauth.ErrRefreshTokenReused) && info != nil && info.FamilyID != "" {
-			killed := 0
-			if tracker, ok := store.(oauth.RefreshTokenFamilyTracker); ok {
-				n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
-				if derr != nil {
-					d.LogErrorCtx(ctx, "family revocation on reuse failed",
-						"error", derr, "family", info.FamilyID)
-				} else {
-					killed = n
-					d.LogErrorCtx(ctx, "refresh token reuse detected — family revoked",
-						"family", info.FamilyID, "killed", killed,
-						"client", client.ID)
-				}
-			}
-			d.RecordRefreshTokenReuse(ctx, client.ID, info.FamilyID, killed)
+		if refreshHandleConsumeError(d, ctx, client, store, refreshToken, info, err) {
+			return
 		}
 		// Unknown / expired / already-consumed all map to invalid_grant
 		// per RFC 6749 §5.2 — clients can't distinguish, by design.
@@ -100,78 +72,31 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return
 	}
-	// Scope rules per RFC 6749 §6: omitted scope = keep original; supplied scope
-	// MUST be a subset of the original (narrowing allowed, expansion forbidden).
-	grantScopes := info.Scopes
-	if scope != "" {
-		requested := strings.Split(scope, " ")
-		if !oauth.IsScopeSubset(requested, info.Scopes) {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
-			return
-		}
-		grantScopes = requested
+	grantScopes, ok := refreshResolveScopes(ctx, info, scope)
+	if !ok {
+		return
 	}
-	// Per-family rotation-VELOCITY cap (OPTIONAL hardening, opt-in via a store
-	// implementing oauth.RefreshTokenRotationLimiter). Runs AFTER the single-use
-	// Consume (so it counts a genuine rotation) and BEFORE any token is minted.
-	// On windowExceeded the family is compromised: kill it via the SAME
-	// DeleteFamily path family-reuse uses, then reject with the SAME invalid_grant
-	// wire shape (detail lives only in the audit event + metric). FAIL-OPEN on a
-	// limiter store error: log + proceed (the cap is a defense layer, not a
-	// correctness gate). info.FamilyID == "" (tracking opted out) → no-op.
-	if limiter, ok := store.(oauth.RefreshTokenRotationLimiter); ok && info.FamilyID != "" {
-		count, exceeded, lerr := limiter.RecordRotation(ctx.Request().Context(), info.FamilyID)
-		if lerr != nil {
-			// Availability class (§2): a store error must not block a legitimate
-			// refresh, and must NOT kill the family.
-			d.LogErrorCtx(ctx, "refresh rotation velocity check failed — proceeding (fail-open)",
-				"error", lerr, "family", info.FamilyID, "client", client.ID)
-		} else if exceeded {
-			killed := 0
-			if tracker, ok := store.(oauth.RefreshTokenFamilyTracker); ok {
-				n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
-				if derr != nil {
-					d.LogErrorCtx(ctx, "family revocation on rotation-velocity breach failed",
-						"error", derr, "family", info.FamilyID)
-				} else {
-					killed = n
-					d.LogErrorCtx(ctx, "refresh rotation velocity exceeded — family revoked",
-						"family", info.FamilyID, "count", count, "killed", killed,
-						"client", client.ID)
-				}
-			}
-			d.IncRefreshRotationVelocityExceeded()
-			d.RecordRefreshRotationVelocity(ctx, client.ID, info.FamilyID, count, killed)
-			// Same wire shape as a reuse / bad refresh — oracle-leak collapse (§2).
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-			return
-		}
+	if refreshVelocityGate(d, ctx, client, store, info.FamilyID) {
+		return
 	}
+	refreshIssueAndRotate(d, ctx, client, info, refreshToken, grantScopes, dpopJKT, mtlsX5T)
+}
+
+// refreshIssueAndRotate is the success tail (reached only after Consume, client
+// bind, scope resolution and the velocity gate all pass): mint the access token,
+// rotate the refresh token within the SAME family, record metrics, cache the
+// successor for the double-submit grace window, and emit 200. Threading
+// info.FamilyID into IssueRefreshToken keeps the new leaf in the family so future
+// reuse anywhere in the chain is still detectable.
+func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, refreshToken string, grantScopes []string, dpopJKT, mtlsX5T string) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
 		return
 	}
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
-	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
-		ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
-		Resources: info.Resources,
-		ClientID:  client.ID,
-		// Refresh rotations don't reset auth_time per RFC 9068 — the underlying
-		// authentication event is the original login, not the refresh exchange.
-		// AMR likewise stays the original method.
-		AMR: []string{info.Provider},
-		// RFC 9396: the authorization_details grant captured at the original
-		// authorization survives the rotation — refreshed tokens MUST carry the
-		// same fine-grained authorization the user already consented to.
-		AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
-		// SID is locked to the original authorization's session — rotation never
-		// opens a new session.
-		SID:                 info.SID,
-		TTL:                 client.AccessTokenTTL,
-		ConfirmationJKT:     dpopJKT,
-		ConfirmationX5TS256: mtlsX5T,
-	}, grantScopes)
+	subject := refreshRotatedSubject(client, info, issuedSub, dpopJKT, mtlsX5T)
+	token, err := ti.Issue(ctx.Request().Context(), subject, grantScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
@@ -206,4 +131,132 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		grace.Remember(refreshToken, resp, time.Now())
 	}
 	ctx.JSON(http.StatusOK, resp)
+}
+
+// refreshRotatedSubject builds the Subject for a rotated access token. RFC 9068:
+// a rotation does NOT reset auth_time and keeps the original AMR — the underlying
+// authentication event is the original login, not this exchange.
+func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issuedSub, dpopJKT, mtlsX5T string) *core.Subject {
+	return &core.Subject{
+		ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
+		Resources: info.Resources,
+		ClientID:  client.ID,
+		// Refresh rotations don't reset auth_time per RFC 9068 — the underlying
+		// authentication event is the original login, not the refresh exchange.
+		// AMR likewise stays the original method.
+		AMR: []string{info.Provider},
+		// RFC 9396: the authorization_details grant captured at the original
+		// authorization survives the rotation — refreshed tokens MUST carry the
+		// same fine-grained authorization the user already consented to.
+		AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
+		// SID is locked to the original authorization's session — rotation never
+		// opens a new session.
+		SID:                 info.SID,
+		TTL:                 client.AccessTokenTTL,
+		ConfirmationJKT:     dpopJKT,
+		ConfirmationX5TS256: mtlsX5T,
+	}
+}
+
+// refreshHandleConsumeError handles a failed single-use Consume. It returns true
+// ONLY when it has already written the response (the grace-window replay): the
+// caller must then return without writing anything else. On the reuse path it
+// kills the family (FAIL-CLOSED) but returns false so the caller emits the
+// shared invalid_grant — keeping the wire shape byte-identical to the prior
+// inline handler and the unknown/expired/consumed paths indistinguishable.
+func refreshHandleConsumeError(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, store oauth.RefreshTokenStore, refreshToken string, info *oauth.RefreshToken, err error) bool {
+	// Refresh double-submit grace: if THIS token was rotated within the
+	// grace window, replay the SAME successor it already produced —
+	// idempotent, so a legitimate concurrent double-submit doesn't trip
+	// the family-reuse kill below (a logout storm). A genuine post-window
+	// replay finds no entry and falls through (BCP §4.13 unweakened).
+	if grace := d.RefreshGrace(); grace != nil {
+		if cached, ok := grace.Lookup(refreshToken, time.Now()); ok {
+			ctx.JSON(http.StatusOK, cached)
+			return true
+		}
+	}
+	// OAuth Security BCP §4.13: a previously-consumed token presented again
+	// is a reuse signal. Kill the whole family (every sibling and
+	// descendant) before returning the wire error — an attacker who already
+	// rotated after stealing the leaf loses access to the active descendant.
+	if errors.Is(err, oauth.ErrRefreshTokenReused) && info != nil && info.FamilyID != "" {
+		killed := 0
+		if tracker, ok := store.(oauth.RefreshTokenFamilyTracker); ok {
+			n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
+			if derr != nil {
+				d.LogErrorCtx(ctx, "family revocation on reuse failed",
+					"error", derr, "family", info.FamilyID)
+			} else {
+				killed = n
+				d.LogErrorCtx(ctx, "refresh token reuse detected — family revoked",
+					"family", info.FamilyID, "killed", killed,
+					"client", client.ID)
+			}
+		}
+		d.RecordRefreshTokenReuse(ctx, client.ID, info.FamilyID, killed)
+	}
+	return false
+}
+
+// refreshResolveScopes applies RFC 6749 §6 scope rules: omitted scope keeps the
+// original; a supplied scope MUST be a subset of the original (narrowing allowed,
+// expansion forbidden). On expansion it writes the DISTINCT invalid_scope (not a
+// credential oracle) and returns ok=false.
+func refreshResolveScopes(ctx core.HandlerContext, info *oauth.RefreshToken, scope string) (grantScopes []string, ok bool) {
+	grantScopes = info.Scopes
+	if scope != "" {
+		requested := strings.Split(scope, " ")
+		if !oauth.IsScopeSubset(requested, info.Scopes) {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
+			return nil, false
+		}
+		grantScopes = requested
+	}
+	return grantScopes, true
+}
+
+// refreshVelocityGate is the per-family rotation-VELOCITY cap (OPTIONAL
+// hardening, opt-in via a store implementing oauth.RefreshTokenRotationLimiter).
+// Runs AFTER the single-use Consume (so it counts a genuine rotation) and BEFORE
+// any token is minted. On windowExceeded the family is compromised: kill it via
+// the SAME DeleteFamily path family-reuse uses, then reject with the SAME
+// invalid_grant wire shape (detail lives only in the audit event + metric) and
+// return true (FAIL-CLOSED). FAIL-OPEN on a limiter store error: log + proceed
+// (the cap is a defense layer, not a correctness gate). familyID == "" (tracking
+// opted out) → no-op, returns false.
+func refreshVelocityGate(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, store oauth.RefreshTokenStore, familyID string) bool {
+	limiter, ok := store.(oauth.RefreshTokenRotationLimiter)
+	if !ok || familyID == "" {
+		return false
+	}
+	count, exceeded, lerr := limiter.RecordRotation(ctx.Request().Context(), familyID)
+	if lerr != nil {
+		// Availability class (§2): a store error must not block a legitimate
+		// refresh, and must NOT kill the family.
+		d.LogErrorCtx(ctx, "refresh rotation velocity check failed — proceeding (fail-open)",
+			"error", lerr, "family", familyID, "client", client.ID)
+		return false
+	}
+	if !exceeded {
+		return false
+	}
+	killed := 0
+	if tracker, ok := store.(oauth.RefreshTokenFamilyTracker); ok {
+		n, derr := tracker.DeleteFamily(ctx.Request().Context(), familyID)
+		if derr != nil {
+			d.LogErrorCtx(ctx, "family revocation on rotation-velocity breach failed",
+				"error", derr, "family", familyID)
+		} else {
+			killed = n
+			d.LogErrorCtx(ctx, "refresh rotation velocity exceeded — family revoked",
+				"family", familyID, "count", count, "killed", killed,
+				"client", client.ID)
+		}
+	}
+	d.IncRefreshRotationVelocityExceeded()
+	d.RecordRefreshRotationVelocity(ctx, client.ID, familyID, count, killed)
+	// Same wire shape as a reuse / bad refresh — oracle-leak collapse (§2).
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	return true
 }

@@ -69,22 +69,7 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 		return
 	}
 
-	var req struct {
-		ClientID                string   `json:"client_id"`
-		ClientSecret            string   `json:"client_secret"`
-		Scope                   string   `json:"scope"`
-		LoginHint               string   `json:"login_hint"`                // OIDC Core §3.1.2.1
-		IDTokenHint             string   `json:"id_token_hint"`             // OIDC Core §3.1.2.1
-		LoginHintToken          string   `json:"login_hint_token"`          // CIBA Core §7.1
-		BindingMessage          string   `json:"binding_message"`           // CIBA Core §7.1
-		ACRValues               string   `json:"acr_values"`                // OIDC Core §3.1.2.1
-		Nonce                   string   `json:"nonce"`                     // OIDC nonce
-		Resource                []string `json:"resource"`                  // RFC 8707
-		UserCode                string   `json:"user_code"`                 // CIBA Core §7.1 (user-code mode — unsupported)
-		ClientNotificationToken string   `json:"client_notification_token"` // CIBA Core §7.1 (ping/push delivery)
-		ClientAssertion         string   `json:"client_assertion"`          // RFC 7521 + 7523
-		ClientAssertionType     string   `json:"client_assertion_type"`     // RFC 7521 + 7523
-	}
+	var req cibaRequest
 	if err := BindParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
@@ -94,63 +79,121 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 		req.ClientSecret = secret
 	}
 
+	client, ok := authenticateCIBAClient(d, ctx, &req)
+	if !ok {
+		return
+	}
+	subjectID, provider, ok := resolveCIBASubject(d, ctx, &req)
+	if !ok {
+		return
+	}
+	issueAndDeliverCIBA(d, ctx, client, subjectID, provider, &req)
+}
+
+// cibaRequest is the bound backchannel-auth request body. Named (vs an
+// anonymous struct) so it can cross the extracted-helper seam.
+type cibaRequest struct {
+	ClientID                string   `json:"client_id"`
+	ClientSecret            string   `json:"client_secret"`
+	Scope                   string   `json:"scope"`
+	LoginHint               string   `json:"login_hint"`                // OIDC Core §3.1.2.1
+	IDTokenHint             string   `json:"id_token_hint"`             // OIDC Core §3.1.2.1
+	LoginHintToken          string   `json:"login_hint_token"`          // CIBA Core §7.1
+	BindingMessage          string   `json:"binding_message"`           // CIBA Core §7.1
+	ACRValues               string   `json:"acr_values"`                // OIDC Core §3.1.2.1
+	Nonce                   string   `json:"nonce"`                     // OIDC nonce
+	Resource                []string `json:"resource"`                  // RFC 8707
+	UserCode                string   `json:"user_code"`                 // CIBA Core §7.1 (user-code mode — unsupported)
+	ClientNotificationToken string   `json:"client_notification_token"` // CIBA Core §7.1 (ping/push delivery)
+	ClientAssertion         string   `json:"client_assertion"`          // RFC 7521 + 7523
+	ClientAssertionType     string   `json:"client_assertion_type"`     // RFC 7521 + 7523
+}
+
+// authenticateCIBAClient runs client authentication: optional
+// private_key_jwt (RFC 7521/7523), then client_id presence, lookup,
+// active/tenant gates, and secret validation. On any failure it writes
+// the response and returns ok=false. The invalid_client collapse
+// (unknown client_id == bad secret) is preserved byte-for-byte to hide
+// client_id enumeration. AreResourcesAllowed (invalid_target) stays
+// BETWEEN secret-validation and hint-resolution.
+func authenticateCIBAClient(d CIBADeps, ctx core.HandlerContext, req *cibaRequest) (*core.Client, bool) {
 	clientStore := d.ClientStoreAccessor()
 
-	// RFC 7521/7523 — private_key_jwt client authentication, same as
-	// /token and /par.
-	if req.ClientAssertion != "" || req.ClientAssertionType != "" {
-		if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-			return
-		}
-		assertedID, err := d.VerifyJWTClientAssertion(
-			ctx.Request().Context(), req.ClientAssertion, req.ClientID, d.ResolveIssuer(ctx),
-		)
-		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return
-		}
-		req.ClientID = assertedID
+	if !applyCIBAClientAssertion(d, ctx, req) {
+		return nil, false
 	}
 
 	if req.ClientID == "" {
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrMissingClientID))
-		return
+		return nil, false
 	}
 
 	client, err := clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-		return
+		return nil, false
 	}
 	if !client.Active {
 		ctx.JSON(http.StatusForbidden, core.ErrorBody(core.ErrInactiveClient))
-		return
+		return nil, false
 	}
 	if !tenant.ClientOK(ctx, client) {
 		ctx.JSON(http.StatusForbidden, core.ErrorBody(core.ErrTenantMismatch))
-		return
+		return nil, false
 	}
 	if req.ClientAssertion == "" {
 		if err := clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
 			// RFC 6749 §5.2: client-auth failure is invalid_client (same code
 			// as unknown-client above — oracle-safe, no client_id enumeration).
 			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
-			return
+			return nil, false
 		}
 	}
 	if !client.AreResourcesAllowed(req.Resource) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidTarget))
-		return
+		return nil, false
 	}
+	return client, true
+}
 
+// applyCIBAClientAssertion runs RFC 7521/7523 private_key_jwt client
+// authentication when a client_assertion is supplied (same as /token and
+// /par), rewriting req.ClientID to the asserted id. Returns false (after
+// writing the response) on wrong assertion type (400 invalid_request) or
+// verification failure (401 invalid_client). No assertion present is a
+// no-op success (secret auth applies later).
+func applyCIBAClientAssertion(d CIBADeps, ctx core.HandlerContext, req *cibaRequest) bool {
+	if req.ClientAssertion == "" && req.ClientAssertionType == "" {
+		return true
+	}
+	if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return false
+	}
+	assertedID, err := d.VerifyJWTClientAssertion(
+		ctx.Request().Context(), req.ClientAssertion, req.ClientID, d.ResolveIssuer(ctx),
+	)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidClient))
+		return false
+	}
+	req.ClientID = assertedID
+	return true
+}
+
+// resolveCIBASubject enforces poll-mode hint resolution. Empty-hint and
+// unresolvable-hint (incl. resolver error) both collapse to a
+// byte-identical 400 unknown_user_id so a client can't enumerate which
+// usernames exist (anti-enumeration parity). The err!=nil logging
+// side-effect is preserved.
+func resolveCIBASubject(d CIBADeps, ctx core.HandlerContext, req *cibaRequest) (subjectID, provider string, ok bool) {
 	// Poll mode only: at least one hint MUST be present. Empty-hint and
 	// unresolvable-hint both collapse to unknown_user_id so a client
 	// can't enumerate which usernames exist (anti-enumeration parity
 	// with the rest of the surface).
 	if req.LoginHint == "" && req.IDTokenHint == "" && req.LoginHintToken == "" {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrUnknownUserID))
-		return
+		return "", "", false
 	}
 	subjectID, provider, err := d.ResolveCIBAHint(
 		ctx.Request().Context(), req.LoginHint, req.IDTokenHint, req.LoginHintToken,
@@ -160,9 +203,16 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 			d.SrvLogger().Info("ciba hint resolution failed", "client_id", req.ClientID, "error", err)
 		}
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrUnknownUserID))
-		return
+		return "", "", false
 	}
+	return subjectID, provider, true
+}
 
+// issueAndDeliverCIBA validates scope, persists the pending request, and
+// delivers the challenge out of band. Delivery failure → 500 + cleanup
+// of the dangling pending request (so no auth_req_id the user can never
+// confirm). On success it records the audit event and writes the 200.
+func issueAndDeliverCIBA(d CIBADeps, ctx core.HandlerContext, client *core.Client, subjectID, provider string, req *cibaRequest) {
 	ttl := d.CIBARequestTTL()
 	if ttl <= 0 {
 		ttl = DefaultCIBARequestTTL
@@ -171,17 +221,47 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 	if interval <= 0 {
 		interval = DefaultCIBAPollInterval
 	}
-	// Scope authorization at backchannel-auth REQUEST time (not at /token
-	// redemption): the client is fully authenticated here and
-	// AllowedScopes is in scope, so an unapproved-scope CIBA request is
-	// rejected up front in this flow's own shape. The captured
-	// CIBARequest.Scopes is the GRANTED set (validated, or defaulted to
-	// the allowlist when empty), so the eventual token carries its
-	// entitled scope.
+
+	authReqID, ok := persistCIBARequest(d, ctx, client, subjectID, provider, req, ttl, interval)
+	if !ok {
+		return
+	}
+
+	// Deliver the challenge out of band. Failure → 500 + clean up the
+	// dangling pending request (operators don't want auth_req_ids the
+	// user can never confirm).
+	if err := d.DeliverCIBAChallenge(ctx.Request().Context(), authReqID, subjectID, req.BindingMessage); err != nil {
+		d.SrvLogger().Error("ciba challenge delivery failed", "error", err)
+		_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+
+	d.RecordCIBAAuthRequest(ctx, req.ClientID, subjectID, authReqID)
+
+	ctx.JSON(http.StatusOK, map[string]any{
+		"auth_req_id": authReqID,
+		"expires_in":  int(ttl.Seconds()),
+		"interval":    int(interval.Seconds()),
+	})
+}
+
+// persistCIBARequest validates the requested scope and persists the
+// pending CIBARequest. Returns (authReqID, true) on success; on
+// disallowed scope it writes 400 invalid_scope, on store failure 500
+// (with the ciba issue failed log), each returning ok=false.
+//
+// Scope authorization happens at backchannel-auth REQUEST time (not at
+// /token redemption): the client is fully authenticated here and
+// AllowedScopes is in scope, so an unapproved-scope CIBA request is
+// rejected up front. The captured CIBARequest.Scopes is the GRANTED set
+// (validated, or defaulted to the allowlist when empty), so the eventual
+// token carries its entitled scope.
+func persistCIBARequest(d CIBADeps, ctx core.HandlerContext, client *core.Client, subjectID, provider string, req *cibaRequest, ttl, interval time.Duration) (string, bool) {
 	grantedScopes, err := GrantedScopes(SplitScope(req.Scope), client)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
-		return
+		return "", false
 	}
 
 	now := time.Now()
@@ -203,24 +283,7 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 	if err != nil {
 		d.SrvLogger().Error("ciba issue failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
+		return "", false
 	}
-
-	// Deliver the challenge out of band. Failure → 500 + clean up the
-	// dangling pending request (operators don't want auth_req_ids the
-	// user can never confirm).
-	if err := d.DeliverCIBAChallenge(ctx.Request().Context(), authReqID, subjectID, req.BindingMessage); err != nil {
-		d.SrvLogger().Error("ciba challenge delivery failed", "error", err)
-		_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
-	}
-
-	d.RecordCIBAAuthRequest(ctx, req.ClientID, subjectID, authReqID)
-
-	ctx.JSON(http.StatusOK, map[string]any{
-		"auth_req_id": authReqID,
-		"expires_in":  int(ttl.Seconds()),
-		"interval":    int(interval.Seconds()),
-	})
+	return authReqID, true
 }

@@ -127,20 +127,8 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 		return
 	}
 
-	var auth Authenticator
-	var err error
-	if provider != "" {
-		auth, _ = s.getAuthenticator(provider)
-	} else {
-		for _, a := range s.authenticators {
-			if _, err = a.Callback(context.Background(), &CallbackState{Code: code, State: state}); err == nil {
-				auth = a
-				break
-			}
-		}
-	}
-
-	if auth == nil {
+	auth, ok := s.resolveCallbackAuthenticator(provider, code, state)
+	if !ok {
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnknownProvider))
 		return
 	}
@@ -153,6 +141,31 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 		return
 	}
 
+	s.finalizeCallbackSession(ctx, result)
+}
+
+// resolveCallbackAuthenticator picks the authenticator that owns this callback.
+// When provider is named it looks it up directly; otherwise it probes each
+// registered authenticator's Callback to find one that accepts the code/state.
+// NOTE: this probe deliberately CALLS a.Callback to resolve the owner — the
+// parent then calls auth.Callback AGAIN. The double-call is intentional (it
+// preserves the original per-attempt side effects) and must not be collapsed.
+func (s *Server) resolveCallbackAuthenticator(provider, code, state string) (Authenticator, bool) {
+	if provider != "" {
+		auth, _ := s.getAuthenticator(provider)
+		return auth, auth != nil
+	}
+	for _, a := range s.authenticators {
+		if _, err := a.Callback(context.Background(), &CallbackState{Code: code, State: state}); err == nil {
+			return a, true
+		}
+	}
+	return nil, false
+}
+
+// finalizeCallbackSession upserts the user (when a UserProvider is configured)
+// and creates a session, writing the success or 500 error response.
+func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult) {
 	user := &User{
 		ID:         result.UserID,
 		ExternalID: result.ExternalID,

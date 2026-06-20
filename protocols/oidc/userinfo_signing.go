@@ -90,43 +90,16 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 		return false
 	}
 
-	reqCtx := ctx.Request().Context()
-
 	// Build the inner payload. When signing is requested (and possible)
 	// the JWE wraps the signed JWS; otherwise the JWE wraps the raw
 	// JSON claim set. When only signing is requested, the JWS is the
 	// final response.
-	var payload []byte
-	signed := false
-	if wantSign {
-		// Resolve the signer per-tenant (UserinfoSigner extends the same
-		// issuer that mints id_tokens). emit=false / a resolution error /
-		// an issuer that isn't a UserinfoSigner all collapse to ok=false:
-		// "can't sign here" → omit the signature, never reach for the
-		// shared key. The downstream branch then either falls through to
-		// JSON (sign-only) or encrypts the raw JSON under the RP's key
-		// (encrypt path is unaffected — it keys off Client.JWKS, not the
-		// signer).
-		signer, ok := userinfoSignerForClient(d, client)
-		if ok && userinfoSignerProducesAlg(d, ctx, signer, client.UserinfoSignedResponseAlg) {
-			jwt, serr := signer.SignUserInfo(reqCtx, client.ID, body)
-			if serr != nil {
-				d.SrvLogger().Error("userinfo sign failed", "error", serr, "client", client.ID)
-				if wantEncrypt {
-					// Opted into encryption: never downgrade to cleartext.
-					writeUserinfoServerError(ctx)
-					return true
-				}
-				return false
-			}
-			payload = []byte(jwt)
-			signed = true
-		} else if !wantEncrypt {
-			// Unsupported sign alg / no signer and no encryption asked —
-			// fall through to JSON (the RP detects the misconfig via
-			// discovery).
-			return false
-		}
+	payload, signed, handled := signUserInfoPayload(d, ctx, client, body, wantSign, wantEncrypt)
+	if handled != nil {
+		// Either the signed-only sign error already wrote server_error
+		// (terminal, wantEncrypt) OR the sign-only fall-through happened.
+		// handled mirrors the parent's return value verbatim.
+		return handled.value()
 	}
 
 	if !wantEncrypt {
@@ -135,8 +108,71 @@ func MaybeSignUserInfo(d UserinfoSigningDeps, ctx core.HandlerContext, clientID 
 		return true
 	}
 
-	// Encryption requested. Inner payload is the JWS (when signed) or
-	// the JSON claim set (when not).
+	return encryptUserInfoPayload(d, ctx, client, body, payload, signed)
+}
+
+// signTriState carries the three terminal outcomes of signUserInfoPayload's
+// sign attempt without losing the fall-through-to-JSON (false) vs
+// handled-terminal (true) boolean contract with the /userinfo caller. nil
+// means "not handled — continue in the parent"; a non-nil value is the EXACT
+// bool MaybeSignUserInfo must return.
+type signTriState struct{ v bool }
+
+func (s *signTriState) value() bool { return s.v }
+
+// signUserInfoPayload runs the sign leg. It returns the inner payload, whether
+// it was signed, and a non-nil handled tri-state when the parent must return
+// immediately:
+//   - sign error WITH wantEncrypt: writes server_error, handled=true(true) —
+//     NEVER downgrade to cleartext.
+//   - sign error WITHOUT wantEncrypt (sign-only): handled=true(false) — fall
+//     through to JSON.
+//   - unsupported alg / no signer AND no encryption: handled=true(false) —
+//     fall through to JSON (the RP detects the misconfig via discovery).
+//
+// handled=nil means continue (encrypt path is unaffected — it keys off
+// Client.JWKS, not the signer).
+func signUserInfoPayload(d UserinfoSigningDeps, ctx core.HandlerContext, client *core.Client, body map[string]any, wantSign, wantEncrypt bool) ([]byte, bool, *signTriState) {
+	if !wantSign {
+		return nil, false, nil
+	}
+	reqCtx := ctx.Request().Context()
+	// Resolve the signer per-tenant (UserinfoSigner extends the same
+	// issuer that mints id_tokens). emit=false / a resolution error /
+	// an issuer that isn't a UserinfoSigner all collapse to ok=false:
+	// "can't sign here" → omit the signature, never reach for the
+	// shared key. The downstream branch then either falls through to
+	// JSON (sign-only) or encrypts the raw JSON under the RP's key
+	// (encrypt path is unaffected — it keys off Client.JWKS, not the
+	// signer).
+	signer, ok := userinfoSignerForClient(d, client)
+	if !ok || !userinfoSignerProducesAlg(d, ctx, signer, client.UserinfoSignedResponseAlg) {
+		if !wantEncrypt {
+			// Unsupported sign alg / no signer and no encryption asked —
+			// fall through to JSON (the RP detects the misconfig via
+			// discovery).
+			return nil, false, &signTriState{false}
+		}
+		return nil, false, nil
+	}
+	jwt, serr := signer.SignUserInfo(reqCtx, client.ID, body)
+	if serr != nil {
+		d.SrvLogger().Error("userinfo sign failed", "error", serr, "client", client.ID)
+		if wantEncrypt {
+			// Opted into encryption: never downgrade to cleartext.
+			writeUserinfoServerError(ctx)
+			return nil, false, &signTriState{true}
+		}
+		return nil, false, &signTriState{false}
+	}
+	return []byte(jwt), true, nil
+}
+
+// encryptUserInfoPayload runs the encrypt leg and always returns true (the
+// encryption path is terminal — every branch writes a response). Inner payload
+// is the JWS (when signed) or the JSON claim set (when not).
+func encryptUserInfoPayload(d UserinfoSigningDeps, ctx core.HandlerContext, client *core.Client, body map[string]any, payload []byte, signed bool) bool {
+	reqCtx := ctx.Request().Context()
 	if !signed {
 		j, jerr := json.Marshal(body)
 		if jerr != nil {

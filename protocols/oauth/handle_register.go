@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/platform/audit"
@@ -126,9 +125,7 @@ func validateDCRRequest(req *DCRRequest, policy *DCRPolicy) error {
 // the echoed metadata. Public clients (token_endpoint_auth_method
 // = "none") skip secret generation per §2.
 func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
-	// DCR responses ship client_secret + registration_access_token —
-	// credential-shaped bodies that intermediaries must not cache.
-	// Same RFC 6749 §5.1 pattern as /token.
+	// Credential-shaped body (secret + RAT) — no-store, same as /token.
 	middleware.TokenNoStoreHeaders(ctx)
 	policy := d.DCRPolicy()
 	if policy == nil {
@@ -139,20 +136,8 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrServerMisconfigured))
 		return
 	}
-
-	// Authentication gate. Initial-access-token takes precedence
-	// when configured; AllowOpenRegistration is the explicit
-	// escape hatch.
-	if !policy.AllowOpenRegistration {
-		if policy.InitialAccessToken == "" {
-			ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrServerMisconfigured))
-			return
-		}
-		if bearer := BearerToken(ctx.Request()); bearer != policy.InitialAccessToken {
-			d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Initial access token missing or invalid")
-			ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
-			return
-		}
+	if !authorizeRegistration(d, ctx, policy) {
+		return
 	}
 
 	var req DCRRequest
@@ -160,7 +145,6 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidClientMetadata, err.Error()))
 		return
 	}
-
 	if err := validateDCRRequest(&req, policy); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidClientMetadata, err.Error()))
 		return
@@ -173,103 +157,22 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	// Public clients (no secret) per RFC 7591 §2 +
-	// RFC 6749 §2.3 — the "none" auth method opts out of secret
-	// issuance entirely. SPAs and mobile apps that hold no
-	// confidential secret should request this.
+	// Public clients ("none" auth method) skip secret issuance per RFC 7591 §2.
 	public := req.TokenEndpointAuthMethod == "none"
-	secret := ""
-	if !public {
-		secret, err = GenerateClientSecret()
-		if err != nil {
-			d.SrvLogger().Error("dcr secret gen failed", "error", err)
-			ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-			return
-		}
-	}
-
-	// RFC 7592 §3: every newly-registered client gets a
-	// registration_access_token so the client itself can later
-	// GET/PUT/DELETE its own registration without operator
-	// involvement. The token is bearer-shaped; deployments
-	// storing clients on disk SHOULD hash it at rest.
-	regToken, err := GenerateClientSecret()
+	secret, regToken, err := mintClientCredentials(d, public)
 	if err != nil {
-		d.SrvLogger().Error("dcr reg-token gen failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-
-	tokenStrategy := req.TokenStrategy
-	if tokenStrategy == "" {
-		tokenStrategy = policy.DefaultTokenStrategy
-	}
-
-	client := &core.Client{
-		ID:                      id,
-		Secret:                  secret,
-		Name:                    req.ClientName,
-		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
-		AllowedScopes:           SplitScope(req.Scope),
-		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
-		TokenStrategy:           tokenStrategy,
-		Active:                  policy.DefaultActive,
-		TenantID:                req.TenantID,
-		RequirePKCE:             req.RequirePKCE || public, // public clients always PKCE
-		AllowedResources:        append([]string(nil), req.AllowedResources...),
-		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
-		RegistrationAccessToken: regToken,
-
-		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
-		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
-		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
-		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
-	}
-
+	client := buildRegisteredClient(&req, policy, id, secret, regToken, public)
 	if err := d.ClientStoreAccessor().Add(ctx.Request().Context(), client); err != nil {
 		d.SrvLogger().Error("dcr persist failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-	// Forensic trail for the credential-lifecycle: a confidential client was
-	// just minted (fresh secret + registration_access_token) on the public
-	// /register path. Recorded ONLY now that the store write succeeded; the
-	// registration method tells operators whether an initial-access-token or
-	// open registration produced it.
-	method := dcrMethodInitialAccessToken
-	if policy.AllowOpenRegistration {
-		method = dcrMethodOpen
-	}
-	recordDCRLifecycle(d, ctx, audit.EventClientRegistered, client.ID, method)
-
-	now := time.Now().Unix()
-	resp := DCRResponse{
-		ClientID:                id,
-		ClientSecret:            secret,
-		ClientIDIssuedAt:        now,
-		ClientSecretExpiresAt:   0, // 0 = never expires per RFC 7591 §3.2.1
-		RegistrationAccessToken: regToken,
-		RegistrationClientURI:   middleware.BaseURL(ctx.Request()) + PathRegister + "/" + id,
-		RedirectURIs:            client.RedirectURIs,
-		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
-		GrantTypes:              req.GrantTypes,
-		ResponseTypes:           req.ResponseTypes,
-		ClientName:              client.Name,
-		Scope:                   req.Scope,
-		Contacts:                req.Contacts,
-		TokenStrategy:           client.TokenStrategy,
-		AllowedAuthenticators:   client.AllowedAuthenticators,
-		AllowedResources:        client.AllowedResources,
-		PostLogoutRedirectURIs:  client.PostLogoutRedirectURIs,
-		RequirePKCE:             client.RequirePKCE,
-
-		IDTokenEncryptedResponseAlg:  client.IDTokenEncryptedResponseAlg,
-		IDTokenEncryptedResponseEnc:  client.IDTokenEncryptedResponseEnc,
-		UserinfoEncryptedResponseAlg: client.UserinfoEncryptedResponseAlg,
-		UserinfoEncryptedResponseEnc: client.UserinfoEncryptedResponseEnc,
-	}
-
-	ctx.JSON(http.StatusCreated, resp)
+	// Forensic trail — recorded ONLY now that the store write succeeded.
+	recordRegistrationCreated(d, ctx, policy, client.ID)
+	ctx.JSON(http.StatusCreated, buildDCRResponse(&req, client, ctx, secret, regToken))
 }
 
 // HandleRegistrationGet implements RFC 7592 §2.1 — the client
@@ -307,49 +210,18 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	tokenStrategy := req.TokenStrategy
-	if tokenStrategy == "" {
-		tokenStrategy = client.TokenStrategy
-	}
-
 	// RFC 7592 §3.2: optionally rotate the registration_access_token on update.
 	// Default-off preserves the stable-token behavior; when on, mint a fresh
 	// token, persist it (hashed at rest by the store), and reveal the plaintext
 	// once in the response. newRAT empty => keep the existing (already-hashed)
 	// token unchanged.
-	ratToStore := client.RegistrationAccessToken // existing hash, unchanged
-	var newRAT string
-	if d.DCRPolicy().RotateRegistrationAccessToken {
-		t, err := GenerateClientSecret()
-		if err != nil {
-			d.SrvLogger().Error("dcr reg-token rotation gen failed", "error", err)
-			ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-			return
-		}
-		newRAT = t
-		ratToStore = t // plaintext; the store hashes it at rest on Update
+	ratToStore, newRAT, err := rotateRAT(d, client)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
 	}
 
-	updated := &core.Client{
-		ID:                      client.ID,
-		Secret:                  client.Secret, // unchanged
-		RegistrationAccessToken: ratToStore,
-		Active:                  client.Active,
-		Name:                    req.ClientName,
-		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
-		AllowedScopes:           SplitScope(req.Scope),
-		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
-		TokenStrategy:           tokenStrategy,
-		TenantID:                req.TenantID,
-		RequirePKCE:             req.RequirePKCE || req.TokenEndpointAuthMethod == "none",
-		AllowedResources:        append([]string(nil), req.AllowedResources...),
-		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
-
-		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
-		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
-		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
-		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
-	}
+	updated := buildUpdatedClient(&req, client, ratToStore)
 
 	if err := d.ClientStoreAccessor().Update(ctx.Request().Context(), updated); err != nil {
 		d.SrvLogger().Error("dcr update failed", "error", err)

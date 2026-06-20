@@ -97,11 +97,7 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 		return nil, err
 	}
 
-	var sr signResponse
-	if err := json.Unmarshal(respBody, &sr); err != nil {
-		return nil, fmt.Errorf("vaulttransit: decode sign response: %w", err)
-	}
-	sig, err := parseVaultSignature(sr.Data.Signature)
+	sig, err := decodeSignResponse(respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +109,17 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 	return sig, nil
 }
 
+// decodeSignResponse unmarshals transit/sign's reply and extracts the raw
+// signature bytes, stripping the "vault:vN:" wrapper. A decode or wrapper
+// failure is fail-closed (never a silent wrong/empty sig).
+func decodeSignResponse(respBody []byte) ([]byte, error) {
+	var sr signResponse
+	if err := json.Unmarshal(respBody, &sr); err != nil {
+		return nil, fmt.Errorf("vaulttransit: decode sign response: %w", err)
+	}
+	return parseVaultSignature(sr.Data.Signature)
+}
+
 // buildSignRequest shapes the transit/sign body for the public key type +
 // requested hash/padding. It enforces the ECDSA hash<->curve pairing and the
 // RSA SHA-256-only / Ed25519-unhashed constraints fail-closed, returning an
@@ -121,43 +128,9 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 func buildSignRequest(pub crypto.PublicKey, digest []byte, hash crypto.Hash, pss bool, keyVersion int) (signRequest, bool, error) {
 	switch pk := pub.(type) {
 	case *ecdsa.PublicKey:
-		// The curve fixes the JWS hash. Reject any other pairing fail-closed —
-		// matching the pkcs11/awskms/gcpkms/azure peers — so a direct
-		// crypto.Signer caller cannot sign a digest under a hash that disagrees
-		// with the ES* alg the JWKS publishes. The !=want check also subsumes
-		// the HashFunc()==0 (Ed25519-shaped) rejection for EC keys.
-		hashAlg, err := ecdsaHashAlg(pk.Curve, hash)
-		if err != nil {
-			return signRequest{}, false, err
-		}
-		return signRequest{
-			Input:      base64.StdEncoding.EncodeToString(digest),
-			KeyVersion: keyVersion,
-			Prehashed:  true,
-			// asn1 → transit returns ASN.1 DER (the crypto.Signer ECDSA
-			// contract; the cryptosigner bridge re-splits DER -> JWS R||S). jws
-			// would return raw R||S, but then this type would NOT be a faithful
-			// crypto.Signer (it would not round-trip ecdsa.VerifyASN1).
-			MarshalingAlgorithm: "asn1",
-			HashAlgorithm:       hashAlg,
-		}, true, nil
+		return ecdsaSignRequest(pk, digest, hash, keyVersion)
 	case *rsa.PublicKey:
-		// The JWS RSA issuers sign over SHA-256 only (RS256 / PS256). Key size
-		// (2048/3072/4096) is orthogonal to the hash.
-		if hash != crypto.SHA256 {
-			return signRequest{}, false, fmt.Errorf("vaulttransit: %w: RSA with hash %v (only SHA-256 / RS256|PS256 supported)", ErrUnsupportedKey, hash)
-		}
-		sigAlg := "pkcs1v15"
-		if pss {
-			sigAlg = "pss"
-		}
-		return signRequest{
-			Input:              base64.StdEncoding.EncodeToString(digest),
-			KeyVersion:         keyVersion,
-			Prehashed:          true,
-			HashAlgorithm:      "sha2-256",
-			SignatureAlgorithm: sigAlg,
-		}, false, nil
+		return rsaSignRequest(digest, hash, pss, keyVersion)
 	case ed25519.PublicKey:
 		// Ed25519 is NOT prehashed: the stdlib crypto.Signer contract passes the
 		// RAW message as `digest` with opts.HashFunc()==0. Transit signs the raw
@@ -174,6 +147,54 @@ func buildSignRequest(pub crypto.PublicKey, digest []byte, hash crypto.Hash, pss
 	default:
 		return signRequest{}, false, fmt.Errorf("vaulttransit: %w: public key type %T", ErrUnsupportedKey, pub)
 	}
+}
+
+// ecdsaSignRequest shapes the transit/sign body for an ECDSA key, enforcing the
+// curve<->hash pairing fail-closed and pinning marshaling_algorithm=asn1 (DER
+// out). The bool return is always true (ECDSA).
+func ecdsaSignRequest(pk *ecdsa.PublicKey, digest []byte, hash crypto.Hash, keyVersion int) (signRequest, bool, error) {
+	// The curve fixes the JWS hash. Reject any other pairing fail-closed —
+	// matching the pkcs11/awskms/gcpkms/azure peers — so a direct
+	// crypto.Signer caller cannot sign a digest under a hash that disagrees
+	// with the ES* alg the JWKS publishes. The !=want check also subsumes
+	// the HashFunc()==0 (Ed25519-shaped) rejection for EC keys.
+	hashAlg, err := ecdsaHashAlg(pk.Curve, hash)
+	if err != nil {
+		return signRequest{}, false, err
+	}
+	return signRequest{
+		Input:      base64.StdEncoding.EncodeToString(digest),
+		KeyVersion: keyVersion,
+		Prehashed:  true,
+		// asn1 → transit returns ASN.1 DER (the crypto.Signer ECDSA
+		// contract; the cryptosigner bridge re-splits DER -> JWS R||S). jws
+		// would return raw R||S, but then this type would NOT be a faithful
+		// crypto.Signer (it would not round-trip ecdsa.VerifyASN1).
+		MarshalingAlgorithm: "asn1",
+		HashAlgorithm:       hashAlg,
+	}, true, nil
+}
+
+// rsaSignRequest shapes the transit/sign body for an RSA key (SHA-256 only,
+// pss when opts is *rsa.PSSOptions else pkcs1v15), fail-closed on any other
+// hash. The bool return is always false (not ECDSA).
+func rsaSignRequest(digest []byte, hash crypto.Hash, pss bool, keyVersion int) (signRequest, bool, error) {
+	// The JWS RSA issuers sign over SHA-256 only (RS256 / PS256). Key size
+	// (2048/3072/4096) is orthogonal to the hash.
+	if hash != crypto.SHA256 {
+		return signRequest{}, false, fmt.Errorf("vaulttransit: %w: RSA with hash %v (only SHA-256 / RS256|PS256 supported)", ErrUnsupportedKey, hash)
+	}
+	sigAlg := "pkcs1v15"
+	if pss {
+		sigAlg = "pss"
+	}
+	return signRequest{
+		Input:              base64.StdEncoding.EncodeToString(digest),
+		KeyVersion:         keyVersion,
+		Prehashed:          true,
+		HashAlgorithm:      "sha2-256",
+		SignatureAlgorithm: sigAlg,
+	}, false, nil
 }
 
 // ecdsaHashAlg returns the transit hash_algorithm string for an ECDSA curve,

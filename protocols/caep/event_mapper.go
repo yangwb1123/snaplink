@@ -80,54 +80,69 @@ func mapAuditEvent(e *audit.Event) (mappedEvent, bool) {
 	}
 	switch e.Type {
 	case audit.EventRefreshTokenReuse:
-		if e.ClientID == "" {
-			return mappedEvent{}, false
-		}
-		return mappedEvent{
-			scope:            scopeClient,
-			affectedClientID: e.ClientID,
-			subject:          e.ActorID,
-			events: map[string]json.RawMessage{
-				EventURICAEPSessionRevoked:    emptyEventPayload,
-				EventURICAEPTokenClaimsChange: emptyEventPayload,
-			},
-		}, true
-
+		return mapRefreshTokenReuse(e)
 	case audit.EventTenantTokensRevoked:
-		// ActorID is the tenant id (see auditTenantTokensRevoked).
-		if e.ActorID == "" {
-			return mappedEvent{}, false
-		}
-		return mappedEvent{
-			scope:    scopeTenant,
-			tenantID: e.ActorID,
-			subject:  e.ActorID,
-			events: map[string]json.RawMessage{
-				EventURIRISCAccountDisabled: emptyEventPayload,
-				EventURICAEPSessionRevoked:  emptyEventPayload,
-			},
-		}, true
-
+		return mapTenantTokensRevoked(e)
 	case audit.EventAdminTokenRevoked:
-		// The affected RP must be named explicitly via metadata — the
-		// event's own ClientID is the calling admin's client. Without it,
-		// do NOT broadcast (no wrong-receiver push, no broadcast-to-all).
-		affected := metaValue(e, MetaAffectedClient)
-		if affected == "" {
-			return mappedEvent{}, false
-		}
-		return mappedEvent{
-			scope:            scopeClient,
-			affectedClientID: affected,
-			subject:          metaValue(e, MetaSubject),
-			events: map[string]json.RawMessage{
-				EventURICAEPTokenRevoked: emptyEventPayload,
-			},
-		}, true
-
+		return mapAdminTokenRevoked(e)
 	default:
 		return mappedEvent{}, false
 	}
+}
+
+// mapRefreshTokenReuse maps a killed refresh-token family to a client-scoped
+// session-revoked + token-claims-change signal. Event.ClientID is the owning
+// RP; absent it (the per-case empty-field guard) we do not broadcast.
+func mapRefreshTokenReuse(e *audit.Event) (mappedEvent, bool) {
+	if e.ClientID == "" {
+		return mappedEvent{}, false
+	}
+	return mappedEvent{
+		scope:            scopeClient,
+		affectedClientID: e.ClientID,
+		subject:          e.ActorID,
+		events: map[string]json.RawMessage{
+			EventURICAEPSessionRevoked:    emptyEventPayload,
+			EventURICAEPTokenClaimsChange: emptyEventPayload,
+		},
+	}, true
+}
+
+// mapTenantTokensRevoked maps a tenant-wide token purge to a tenant-scoped
+// account-disabled + session-revoked signal. ActorID is the tenant id (see
+// auditTenantTokensRevoked); absent it we do not broadcast.
+func mapTenantTokensRevoked(e *audit.Event) (mappedEvent, bool) {
+	if e.ActorID == "" {
+		return mappedEvent{}, false
+	}
+	return mappedEvent{
+		scope:    scopeTenant,
+		tenantID: e.ActorID,
+		subject:  e.ActorID,
+		events: map[string]json.RawMessage{
+			EventURIRISCAccountDisabled: emptyEventPayload,
+			EventURICAEPSessionRevoked:  emptyEventPayload,
+		},
+	}, true
+}
+
+// mapAdminTokenRevoked maps an admin-initiated revoke to a client-scoped
+// token-revoked signal. The affected RP must be named explicitly via metadata —
+// the event's own ClientID is the calling admin's client. Without it, do NOT
+// broadcast (no wrong-receiver push, no broadcast-to-all).
+func mapAdminTokenRevoked(e *audit.Event) (mappedEvent, bool) {
+	affected := metaValue(e, MetaAffectedClient)
+	if affected == "" {
+		return mappedEvent{}, false
+	}
+	return mappedEvent{
+		scope:            scopeClient,
+		affectedClientID: affected,
+		subject:          metaValue(e, MetaSubject),
+		events: map[string]json.RawMessage{
+			EventURICAEPTokenRevoked: emptyEventPayload,
+		},
+	}, true
 }
 
 // metaValue reads a metadata key safely from a possibly-nil map.

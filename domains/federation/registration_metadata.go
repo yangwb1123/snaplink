@@ -44,6 +44,16 @@ func MetadataToClient(entityID string, rp map[string]any, jwks []core.JWK, tenan
 		return nil, fmt.Errorf("%w: no redirect_uris in resolved metadata", ErrFederationMetadataInvalid)
 	}
 
+	return buildFederationClient(entityID, rp, jwks, tenantID, redirectURIs), nil
+}
+
+// buildFederationClient projects the validated, policy-constrained RP metadata
+// onto a core.Client. Split out of MetadataToClient so the mapping (struct
+// literal + the public-client PKCE rule) stays under the per-function budget;
+// the two guard clauses (entity id present, redirect_uris present) remain in
+// MetadataToClient so the ErrFederationMetadataInvalid sentinel is raised at
+// the call boundary.
+func buildFederationClient(entityID string, rp map[string]any, jwks []core.JWK, tenantID string, redirectURIs []string) *core.Client {
 	client := &core.Client{
 		ID:           entityID,
 		Name:         metaString(rp, "client_name"),
@@ -78,7 +88,7 @@ func MetadataToClient(entityID string, rp map[string]any, jwks []core.JWK, tenan
 		client.RequirePKCE = true
 	}
 
-	return client, nil
+	return client
 }
 
 // ----- resolved-metadata projection helpers -------------------------------

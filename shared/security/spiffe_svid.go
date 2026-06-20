@@ -75,20 +75,10 @@ func ParseSPIFFEURI(uri string) (*SPIFFEID, error) {
 	if err != nil {
 		return nil, fmt.Errorf("spiffe: parse: %w", err)
 	}
-	// The SPIFFE-ID spec mandates a lowercase scheme; url.Parse already
-	// lowercases the scheme, but compare explicitly so a future change
-	// can't silently weaken this.
-	if u.Scheme != spiffeScheme {
-		return nil, fmt.Errorf("spiffe: scheme %q is not spiffe", u.Scheme)
-	}
-	if u.User != nil {
-		return nil, errors.New("spiffe: id must not contain userinfo")
-	}
-	if u.Port() != "" {
-		return nil, errors.New("spiffe: id must not contain a port")
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("spiffe: id must not contain query or fragment")
+	// Reject-set ordering (scheme / userinfo / port / query / fragment)
+	// runs BEFORE the trust-domain and path checks below.
+	if err := validateSPIFFEURIComponents(u); err != nil {
+		return nil, err
 	}
 	td := u.Hostname()
 	if td == "" {
@@ -102,13 +92,9 @@ func ParseSPIFFEURI(uri string) (*SPIFFEID, error) {
 		return nil, errors.New("spiffe: trust domain must be lowercase")
 	}
 
-	path := strings.TrimPrefix(u.Path, "/")
-	if path != "" {
-		for _, seg := range strings.Split(path, "/") {
-			if seg == "" {
-				return nil, errors.New("spiffe: path has an empty segment")
-			}
-		}
+	path, err := validateSPIFFEPath(u.Path)
+	if err != nil {
+		return nil, err
 	}
 
 	id := &SPIFFEID{
@@ -118,6 +104,45 @@ func ParseSPIFFEURI(uri string) (*SPIFFEID, error) {
 	}
 	id.Namespace, id.ServiceAccount = parseK8sWorkloadPath(path)
 	return id, nil
+}
+
+// validateSPIFFEURIComponents enforces the SPIFFE-ID structural reject-set
+// in order: a non-spiffe scheme, then any userinfo / port / query /
+// fragment. Split out of ParseSPIFFEURI for the per-function budget; the
+// gate ORDER is preserved exactly and runs BEFORE the trust-domain/path
+// checks in the caller.
+func validateSPIFFEURIComponents(u *url.URL) error {
+	// The SPIFFE-ID spec mandates a lowercase scheme; url.Parse already
+	// lowercases the scheme, but compare explicitly so a future change
+	// can't silently weaken this.
+	if u.Scheme != spiffeScheme {
+		return fmt.Errorf("spiffe: scheme %q is not spiffe", u.Scheme)
+	}
+	if u.User != nil {
+		return errors.New("spiffe: id must not contain userinfo")
+	}
+	if u.Port() != "" {
+		return errors.New("spiffe: id must not contain a port")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("spiffe: id must not contain query or fragment")
+	}
+	return nil
+}
+
+// validateSPIFFEPath strips the leading slash and rejects any empty
+// segment, returning the leading-slash-free workload path. Split out of
+// ParseSPIFFEURI for the per-function budget.
+func validateSPIFFEPath(rawPath string) (string, error) {
+	path := strings.TrimPrefix(rawPath, "/")
+	if path != "" {
+		for _, seg := range strings.Split(path, "/") {
+			if seg == "" {
+				return "", errors.New("spiffe: path has an empty segment")
+			}
+		}
+	}
+	return path, nil
 }
 
 // parseK8sWorkloadPath extracts (namespace, service-account) from a

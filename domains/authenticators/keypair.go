@@ -122,21 +122,67 @@ func NewKeyPairAuthenticator(resolver PublicKeyResolver, maxClockSkew time.Durat
 func (k *KeyPairAuthenticator) Name() string { return MethodKeyPair }
 
 func (k *KeyPairAuthenticator) Authenticate(ctx context.Context, req *sso.AuthRequest) (*sso.AuthResult, error) {
+	creds, err := k.parseKeyPairCredentials(req)
+	if err != nil {
+		return nil, err
+	}
+
+	pub, subject, err := k.resolver.Resolve(ctx, creds.keyID)
+	if err != nil {
+		return nil, err
+	}
+
+	message := canonicalKeyPairMessage(creds.keyID, creds.nonce, creds.tsStr)
+	if !ed25519.Verify(pub, message, creds.signature) {
+		return nil, errors.New("keypair: signature verification failed")
+	}
+
+	if err := k.checkNonceReplay(ctx, creds); err != nil {
+		return nil, err
+	}
+
+	if subject == nil {
+		subject = &sso.Subject{ID: subjectPrefixKeyPair + creds.keyID}
+	}
+	return &sso.AuthResult{
+		UserID:      subject.ID,
+		ExternalID:  creds.keyID,
+		Provider:    k.Name(),
+		Attributes:  subject.Claims,
+		AuthMethods: []string{AuthMethodSig},
+	}, nil
+}
+
+// keyPairCredentials holds the parsed, window-validated request fields. ts is
+// the parsed timestamp; signature is the decoded (raw-URL or std base64) blob.
+type keyPairCredentials struct {
+	keyID     string
+	nonce     string
+	tsStr     string
+	ts        time.Time
+	signature []byte
+}
+
+// parseKeyPairCredentials extracts the credential fields and enforces the
+// timestamp clock-skew window BEFORE decoding the signature, then decodes it.
+// Order is load-bearing: a stale timestamp is rejected ahead of any signature
+// processing.
+func (k *KeyPairAuthenticator) parseKeyPairCredentials(req *sso.AuthRequest) (keyPairCredentials, error) {
 	keyID := req.Credential["key_id"]
 	nonce := req.Credential["nonce"]
 	tsStr := req.Credential["timestamp"]
 	sigB64 := req.Credential["signature"]
 	if keyID == "" || nonce == "" || tsStr == "" || sigB64 == "" {
-		return nil, errors.New("keypair: key_id, nonce, timestamp, signature required")
+		return keyPairCredentials{}, errors.New("keypair: key_id, nonce, timestamp, signature required")
 	}
 
 	tsUnix, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("keypair: invalid timestamp: %w", err)
+		return keyPairCredentials{}, fmt.Errorf("keypair: invalid timestamp: %w", err)
 	}
 	ts := time.Unix(tsUnix, 0)
 	if delta := time.Since(ts); delta > k.maxClockSkew || -delta > k.maxClockSkew {
-		return nil, errors.New("keypair: timestamp outside allowed clock skew")
+		return keyPairCredentials{}, errors.New("keypair: timestamp outside allowed clock skew")
 	}
 
 	signature, err := base64.RawURLEncoding.DecodeString(sigB64)
@@ -144,49 +190,35 @@ func (k *KeyPairAuthenticator) Authenticate(ctx context.Context, req *sso.AuthRe
 		// Tolerate standard base64 too.
 		signature, err = base64.StdEncoding.DecodeString(sigB64)
 		if err != nil {
-			return nil, fmt.Errorf("keypair: signature not base64: %w", err)
+			return keyPairCredentials{}, fmt.Errorf("keypair: signature not base64: %w", err)
 		}
 	}
 
-	pub, subject, err := k.resolver.Resolve(ctx, keyID)
-	if err != nil {
-		return nil, err
-	}
+	return keyPairCredentials{keyID: keyID, nonce: nonce, tsStr: tsStr, ts: ts, signature: signature}, nil
+}
 
-	message := canonicalKeyPairMessage(keyID, nonce, tsStr)
-	if !ed25519.Verify(pub, message, signature) {
-		return nil, errors.New("keypair: signature verification failed")
+// checkNonceReplay runs ONLY on an otherwise-valid request (signature +
+// timestamp window both passed). Key the nonce by key_id so two clients can't
+// collide on a shared nonce string, and anchor the entry's expiry to the
+// clock-skew window — past it the timestamp gate rejects anyway, so there is no
+// value in remembering the nonce longer. FAIL-OPEN: a store error is logged but
+// never blocks a cryptographically valid login. A nil store keeps the
+// historical bounded-window-only behavior.
+func (k *KeyPairAuthenticator) checkNonceReplay(ctx context.Context, creds keyPairCredentials) error {
+	if k.nonceStore == nil {
+		return nil
 	}
-
-	// Replay defense runs ONLY on an otherwise-valid request (signature +
-	// timestamp window both passed). Key the nonce by key_id so two clients
-	// can't collide on a shared nonce string, and anchor the entry's expiry
-	// to the clock-skew window — past it the timestamp gate rejects anyway,
-	// so there is no value in remembering the nonce longer. FAIL-OPEN: a
-	// store error is logged but never blocks a cryptographically valid login.
-	if k.nonceStore != nil {
-		nonceKey := keyID + keyPairMessageSeparator + nonce
-		firstSighting, err := k.nonceStore.MarkSeen(ctx, nonceKey, ts.Add(k.maxClockSkew))
-		switch {
-		case err != nil:
-			if k.logger != nil {
-				k.logger.Error("keypair nonce store failed (allowing)", "key_id", keyID, "error", err)
-			}
-		case !firstSighting:
-			return nil, errors.New("keypair: nonce replay detected")
+	nonceKey := creds.keyID + keyPairMessageSeparator + creds.nonce
+	firstSighting, err := k.nonceStore.MarkSeen(ctx, nonceKey, creds.ts.Add(k.maxClockSkew))
+	switch {
+	case err != nil:
+		if k.logger != nil {
+			k.logger.Error("keypair nonce store failed (allowing)", "key_id", creds.keyID, "error", err)
 		}
+	case !firstSighting:
+		return errors.New("keypair: nonce replay detected")
 	}
-
-	if subject == nil {
-		subject = &sso.Subject{ID: subjectPrefixKeyPair + keyID}
-	}
-	return &sso.AuthResult{
-		UserID:      subject.ID,
-		ExternalID:  keyID,
-		Provider:    k.Name(),
-		Attributes:  subject.Claims,
-		AuthMethods: []string{AuthMethodSig},
-	}, nil
+	return nil
 }
 
 func (k *KeyPairAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (*sso.AuthResult, error) {

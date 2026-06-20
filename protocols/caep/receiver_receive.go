@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -52,102 +53,141 @@ func knownReceiverEvent(uri string) bool {
 //  9. subject mapping: map sub_id → local user. Unmapped ⇒ ack + no-op.
 //  10. action: revoke the mapped subject's sessions + refresh tokens.
 func (r *Receiver) Receive(ctx context.Context, setBody string) (ReceiverResult, error) {
-	// (1) Parse enough of the SET to learn its issuer, WITHOUT trusting any
-	// of it yet (the signature is checked in step 3). VerifyCompactJWS also
-	// reparses the header internally for the alg/kid gate; we read the
-	// payload `iss` here only to SELECT which trust bundle to verify
-	// against. A malformed body is the one shape error distinct from a
-	// trust failure.
+	// Steps 1-7: authenticate + validate the SET. A non-ok return carries the
+	// oracle-safe rejected result (the failure code is baked in); ok==true
+	// means the SET is FULLY VALIDATED and we ACK from here on.
+	entry, c, rejected, ok := r.authenticateSET(ctx, setBody)
+	if !ok {
+		return rejected, nil
+	}
+
+	// ---- The SET is now FULLY VALIDATED. From here we ACK (202) even if
+	// there is nothing to do; only unknown subjects/events remain, which
+	// are no-ops, not errors. ----
+
+	// (8) actionable events — keep only KNOWN URIs the transmitter is
+	// allowed to trigger. An unknown / disallowed event is ignored.
+	eventTypes := selectActionableEvents(c.Events, entry.allowedEvents)
+	if len(eventTypes) == 0 {
+		// Valid SET, but it carries no event this receiver acts on. Ack it.
+		r.auditReceived(ctx, c.Iss, nil, "")
+		if r.metric != nil {
+			r.metric(ReceiverOutcomeNoop)
+		}
+		return ReceiverResult{Acked: true, Issuer: c.Iss}, nil
+	}
+
+	// Steps 9-10: resolve the subject + revoke. A resolver/revoke store error
+	// returns (ReceiverResult{}, err) — NOT acked, NOT a reject — so the
+	// handler maps it to a 500/retry; the validated intent is real.
+	return r.actOnSubject(ctx, entry, &c, eventTypes)
+}
+
+// authenticateSET runs validation steps 1-7 against an inbound SET body. On
+// success it returns the matched trusted entry + the verified claims with
+// ok==true. On any failure it returns ok==false and a rejected ReceiverResult
+// carrying the oracle-safe code: a splitCompactJWS miss is the ONLY
+// ErrReceiverInvalidRequest; EVERY other validation failure collapses to the
+// SAME coarse ErrReceiverInvalidKey so the wire reveals no detail. FAIL-CLOSED:
+// an unavailable trust bundle, a jti store error, or a replayed jti all reject.
+func (r *Receiver) authenticateSET(ctx context.Context, setBody string) (trustedEntry, inboundSETClaims, ReceiverResult, bool) {
+	var zero inboundSETClaims
+	// (1) Parse enough of the SET to learn its issuer, WITHOUT trusting it yet
+	// (the signature is checked in step 3) — only to SELECT the trust bundle. A
+	// malformed body is the one shape error distinct from a trust failure.
 	header, payload, ok := splitCompactJWS(setBody)
 	if !ok {
-		return r.reject(ErrReceiverInvalidRequest), nil
+		return trustedEntry{}, zero, r.reject(ErrReceiverInvalidRequest), false
 	}
 	var pre struct {
 		Iss string `json:"iss"`
 	}
 	if err := json.Unmarshal(payload, &pre); err != nil || pre.Iss == "" {
-		// No issuer ⇒ cannot select a trust bundle ⇒ untrusted.
-		return r.reject(ErrReceiverInvalidKey), nil
+		return trustedEntry{}, zero, r.reject(ErrReceiverInvalidKey), false // no iss ⇒ no bundle ⇒ untrusted
 	}
 
-	// (2) iss-allowlist — the trust gate. An issuer not in the configured
-	// set is rejected BEFORE any signature work: only configured,
-	// authenticated transmitters may ever trigger a revocation.
+	// (2) iss-allowlist — the trust gate, BEFORE any signature work. An
+	// unavailable/empty bundle fails closed (must never accept).
 	entry, trustedIss := r.trusted[pre.Iss]
 	if !trustedIss {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return trustedEntry{}, zero, r.reject(ErrReceiverInvalidKey), false
 	}
-
 	keys, err := entry.jwks.GetJWKS(ctx)
 	if err != nil || len(keys) == 0 {
-		// The trust bundle is unavailable — treat as not-authenticatable
-		// (fail-closed). A misconfigured/empty bundle must never accept.
-		return r.reject(ErrReceiverInvalidKey), nil
+		return trustedEntry{}, zero, r.reject(ErrReceiverInvalidKey), false
 	}
 
-	// (3) signature + alg-allowlist (no alg=none, no symmetric) against
-	// THIS transmitter's bundle. Reuses the SAME verifier the SPIFFE path
-	// uses — alg-confusion-safe, kid-bound, on-curve EC checks.
+	// (3-5) signature (alg-allowlist BEFORE sig; no alg=none/symmetric) + typ +
+	// iss-match + aud-binding against THIS transmitter's bundle.
+	c, rejected, ok := r.verifyAndBindClaims(setBody, header, keys, entry, pre.Iss)
+	if !ok {
+		return trustedEntry{}, zero, rejected, false
+	}
+
+	if rejected, ok := r.checkTemporalAndReplay(ctx, &c); !ok {
+		return trustedEntry{}, zero, rejected, false
+	}
+	return entry, c, ReceiverResult{}, true
+}
+
+// verifyAndBindClaims runs validation steps 3-5 on a SET already matched to a
+// trusted bundle: signature + alg-allowlist via VerifyCompactJWS (the SAME
+// alg-confusion-safe, kid-bound verifier the SPIFFE path uses — no alg=none, no
+// symmetric), the secevent+jwt typ gate (so a plain access/id token signed by
+// the same key can never be replayed as a SET), the defense-in-depth iss-match
+// (the signed body's iss MUST equal the pre-parsed one the bundle was selected
+// by), and STRICT aud-binding. Every failure collapses to ErrReceiverInvalidKey.
+func (r *Receiver) verifyAndBindClaims(setBody string, header []byte, keys []core.JWK, entry trustedEntry, preIss string) (inboundSETClaims, ReceiverResult, bool) {
+	var c inboundSETClaims
 	verifiedPayload, err := security.VerifyCompactJWS(setBody, keys, entry.allowedAlgs)
 	if err != nil {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return c, r.reject(ErrReceiverInvalidKey), false
 	}
-
-	// (4) typ gate: the JOSE header MUST declare secevent+jwt, so a plain
-	// access/id token signed by the same upstream key can never be replayed
-	// here as a SET (the inverse of the issuers' at+jwt typ gate).
 	if !headerTypIsSET(header) {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return c, r.reject(ErrReceiverInvalidKey), false
 	}
-
-	var c inboundSETClaims
 	if err := json.Unmarshal(verifiedPayload, &c); err != nil {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return c, r.reject(ErrReceiverInvalidKey), false
 	}
-	// Defense-in-depth: the verified payload's iss MUST still equal the one
-	// we selected the bundle by (a mismatch would mean the unverified
-	// pre-parse disagreed with the signed body — reject).
-	if c.Iss != pre.Iss {
-		return r.reject(ErrReceiverInvalidKey), nil
+	if c.Iss != preIss {
+		return c, r.reject(ErrReceiverInvalidKey), false
 	}
-
-	// (5) STRICT aud-binding — refuse a SET not addressed to THIS receiver.
 	if !c.Aud.Contains(r.audience) {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return c, r.reject(ErrReceiverInvalidKey), false
 	}
+	return c, ReceiverResult{}, true
+}
 
-	// (6) temporal freshness. A SET MUST carry at least one temporal claim
-	// (iat or exp). With NEITHER, both window checks below would be skipped,
-	// so the SET bypasses freshness entirely; worse, with no exp the jti
-	// replay key lives only DefaultJTIReplayWindow (below), so the same
-	// no-temporal SET replays INDEFINITELY past that window, re-triggering a
-	// revocation each time. A push-delivery SET with no freshness claim is
-	// non-conformant for replay-safety → reject (fail-closed). When present,
-	// we bound exp (not already past) and iat (not too far in the future) by
-	// the skew; the jti-replay key (below) is bounded by exp+skew when exp is
-	// present, else the default window from now (and since a fresh iat ≈ now,
-	// that is effectively iat+window for the iat-only case — never unbounded,
-	// because a no-temporal SET is rejected above).
+// checkTemporalAndReplay runs validation steps 6-7 on already-verified claims.
+//
+// (6) temporal freshness: a SET MUST carry at least one temporal claim (iat or
+// exp). With NEITHER, both window checks are skipped (freshness bypass) AND,
+// lacking exp, the jti replay key lives only DefaultJTIReplayWindow — so the
+// same no-temporal SET replays INDEFINITELY past that window, re-revoking each
+// time. So a no-freshness SET is rejected (fail-closed). When present, exp must
+// not be already past and iat not too far in the future (bounded by the skew).
+//
+// (7) jti replay: a SET MUST carry a jti (RFC 8417 §2.2); a missing jti is
+// rejected (accepting "" would let an attacker strip the claim to bypass the
+// guard). The replay key is bounded by exp+skew when exp is present, else the
+// default window from now. FAIL-CLOSED: a seen jti OR a store error rejects (an
+// external-driven revocation primitive must not double-act, nor act on store
+// uncertainty). The ack-even-on-no-op boundary in Receive sits AFTER MarkSeen.
+// All failures collapse to the SAME coarse ErrReceiverInvalidKey.
+func (r *Receiver) checkTemporalAndReplay(ctx context.Context, c *inboundSETClaims) (ReceiverResult, bool) {
 	now := r.now()
 	skew := r.maxClockSkew
 	if c.Exp == 0 && c.Iat == 0 {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return r.reject(ErrReceiverInvalidKey), false
 	}
 	if c.Exp != 0 && now.Add(-skew).After(time.Unix(c.Exp, 0)) {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return r.reject(ErrReceiverInvalidKey), false
 	}
 	if c.Iat != 0 && now.Add(skew).Before(time.Unix(c.Iat, 0)) {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return r.reject(ErrReceiverInvalidKey), false
 	}
-
-	// (7) jti replay — consume the jti so a replayed SET cannot re-trigger.
-	// A SET MUST carry a jti (RFC 8417 §2.2); a missing jti is rejected
-	// rather than silently accepted (accepting "" would let an attacker
-	// strip the claim to bypass the replay guard). Fail-closed: a seen jti,
-	// OR a store error, rejects (an external-driven revocation primitive
-	// must not double-act, and must not act on store uncertainty).
 	if c.Jti == "" {
-		return r.reject(ErrReceiverInvalidKey), nil
+		return r.reject(ErrReceiverInvalidKey), false
 	}
 	replayExpiry := now.Add(security.DefaultJTIReplayWindow)
 	if c.Exp != 0 {
@@ -158,58 +198,61 @@ func (r *Receiver) Receive(ctx context.Context, setBody string) (ReceiverResult,
 		if r.logger != nil {
 			r.logger.Error("ssf: jti replay store error", "iss", c.Iss, "error", mErr.Error())
 		}
-		return r.reject(ErrReceiverInvalidKey), nil
+		return r.reject(ErrReceiverInvalidKey), false
 	}
 	if !first {
-		// Replayed SET — already actioned within its window. Reject so it
-		// does not double-act, but the rejection is indistinguishable from
-		// any other trust failure on the wire.
-		return r.reject(ErrReceiverInvalidKey), nil
+		// Replayed SET — already actioned within its window; reject so it does
+		// not double-act (indistinguishable from any other trust failure).
+		return r.reject(ErrReceiverInvalidKey), false
 	}
+	return ReceiverResult{}, true
+}
 
-	// ---- The SET is now FULLY VALIDATED. From here we ACK (202) even if
-	// there is nothing to do; only unknown subjects/events remain, which
-	// are no-ops, not errors. ----
-
-	// (8) actionable events — keep only KNOWN URIs the transmitter is
-	// allowed to trigger. An unknown / disallowed event is ignored.
+// selectActionableEvents (step 8) keeps only KNOWN event URIs the transmitter
+// is allowed to trigger. An unknown / disallowed event is ignored. A nil
+// allowedEvents means all known events are honored.
+func selectActionableEvents(events map[string]json.RawMessage, allowedEvents map[string]struct{}) []string {
 	var eventTypes []string
-	for uri := range c.Events {
+	for uri := range events {
 		if !knownReceiverEvent(uri) {
 			continue
 		}
-		if entry.allowedEvents != nil {
-			if _, ok := entry.allowedEvents[uri]; !ok {
+		if allowedEvents != nil {
+			if _, ok := allowedEvents[uri]; !ok {
 				continue
 			}
 		}
 		eventTypes = append(eventTypes, uri)
 	}
-	if len(eventTypes) == 0 {
-		// Valid SET, but it carries no event this receiver acts on. Ack it.
-		r.auditReceived(ctx, c.Iss, nil, "")
-		if r.metric != nil {
-			r.metric(ReceiverOutcomeNoop)
-		}
-		return ReceiverResult{Acked: true, Issuer: c.Iss}, nil
-	}
+	return eventTypes
+}
 
-	// (9) subject mapping — the precision crux. Resolve the SET subject to a
-	// LOCAL user id. A subject with no known local mapping is a NO-OP (ack,
-	// no revocation) — never a guessed/partial match.
+// actOnSubject runs validation steps 9-10 on a fully-validated SET carrying at
+// least one actionable event.
+//
+// (9) subject mapping — the precision crux: resolve the SET subject to a LOCAL
+// user id. An unmapped subject is a NO-OP (ack, no revocation) — never a
+// guessed/partial match. A transient resolver error returns (ReceiverResult{},
+// err) — NOT acked, NOT a reject — so it fails closed (no action) yet the
+// handler maps it to a 500/retry rather than silently dropping a real
+// revocation; the validated intent is real.
+//
+// (10) action — revoke ALL of the mapped subject's local access. Every
+// actionable event (session-revoked / account-disabled / token-claims-change /
+// token-revoked) is conservatively handled by the SAME full-subject revocation
+// (sessions + refresh tokens) — the safe superset of each. A revoke store error
+// is likewise surfaced as (ReceiverResult{}, err) for retry (not acked-as-done);
+// the attempt is still audited.
+func (r *Receiver) actOnSubject(ctx context.Context, entry trustedEntry, c *inboundSETClaims, eventTypes []string) (ReceiverResult, error) {
 	sub := c.subjectID()
 	localSub, mapped, rErr := r.resolver.ResolveLocalSubject(ctx, entry.subjectMode, entry.provider, sub)
 	if rErr != nil {
-		// A transient resolver failure: fail-closed (no action) and do NOT
-		// ack, so the transmitter may retry rather than silently dropping a
-		// real revocation. Surfaced as an internal error → 500.
 		if r.logger != nil {
 			r.logger.Error("ssf: subject resolve error", "iss", c.Iss, "error", rErr.Error())
 		}
 		return ReceiverResult{}, rErr
 	}
 	if !mapped {
-		// Unmapped subject ⇒ no wrongful revocation. Ack + no-op.
 		r.auditReceived(ctx, c.Iss, eventTypes, "")
 		if r.metric != nil {
 			r.metric(ReceiverOutcomeNoop)
@@ -217,18 +260,8 @@ func (r *Receiver) Receive(ctx context.Context, setBody string) (ReceiverResult,
 		return ReceiverResult{Acked: true, Issuer: c.Iss, EventTypes: eventTypes}, nil
 	}
 
-	// (10) action — revoke ALL of the mapped subject's local access. Every
-	// actionable event here (session-revoked / account-disabled /
-	// token-claims-change / token-revoked) is conservatively handled by the
-	// SAME full-subject revocation: killing the subject's sessions + refresh
-	// tokens is the safe superset of each. Token-claims-change is the
-	// weakest signal but still revokes (the previously-trusted tokens should
-	// no longer be honored).
 	res, revErr := r.revoker.RevokeAllForSubject(ctx, localSub)
 	if revErr != nil {
-		// The SET was valid + mapped; the revoke is the safe direction, so a
-		// store error here is surfaced (the transmitter retries) rather than
-		// acked-as-done. We still audit the attempt.
 		r.auditRevocation(ctx, c.Iss, eventTypes, localSub, res, false)
 		if r.logger != nil {
 			r.logger.Error("ssf: revocation failed after valid SET", "iss", c.Iss, "subject", localSub, "error", revErr.Error())

@@ -14,75 +14,28 @@ import (
 
 // matter whether MFA gated the request or not.
 func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
-	if s.userProvider != nil {
-		user := &User{
-			ID:         result.UserID,
-			ExternalID: result.ExternalID,
-			Provider:   result.Provider,
-			Attributes: result.Attributes,
-		}
-		if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
-			s.logger.Error("failed to upsert user", "error", err)
-			ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
-			return
-		}
+	if s.upsertLoginUser(ctx, result) {
+		return
 	}
 
-	// Non-blocking credential-health signal. Emitted once here so it
-	// covers every downstream branch (code flow + direct mint) and both
-	// the primary login and the MFA-resumed re-entry, which all funnel
-	// through finishLogin. The signal NEVER blocks login and NEVER rides
-	// on the wire or into any token — AuthResult.CredentialHealth is
-	// json:"-", so generic serialization (tokens, the MFA challenge store)
-	// strips it; the MFA step-up path re-threads it explicitly via
-	// mfaResumeState.CredentialHealth so this audit still fires after
-	// resume. It lands only in the audit log. nil = no signal (healthy
-	// credential or no checker wired).
+	// Non-blocking credential-health signal. Emitted once here so it covers
+	// every downstream branch (code flow + direct mint) and both the primary
+	// login and the MFA-resumed re-entry, which all funnel through finishLogin.
+	// It NEVER blocks login and NEVER rides on the wire or into any token —
+	// AuthResult.CredentialHealth is json:"-", so generic serialization strips
+	// it; the MFA step-up path re-threads it via mfaResumeState.CredentialHealth
+	// so this audit still fires after resume. nil = no signal.
 	s.recordCredentialHealth(ctx, client.ID, result.UserID, result.CredentialHealth)
 
-	// OAuth 2.1 strict mode: response_type=token (implicit) is
-	// retired by OAuth 2.1; empty response_type (which defaulted
-	// to direct-mint in OAuth 2.0) is treated the same way under
-	// strict mode. Both reject with unsupported_response_type
-	// — strict mode requires explicit response_type=code.
-	if s.oauth21Strict && req.ResponseType != "code" {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedResponseType))
-		return
-	}
-
-	// OIDC Form Post Response Mode 1.0 — validate response_mode
-	// early so a bad value fails BEFORE any side-effects (auth code
-	// issue, session create). Empty is always valid and falls
-	// through to the response_type's default mode.
-	if req.ResponseMode != "" && !s.isValidResponseMode(req.ResponseMode) {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
-		return
-	}
-
-	// Scope authorization (RFC 6749 §3.3) — the access-control gate on
-	// what the issued token may carry. Run here, AFTER authentication and
-	// the tenant/residency gates, so it can never be a pre-auth probe and
-	// covers BOTH the authorization_code branch (the granted set is baked
-	// into the stored code) and the direct-mint branch below. Mirrors the
-	// tenant_mismatch / residency gates: record the failure + emit the
-	// authz error body carrying the RFC 9207 iss. req.Scope is replaced
-	// with the GRANTED set (validated, or defaulted to the client's
-	// AllowedScopes when the request named no scope) so every downstream
-	// consumer — auth code, direct mint, refresh, id_token gate — sees
-	// the authorized scope. Empty allowlist = unrestricted = req.Scope
-	// passes through unchanged (byte-identical for clients without one).
-	granted, scopeErr := oauth.GrantedScopes(req.Scope, client)
-	if scopeErr != nil {
-		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidScope)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+	granted, halted := s.validateAndAuthorizeScope(ctx, &req, client)
+	if halted {
 		return
 	}
 	req.Scope = granted
 
-	// Consent gate (opt-in via WithConsentStore, nil = no-op).
-	// Runs AFTER scope authorization so req.Scope is the granted set that
-	// will actually appear in the issued token — the grant we check and
-	// record is authoritative for exactly those scopes.
+	// Consent gate (opt-in via WithConsentStore, nil = no-op). Runs AFTER scope
+	// authorization so req.Scope is the granted set that will appear in the
+	// issued token — the grant we check and record is authoritative for them.
 	if s.consentStore != nil {
 		if s.handleConsentGate(ctx, result.UserID, client, req.Scope, req.Prompt, req.ConsentChallengeID) {
 			return
@@ -95,13 +48,10 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 	// Fail-open + best-effort — never blocks login.
 	s.ensureJITMembership(ctx, client, result.UserID)
 
-	// OAuth 2.0 authorization_code branch: instead of minting a token
-	// here, persist a short-lived code bound to (user, client, redirect_uri)
-	// and return it so the relying party can exchange it via /token.
 	// OAuth 2.0 authorization_code branch: instead of minting a token here,
-	// persist a short-lived code bound to (user, client, redirect_uri) and return
-	// it so the relying party can exchange it via /token. The branch always owns
-	// the response, so finishLogin returns immediately after it.
+	// persist a short-lived code bound to (user, client, redirect_uri) and
+	// return it so the relying party can exchange it via /token. The branch
+	// always owns the response, so finishLogin returns immediately after it.
 	if req.ResponseType == "code" {
 		s.finishLoginCodeFlow(ctx, result, &req, client)
 		return
@@ -112,6 +62,76 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 	}
 
 	s.finishLoginDirectMint(ctx, result, &req, client)
+}
+
+// upsertLoginUser provisions/refreshes the local user record from the
+// authentication result when a UserProvider is wired. On a store failure it has
+// ALREADY written the exact 500 internal body and returns halted=true; the
+// caller must return immediately. No provider = no-op (halted=false).
+func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult) bool {
+	if s.userProvider == nil {
+		return false
+	}
+	user := &User{
+		ID:         result.UserID,
+		ExternalID: result.ExternalID,
+		Provider:   result.Provider,
+		Attributes: result.Attributes,
+	}
+	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
+		s.logger.Error("failed to upsert user", "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		return true
+	}
+	return false
+}
+
+// validateAndAuthorizeScope runs the pre-side-effect gates shared by both login
+// branches and resolves the granted scope set. On any halt it has ALREADY written
+// the exact 400 body (unsupported_response_type / invalid_request / invalid_scope)
+// and returns halted=true; the caller must return immediately. On success it
+// returns the GRANTED scope set (validated, or defaulted to the client's
+// AllowedScopes when the request named no scope); the caller assigns it to
+// req.Scope BEFORE the consent gate so every downstream consumer sees it.
+func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Request, client *Client) ([]string, bool) {
+	// OAuth 2.1 strict mode: response_type=token (implicit) is
+	// retired by OAuth 2.1; empty response_type (which defaulted
+	// to direct-mint in OAuth 2.0) is treated the same way under
+	// strict mode. Both reject with unsupported_response_type
+	// — strict mode requires explicit response_type=code.
+	if s.oauth21Strict && req.ResponseType != "code" {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedResponseType))
+		return nil, true
+	}
+
+	// OIDC Form Post Response Mode 1.0 — validate response_mode
+	// early so a bad value fails BEFORE any side-effects (auth code
+	// issue, session create). Empty is always valid and falls
+	// through to the response_type's default mode.
+	if req.ResponseMode != "" && !s.isValidResponseMode(req.ResponseMode) {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+		return nil, true
+	}
+
+	// Scope authorization (RFC 6749 §3.3) — the access-control gate on
+	// what the issued token may carry. Run here, AFTER authentication and
+	// the tenant/residency gates, so it can never be a pre-auth probe and
+	// covers BOTH the authorization_code branch (the granted set is baked
+	// into the stored code) and the direct-mint branch below. Mirrors the
+	// tenant_mismatch / residency gates: record the failure + emit the
+	// authz error body carrying the RFC 9207 iss. The granted set is
+	// validated, or defaulted to the client's AllowedScopes when the
+	// request named no scope, so every downstream consumer — auth code,
+	// direct mint, refresh, id_token gate — sees the authorized scope.
+	// Empty allowlist = unrestricted = req.Scope passes through unchanged
+	// (byte-identical for clients without one).
+	granted, scopeErr := oauth.GrantedScopes(req.Scope, client)
+	if scopeErr != nil {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidScope)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+		return nil, true
+	}
+	return granted, false
 }
 
 // finishLoginDirectMint is the OAuth 2.0 direct-mint branch (response_type
@@ -130,11 +150,43 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 		return
 	}
+	strategy, token, issuedSub, err := s.mintAccessToken(ctx, result, req, client, session)
+	if err != nil {
+		// mintAccessToken has already written the exact 500 body.
+		return
+	}
+
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, strategy, result.UserID, session.ID)
+	s.recordSubjectClientAccess(ctx.Request().Context(), result.UserID, client.ID)
+	fillGeoFromContext(ctx, result)
+
+	resp := map[string]any{
+		KeySessionID:     session.ID,
+		KeyAccessToken:   token.AccessToken,
+		KeyTokenType:     token.TokenType,
+		KeyRefreshToken:  token.RefreshToken,
+		KeyExpiresIn:     token.ExpiresIn,
+		KeyScope:         token.Scope,
+		KeyTokenStrategy: strategy,
+		KeyIss:           s.resolveIssuer(ctx),
+	}
+	s.augmentDirectMintResponse(ctx, result, req, client, session, issuedSub, token, resp)
+	s.applyLoginResponseExtras(ctx, result, client.ID, resp)
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// mintAccessToken resolves the per-client token strategy, applies the pairwise
+// subject pseudonym, and issues the access token for the direct-mint branch. It
+// returns the issued subject so the caller threads the SAME value into the
+// id_token (it MUST NOT be recomputed). On any failure it has ALREADY written
+// the exact 500 body (no_token_strategy / internal) and returns a non-nil error;
+// the caller returns immediately.
+func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session) (string, *Token, string, error) {
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
 		s.logger.Error("no token strategy for client", "client", client.ID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrNoTokenStrategy))
-		return
+		return "", nil, "", err
 	}
 	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
@@ -154,19 +206,24 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
-		return
+		return "", nil, "", err
 	}
+	return strategy, token, issuedSub, nil
+}
 
-	s.recordLoginSuccess(ctx, client.ID, req.Provider, strategy, result.UserID, session.ID)
-	s.recordSubjectClientAccess(ctx.Request().Context(), result.UserID, client.ID)
-	fillGeoFromContext(ctx, result)
-
+// augmentDirectMintResponse layers the optional credentials onto the direct-mint
+// response in order: the server-managed refresh token (overriding the issuer's),
+// then the Native SSO device_secret, then the OIDC id_token. The device_secret is
+// minted BEFORE the id_token so its ds_hash can ride the id_token. issuedSub is
+// the value returned by mintAccessToken and is threaded into emitLoginIDToken
+// unchanged. Each step FAILS OPEN: an outage logs a logger.Error and omits only
+// that field, never blocking the login.
+func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session, issuedSub string, token *Token, resp map[string]any) {
 	// When a oauth.RefreshTokenStore is wired, server-managed refresh tokens
 	// override whatever the underlying TokenIssuer returned — that way the OAuth
 	// refresh_token grant works uniformly regardless of which issuer minted the
 	// access token. Fail-open: a refresh-token store outage doesn't block the
 	// login (user gets an access_token until expiry), surfaced as a logger.Error.
-	refreshTokenOut := token.RefreshToken
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
 			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource,
@@ -174,20 +231,9 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {
-			refreshTokenOut = rt
+			resp[KeyRefreshToken] = rt
 			s.recordRefreshTokenIssued(ctx, client.ID, result.UserID, false)
 		}
-	}
-
-	resp := map[string]any{
-		KeySessionID:     session.ID,
-		KeyAccessToken:   token.AccessToken,
-		KeyTokenType:     token.TokenType,
-		KeyRefreshToken:  refreshTokenOut,
-		KeyExpiresIn:     token.ExpiresIn,
-		KeyScope:         token.Scope,
-		KeyTokenStrategy: strategy,
-		KeyIss:           s.resolveIssuer(ctx),
 	}
 	// Native SSO 1.0: when the client was granted device_sso and a device-secret
 	// store is wired, mint a device_secret BEFORE the id_token so its ds_hash can
@@ -209,8 +255,6 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	if deviceSecretValue != "" {
 		resp[KeyDeviceSecret] = deviceSecretValue
 	}
-	s.applyLoginResponseExtras(ctx, result, client.ID, resp)
-	ctx.JSON(http.StatusOK, resp)
 }
 
 // fillGeoFromContext backfills the AuthResult's country/language from the geo

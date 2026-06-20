@@ -112,54 +112,95 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 	// union). TTL-cached across requests so a hot RP polling the
 	// discovery doc doesn't pay 5× ClientStore.List per call.
 	clientSnap := s.discoverySnapshot(ctx.Request().Context())
-	cfg := oidc.ProviderMetadata{
-		Issuer:                 base,
-		AuthorizationEndpoint:  base + PathLogin,
-		TokenEndpoint:          base + PathToken,
-		UserInfoEndpoint:       base + PathUserInfo,
-		JWKSURI:                base + PathJWKS,
-		EndSessionEndpoint:     base + PathEndSession,
-		RevocationEndpoint:     base + PathRevoke,
-		IntrospectionEndpoint:  base + PathIntrospect,
-		ResponseTypesSupported: responseTypesFor(s),
-		GrantTypesSupported:    append([]string(nil), SupportedGrants...),
-		SubjectTypesSupported:  subjectTypesFor(s),
-		TokenEndpointAuthMethodsSupported: []string{
-			"client_secret_basic",
-			"client_secret_post",
-			"private_key_jwt", // RFC 7521 + 7523
-			// RFC 6749 §2.1 / OIDC Core §9 — public clients (SPAs,
-			// native apps) authenticate only by client_id + PKCE,
-			// so `none` is the spec-defined method for them. DCR
-			// already accepts it (handle_register.go), so advertise
-			// it here so RP libraries don't reject the AS during
-			// metadata validation.
-			"none",
-		},
-		// Introspection + revocation share the same client-auth
-		// pipeline as /token, so advertise the same list.
-		IntrospectionEndpointAuthMethodsSupported: []string{
-			"client_secret_basic", "client_secret_post", "private_key_jwt",
-		},
-		RevocationEndpointAuthMethodsSupported: []string{
-			"client_secret_basic", "client_secret_post", "private_key_jwt",
-		},
-		CodeChallengeMethodsSupported: codeChallengeMethodsFor(s),
-		// RFC 9207 §3: this server always includes `iss` in
-		// authorization responses (see handleLogin + resolveIssuer).
-		AuthorizationResponseIssParameterSupported: true,
-		// RFC 9101 §10.5: JAR `request` parameter accepted; URL
-		// fetched `request_uri` flips true when WithJARFetcher is
-		// wired (set below).
-		RequestParameterSupported:    true,
-		RequestURIParameterSupported: false,
-		// JAR request objects (RFC 9101) verify through
-		// security.VerifyCompactJWS, which accepts the full asymmetric
-		// allowlist — advertise exactly what is accepted on the wire so
-		// RP metadata validation reflects reality.
-		RequestObjectSigningAlgValuesSupported: security.AsymmetricJWSAlgValues(),
-		ClaimsParameterSupported:               true,
+	cfg := buildBaseMetadata(s, base)
+	s.applyClientAuthAndRequestParams(&cfg)
+	s.applyEncryptionMetadata(&cfg)
+	s.applyMFAIssuerSigning(&cfg, ctx, base)
+	s.applyGrantEndpoints(&cfg, base, clientSnap)
+	s.applyLogoutMetadata(&cfg, clientSnap)
+	s.applyStaticClaimsAndSecurity(&cfg, clientSnap)
+	s.applyEndpointAuthSigningAlgs(&cfg)
+	s.applyResponseModesAndProfiles(&cfg, ctx)
+	// RFC 8414 §2.1 signed_metadata MUST be produced AFTER every
+	// other field is finalized so the signed claims match what RPs
+	// see in the plaintext fields. The signing itself excludes the
+	// signed_metadata field (chicken-and-egg) — claims are sourced
+	// from the cfg struct via json round-trip.
+	if s.metadataSigner != nil {
+		if jws, err := s.signDiscoveryMetadata(ctx.Request().Context(), &cfg); err != nil {
+			s.logger.Error("signed_metadata generation failed", "error", err)
+		} else {
+			cfg.SignedMetadata = jws
+		}
 	}
+	return cfg
+}
+
+// buildBaseMetadata seeds the always-present identity, endpoint, and core
+// capability fields. The conditional + derived fields are layered on by the
+// apply* helpers in buildOIDCConfiguration, in the same order as the original
+// inline assembly so the output stays byte-identical.
+func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
+	return oidc.ProviderMetadata{
+		Issuer:                        base,
+		AuthorizationEndpoint:         base + PathLogin,
+		TokenEndpoint:                 base + PathToken,
+		UserInfoEndpoint:              base + PathUserInfo,
+		JWKSURI:                       base + PathJWKS,
+		EndSessionEndpoint:            base + PathEndSession,
+		RevocationEndpoint:            base + PathRevoke,
+		IntrospectionEndpoint:         base + PathIntrospect,
+		ResponseTypesSupported:        responseTypesFor(s),
+		GrantTypesSupported:           append([]string(nil), SupportedGrants...),
+		SubjectTypesSupported:         subjectTypesFor(s),
+		CodeChallengeMethodsSupported: codeChallengeMethodsFor(s),
+	}
+}
+
+// applyClientAuthAndRequestParams advertises the client-authentication methods
+// accepted on /token, /introspect, /revoke plus the JAR request-parameter
+// capabilities. These values are constant for a given build.
+func (s *Server) applyClientAuthAndRequestParams(cfg *oidc.ProviderMetadata) {
+	cfg.TokenEndpointAuthMethodsSupported = []string{
+		"client_secret_basic",
+		"client_secret_post",
+		"private_key_jwt", // RFC 7521 + 7523
+		// RFC 6749 §2.1 / OIDC Core §9 — public clients (SPAs,
+		// native apps) authenticate only by client_id + PKCE,
+		// so `none` is the spec-defined method for them. DCR
+		// already accepts it (handle_register.go), so advertise
+		// it here so RP libraries don't reject the AS during
+		// metadata validation.
+		"none",
+	}
+	// Introspection + revocation share the same client-auth
+	// pipeline as /token, so advertise the same list.
+	cfg.IntrospectionEndpointAuthMethodsSupported = []string{
+		"client_secret_basic", "client_secret_post", "private_key_jwt",
+	}
+	cfg.RevocationEndpointAuthMethodsSupported = []string{
+		"client_secret_basic", "client_secret_post", "private_key_jwt",
+	}
+	// RFC 9207 §3: this server always includes `iss` in
+	// authorization responses (see handleLogin + resolveIssuer).
+	cfg.AuthorizationResponseIssParameterSupported = true
+	// RFC 9101 §10.5: JAR `request` parameter accepted; URL
+	// fetched `request_uri` flips true when WithJARFetcher is
+	// wired (applyEncryptionMetadata).
+	cfg.RequestParameterSupported = true
+	cfg.RequestURIParameterSupported = false
+	// JAR request objects (RFC 9101) verify through
+	// security.VerifyCompactJWS, which accepts the full asymmetric
+	// allowlist — advertise exactly what is accepted on the wire so
+	// RP metadata validation reflects reality.
+	cfg.RequestObjectSigningAlgValuesSupported = security.AsymmetricJWSAlgValues()
+	cfg.ClaimsParameterSupported = true
+}
+
+// applyEncryptionMetadata advertises JAR request-object encryption (when a
+// decrypter is wired), response-direction JWE for id_token/userinfo (when an
+// encrypter is wired), and flips request_uri support when a JAR fetcher is set.
+func (s *Server) applyEncryptionMetadata(cfg *oidc.ProviderMetadata) {
 	if s.jarFetcher != nil {
 		cfg.RequestURIParameterSupported = true
 	}
@@ -182,6 +223,12 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 		cfg.UserinfoEncryptionAlgValuesSupported = algs
 		cfg.UserinfoEncryptionEncValuesSupported = encs
 	}
+}
+
+// applyMFAIssuerSigning advertises MFA orchestration (Provider+Store both
+// wired), honors a WithIssuer override, and derives the id_token/userinfo
+// signing algs from the wired signers.
+func (s *Server) applyMFAIssuerSigning(cfg *oidc.ProviderMetadata, ctx HandlerContext, base string) {
 	// MFA orchestration is advertised only when both Provider + Store
 	// are wired — having Provider without Store would be a misconfig
 	// (handleMFAComplete returns 404 in that state) so we don't leak
@@ -213,6 +260,12 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 			cfg.UserinfoSigningAlgValuesSupported = signingAlgs
 		}
 	}
+}
+
+// applyGrantEndpoints advertises the CIBA, PAR, and dynamic-registration
+// endpoints (each opt-in) plus the client-derived scopes_supported and
+// authorization_details_types_supported unions.
+func (s *Server) applyGrantEndpoints(cfg *oidc.ProviderMetadata, base string, clientSnap *clientDiscoverySnapshot) {
 	if s.cibaStore != nil {
 		// OIDC CIBA Core 1.0 §4: advertise the backchannel endpoint +
 		// delivery modes only when CIBA is wired (opt-in). Poll is always
@@ -257,6 +310,11 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 	if len(clientSnap.authorizationDetailTypes) > 0 {
 		cfg.AuthorizationDetailsTypesSupported = clientSnap.authorizationDetailTypes
 	}
+}
+
+// applyLogoutMetadata advertises back/front-channel logout, each gated on its
+// wiring (and the per-client frontchannel snapshot flag).
+func (s *Server) applyLogoutMetadata(cfg *oidc.ProviderMetadata, clientSnap *clientDiscoverySnapshot) {
 	if s.logoutTokenIssuer != nil && s.logoutNotifier != nil {
 		cfg.BackchannelLogoutSupported = true
 		if s.sessionMgr != nil {
@@ -269,6 +327,13 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 			cfg.FrontchannelLogoutSessionSupported = true
 		}
 	}
+}
+
+// applyStaticClaimsAndSecurity sets the static claim list, the unconditional
+// DPoP advertisement, the mTLS-bound-token aliases (when a cert extractor is
+// wired), ACR values, policy/ToS URIs, and the client-derived
+// require_signed_request_object_global flag.
+func (s *Server) applyStaticClaimsAndSecurity(cfg *oidc.ProviderMetadata, clientSnap *clientDiscoverySnapshot) {
 	cfg.ClaimsSupported = []string{
 		"sub", "iss", "aud", "exp", "iat", "nbf", "scope",
 		"nonce", "auth_time", "amr", "acr", "azp",
@@ -301,10 +366,12 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 	if clientSnap.requireSignedRequestObject {
 		cfg.RequireSignedRequestObjectGlobal = true
 	}
-	// private_key_jwt (RFC 7523) client assertions verify through
-	// security.VerifyCompactJWS on every endpoint that accepts them, so
-	// the advertised signing-alg lists are the full asymmetric allowlist
-	// (was EdDSA-only) — RPs overwhelmingly hold RS256/ES256 keys.
+}
+
+// applyEndpointAuthSigningAlgs advertises the private_key_jwt (RFC 7523)
+// client-assertion signing algs accepted on each client-auth endpoint — the
+// full asymmetric allowlist, since they all verify through VerifyCompactJWS.
+func (s *Server) applyEndpointAuthSigningAlgs(cfg *oidc.ProviderMetadata) {
 	authAlgs := security.AsymmetricJWSAlgValues()
 	cfg.TokenEndpointAuthSigningAlgValuesSupported = authAlgs
 	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = authAlgs
@@ -312,6 +379,13 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 	if s.parStore != nil {
 		cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported = authAlgs
 	}
+}
+
+// applyResponseModesAndProfiles advertises the supported prompt + response
+// modes (adding the JARM jwt modes when a JARM signer is wired) and applies the
+// FAPI 2.0 enforce-mode hard requirements LAST so they override any earlier
+// advertisement.
+func (s *Server) applyResponseModesAndProfiles(cfg *oidc.ProviderMetadata, ctx HandlerContext) {
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
 	// run silent renewal via id_token_hint. The other prompt
 	// values (login / consent / select_account) aren't surfaced
@@ -353,21 +427,6 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 		cfg.ResponseTypesSupported = []string{"code"}
 		cfg.CodeChallengeMethodsSupported = []string{PKCEMethodS256}
 	}
-
-	// RFC 8414 §2.1 signed_metadata MUST be produced AFTER every
-	// other field is finalized so the signed claims match what RPs
-	// see in the plaintext fields. The signing itself excludes the
-	// signed_metadata field (chicken-and-egg) — claims are sourced
-	// from the cfg struct via json round-trip.
-	if s.metadataSigner != nil {
-		if jws, err := s.signDiscoveryMetadata(ctx.Request().Context(), &cfg); err != nil {
-			s.logger.Error("signed_metadata generation failed", "error", err)
-		} else {
-			cfg.SignedMetadata = jws
-		}
-	}
-
-	return cfg
 }
 
 // BuildOPMetadata projects the openid_provider metadata for the OpenID

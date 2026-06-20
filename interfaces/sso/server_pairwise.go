@@ -145,15 +145,7 @@ const DefaultClientAssertionMaxLifetime = 5 * time.Minute
 // Errors collapse to one wire shape on the caller side
 // (invalid_client) so attacker probing can't distinguish "wrong
 // signature" from "missing client" from "wrong audience".
-func verifyJWTClientAssertion(
-	ctx context.Context,
-	assertion string,
-	formClientID string,
-	clientStore ClientStore,
-	asIssuer string,
-	replay security.JTIReplayStore,
-	replayFailClosed bool,
-) (string, error) {
+func verifyJWTClientAssertion(ctx context.Context, assertion, formClientID string, clientStore ClientStore, asIssuer string, replay security.JTIReplayStore, replayFailClosed bool) (string, error) {
 	if clientStore == nil {
 		return "", errors.New("jwt_client_assertion: client store required")
 	}
@@ -161,67 +153,21 @@ func verifyJWTClientAssertion(
 	if len(parts) != 3 {
 		return "", errors.New("jwt_client_assertion: malformed JWT")
 	}
-	// The `typ` header is RFC 7523-specific and not VerifyCompactJWS's
-	// concern, so it is checked here. `alg`, `kid`, the kty/crv↔alg
-	// consistency, and the signature are ALL owned by VerifyCompactJWS
-	// below — this header parse and the payload parse that follows read
-	// UNVERIFIED segments and MUST NOT be trusted for any security
-	// decision beyond reaching `typ` and the self-asserted `sub` used to
-	// LOOK UP the client (whose registered JWKS then verifies the
-	// signature; an attacker who lies about `sub` simply fails that
-	// verification).
-	hraw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err := parseAssertionTypHeader(parts[0]); err != nil {
+		return "", err
+	}
+	p, err := decodeAssertionClaims(parts[1])
 	if err != nil {
-		return "", fmt.Errorf("jwt_client_assertion: header decode: %w", err)
+		return "", err
 	}
-	var h struct {
-		Typ string `json:"typ"`
-	}
-	if err := json.Unmarshal(hraw, &h); err != nil {
-		return "", fmt.Errorf("jwt_client_assertion: header parse: %w", err)
-	}
-	switch h.Typ {
-	case "", "JWT", "client-authentication+jwt":
-	default:
-		return "", fmt.Errorf("jwt_client_assertion: typ %q not supported", h.Typ)
+	if err := validateAssertionClaims(p, formClientID, asIssuer); err != nil {
+		return "", err
 	}
 
-	praw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", fmt.Errorf("jwt_client_assertion: payload decode: %w", err)
-	}
-	var p struct {
-		Iss string   `json:"iss"`
-		Sub string   `json:"sub"`
-		Aud audClaim `json:"aud"`
-		Exp int64    `json:"exp"`
-		Nbf int64    `json:"nbf"`
-		Iat int64    `json:"iat"`
-		JTI string   `json:"jti"`
-	}
-	if err := json.Unmarshal(praw, &p); err != nil {
-		return "", fmt.Errorf("jwt_client_assertion: payload parse: %w", err)
-	}
-	if p.Sub == "" || p.Sub != p.Iss {
-		return "", errors.New("jwt_client_assertion: iss/sub must be equal and non-empty")
-	}
-	if formClientID != "" && formClientID != p.Sub {
-		return "", errors.New("jwt_client_assertion: form client_id does not match sub")
-	}
-	now := time.Now()
-	if p.Exp == 0 || now.After(time.Unix(p.Exp, 0)) {
-		return "", errors.New("jwt_client_assertion: expired or missing exp")
-	}
-	if time.Unix(p.Exp, 0).After(now.Add(DefaultClientAssertionMaxLifetime)) {
-		return "", fmt.Errorf("jwt_client_assertion: exp too far in future (max %s)", DefaultClientAssertionMaxLifetime)
-	}
-	if p.Nbf != 0 && now.Before(time.Unix(p.Nbf, 0)) {
-		return "", errors.New("jwt_client_assertion: nbf in future")
-	}
-	if asIssuer != "" && !slices.Contains([]string(p.Aud), asIssuer) {
-		return "", fmt.Errorf("jwt_client_assertion: aud does not include %q", asIssuer)
-	}
-
+	// Lookup-then-verify: resolve the self-asserted `sub` to a registered
+	// client FIRST, then verify the signature against THAT client's JWKS.
+	// This ordering is the auth core and MUST NOT be reordered — an
+	// attacker who lies about `sub` simply fails the signature check below.
 	client, err := clientStore.Get(ctx, p.Sub)
 	if err != nil || client == nil {
 		return "", errors.New("jwt_client_assertion: client not found")
@@ -238,25 +184,111 @@ func verifyJWTClientAssertion(
 		return "", fmt.Errorf("jwt_client_assertion: %w", err)
 	}
 
-	// Replay defense — when wired and the JWT carries a jti, refuse
-	// any second sighting within its exp window. Same store + same
-	// semantics JAR replay protection uses; one knob covers both.
-	if replay != nil && p.JTI != "" {
-		first, err := replay.MarkSeen(ctx, p.JTI, time.Unix(p.Exp, 0))
-		switch {
-		case err != nil:
-			// Store error — default fail-OPEN (continue). Fail-CLOSED
-			// (opt-in) rejects with the detected-replay error so the
-			// wire shape is identical (no store-health oracle).
-			if replayFailClosed {
-				return "", errors.New("jwt_client_assertion: jti replay detected")
-			}
-		case !first:
-			return "", errors.New("jwt_client_assertion: jti replay detected")
-		}
+	if err := enforceAssertionReplay(ctx, p, replay, replayFailClosed); err != nil {
+		return "", err
 	}
 
 	return p.Sub, nil
+}
+
+// assertionClaims holds the RFC 7523 §3 payload fields read from the
+// UNVERIFIED JWT segment. They MUST NOT drive any security decision
+// beyond reaching the self-asserted `sub` used to LOOK UP the client
+// (whose registered JWKS then verifies the signature).
+type assertionClaims struct {
+	Iss string   `json:"iss"`
+	Sub string   `json:"sub"`
+	Aud audClaim `json:"aud"`
+	Exp int64    `json:"exp"`
+	Nbf int64    `json:"nbf"`
+	Iat int64    `json:"iat"`
+	JTI string   `json:"jti"`
+}
+
+// parseAssertionTypHeader checks the RFC 7523-specific `typ` JOSE header.
+// The `typ` is not VerifyCompactJWS's concern, so it is checked here;
+// `alg`, `kid`, the kty/crv↔alg consistency, and the signature are ALL
+// owned by VerifyCompactJWS — this reads an UNVERIFIED segment.
+func parseAssertionTypHeader(segment string) error {
+	hraw, err := base64.RawURLEncoding.DecodeString(segment)
+	if err != nil {
+		return fmt.Errorf("jwt_client_assertion: header decode: %w", err)
+	}
+	var h struct {
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(hraw, &h); err != nil {
+		return fmt.Errorf("jwt_client_assertion: header parse: %w", err)
+	}
+	switch h.Typ {
+	case "", "JWT", "client-authentication+jwt":
+		return nil
+	default:
+		return fmt.Errorf("jwt_client_assertion: typ %q not supported", h.Typ)
+	}
+}
+
+// decodeAssertionClaims decodes the UNVERIFIED payload segment into the
+// RFC 7523 §3 claim set. No claim here is trusted for a security
+// decision beyond the lookup `sub` (see verifyJWTClientAssertion).
+func decodeAssertionClaims(segment string) (assertionClaims, error) {
+	var p assertionClaims
+	praw, err := base64.RawURLEncoding.DecodeString(segment)
+	if err != nil {
+		return p, fmt.Errorf("jwt_client_assertion: payload decode: %w", err)
+	}
+	if err := json.Unmarshal(praw, &p); err != nil {
+		return p, fmt.Errorf("jwt_client_assertion: payload parse: %w", err)
+	}
+	return p, nil
+}
+
+// validateAssertionClaims enforces the non-cryptographic RFC 7523 §3
+// gates (iss/sub, form client_id binding, exp window + max-lifetime
+// ceiling, nbf, aud) in the SAME order as the inline original.
+func validateAssertionClaims(p assertionClaims, formClientID, asIssuer string) error {
+	if p.Sub == "" || p.Sub != p.Iss {
+		return errors.New("jwt_client_assertion: iss/sub must be equal and non-empty")
+	}
+	if formClientID != "" && formClientID != p.Sub {
+		return errors.New("jwt_client_assertion: form client_id does not match sub")
+	}
+	now := time.Now()
+	if p.Exp == 0 || now.After(time.Unix(p.Exp, 0)) {
+		return errors.New("jwt_client_assertion: expired or missing exp")
+	}
+	if time.Unix(p.Exp, 0).After(now.Add(DefaultClientAssertionMaxLifetime)) {
+		return fmt.Errorf("jwt_client_assertion: exp too far in future (max %s)", DefaultClientAssertionMaxLifetime)
+	}
+	if p.Nbf != 0 && now.Before(time.Unix(p.Nbf, 0)) {
+		return errors.New("jwt_client_assertion: nbf in future")
+	}
+	if asIssuer != "" && !slices.Contains([]string(p.Aud), asIssuer) {
+		return fmt.Errorf("jwt_client_assertion: aud does not include %q", asIssuer)
+	}
+	return nil
+}
+
+// enforceAssertionReplay applies jti replay defense — when wired and the
+// JWT carries a jti, refuse any second sighting within its exp window.
+// Same store + semantics JAR replay protection uses. A store error
+// defaults to fail-OPEN (continue); fail-CLOSED (opt-in) rejects with the
+// SAME detected-replay error so the wire shape is identical (no
+// store-health oracle).
+func enforceAssertionReplay(ctx context.Context, p assertionClaims, replay security.JTIReplayStore, replayFailClosed bool) error {
+	if replay == nil || p.JTI == "" {
+		return nil
+	}
+	first, err := replay.MarkSeen(ctx, p.JTI, time.Unix(p.Exp, 0))
+	switch {
+	case err != nil:
+		if replayFailClosed {
+			return errors.New("jwt_client_assertion: jti replay detected")
+		}
+	case !first:
+		return errors.New("jwt_client_assertion: jti replay detected")
+	}
+	return nil
 }
 
 // RFC 9449 — DPoP (Demonstration of Proof-of-Possession).

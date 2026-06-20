@@ -76,35 +76,72 @@ func HandleEndSession(d EndSessionDeps, ctx core.HandlerContext) {
 	state := q.Get("state")
 	clientIDHint := strings.TrimSpace(q.Get("client_id"))
 
+	client, userID, sid, handled := resolveEndSessionClient(d, ctx, idTokenHint, clientIDHint)
+	if handled {
+		return // a bad id_token_hint already wrote 400 invalid_token.
+	}
+
+	revokeEndSessionTokens(d, ctx, idTokenHint, userID, client)
+
+	// Capture FCL fan-out targets BEFORE the BCL fan-out runs: BCL's
+	// Forget-on-non-BCL behavior trims the SubjectClientIndex of clients
+	// without a BackchannelLogoutURI, so FCL gathered AFTER would silently
+	// drop those FCL-only peers. Render happens later; this only snapshots.
+	var fclIframes []string
+	if userID != "" {
+		fclIframes = d.GatherFrontchannelLogoutIframes(ctx, userID, client, sid)
+	}
+
+	// Back-Channel Logout — notify the id_token_hint's RP so its local
+	// session is torn down. No-op when BCL isn't wired / no backchannel uri.
+	if userID != "" && client != nil {
+		d.FanOutBackchannelLogout(ctx, client, userID, sid)
+	}
+
+	if userID != "" {
+		d.RecordLogout(ctx, "", []string{"id_token_hint"})
+	}
+
+	target := composePostLogoutTarget(postLogoutURI, state, client)
+
+	// Front-Channel Logout — render the hidden-iframe page (with a
+	// meta-refresh to target when allowlisted) using the pre-BCL snapshot.
+	if len(fclIframes) > 0 {
+		d.RenderFrontchannelLogout(ctx, fclIframes, target)
+		return
+	}
+
+	// Redirect ONLY to an allowlisted URI (phishing defense per §3);
+	// otherwise 204 — session killed, nothing safe to render.
+	if target != "" {
+		ctx.Redirect(http.StatusFound, target)
+		return
+	}
+	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
+}
+
+// resolveEndSessionClient validates the id_token_hint (best-effort: a bad
+// signature is a phishing attempt, so we MUST NOT honor a post_logout_redirect_uri
+// tied to its claimed audience) and resolves the client/userID/sid. Its ONLY
+// early-return is the 400 invalid_token, signalled via handled=true. With only a
+// client_id hint (no signed identity) it resolves the client for redirect-uri
+// validation but returns no userID, so no session is terminated.
+func resolveEndSessionClient(d EndSessionDeps, ctx core.HandlerContext, idTokenHint, clientIDHint string) (client *core.Client, userID, sid string, handled bool) {
 	clientStore := d.ClientStoreAccessor()
-
-	var (
-		client *core.Client
-		userID string
-		sid    string
-	)
-
 	if idTokenHint != "" {
-		// Best-effort verification: an id_token_hint with a bad
-		// signature is a phishing attempt; we MUST not honor any
-		// post_logout_redirect_uri tied to its claimed audience.
 		claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), idTokenHint)
 		if err != nil || claims == nil {
 			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidToken))
-			return
+			return nil, "", "", true
 		}
 		userID = claims.Subject
-		// OIDC §8 pairwise: translate the per-sector sub back to the
-		// local one so downstream session bookkeeping finds the right
-		// user. Non-pairwise deployments no-op.
+		// OIDC §8 pairwise: translate the per-sector sub back to the local one.
 		if local, perr := d.ResolveLocalSubject(ctx.Request().Context(), userID); perr == nil {
 			userID = local
 		}
 		sid = claims.SID
-		// Resolve the client by RFC 9068 client_id claim (preferred,
-		// first-class) or fall back to the first audience entry (the
-		// pre-9068 heuristic) — matches handleLogout's lookup so
-		// behavior is consistent across the two logout endpoints.
+		// RFC 9068 client_id claim, or fall back to first audience (pre-9068) —
+		// matches handleLogout so the two logout endpoints behave consistently.
 		clientLookupID := claims.ClientID
 		if clientLookupID == "" && len(claims.Audience) > 0 {
 			clientLookupID = claims.Audience[0]
@@ -114,96 +151,47 @@ func HandleEndSession(d EndSessionDeps, ctx core.HandlerContext) {
 				client = c
 			}
 		}
-	} else if clientIDHint != "" && clientStore != nil {
-		// Spec allows client_id without id_token_hint, but without a
-		// signed user identity we won't revoke any session — we only
-		// use the client to validate the redirect uri.
+		return client, userID, sid, false
+	}
+	if clientIDHint != "" && clientStore != nil {
 		if c, err := clientStore.Get(ctx.Request().Context(), clientIDHint); err == nil {
 			client = c
 		}
 	}
+	return client, "", "", false
+}
 
-	// Kill the presented id_token's access-side counterpart so a
-	// stolen id_token_hint can't be used as a soft-logout that leaves
-	// the access token alive until expiry.
+// revokeEndSessionTokens kills the id_token_hint's access-side counterpart (so a
+// stolen id_token_hint can't be a soft-logout leaving the access token alive)
+// and wipes the user's refresh tokens for the client so rotations can't outlive
+// the logout. Both are best-effort.
+func revokeEndSessionTokens(d EndSessionDeps, ctx core.HandlerContext, idTokenHint, userID string, client *core.Client) {
 	if idTokenHint != "" {
 		revoked, failed := d.RevokeAcrossIssuers(ctx.Request().Context(), idTokenHint)
 		d.AuditPartialRevokeFailure(ctx, revoked, failed)
 	}
-	// Wipe every refresh token the user holds for the client in scope,
-	// so descendant rotations can't outlive the logout.
 	if userID != "" && client != nil {
 		if idx := d.SubjectRefreshRevoker(); idx != nil {
 			_, _ = idx.DeleteAllForSubject(ctx.Request().Context(), userID, client.ID)
 		}
 	}
+}
 
-	// Capture FCL fan-out targets BEFORE the BCL fan-out runs.
-	// BCL's Forget-on-non-BCL behavior trims the SubjectClientIndex
-	// of clients without a BackchannelLogoutURI; if FCL gathered
-	// AFTER, those FCL-only peers would be missing from the index by
-	// the time we walked it and silently dropped from the iframe
-	// list. Render happens later — this just snapshots the targets
-	// while the index is still complete.
-	var fclIframes []string
-	if userID != "" {
-		fclIframes = d.GatherFrontchannelLogoutIframes(ctx, userID, client, sid)
+// composePostLogoutTarget returns the redirect destination ONLY when the URI
+// exact-matches the client's allowlist (no path tolerance — phishing defense per
+// §3), with state appended when supplied; otherwise the empty string. Shared by
+// both the FCL HTML page and the legacy 302 path so the defense is uniform.
+func composePostLogoutTarget(postLogoutURI, state string, client *core.Client) string {
+	if postLogoutURI == "" || client == nil || !client.IsPostLogoutRedirectURIValid(postLogoutURI) {
+		return ""
 	}
-
-	// OIDC Back-Channel Logout 1.0 — mirror of the /logout behavior.
-	// When the user logs out via the redirect-style /end_session, the
-	// RP whose id_token_hint was presented should also be notified
-	// via back-channel so its local session can be torn down. No-op
-	// when BCL isn't wired or the client doesn't declare a
-	// backchannel_logout_uri.
-	if userID != "" && client != nil {
-		d.FanOutBackchannelLogout(ctx, client, userID, sid)
-	}
-
-	if userID != "" {
-		d.RecordLogout(ctx, "", []string{"id_token_hint"})
-	}
-
-	// Resolve a safe redirect destination once — both the FCL HTML
-	// page and the legacy 302 path want the same allowlist + state
-	// composition; computing it in one place keeps phishing defense
-	// uniform across the two response shapes.
-	var target string
-	if postLogoutURI != "" && client != nil && client.IsPostLogoutRedirectURIValid(postLogoutURI) {
-		target = postLogoutURI
-		if state != "" {
-			sep := "?"
-			if strings.Contains(target, "?") {
-				sep = "&"
-			}
-			target = target + sep + "state=" + url.QueryEscape(state)
+	target := postLogoutURI
+	if state != "" {
+		sep := "?"
+		if strings.Contains(target, "?") {
+			sep = "&"
 		}
+		target = target + sep + "state=" + url.QueryEscape(state)
 	}
-
-	// OIDC Front-Channel Logout 1.0 — when any client (the primary
-	// from id_token_hint, or any other the subject is signed into via
-	// the SubjectClientIndex) opts in via FrontchannelLogoutURI,
-	// render an HTML page with one hidden iframe per such client. The
-	// browser fires each iframe request (clearing RP cookies); a
-	// meta-refresh then navigates to post_logout_redirect_uri if one
-	// was allowlisted. FCL is purely additive to the revoke/BCL
-	// pipeline above — those still ran. Iframe targets were
-	// snapshotted above before BCL pruned the index.
-	if len(fclIframes) > 0 {
-		d.RenderFrontchannelLogout(ctx, fclIframes, target)
-		return
-	}
-
-	// Redirect ONLY if the client allowlists the URI. Phishing
-	// defense: an attacker who crafts an end_session URL with
-	// post_logout_redirect_uri=https://evil.example MUST not get the
-	// user bounced there.
-	if target != "" {
-		ctx.Redirect(http.StatusFound, target)
-		return
-	}
-
-	// Session killed, but no safe redirect destination. 204 is the
-	// OIDC convention for "we did the work, nothing to render".
-	ctx.ResponseWriter().WriteHeader(http.StatusNoContent)
+	return target
 }

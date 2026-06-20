@@ -175,50 +175,11 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 	if users == nil || sessions == nil {
 		return nil, errors.New("webauthn: UserStore + SessionStore required")
 	}
-	conveyance, err := mapConveyance(cfg.AttestationConveyance)
+	conveyance, err := validateAttestationConveyance(cfg)
 	if err != nil {
 		return nil, err
 	}
-	// Boot guard: an ACTIVE attestation policy is meaningless unless the RP
-	// asks for attestation to be conveyed. Under conveyance ""/none/indirect
-	// most authenticators omit the attestation statement and report the
-	// all-zero AAGUID, which a denylist can never match (silent bypass) and an
-	// allowlist gate can only reject wholesale — so a policy with weak
-	// conveyance is silently ineffective. Require direct (or stronger:
-	// enterprise) so the gate sees a verified, model-specific AAGUID. Fail
-	// loud here rather than ship a dark policy. (mapConveyance has already
-	// validated the string; "" / PreferIndirectAttestation are the
-	// below-direct values.)
-	if cfg.AttestationPolicy.Enabled() &&
-		(conveyance == "" || conveyance == protocol.PreferIndirectAttestation) {
-		return nil, fmt.Errorf(
-			"webauthn: attestation policy mode %q requires AttestationConveyance \"direct\" or \"enterprise\" "+
-				"(got %q) — an attestation policy on an un-attested AAGUID is meaningless",
-			cfg.AttestationPolicy.Mode, conveyanceOrNone(cfg.AttestationConveyance))
-	}
-	gwCfg := &gw.Config{
-		RPID:          cfg.RPID,
-		RPDisplayName: cfg.RPDisplayName,
-		RPOrigins:     cfg.RPOrigins,
-		// MDS = FIDO Metadata Service provider. When non-nil, go-webauthn
-		// root-validates the attestation chain (see Config.MDS doc) — the
-		// AAGUID policy then gates a FIDO-validated AAGUID. Nil leaves the
-		// field at go-webauthn's zero (no metadata validation), byte-identical
-		// to the pre-MDS ceremony.
-		MDS: cfg.MDS,
-	}
-	// Pin the user-verification requirement into the core config so the
-	// assertion options sent to the client AND go-webauthn's stored
-	// session.UserVerification both say "required" — without it
-	// validateLogin's shouldVerifyUser is always false and the UV bit goes
-	// unchecked (mere user-presence satisfies the ceremony). BeginLogin also
-	// passes the per-ceremony option as a belt-and-suspenders against a
-	// future library default change. Left at the zero value when the operator
-	// hasn't opted in — byte-identical to a pre-fix build.
-	if cfg.RequireUserVerification {
-		gwCfg.AuthenticatorSelection.UserVerification = protocol.VerificationRequired
-	}
-	core, err := gw.New(gwCfg)
+	core, err := gw.New(buildGWConfig(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: configure: %w", err)
 	}
@@ -235,6 +196,54 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		attestationPolicy:       cfg.AttestationPolicy,
 		requireUserVerification: cfg.RequireUserVerification,
 	}, nil
+}
+
+// validateAttestationConveyance maps the operator-supplied conveyance string to
+// the go-webauthn protocol constant and enforces the boot guard: an ACTIVE
+// attestation policy is meaningless unless the RP asks for attestation to be
+// conveyed. Under conveyance ""/none/indirect most authenticators omit the
+// attestation statement and report the all-zero AAGUID, which a denylist can
+// never match (silent bypass) and an allowlist gate can only reject wholesale —
+// so a policy with weak conveyance is silently ineffective. Require direct (or
+// stronger: enterprise) so the gate sees a verified, model-specific AAGUID. Fail
+// loud here rather than ship a dark policy. (mapConveyance has already validated
+// the string; "" / PreferIndirectAttestation are the below-direct values.)
+func validateAttestationConveyance(cfg Config) (protocol.ConveyancePreference, error) {
+	conveyance, err := mapConveyance(cfg.AttestationConveyance)
+	if err != nil {
+		return "", err
+	}
+	if cfg.AttestationPolicy.Enabled() &&
+		(conveyance == "" || conveyance == protocol.PreferIndirectAttestation) {
+		return "", fmt.Errorf(
+			"webauthn: attestation policy mode %q requires AttestationConveyance \"direct\" or \"enterprise\" "+
+				"(got %q) — an attestation policy on an un-attested AAGUID is meaningless",
+			cfg.AttestationPolicy.Mode, conveyanceOrNone(cfg.AttestationConveyance))
+	}
+	return conveyance, nil
+}
+
+// buildGWConfig assembles the core gw.Config from cfg. It mirrors the operator's
+// MDS provider (nil ⇒ no metadata validation, byte-identical to the pre-MDS
+// ceremony) and pins the user-verification requirement into the core config so
+// the assertion options sent to the client AND go-webauthn's stored
+// session.UserVerification both say "required" — without it validateLogin's
+// shouldVerifyUser is always false and the UV bit goes unchecked (mere
+// user-presence satisfies the ceremony). BeginLogin also passes the per-ceremony
+// option as a belt-and-suspenders against a future library default change. Left
+// at the zero value when the operator hasn't opted in — byte-identical to a
+// pre-fix build.
+func buildGWConfig(cfg Config) *gw.Config {
+	gwCfg := &gw.Config{
+		RPID:          cfg.RPID,
+		RPDisplayName: cfg.RPDisplayName,
+		RPOrigins:     cfg.RPOrigins,
+		MDS:           cfg.MDS,
+	}
+	if cfg.RequireUserVerification {
+		gwCfg.AuthenticatorSelection.UserVerification = protocol.VerificationRequired
+	}
+	return gwCfg
 }
 
 // mapConveyance validates + maps the operator-supplied conveyance string

@@ -50,118 +50,18 @@ type funcMetric struct {
 	lines int
 }
 
-// cycloExemptions / funcLenExemptions are the frozen backlogs of functions that
-// exceeded the budget when this gate was introduced. Each value is the measure
+// cycloExemptions / funcLenExemptions WERE the frozen backlogs of functions that
+// exceeded the budget when this gate was introduced. Each value was the measure
 // at introduction (the ceiling). SHRINK THESE LISTS; never grow them, and never
-// raise a ceiling. Regenerate after a refactor with:
+// raise a ceiling. Both are now EMPTY: the entire backlog has been decomposed,
+// so EVERY parent-module function is within the cyclo<=15 / lines<=50 budgets.
+// A NEW violation must be fixed (extract sub-functions), never re-exempted.
+// Regenerate after a refactor with:
 //
 //	SEED_MAINTAINABILITY=1 go test -run TestSeedMaintainabilityExemptions -v .
-var cycloExemptions = map[string]int{
-	"domains/authenticators/keypair.go:(*KeyPairAuthenticator).Authenticate":        17,
-	"protocols/caep/receiver_construct.go:NewReceiver":                              19,
-	"protocols/caep/receiver_receive.go:(*Receiver).Receive":                        36,
-	"cmd/sso-server/build_stores.go:buildApp":                                       23,
-	"infrastructure/defaultimpl/ecdsa_validate.go:(*ECDSAJWTIssuer).Validate":       23,
-	"infrastructure/defaultimpl/ed25519_validate.go:(*Ed25519JWTIssuer).Validate":   23,
-	"infrastructure/defaultimpl/rsa_validate.go:(*RSAJWTIssuer).Validate":           23,
-	"interfaces/sso/mesh_authz.go:(*Server).MeshAuthorize":                          19,
-	"protocols/oauth/dcr_validate.go:ValidateDCRMetadata":                           16,
-	"protocols/oauth/handle_ciba.go:HandleBackchannelAuth":                          27,
-	"protocols/oauth/handle_introspect.go:HandleIntrospect":                         19,
-	"protocols/oauth/handle_par.go:HandlePAR":                                       23,
-	"protocols/oauth/handle_register.go:HandleRegister":                             16,
-	"protocols/oidc/handle_end_session.go:HandleEndSession":                         28,
-	"protocols/oidc/handle_silent_renewal.go:HandleSilentRenewal":                   30,
-	"protocols/oidc/userinfo_signing.go:MaybeSignUserInfo":                          19,
-	"shared/security/jwks_verify.go:VerifyCompactJWS":                               19,
-	"interfaces/sso/server_backchannel_logout.go:(*Server).fanOutBackchannelLogout": 18,
-	"internal/handler/token_ciba.go:HandleCIBAGrant":                                21,
-	"internal/handler/token_device.go:HandleDeviceGrant":                            19,
-	"interfaces/sso/server_discovery_cache.go:(*Server).computeDiscoverySnapshot":   17,
-	"interfaces/sso/server_discovery_config.go:(*Server).buildOIDCConfiguration":    30,
-	"interfaces/sso/server_dpop.go:verifyDPoPProof":                                 24,
-	"interfaces/sso/server_jar.go:verifyJAR":                                        28,
-	"interfaces/sso/server_logout.go:(*Server).handleLogout":                        19,
-	"interfaces/sso/server_native_sso.go:(*Server).handleDeviceSecretExchange":      24,
-	"interfaces/sso/server_pairwise.go:verifyJWTClientAssertion":                    29,
-	"internal/handler/token_refresh.go:HandleRefreshGrant":                          24,
-	"interfaces/sso/server_routes.go:(*Server).Mount":                               52,
-	"interfaces/sso/server_tenant_residency.go:(*Server).checkTenantNotSuspended":   16,
-	"interfaces/sso/server_tenant_residency.go:(*Server).checkTenantResidency":      19,
-	"interfaces/sso/server_token.go:(*Server).handleToken":                          41,
-	"internal/handler/token_authcode.go:HandleAuthCodeGrant":                        27,
-	"internal/handler/token_exchange.go:HandleTokenExchangeGrant":                   60,
-	"protocols/oidc/handle_userinfo.go:HandleUserInfo":                              17,
-	"protocols/oidc/userinfo.go:ProjectUserInfoForOIDC":                             26,
-}
+var cycloExemptions = map[string]int{}
 
-var funcLenExemptions = map[string]int{
-	"interfaces/sso/accessors_handlers.go:(*Server).BuildHandlerDeps":               78,
-	"domains/authenticators/keypair.go:(*KeyPairAuthenticator).Authenticate":        67,
-	"domains/authenticators/webauthn/mds.go:BuildMDSProvider":                       51,
-	"domains/authenticators/webauthn/webauthn.go:NewHelper":                         71,
-	"protocols/caep/event_mapper.go:mapAuditEvent":                                  55,
-	"protocols/caep/receiver_construct.go:NewReceiver":                              81,
-	"protocols/caep/receiver_receive.go:(*Receiver).Receive":                        198,
-	"protocols/caep/revoker.go:(*userProviderResolver).ResolveLocalSubject":         51,
-	"cmd/sso-server/build_stores.go:buildApp":                                       77,
-	"infrastructure/defaultimpl/ecdsa_issue.go:(*ECDSAJWTIssuer).Issue":             82,
-	"infrastructure/defaultimpl/ecdsa_validate.go:(*ECDSAJWTIssuer).Validate":       101,
-	"infrastructure/defaultimpl/ed25519_issue.go:(*Ed25519JWTIssuer).Issue":         88,
-	"infrastructure/defaultimpl/ed25519_validate.go:(*Ed25519JWTIssuer).Validate":   110,
-	"infrastructure/defaultimpl/rsa_issue.go:(*RSAJWTIssuer).Issue":                 74,
-	"infrastructure/defaultimpl/rsa_validate.go:(*RSAJWTIssuer).Validate":           102,
-	"infrastructure/defaultimpl/vaulttransit/signer_request.go:(*Signer).doRequest": 57,
-	"infrastructure/defaultimpl/vaulttransit/signer_sign.go:(*Signer).Sign":         52,
-	"infrastructure/defaultimpl/vaulttransit/signer_sign.go:buildSignRequest":       57,
-	"domains/federation/registration_metadata.go:MetadataToClient":                  53,
-	"interfaces/sso/handlers.go:(*Server).handleAuthzPolicyBundle":                  58,
-	"interfaces/sso/mesh_authz.go:(*Server).MeshAuthorize":                          154,
-	"protocols/oauth/dcr_validate.go:ValidateDCRMetadata":                           52,
-	"protocols/oauth/handle_ciba.go:HandleBackchannelAuth":                          166,
-	"protocols/oauth/handle_introspect.go:HandleIntrospect":                         93,
-	"protocols/oauth/handle_introspect.go:introspectAccess":                         58,
-	"protocols/oauth/handle_par.go:HandlePAR":                                       149,
-	"protocols/oauth/handle_register.go:HandleRegister":                             146,
-	"protocols/oauth/handle_register.go:HandleRegistrationPut":                      79,
-	"protocols/oauth/handle_revoke.go:HandleRevoke":                                 70,
-	"protocols/oauth/handle_revoke.go:HandleRevokeAll":                              59,
-	"protocols/oidc/handle_end_session.go:HandleEndSession":                         138,
-	"protocols/oidc/handle_silent_renewal.go:HandleSilentRenewal":                   175,
-	"protocols/oidc/handlers.go:HandleJWKS":                                         63,
-	"protocols/oidc/userinfo_signing.go:MaybeSignUserInfo":                          94,
-	"shared/security/jwks_verify.go:VerifyCompactJWS":                               72,
-	"shared/security/jwks_verify.go:verifyJWSWithJWK":                               70,
-	"shared/security/spiffe_svid.go:ParseSPIFFEURI":                                 52,
-	"interfaces/sso/server_backchannel_logout.go:(*Server).fanOutBackchannelLogout": 86,
-	"internal/handler/token_ciba.go:HandleCIBAGrant":                                111,
-	"interfaces/sso/server_device.go:(*Server).handleDeviceCode":                    101,
-	"internal/handler/token_device.go:HandleDeviceGrant":                            110,
-	"interfaces/sso/server_device.go:(*Server).handleDeviceVerify":                  66,
-	"interfaces/sso/server_discovery_cache.go:(*Server).computeDiscoverySnapshot":   60,
-	"interfaces/sso/server_discovery_config.go:(*Server).buildOIDCConfiguration":    264,
-	"interfaces/sso/server_dpop.go:verifyDPoPProof":                                 121,
-	"interfaces/sso/server_finish_login.go:(*Server).finishLogin":                   100,
-	"interfaces/sso/server_finish_login.go:(*Server).finishLoginDirectMint":         93,
-	"interfaces/sso/server_jar.go:verifyJAR":                                        104,
-	"interfaces/sso/server_key_rotation.go:(*Server).scheduleCoordinatedRetire":     66,
-	"interfaces/sso/server_login.go:(*Server).handleLogin":                          106,
-	"interfaces/sso/server_logout.go:(*Server).handleConsentGate":                   90,
-	"interfaces/sso/server_logout.go:(*Server).handleLogout":                        69,
-	"interfaces/sso/server_mfa.go:(*Server).handleMFAComplete":                      71,
-	"interfaces/sso/server_mfa.go:(*Server).issueMFAChallenge":                      93,
-	"interfaces/sso/server_native_sso.go:(*Server).handleDeviceSecretExchange":      135,
-	"interfaces/sso/server_oauth.go:(*Server).handleCallback":                       62,
-	"interfaces/sso/server_pairwise.go:verifyJWTClientAssertion":                    113,
-	"internal/handler/token_refresh.go:HandleRefreshGrant":                          160,
-	"interfaces/sso/server_routes.go:(*Server).Handler":                             69,
-	"interfaces/sso/server_routes.go:(*Server).Mount":                               277,
-	"interfaces/sso/server_token.go:(*Server).handleToken":                          294,
-	"internal/handler/token_authcode.go:HandleAuthCodeGrant":                        125,
-	"internal/handler/token_exchange.go:HandleTokenExchangeGrant":                   343,
-	"protocols/oidc/handle_userinfo.go:HandleUserInfo":                              146,
-	"protocols/oidc/userinfo.go:ProjectUserInfoForOIDC":                             68,
-}
+var funcLenExemptions = map[string]int{}
 
 func TestMaintainability_CyclomaticComplexity(t *testing.T) {
 	checkFuncBudget(t, "cyclo", maxFuncComplexity,
@@ -342,8 +242,8 @@ func emitSeed(name string, metrics []funcMetric, threshold int, value func(funcM
 // these caps (only) when you remove exemptions. This closes the ratchet-bypass
 // hole so the per-function budgets are binding for NEW code, not just existing.
 const (
-	maxCycloExemptions   = 36
-	maxFuncLenExemptions = 65
+	maxCycloExemptions   = 0
+	maxFuncLenExemptions = 0
 )
 
 func TestMaintainability_ExemptionsDoNotGrow(t *testing.T) {

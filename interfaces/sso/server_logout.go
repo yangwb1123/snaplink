@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -25,27 +26,51 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		return
 	}
 
-	// Capture (subject, client) for back-channel logout BEFORE
-	// revoking the bearer — the post-revoke Validate call would
-	// fail. We do this in a best-effort way: a malformed or
-	// already-expired bearer just yields no back-channel
-	// notification, never an error.
-	var bcSubject, bcClientID, bcSID string
-	if bearer != "" {
-		if claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer); err == nil && claims != nil {
-			bcSubject = claims.Subject
-			bcSID = claims.SID
-			if claims.ClientID != "" {
-				bcClientID = claims.ClientID
-			} else if len(claims.Audience) > 0 {
-				bcClientID = claims.Audience[0]
-			}
-		}
-	}
+	bcSubject, bcClientID, bcSID := s.captureBackchannelTarget(ctx, bearer)
 
+	revoked := s.revokeLogoutCredentials(ctx, req.SessionID, bearer)
+
+	s.maybeFanOutBackchannel(ctx, bcSubject, bcClientID, bcSID)
+
+	s.recordLogout(ctx, req.SessionID, revoked)
+
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus:  StatusLoggedOut,
+		KeyRevoked: revoked,
+	})
+}
+
+// captureBackchannelTarget resolves the (subject, client, sid) for back-channel
+// logout from the bearer BEFORE it is revoked — the post-revoke Validate call
+// would fail. Best-effort: a malformed or already-expired bearer just yields no
+// back-channel notification, never an error. ClientID is preferred, falling back
+// to the first Audience entry.
+func (s *Server) captureBackchannelTarget(ctx HandlerContext, bearer string) (bcSubject, bcClientID, bcSID string) {
+	if bearer == "" {
+		return "", "", ""
+	}
+	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
+	if err != nil || claims == nil {
+		return "", "", ""
+	}
+	bcSubject = claims.Subject
+	bcSID = claims.SID
+	if claims.ClientID != "" {
+		bcClientID = claims.ClientID
+	} else if len(claims.Audience) > 0 {
+		bcClientID = claims.Audience[0]
+	}
+	return bcSubject, bcClientID, bcSID
+}
+
+// revokeLogoutCredentials destroys the session (when present) and revokes the
+// bearer across every registered issuer, returning the list of revoked-credential
+// markers in append order: RevokedSession first, then one RevokedToken per issuer
+// that held the token.
+func (s *Server) revokeLogoutCredentials(ctx HandlerContext, sessionID, bearer string) []string {
 	revoked := []string{}
-	if req.SessionID != "" && s.sessionMgr != nil {
-		if err := s.sessionMgr.Destroy(ctx.Request().Context(), req.SessionID); err != nil {
+	if sessionID != "" && s.sessionMgr != nil {
+		if err := s.sessionMgr.Destroy(ctx.Request().Context(), sessionID); err != nil {
 			s.logger.Error("logout: destroy session failed", "error", err)
 		} else {
 			revoked = append(revoked, RevokedSession)
@@ -58,27 +83,23 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		}
 		s.auditPartialRevokeFailure(ctx, issuersHit, failedIssuers)
 	}
+	return revoked
+}
 
-	// OIDC Back-Channel Logout 1.0: notify the client in the
-	// bearer's aud / client_id that this user just logged out so
-	// the RP can tear down its local session. No-op when the
-	// subsystem isn't wired or the client has no
-	// backchannel_logout_uri declared.
-	if bcSubject != "" && bcClientID != "" && s.clientStore != nil {
-		if c, err := s.clientStore.Get(ctx.Request().Context(), bcClientID); err == nil && c != nil {
-			// Multi-RP fan-out when the security.SubjectClientIndex is wired;
-			// degrades to single-RP notification of the bearer's
-			// client when it isn't.
-			s.fanOutBackchannelLogout(ctx, c, bcSubject, bcSID)
-		}
+// maybeFanOutBackchannel notifies the client in the bearer's aud / client_id
+// that this user just logged out so the RP can tear down its local session
+// (OIDC Back-Channel Logout 1.0). No-op when the subsystem isn't wired or the
+// client has no backchannel_logout_uri declared.
+func (s *Server) maybeFanOutBackchannel(ctx HandlerContext, bcSubject, bcClientID, bcSID string) {
+	if bcSubject == "" || bcClientID == "" || s.clientStore == nil {
+		return
 	}
-
-	s.recordLogout(ctx, req.SessionID, revoked)
-
-	ctx.JSON(http.StatusOK, map[string]any{
-		KeyStatus:  StatusLoggedOut,
-		KeyRevoked: revoked,
-	})
+	if c, err := s.clientStore.Get(ctx.Request().Context(), bcClientID); err == nil && c != nil {
+		// Multi-RP fan-out when the security.SubjectClientIndex is wired;
+		// degrades to single-RP notification of the bearer's
+		// client when it isn't.
+		s.fanOutBackchannelLogout(ctx, c, bcSubject, bcSID)
+	}
 }
 
 func (s *Server) handleSendCode(ctx HandlerContext) {
@@ -165,82 +186,94 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 
 	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
 
-	promptConsent := consent.HasPromptValue(prompt, PromptConsent)
-	needsConsent := false
+	if !s.evaluateConsentNeed(userID, client, scopes, prompt, grant, err) {
+		// Grant exists and is sufficient (or store outage fell through): persist
+		// an up-to-date record so the granted_at timestamp stays fresh and any
+		// newly-in-scope scopes are saved. Fail-open on write errors — the
+		// absence of a stored grant is not a correctness issue here since we
+		// already confirmed the existing grant is sufficient.
+		s.recordConsentGrant(requestCtx, userID, clientID, scopes)
+		return false
+	}
 
+	// Require a server-issued challenge that was previously returned in a
+	// consent_required response. A bare boolean would let any caller bypass
+	// the consent screen by fabricating the approval signal.
+	if consentChallengeID == "" || !s.consentChallenges.Consume(consentChallengeID, userID, clientID, scopes) {
+		s.issueConsentChallengeResponse(ctx, userID, client, scopes, consentChallengeID)
+		return true
+	}
+	// Challenge validated and consumed: record the grant and continue.
+	s.recordConsentGrant(requestCtx, userID, clientID, scopes)
+	s.recordConsentEvent(ctx, audit.EventConsentGranted, audit.OutcomeSuccess, userID, clientID, scopes)
+	return false
+}
+
+// evaluateConsentNeed is the pure consent-gate predicate: it returns whether the
+// request must prompt for consent given the existing grant lookup result. On a
+// store outage (err != nil that is not ErrNoConsentGrant) it fails open — logs
+// and returns false — matching the audit / risk-scorer / geo fail-open contract.
+func (s *Server) evaluateConsentNeed(userID string, client *Client, scopes []string, prompt string, grant ConsentGrant, err error) bool {
+	promptConsent := consent.HasPromptValue(prompt, PromptConsent)
 	switch {
 	case errors.Is(err, ErrNoConsentGrant):
 		// First-time authorization — user has never granted for this client.
-		needsConsent = true
+		return true
 	case err != nil:
-		// Store outage: fail-open to preserve availability (matches the
-		// audit / risk-scorer / geo fail-open contract). Log and continue.
-		s.logger.Error("consent store get failed; skipping gate", "user", userID, "client", clientID, "error", err)
+		// Store outage: fail-open to preserve availability. Log and continue.
+		s.logger.Error("consent store get failed; skipping gate", "user", userID, "client", client.ID, "error", err)
+		return false
 	case promptConsent:
 		// RP requested explicit re-consent (e.g. for UI branding or re-auth).
-		needsConsent = true
+		return true
 	case !consent.ScopesSubsumed(grant.Scopes, scopes):
 		// Existing grant does not cover all the requested scopes — new scopes
 		// were added to the authorization request since the user last consented.
-		needsConsent = true
+		return true
 	case client.ConsentRefreshInterval > 0 && time.Since(grant.GrantedAt) > client.ConsentRefreshInterval:
 		// Periodic re-consent: the grant still covers the scopes but is older
 		// than this client's refresh cadence (high-risk clients re-confirm
 		// authorization on a schedule). GrantedAt is refreshed on every
 		// approval, so the clock restarts each time the user re-consents.
-		needsConsent = true
+		return true
 	}
+	return false
+}
 
-	if needsConsent {
-		// Require a server-issued challenge that was previously returned in a
-		// consent_required response. A bare boolean would let any caller bypass
-		// the consent screen by fabricating the approval signal.
-		if consentChallengeID == "" || !s.consentChallenges.Consume(consentChallengeID, userID, clientID, scopes) {
-			// A presented-but-invalid challenge is a failed approval attempt
-			// (expired / fabricated / replayed / wrong scopes) — record it for
-			// forensics. A first-time prompt (empty challenge) is not a denial.
-			if consentChallengeID != "" {
-				s.recordConsentEvent(ctx, audit.EventConsentDenied, audit.OutcomeFailure, userID, clientID, scopes)
-			}
-			challengeID := s.consentChallenges.Issue(userID, clientID, scopes)
-			resp := map[string]any{
-				KeyError:              ErrConsentRequired,
-				KeyConsentChallengeID: challengeID,
-				KeyIss:                s.resolveIssuer(ctx),
-			}
-			// Presentational enrichment so the consent UI can render a meaningful
-			// screen (the app's display name + per-scope descriptions) instead of
-			// raw IDs. Additive — older clients ignore the extra fields.
-			if client.Name != "" {
-				resp[KeyClientName] = client.Name
-			}
-			resp[KeyScopes] = s.describeScopes(scopes)
-			ctx.JSON(http.StatusOK, resp)
-			return true
-		}
-		// Challenge validated and consumed: record the grant and continue.
-		_ = s.consentStore.RecordConsent(requestCtx, ConsentGrant{
-			UserID:    userID,
-			ClientID:  clientID,
-			Scopes:    scopes,
-			GrantedAt: time.Now(),
-		})
-		s.recordConsentEvent(ctx, audit.EventConsentGranted, audit.OutcomeSuccess, userID, clientID, scopes)
-		return false
+// issueConsentChallengeResponse records a denial when a challenge was presented
+// but failed (expired / fabricated / replayed / wrong scopes — a first-time
+// prompt with an empty challenge is not a denial), then issues a fresh challenge
+// and writes the consent_required response.
+func (s *Server) issueConsentChallengeResponse(ctx HandlerContext, userID string, client *Client, scopes []string, consentChallengeID string) {
+	clientID := client.ID
+	if consentChallengeID != "" {
+		s.recordConsentEvent(ctx, audit.EventConsentDenied, audit.OutcomeFailure, userID, clientID, scopes)
 	}
+	challengeID := s.consentChallenges.Issue(userID, clientID, scopes)
+	resp := map[string]any{
+		KeyError:              ErrConsentRequired,
+		KeyConsentChallengeID: challengeID,
+		KeyIss:                s.resolveIssuer(ctx),
+	}
+	// Presentational enrichment so the consent UI can render a meaningful
+	// screen (the app's display name + per-scope descriptions) instead of
+	// raw IDs. Additive — older clients ignore the extra fields.
+	if client.Name != "" {
+		resp[KeyClientName] = client.Name
+	}
+	resp[KeyScopes] = s.describeScopes(scopes)
+	ctx.JSON(http.StatusOK, resp)
+}
 
-	// Grant exists and is sufficient (or store outage fell through): persist
-	// an up-to-date record so the granted_at timestamp stays fresh and any
-	// newly-in-scope scopes are saved. Fail-open on write errors — the
-	// absence of a stored grant is not a correctness issue here since we
-	// already confirmed the existing grant is sufficient.
+// recordConsentGrant persists an up-to-date consent grant (refreshing GrantedAt).
+// Fail-open on write errors.
+func (s *Server) recordConsentGrant(requestCtx context.Context, userID, clientID string, scopes []string) {
 	_ = s.consentStore.RecordConsent(requestCtx, ConsentGrant{
 		UserID:    userID,
 		ClientID:  clientID,
 		Scopes:    scopes,
 		GrantedAt: time.Now(),
 	})
-	return false
 }
 
 // recordConsentEvent emits a user-initiated consent-lifecycle audit event

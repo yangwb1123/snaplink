@@ -86,6 +86,31 @@ func NewReceiver(audience string, jtiReplay security.JTIReplayStore, revoker Sub
 		return nil, errors.New("caep: receiver requires at least one trusted transmitter")
 	}
 
+	trusted, err := buildTrustedEntries(transmitters)
+	if err != nil {
+		return nil, err
+	}
+
+	r := &Receiver{
+		trusted:      trusted,
+		audience:     audience,
+		maxClockSkew: DefaultReceiverMaxClockSkew,
+		jtiReplay:    jtiReplay,
+		revoker:      revoker,
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	if err := r.applyDefaults(userProvider); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// buildTrustedEntries normalizes the trusted-transmitter allowlist into the
+// internal issuer-keyed map. The validation ORDER (empty-iss → nil-JWKS →
+// duplicate-iss → iss_sub-without-provider) is load-bearing and preserved.
+func buildTrustedEntries(transmitters []TrustedTransmitter) (map[string]trustedEntry, error) {
 	trusted := make(map[string]trustedEntry, len(transmitters))
 	for _, tt := range transmitters {
 		iss := strings.TrimSpace(tt.Issuer)
@@ -112,44 +137,43 @@ func NewReceiver(audience string, jtiReplay security.JTIReplayStore, revoker Sub
 		if len(algs) == 0 {
 			algs = defaultReceiverAlgs
 		}
-		algSet := make(map[string]struct{}, len(algs))
-		for _, a := range algs {
-			algSet[a] = struct{}{}
-		}
 		var evSet map[string]struct{}
 		if len(tt.AllowedEvents) > 0 {
-			evSet = make(map[string]struct{}, len(tt.AllowedEvents))
-			for _, e := range tt.AllowedEvents {
-				evSet[e] = struct{}{}
-			}
+			evSet = toStringSet(tt.AllowedEvents)
 		}
 		trusted[iss] = trustedEntry{
 			jwks:          tt.JWKS,
 			subjectMode:   tt.SubjectMode,
 			provider:      tt.Provider,
-			allowedAlgs:   algSet,
+			allowedAlgs:   toStringSet(algs),
 			allowedEvents: evSet,
 		}
 	}
+	return trusted, nil
+}
 
-	r := &Receiver{
-		trusted:      trusted,
-		audience:     audience,
-		maxClockSkew: DefaultReceiverMaxClockSkew,
-		jtiReplay:    jtiReplay,
-		revoker:      revoker,
+// toStringSet builds a presence set from a slice. Callers preserving the
+// nil-vs-empty distinction (e.g. allowedEvents) must guard the empty case.
+func toStringSet(vals []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(vals))
+	for _, v := range vals {
+		set[v] = struct{}{}
 	}
-	for _, opt := range opts {
-		opt(r)
-	}
+	return set
+}
+
+// applyDefaults fills the resolver and clock seams left unset by opts. A nil
+// resolver requires a UserProvider; the default userProviderResolver is wired
+// only when no custom SubjectResolver was supplied.
+func (r *Receiver) applyDefaults(userProvider core.UserProvider) error {
 	if r.resolver == nil {
 		if userProvider == nil {
-			return nil, errors.New("caep: receiver requires a UserProvider (or a custom SubjectResolver)")
+			return errors.New("caep: receiver requires a UserProvider (or a custom SubjectResolver)")
 		}
 		r.resolver = &userProviderResolver{users: userProvider}
 	}
 	if r.now == nil {
 		r.now = time.Now
 	}
-	return r, nil
+	return nil
 }

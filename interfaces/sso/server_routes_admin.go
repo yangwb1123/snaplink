@@ -1,0 +1,89 @@
+package sso
+
+// Admin REST API route registration, extracted from Mount (server_routes.go).
+// All routes hang off the /api/v1 group created in Mount; the /api/v1/admin/*
+// paths are gated by AdminMiddleware (GET admin:read, mutations admin:write).
+// Each block is gated on its backing store so the registered route set is
+// byte-identical to the previous inline assembly.
+
+// mountAdminAPIObservability registers the client lookup plus the opt-in audit,
+// network-policy, and per-tenant usage/metering read APIs.
+func (s *Server) mountAdminAPIObservability(api Router) {
+	api.GET(PathClientByID, s.handleGetClient)
+	if s.auditAPI && s.auditor != nil {
+		api.GET(PathAuditEvents, s.handleAuditEvents)
+		api.GET(PathAuditEventByID, s.handleAuditEventByID)
+		api.GET(PathAuditFacets, s.handleAuditFacets)
+	}
+	if s.netAPI && s.netStore != nil {
+		api.GET(PathNetPolicies, s.handleListNetPolicies)
+		api.GET(PathNetPolicyByName, s.handleGetNetPolicy)
+		api.POST(PathNetPolicies, s.handleApplyNetPolicy)
+		api.DELETE(PathNetPolicyByName, s.handleDeleteNetPolicy)
+		api.GET(PathNetPolicyClassify, s.handleClassifyNetPolicy)
+		api.GET(PathNetPolicyResolveMe, s.handleResolveMeNetPolicy)
+	}
+
+	// Per-tenant usage/metering endpoint (opt-in WithTenantUsageAggregator).
+	// Gated by AdminMiddleware (admin:read) via the /api/v1/admin/ prefix.
+	// Not mounted without the aggregator — byte-identical to a build without it.
+	if s.usageAggregator != nil {
+		api.GET(PathTenantUsage, s.handleTenantUsage)
+	}
+}
+
+// mountAdminUserState registers the admin/helpdesk management of a user's
+// self-service state. Each block reuses the SAME store the user's own /me
+// endpoints use, so an admin and the user see one consistent view. Mounted only
+// when the backing store is wired — byte-identical without them.
+func (s *Server) mountAdminUserState(api Router) {
+	if s.consentStore != nil {
+		api.GET(PathAdminUserConsents, s.handleAdminListUserConsents)
+		api.DELETE(PathAdminUserConsentByID, s.handleAdminRevokeUserConsent)
+	}
+	if s.mfaEnrollmentStore != nil {
+		api.GET(PathAdminUserMFA, s.handleAdminListUserMFA)
+		api.DELETE(PathAdminUserMFAByID, s.handleAdminRemoveUserMFA)
+	}
+	if s.passwordCredentialStore != nil {
+		api.POST(PathAdminUserPassword, s.handleAdminResetUserPassword)
+	}
+	if s.userProvider != nil {
+		api.POST(PathAdminUserEmail, s.handleAdminSetUserEmail)
+	}
+	if s.deviceSecretStore != nil {
+		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
+	}
+	if s.passwordResetStore != nil {
+		api.GET(PathAdminUserPasswordResetTokens, s.handleAdminListUserPasswordResetTokens)
+		api.DELETE(PathAdminUserPasswordResetTokens, s.handleAdminRevokeUserPasswordResetTokens)
+	}
+	if s.emailChangeStore != nil {
+		api.GET(PathAdminUserEmailChangeTokens, s.handleAdminListUserEmailChangeTokens)
+		api.DELETE(PathAdminUserEmailChangeTokens, s.handleAdminRevokeUserEmailChangeTokens)
+	}
+	if s.accountLockout != nil {
+		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
+	}
+}
+
+// mountAdminB2B registers the admin management of enterprise connections,
+// tenant membership, and invitations. Mounted only when the backing store is
+// wired — byte-identical without them.
+func (s *Server) mountAdminB2B(api Router) {
+	if s.connectionStore != nil {
+		api.GET(PathAdminConnections, s.handleAdminListConnections)
+		api.POST(PathAdminConnections, s.handleAdminUpsertConnection)
+		api.GET(PathAdminConnectionByID, s.handleAdminGetConnection)
+		api.DELETE(PathAdminConnectionByID, s.handleAdminDeleteConnection)
+	}
+	if s.tenantUserStore != nil {
+		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)
+		api.PUT(PathAdminTenantMemberByID, s.handleAdminPutTenantMember)
+		api.DELETE(PathAdminTenantMemberByID, s.handleAdminRemoveTenantMember)
+	}
+	if s.invitationStore != nil {
+		api.POST(PathAdminTenantInvitations, s.handleAdminSendInvitation)
+		api.GET(PathAdminTenantInvitations, s.handleAdminListInvitations)
+	}
+}

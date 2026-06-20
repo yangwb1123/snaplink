@@ -133,53 +133,66 @@ type userProviderResolver struct {
 func (u *userProviderResolver) ResolveLocalSubject(ctx context.Context, mode SubjectMapMode, provider string, sub setSubjectID) (string, bool, error) {
 	switch mode {
 	case SubjectMapIssSub:
-		// Only an iss_sub-shaped (or implicitly iss_sub) subject maps here.
-		// A format mismatch (e.g. the SET sent opaque to an iss_sub
-		// transmitter) is NOT a match — refuse to guess.
-		if sub.Format != "" && sub.Format != subjectFormatIssSub {
-			return "", false, nil
-		}
-		if sub.Sub == "" {
-			return "", false, nil
-		}
-		// The provider MUST be the operator-pinned per-transmitter Provider —
-		// NEVER the SET's sub_id.iss. NewReceiver requires a non-empty provider
-		// in iss_sub mode, so an empty one here is a programming/wiring bug, not
-		// an attacker-controlled fallback. Deriving the provider from sub.Iss
-		// would let a trusted (or key-compromised) transmitter name ANY other
-		// provider in its sub_id and revoke users federated from a DIFFERENT
-		// upstream — a cross-IdP subject hijack (targeted DoS). The
-		// per-transmitter namespace isolation iss_sub exists for depends on the
-		// provider being operator-pinned to THIS transmitter's federated
-		// namespace.
-		if provider == "" {
-			return "", false, nil
-		}
-		// Defense-in-depth: if the SET pins a sub_id.iss, it MUST equal the
-		// operator-configured provider. A sub_id.iss naming a FOREIGN provider
-		// means the SET addresses a subject from a namespace this transmitter
-		// is NOT trusted for → no-op (ack, no revocation). A transmitter may
-		// legitimately OMIT sub_id.iss (sub.Iss == "") or set it == its
-		// configured provider; only a present-and-mismatched iss is refused.
-		if sub.Iss != "" && sub.Iss != provider {
-			return "", false, nil
-		}
-		usr, err := u.users.GetByExternalID(ctx, provider, sub.Sub)
-		return resolveResult(usr, err)
-
+		return u.resolveIssSub(ctx, provider, sub)
 	default: // SubjectMapOpaque
-		// The opaque id (or a bare `sub` folded into ID by subjectID()) is
-		// the local user id. Reject an iss_sub-shaped subject under opaque
-		// mode (format mismatch ⇒ no guess).
-		if sub.Format != "" && sub.Format != subjectFormatOpaque {
-			return "", false, nil
-		}
-		if sub.ID == "" {
-			return "", false, nil
-		}
-		usr, err := u.users.GetByID(ctx, sub.ID)
-		return resolveResult(usr, err)
+		return u.resolveOpaque(ctx, sub)
 	}
+}
+
+// resolveIssSub maps an iss_sub-shaped subject to a local user via the
+// federation link, applying the four security guards IN ORDER before the
+// lookup. Order is load-bearing: each guard is a separate gate and the
+// no-match (ok=false) outcomes must be indistinguishable.
+func (u *userProviderResolver) resolveIssSub(ctx context.Context, provider string, sub setSubjectID) (string, bool, error) {
+	// Only an iss_sub-shaped (or implicitly iss_sub) subject maps here.
+	// A format mismatch (e.g. the SET sent opaque to an iss_sub
+	// transmitter) is NOT a match — refuse to guess.
+	if sub.Format != "" && sub.Format != subjectFormatIssSub {
+		return "", false, nil
+	}
+	if sub.Sub == "" {
+		return "", false, nil
+	}
+	// The provider MUST be the operator-pinned per-transmitter Provider —
+	// NEVER the SET's sub_id.iss. NewReceiver requires a non-empty provider
+	// in iss_sub mode, so an empty one here is a programming/wiring bug, not
+	// an attacker-controlled fallback. Deriving the provider from sub.Iss
+	// would let a trusted (or key-compromised) transmitter name ANY other
+	// provider in its sub_id and revoke users federated from a DIFFERENT
+	// upstream — a cross-IdP subject hijack (targeted DoS). The
+	// per-transmitter namespace isolation iss_sub exists for depends on the
+	// provider being operator-pinned to THIS transmitter's federated
+	// namespace.
+	if provider == "" {
+		return "", false, nil
+	}
+	// Defense-in-depth: if the SET pins a sub_id.iss, it MUST equal the
+	// operator-configured provider. A sub_id.iss naming a FOREIGN provider
+	// means the SET addresses a subject from a namespace this transmitter
+	// is NOT trusted for → no-op (ack, no revocation). A transmitter may
+	// legitimately OMIT sub_id.iss (sub.Iss == "") or set it == its
+	// configured provider; only a present-and-mismatched iss is refused.
+	if sub.Iss != "" && sub.Iss != provider {
+		return "", false, nil
+	}
+	usr, err := u.users.GetByExternalID(ctx, provider, sub.Sub)
+	return resolveResult(usr, err)
+}
+
+// resolveOpaque maps an opaque subject (the id, or a bare `sub` folded into
+// ID by subjectID()) directly to a local user id.
+func (u *userProviderResolver) resolveOpaque(ctx context.Context, sub setSubjectID) (string, bool, error) {
+	// The opaque id (or a bare `sub` folded into ID by subjectID()) is
+	// the local user id. Reject an iss_sub-shaped subject under opaque
+	// mode (format mismatch ⇒ no guess).
+	if sub.Format != "" && sub.Format != subjectFormatOpaque {
+		return "", false, nil
+	}
+	if sub.ID == "" {
+		return "", false, nil
+	}
+	usr, err := u.users.GetByID(ctx, sub.ID)
+	return resolveResult(usr, err)
 }
 
 // resolveResult collapses a UserProvider lookup into the resolver contract:

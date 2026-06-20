@@ -75,12 +75,41 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 		return ErrDCR("unsupported token_endpoint_auth_method: " + req.TokenEndpointAuthMethod)
 	}
 
+	if err := validateGrantTypes(req, supportedGrants); err != nil {
+		return err
+	}
+
+	if err := validateResponseTypes(req); err != nil {
+		return err
+	}
+
+	if err := validateAuthenticatorPolicy(req, policy); err != nil {
+		return err
+	}
+
+	if err := normalizeAndValidateEncryption(req); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateGrantTypes rejects any requested grant_type the AS does not
+// advertise in discovery. Leaf helper of ValidateDCRMetadata — returns
+// the same ErrDCR policy-rejection value (classified via errors.As).
+func validateGrantTypes(req *DCRMetadata, supportedGrants []string) error {
 	for _, g := range req.GrantTypes {
 		if !slices.Contains(supportedGrants, g) {
 			return ErrDCR("unsupported grant_type: " + g)
 		}
 	}
+	return nil
+}
 
+// validateResponseTypes rejects any response_type outside the set this
+// server can satisfy. Leaf helper of ValidateDCRMetadata — returns the
+// same ErrDCR policy-rejection value (classified via errors.As).
+func validateResponseTypes(req *DCRMetadata) error {
 	for _, rt := range req.ResponseTypes {
 		switch rt {
 		case "code", "token", "":
@@ -89,19 +118,22 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 			return ErrDCR("unsupported response_type: " + rt)
 		}
 	}
+	return nil
+}
 
-	if len(policy.AllowedAuthenticators) > 0 {
-		for _, a := range req.AllowedAuthenticators {
-			if !slices.Contains(policy.AllowedAuthenticators, a) {
-				return ErrDCR("authenticator not permitted by registration policy: " + a)
-			}
+// validateAuthenticatorPolicy enforces the registration policy's
+// authenticator allowlist (no-op when the policy lists none). Leaf
+// helper of ValidateDCRMetadata — returns the same ErrDCR
+// policy-rejection value (classified via errors.As).
+func validateAuthenticatorPolicy(req *DCRMetadata, policy *DCRPolicy) error {
+	if len(policy.AllowedAuthenticators) == 0 {
+		return nil
+	}
+	for _, a := range req.AllowedAuthenticators {
+		if !slices.Contains(policy.AllowedAuthenticators, a) {
+			return ErrDCR("authenticator not permitted by registration policy: " + a)
 		}
 	}
-
-	if err := normalizeAndValidateEncryption(req); err != nil {
-		return err
-	}
-
 	return nil
 }
 

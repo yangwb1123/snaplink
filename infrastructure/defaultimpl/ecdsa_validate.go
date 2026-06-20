@@ -28,93 +28,87 @@ func (j *ECDSAJWTIssuer) Validate(_ context.Context, token string) (*sso.TokenCl
 		return nil, errors.New("ecdsa: token revoked")
 	}
 
-	// RFC 9068 §4: enforce the alg + typ allowlists BEFORE signature
-	// verification. An EdDSA / RS256 / `none` token fails here, never
-	// reaching the ECDSA verify path — the structural guarantee that an
-	// RP can't pick the verification algorithm.
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	h, err := j.parseAndGuardHeader(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("ecdsa: header decode: %w", err)
+		return nil, err
+	}
+	if err := j.verifyECDSASignature(h, parts); err != nil {
+		return nil, err
+	}
+	p, err := j.decodeAndCheckClaims(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	return claimsFromPayload(p), nil
+}
+
+// parseAndGuardHeader base64-decodes + JSON-parses the JWS header and enforces
+// the alg + typ allowlists.
+//
+// RFC 9068 §4: enforce the alg + typ allowlists BEFORE signature
+// verification. An EdDSA / RS256 / `none` token fails here, never
+// reaching the ECDSA verify path — the structural guarantee that an
+// RP can't pick the verification algorithm.
+func (j *ECDSAJWTIssuer) parseAndGuardHeader(headerB64 string) (ecdsaHeader, error) {
+	headerBytes, err := base64.RawURLEncoding.DecodeString(headerB64)
+	if err != nil {
+		return ecdsaHeader{}, fmt.Errorf("ecdsa: header decode: %w", err)
 	}
 	var h ecdsaHeader
 	if err := json.Unmarshal(headerBytes, &h); err != nil {
-		return nil, fmt.Errorf("ecdsa: header parse: %w", err)
+		return ecdsaHeader{}, fmt.Errorf("ecdsa: header parse: %w", err)
 	}
 	if _, ok := supportedES256Algs[h.Alg]; !ok {
-		return nil, fmt.Errorf("ecdsa: alg %q not in allowlist", h.Alg)
+		return ecdsaHeader{}, fmt.Errorf("ecdsa: alg %q not in allowlist", h.Alg)
 	}
 	if h.Typ != "" {
 		if _, ok := supportedJWTTypes[h.Typ]; !ok {
-			return nil, fmt.Errorf("ecdsa: typ %q not in allowlist", h.Typ)
+			return ecdsaHeader{}, fmt.Errorf("ecdsa: typ %q not in allowlist", h.Typ)
 		}
 	}
+	return h, nil
+}
 
+// verifyECDSASignature decodes the signature segment, looks up the verify key
+// by kid, and runs the ES256 verify over the signing input.
+func (j *ECDSAJWTIssuer) verifyECDSASignature(h ecdsaHeader, parts []string) error {
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("ecdsa: signature decode: %w", err)
+		return fmt.Errorf("ecdsa: signature decode: %w", err)
 	}
 	signingInput := parts[0] + "." + parts[1]
 
 	pub := j.lookupVerifyKey(h.Kid)
 	if pub == nil {
-		return nil, errors.New("ecdsa: unknown kid")
+		return errors.New("ecdsa: unknown kid")
 	}
 	if !ecdsaVerifyJWS(pub, []byte(signingInput), sig) {
-		return nil, errors.New("ecdsa: signature invalid")
+		return errors.New("ecdsa: signature invalid")
 	}
+	return nil
+}
 
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+// decodeAndCheckClaims base64-decodes + JSON-parses the payload and enforces
+// exp/nbf against the issuer's clock skew.
+func (j *ECDSAJWTIssuer) decodeAndCheckClaims(payloadB64 string) (ed25519Payload, error) {
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
 	if err != nil {
-		return nil, fmt.Errorf("ecdsa: payload decode: %w", err)
+		return ed25519Payload{}, fmt.Errorf("ecdsa: payload decode: %w", err)
 	}
 	var p ed25519Payload
 	if err := json.Unmarshal(payloadBytes, &p); err != nil {
-		return nil, fmt.Errorf("ecdsa: payload parse: %w", err)
+		return ed25519Payload{}, fmt.Errorf("ecdsa: payload parse: %w", err)
 	}
 
 	now := time.Now().Unix()
 	skew := int64(j.maxClockSkew.Seconds())
 	if p.Exp != 0 && now-skew >= p.Exp {
-		return nil, errors.New("ecdsa: token expired")
+		return ed25519Payload{}, errors.New("ecdsa: token expired")
 	}
 	if p.Nbf != 0 && now+skew < p.Nbf {
-		return nil, errors.New("ecdsa: token not yet valid")
+		return ed25519Payload{}, errors.New("ecdsa: token not yet valid")
 	}
-
-	claims := &sso.TokenClaims{
-		Subject:   p.Sub,
-		Issuer:    p.Iss,
-		Audience:  []string(p.Aud),
-		ExpiresAt: time.Unix(p.Exp, 0),
-		NotBefore: time.Unix(p.Nbf, 0),
-		IssuedAt:  time.Unix(p.Iat, 0),
-		Extra:     p.Extra,
-		ClientID:  p.ClientID,
-		JTI:       p.JTI,
-		ACR:       p.ACR,
-		AMR:       append([]string(nil), p.AMR...),
-		SID:       p.SID,
-	}
-	if p.CNF != nil {
-		claims.ConfirmationJKT = p.CNF.JKT
-		claims.ConfirmationX5TS256 = p.CNF.X5TS256
-	}
-	if len(p.AuthorizationDetails) > 0 {
-		claims.AuthorizationDetails = append(json.RawMessage(nil), p.AuthorizationDetails...)
-	}
-	if p.AuthTime > 0 {
-		claims.AuthTime = time.Unix(p.AuthTime, 0)
-	}
-	if p.Scope != "" {
-		claims.Scopes = strings.Split(p.Scope, " ")
-	}
-	if chain := wireChainToActor(p.Act); chain != nil {
-		claims.Actor = chain
-	}
-	if len(p.RequestedClaims) > 0 {
-		claims.RequestedClaims = append(json.RawMessage(nil), p.RequestedClaims...)
-	}
-	return claims, nil
+	return p, nil
 }
 
 // ecdsaVerifyJWS verifies a fixed-width R||S ES256 signature (RFC 7518

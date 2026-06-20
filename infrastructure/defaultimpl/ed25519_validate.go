@@ -26,35 +26,59 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 		return nil, errors.New("ed25519: token revoked")
 	}
 
-	// RFC 9068 §4: parse the header explicitly so the algorithm
-	// and typ allowlists are enforced BEFORE signature verification
-	// even runs. Defends against alg-confusion attacks (e.g.
-	// alg=none, alg=HS256-spoofed-with-RS256-public-key) and
-	// against a token meant for a different shape (ID token,
-	// generic JWT) being accepted as an access token.
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	h, err := j.parseAndGuardHeader(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("ed25519: header decode: %w", err)
+		return nil, err
+	}
+	if err := j.verifyEd25519Signature(h, parts); err != nil {
+		return nil, err
+	}
+	p, err := j.decodeAndCheckClaims(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	return claimsFromPayload(p), nil
+}
+
+// parseAndGuardHeader base64-decodes + JSON-parses the JWS header and enforces
+// the alg + typ allowlists.
+//
+// RFC 9068 §4: parse the header explicitly so the algorithm
+// and typ allowlists are enforced BEFORE signature verification
+// even runs. Defends against alg-confusion attacks (e.g.
+// alg=none, alg=HS256-spoofed-with-RS256-public-key) and
+// against a token meant for a different shape (ID token,
+// generic JWT) being accepted as an access token.
+func (j *Ed25519JWTIssuer) parseAndGuardHeader(headerB64 string) (ed25519Header, error) {
+	headerBytes, err := base64.RawURLEncoding.DecodeString(headerB64)
+	if err != nil {
+		return ed25519Header{}, fmt.Errorf("ed25519: header decode: %w", err)
 	}
 	var h ed25519Header
 	if err := json.Unmarshal(headerBytes, &h); err != nil {
-		return nil, fmt.Errorf("ed25519: header parse: %w", err)
+		return ed25519Header{}, fmt.Errorf("ed25519: header parse: %w", err)
 	}
 	if _, ok := supportedJWTAlgs[h.Alg]; !ok {
-		return nil, fmt.Errorf("ed25519: alg %q not in allowlist", h.Alg)
+		return ed25519Header{}, fmt.Errorf("ed25519: alg %q not in allowlist", h.Alg)
 	}
 	// Empty typ is tolerated for legacy tokens minted before this
 	// gate landed (back-compat); a non-empty typ MUST be in the
 	// allowlist.
 	if h.Typ != "" {
 		if _, ok := supportedJWTTypes[h.Typ]; !ok {
-			return nil, fmt.Errorf("ed25519: typ %q not in allowlist", h.Typ)
+			return ed25519Header{}, fmt.Errorf("ed25519: typ %q not in allowlist", h.Typ)
 		}
 	}
+	return h, nil
+}
 
+// verifyEd25519Signature decodes the signature segment, looks up the verify key
+// (by the raw header segment, NOT h.Kid — see lookupVerifyKey), and runs the
+// EdDSA verify over the signing input.
+func (j *Ed25519JWTIssuer) verifyEd25519Signature(_ ed25519Header, parts []string) error {
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("ed25519: signature decode: %w", err)
+		return fmt.Errorf("ed25519: signature decode: %w", err)
 	}
 	signingInput := parts[0] + "." + parts[1]
 
@@ -64,64 +88,35 @@ func (j *Ed25519JWTIssuer) Validate(_ context.Context, token string) (*sso.Token
 	// lookup to be O(1), which `Issue` does unconditionally.
 	pub := j.lookupVerifyKey(parts[0])
 	if pub == nil {
-		return nil, errors.New("ed25519: unknown kid")
+		return errors.New("ed25519: unknown kid")
 	}
 	if !ed25519.Verify(pub, []byte(signingInput), sig) {
-		return nil, errors.New("ed25519: signature invalid")
+		return errors.New("ed25519: signature invalid")
 	}
+	return nil
+}
 
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+// decodeAndCheckClaims base64-decodes + JSON-parses the payload and enforces
+// exp/nbf against the issuer's clock skew.
+func (j *Ed25519JWTIssuer) decodeAndCheckClaims(payloadB64 string) (ed25519Payload, error) {
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
 	if err != nil {
-		return nil, fmt.Errorf("ed25519: payload decode: %w", err)
+		return ed25519Payload{}, fmt.Errorf("ed25519: payload decode: %w", err)
 	}
 	var p ed25519Payload
 	if err := json.Unmarshal(payloadBytes, &p); err != nil {
-		return nil, fmt.Errorf("ed25519: payload parse: %w", err)
+		return ed25519Payload{}, fmt.Errorf("ed25519: payload parse: %w", err)
 	}
 
 	now := time.Now().Unix()
 	skew := int64(j.maxClockSkew.Seconds())
 	if p.Exp != 0 && now-skew >= p.Exp {
-		return nil, errors.New("ed25519: token expired")
+		return ed25519Payload{}, errors.New("ed25519: token expired")
 	}
 	if p.Nbf != 0 && now+skew < p.Nbf {
-		return nil, errors.New("ed25519: token not yet valid")
+		return ed25519Payload{}, errors.New("ed25519: token not yet valid")
 	}
-
-	claims := &sso.TokenClaims{
-		Subject:   p.Sub,
-		Issuer:    p.Iss,
-		Audience:  []string(p.Aud),
-		ExpiresAt: time.Unix(p.Exp, 0),
-		NotBefore: time.Unix(p.Nbf, 0),
-		IssuedAt:  time.Unix(p.Iat, 0),
-		Extra:     p.Extra,
-		ClientID:  p.ClientID,
-		JTI:       p.JTI,
-		ACR:       p.ACR,
-		AMR:       append([]string(nil), p.AMR...),
-		SID:       p.SID,
-	}
-	if p.CNF != nil {
-		claims.ConfirmationJKT = p.CNF.JKT
-		claims.ConfirmationX5TS256 = p.CNF.X5TS256
-	}
-	if len(p.AuthorizationDetails) > 0 {
-		claims.AuthorizationDetails = append(json.RawMessage(nil), p.AuthorizationDetails...)
-	}
-	if p.AuthTime > 0 {
-		claims.AuthTime = time.Unix(p.AuthTime, 0)
-	}
-	if p.Scope != "" {
-		claims.Scopes = strings.Split(p.Scope, " ")
-	}
-	if chain := wireChainToActor(p.Act); chain != nil {
-		claims.Actor = chain
-	}
-	if len(p.RequestedClaims) > 0 {
-		claims.RequestedClaims = append(json.RawMessage(nil), p.RequestedClaims...)
-	}
-	return claims, nil
+	return p, nil
 }
 
 // Revoke adds the token to an in-memory, exp-bounded deny list. Returns an

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
@@ -19,10 +18,7 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 		return nil, errors.New("rsa: subject required")
 	}
 	now := time.Now()
-	effectiveTTL := j.tokenTTL
-	if subject.TTL > 0 {
-		effectiveTTL = subject.TTL
-	}
+	effectiveTTL := effectiveAccessTTL(subject, j.tokenTTL)
 	expiresAt := now.Add(effectiveTTL)
 
 	header := rsaHeader{Alg: j.alg, Typ: jwtTypAT, Kid: kid}
@@ -31,43 +27,7 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 		return nil, fmt.Errorf("rsa: generate jti: %w", err)
 	}
 
-	payload := ed25519Payload{
-		Iss:      j.issuer,
-		Sub:      subject.ID,
-		Exp:      expiresAt.Unix(),
-		Nbf:      now.Unix(),
-		Iat:      now.Unix(),
-		Scope:    strings.Join(scopes, " "),
-		Extra:    subject.Claims,
-		ClientID: subject.ClientID,
-		JTI:      jti,
-		ACR:      subject.ACR,
-		SID:      subject.SID,
-	}
-	if subject.ConfirmationJKT != "" || subject.ConfirmationX5TS256 != "" {
-		payload.CNF = &confirmationClaim{
-			JKT:     subject.ConfirmationJKT,
-			X5TS256: subject.ConfirmationX5TS256,
-		}
-	}
-	if !subject.AuthTime.IsZero() {
-		payload.AuthTime = subject.AuthTime.Unix()
-	}
-	if len(subject.AMR) > 0 {
-		payload.AMR = append([]string(nil), subject.AMR...)
-	}
-	if len(subject.AuthorizationDetails) > 0 {
-		payload.AuthorizationDetails = append(json.RawMessage(nil), subject.AuthorizationDetails...)
-	}
-	if chain := actorChainToWire(subject.Actor); chain != nil {
-		payload.Act = chain
-	}
-	if len(subject.RequestedClaims) > 0 {
-		payload.RequestedClaims = append(json.RawMessage(nil), subject.RequestedClaims...)
-	}
-	if len(subject.Resources) > 0 {
-		payload.Aud = audClaim(append([]string(nil), subject.Resources...))
-	}
+	payload := buildAccessPayload(j.issuer, subject, scopes, jti, now, expiresAt)
 
 	signingInput, err := rsaSigningInput(header, payload)
 	if err != nil {

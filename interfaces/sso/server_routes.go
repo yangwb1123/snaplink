@@ -50,8 +50,28 @@ func (s *Server) Handle(method, path string, handler http.HandlerFunc) error {
 	return nil
 }
 
-// Mount registers all SSO endpoints on the router.
+// Mount registers all SSO endpoints on the router. The registration is grouped
+// into focused registrar helpers (middleware -> core protocol -> self-service
+// -> cluster/federation -> admin API); the mount order and every per-store
+// conditional are preserved, so the registered route set is byte-identical to
+// the previous inline assembly.
 func (s *Server) Mount() {
+	s.mountMiddleware()
+	s.mountCoreOAuthOIDC()
+	s.mountSelfServiceProfile()
+	s.mountSelfServiceCredentials()
+	s.mountClusterEndpoints()
+	s.mountFederationEndpoints()
+	api := s.router.Group(PathAPIPrefix)
+	s.mountAdminAPIObservability(api)
+	s.mountAdminUserState(api)
+	s.mountAdminB2B(api)
+}
+
+// mountMiddleware lazily creates the router and installs the global middleware
+// chain (request-id/tracing, tenant, geo, region) in the order the audit
+// enrichment pipeline expects.
+func (s *Server) mountMiddleware() {
 	if s.router == nil {
 		s.router = NewStdRouter()
 	}
@@ -77,7 +97,12 @@ func (s *Server) Mount() {
 	if s.regionResolver != nil {
 		s.router.Use(region.Middleware(s.regionResolver, s.regionMiddlewareOpts))
 	}
+}
 
+// mountCoreOAuthOIDC registers the always-present OAuth 2.0 / OIDC protocol
+// endpoints plus the conditional unauthenticated password-reset and self-
+// service signup routes.
+func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathHealth, s.handleHealth)
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.router.GET(PathOIDCDiscovery, s.handleOIDCDiscovery)
@@ -112,6 +137,12 @@ func (s *Server) Mount() {
 	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.POST(PathLogout, s.handleLogout)
 	s.router.GET(PathEndSession, s.handleEndSession)
+}
+
+// mountSelfServiceProfile registers the authenticated /me* self-service
+// endpoints for permissions/menus/roles, sessions, consents, org membership,
+// and profile — each gated on its backing store.
+func (s *Server) mountSelfServiceProfile() {
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)
 	s.router.GET(PathMyMenus, s.handleMyMenus)
 	s.router.GET(PathMyRoles, s.handleMyRoles)
@@ -144,6 +175,12 @@ func (s *Server) Mount() {
 	if s.passwordCredentialStore != nil {
 		s.router.POST(PathMyPassword, s.handleChangeMyPassword)
 	}
+}
+
+// mountSelfServiceCredentials registers the authenticated /me* credential +
+// privacy endpoints (MFA factors, passkey registration, GDPR export/erasure,
+// verified email change) and the public per-host branding lookup.
+func (s *Server) mountSelfServiceCredentials() {
 	// Self-service MFA factor management. Mounted only with an enrollment
 	// store; byte-identical without one.
 	if s.mfaEnrollmentStore != nil {
@@ -185,7 +222,12 @@ func (s *Server) Mount() {
 	if s.tenantStore != nil {
 		s.router.GET(PathBranding, s.handleBranding)
 	}
+}
 
+// mountClusterEndpoints registers the full-path admin/cluster endpoints
+// (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
+// each opt-in and gated on its wiring.
+func (s *Server) mountClusterEndpoints() {
 	// Authorization policy bundle export (decentralized authz). Full
 	// path (not group-relative) registered directly on the router; its
 	// /api/v1/admin/ prefix means AdminMiddleware gates it as admin:read.
@@ -224,7 +266,12 @@ func (s *Server) Mount() {
 	if s.caepReceiver != nil {
 		s.router.POST(PathSSFReceive, s.handleSSFReceive)
 	}
+}
 
+// mountFederationEndpoints registers the RFC 9728 protected-resource metadata,
+// the OpenID Federation 1.0 entity configuration (+ §8 fetch when this server
+// is a superior), and the B2B home-realm discovery routes — each opt-in.
+func (s *Server) mountFederationEndpoints() {
 	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
 	// self-signed Entity Statement at the well-known endpoint so the OP is
 	// discoverable as a federation ENTITY. Not mounted unless
@@ -255,78 +302,6 @@ func (s *Server) Mount() {
 		s.router.GET(PathHomeRealm, s.handleHomeRealm)
 		s.router.POST(PathHomeRealm, s.handleHomeRealm)
 	}
-
-	api := s.router.Group(PathAPIPrefix)
-	api.GET(PathClientByID, s.handleGetClient)
-	if s.auditAPI && s.auditor != nil {
-		api.GET(PathAuditEvents, s.handleAuditEvents)
-		api.GET(PathAuditEventByID, s.handleAuditEventByID)
-		api.GET(PathAuditFacets, s.handleAuditFacets)
-	}
-	if s.netAPI && s.netStore != nil {
-		api.GET(PathNetPolicies, s.handleListNetPolicies)
-		api.GET(PathNetPolicyByName, s.handleGetNetPolicy)
-		api.POST(PathNetPolicies, s.handleApplyNetPolicy)
-		api.DELETE(PathNetPolicyByName, s.handleDeleteNetPolicy)
-		api.GET(PathNetPolicyClassify, s.handleClassifyNetPolicy)
-		api.GET(PathNetPolicyResolveMe, s.handleResolveMeNetPolicy)
-	}
-
-	// Per-tenant usage/metering endpoint (opt-in WithTenantUsageAggregator).
-	// Gated by AdminMiddleware (admin:read) via the /api/v1/admin/ prefix.
-	// Not mounted without the aggregator — byte-identical to a build without it.
-	if s.usageAggregator != nil {
-		api.GET(PathTenantUsage, s.handleTenantUsage)
-	}
-
-	// Admin/helpdesk management of a user's self-service state. Gated by
-	// AdminMiddleware via the /api/v1/admin/ prefix (GET admin:read, DELETE
-	// admin:write). Mounted only when the backing store is wired — reusing the
-	// SAME consent / MFA-enrollment stores the user's own /me endpoints use, so
-	// an admin and the user see one consistent view. Byte-identical without them.
-	if s.consentStore != nil {
-		api.GET(PathAdminUserConsents, s.handleAdminListUserConsents)
-		api.DELETE(PathAdminUserConsentByID, s.handleAdminRevokeUserConsent)
-	}
-	if s.mfaEnrollmentStore != nil {
-		api.GET(PathAdminUserMFA, s.handleAdminListUserMFA)
-		api.DELETE(PathAdminUserMFAByID, s.handleAdminRemoveUserMFA)
-	}
-	if s.passwordCredentialStore != nil {
-		api.POST(PathAdminUserPassword, s.handleAdminResetUserPassword)
-	}
-	if s.userProvider != nil {
-		api.POST(PathAdminUserEmail, s.handleAdminSetUserEmail)
-	}
-	if s.deviceSecretStore != nil {
-		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
-	}
-	if s.passwordResetStore != nil {
-		api.GET(PathAdminUserPasswordResetTokens, s.handleAdminListUserPasswordResetTokens)
-		api.DELETE(PathAdminUserPasswordResetTokens, s.handleAdminRevokeUserPasswordResetTokens)
-	}
-	if s.emailChangeStore != nil {
-		api.GET(PathAdminUserEmailChangeTokens, s.handleAdminListUserEmailChangeTokens)
-		api.DELETE(PathAdminUserEmailChangeTokens, s.handleAdminRevokeUserEmailChangeTokens)
-	}
-	if s.accountLockout != nil {
-		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
-	}
-	if s.connectionStore != nil {
-		api.GET(PathAdminConnections, s.handleAdminListConnections)
-		api.POST(PathAdminConnections, s.handleAdminUpsertConnection)
-		api.GET(PathAdminConnectionByID, s.handleAdminGetConnection)
-		api.DELETE(PathAdminConnectionByID, s.handleAdminDeleteConnection)
-	}
-	if s.tenantUserStore != nil {
-		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)
-		api.PUT(PathAdminTenantMemberByID, s.handleAdminPutTenantMember)
-		api.DELETE(PathAdminTenantMemberByID, s.handleAdminRemoveTenantMember)
-	}
-	if s.invitationStore != nil {
-		api.POST(PathAdminTenantInvitations, s.handleAdminSendInvitation)
-		api.GET(PathAdminTenantInvitations, s.handleAdminListInvitations)
-	}
 }
 
 // Handler returns the http.Handler for the server.
@@ -356,8 +331,15 @@ func (s *Server) Mount() {
 // /livez, /readyz, and `/` (so the mux cost is negligible).
 func (s *Server) Handler() http.Handler {
 	s.Mount()
+	inner := s.buildMiddlewareChain(s.router)
+	return s.buildProbeMux(inner)
+}
 
-	var inner http.Handler = s.router
+// buildMiddlewareChain wraps the router (innermost) with the optional CORS,
+// body-limit, rate-limit, trusted-proxies, metrics, and tracing middlewares in
+// the documented outermost->innermost order. trustedProxies MUST wrap before
+// rate limiting so the limiter keys on the validated real client IP.
+func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 	if s.corsPolicy != nil {
 		// CORS sits innermost (just outside the router) so preflight
 		// 204s don't traverse routing, but still get counted by metrics
@@ -390,12 +372,26 @@ func (s *Server) Handler() http.Handler {
 		// 200ms go" on a slow request.
 		inner = tracing.Middleware(s.tracingOperation)(inner)
 	}
+	return inner
+}
 
+// SPA mount prefixes served by buildProbeMux outside the SSO router. Held as
+// consts so each prefix's mux.Handle and StripPrefix uses cannot drift apart.
+const (
+	pathAdminConsolePrefix = "/admin/"
+	pathHostedLoginPrefix  = "/login/"
+	pathPortalPrefix       = "/portal/"
+)
+
+// buildProbeMux serves the operational probe endpoints (/livez, /readyz,
+// /metrics) and the opt-in SPA bundles OUTSIDE the middleware stack, routing
+// everything else to inner. See Handler's doc for why probes bypass middleware.
+func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(PathLivez, s.handleLivez)
 	mux.HandleFunc(PathReadyz, s.handleReadyz)
 	if s.metrics != nil {
-		mux.Handle("/metrics", promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
+		mux.Handle(PathMetrics, promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
 	}
 	// Admin console SPA (opt-in). Served from /admin/ so the browser client
 	// has a stable origin to call back to /api/v1/admin/* from. The
@@ -404,7 +400,7 @@ func (s *Server) Handler() http.Handler {
 	// into the SSO routing layer. Not wired by default — byte-identical to a
 	// build without the console when adminConsoleFS is nil.
 	if s.adminConsoleFS != nil {
-		mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServerFS(s.adminConsoleFS)))
+		mux.Handle(pathAdminConsolePrefix, http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS)))
 	}
 	// Hosted login SPA (opt-in). Served from /login/ so the browser can
 	// reach the SPA while the JSON /auth/login endpoint remains at its
@@ -412,13 +408,13 @@ func (s *Server) Handler() http.Handler {
 	// /auth/login over JSON like any other client. Not wired by default —
 	// byte-identical to a build without the UI when hostedLoginFS is nil.
 	if s.hostedLoginFS != nil {
-		mux.Handle("/login/", http.StripPrefix("/login/", http.FileServerFS(s.hostedLoginFS)))
+		mux.Handle(pathHostedLoginPrefix, http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS)))
 	}
 	// End-user self-service portal SPA (opt-in). Served from /portal/; it calls
 	// the /me* endpoints over JSON with the user's own bearer. Not wired by
 	// default — byte-identical when portalFS is nil.
 	if s.portalFS != nil {
-		mux.Handle("/portal/", http.StripPrefix("/portal/", http.FileServerFS(s.portalFS)))
+		mux.Handle(pathPortalPrefix, http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS)))
 	}
 	mux.Handle("/", inner)
 	return mux

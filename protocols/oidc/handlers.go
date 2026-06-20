@@ -34,42 +34,56 @@ func HandleJWKS(d JWKSDeps, ctx core.HandlerContext) {
 	// marshal. The closure derives the doc solely from the issuer key
 	// set (identical for every caller), so collapsing is safe.
 	body, err := d.ComputeJWKSDocument(func() ([]byte, error) {
-		keys := make([]core.JWK, 0)
-		for _, ti := range d.TokenIssuers() {
-			jp, ok := ti.(core.JWKSProvider)
-			if !ok {
-				continue
-			}
-			ks, err := jp.JWKS(ctx.Request().Context())
-			if err != nil {
-				d.SrvLogger().Error("jwks provider failed", "error", err)
-				continue
-			}
-			keys = append(keys, ks...)
-		}
-		// JAR JWE decrypter typically also implements JWKSProvider so its
-		// public encryption key (use: "enc") publishes alongside the
-		// issuer signing keys (use: "sig"). A single JWKS doc covers both
-		// roles; RPs branch on `use` to know which key to encrypt to vs
-		// verify with.
-		if dec := d.JARDecrypter(); dec != nil {
-			if jp, ok := dec.(core.JWKSProvider); ok {
-				ks, err := jp.JWKS(ctx.Request().Context())
-				if err != nil {
-					d.SrvLogger().Error("jwks decrypter failed", "error", err)
-				} else {
-					keys = append(keys, ks...)
-				}
-			}
-		}
-		return json.Marshal(map[string]any{"keys": keys})
+		return marshalJWKSDocument(d, ctx)
 	})
 	if err != nil {
 		d.SrvLogger().Error("jwks marshal failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, map[string]string{core.KeyError: core.ErrInternal})
 		return
 	}
+	writeJWKSResponse(d, ctx, body)
+}
 
+// marshalJWKSDocument walks every registered issuer (and the JAR JWE
+// decrypter) and marshals the aggregated key set. It runs inside the
+// single-flight closure, so it MUST derive the doc solely from the issuer
+// key set — identical for every caller — to keep collapsing safe. ctx is
+// passed in (never captured) so the request-scoped context is current.
+func marshalJWKSDocument(d JWKSDeps, ctx core.HandlerContext) ([]byte, error) {
+	keys := make([]core.JWK, 0)
+	for _, ti := range d.TokenIssuers() {
+		jp, ok := ti.(core.JWKSProvider)
+		if !ok {
+			continue
+		}
+		ks, err := jp.JWKS(ctx.Request().Context())
+		if err != nil {
+			d.SrvLogger().Error("jwks provider failed", "error", err)
+			continue
+		}
+		keys = append(keys, ks...)
+	}
+	// JAR JWE decrypter typically also implements JWKSProvider so its
+	// public encryption key (use: "enc") publishes alongside the
+	// issuer signing keys (use: "sig"). A single JWKS doc covers both
+	// roles; RPs branch on `use` to know which key to encrypt to vs
+	// verify with.
+	if dec := d.JARDecrypter(); dec != nil {
+		if jp, ok := dec.(core.JWKSProvider); ok {
+			ks, err := jp.JWKS(ctx.Request().Context())
+			if err != nil {
+				d.SrvLogger().Error("jwks decrypter failed", "error", err)
+			} else {
+				keys = append(keys, ks...)
+			}
+		}
+	}
+	return json.Marshal(map[string]any{"keys": keys})
+}
+
+// writeJWKSResponse stamps the strong ETag + cache headers and honors a
+// matching If-None-Match with a 304 short-circuit.
+func writeJWKSResponse(d JWKSDeps, ctx core.HandlerContext, body []byte) {
 	// ETag = strong validator. RP libraries can send If-None-Match on
 	// poll-style fetches to short-circuit when keys haven't rotated.
 	sum := sha256.Sum256(body)

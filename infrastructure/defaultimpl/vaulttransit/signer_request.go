@@ -25,6 +25,25 @@ type vaultError struct {
 // status and Vault's own error message(s) — but NEVER the token (it is only
 // ever a request header, never read back or logged). reqBody nil sends no body.
 func (s *Signer) doRequest(ctx context.Context, method, path string, reqBody []byte) ([]byte, error) {
+	httpReq, err := s.buildVaultRequest(ctx, method, path, reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(httpReq)
+	if err != nil {
+		// Transport error (DNS, TLS verify failure, connection refused,
+		// deadline). The url.Error here wraps the request URL, NOT the headers,
+		// so the token is not exposed.
+		return nil, fmt.Errorf("vaulttransit: %s %s: %w", method, vaultTransitOpName(path), err)
+	}
+	return readVaultResponse(method, path, resp)
+}
+
+// buildVaultRequest fetches the per-request token (fail-closed on empty) and
+// constructs the bounded HTTP request with the X-Vault-Token, optional
+// X-Vault-Namespace, and Content-Type headers. reqBody nil sends no body.
+func (s *Signer) buildVaultRequest(ctx context.Context, method, path string, reqBody []byte) (*http.Request, error) {
 	// Per-request token: the operator owns lifecycle/renewal. Called every
 	// request so a renewing source (AppRole, k8s auth, agent sink) is honored.
 	token, err := s.cfg.TokenSource(ctx)
@@ -53,14 +72,13 @@ func (s *Signer) doRequest(ctx context.Context, method, path string, reqBody []b
 	if reqBody != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
+	return httpReq, nil
+}
 
-	resp, err := s.client.Do(httpReq)
-	if err != nil {
-		// Transport error (DNS, TLS verify failure, connection refused,
-		// deadline). The url.Error here wraps the request URL, NOT the headers,
-		// so the token is not exposed.
-		return nil, fmt.Errorf("vaulttransit: %s %s: %w", method, vaultTransitOpName(path), err)
-	}
+// readVaultResponse reads (bounded) and closes the response body, mapping a
+// non-2xx status to a fail-closed error carrying the status and Vault's own
+// error message(s) — but NEVER the token or the request body.
+func readVaultResponse(method, path string, resp *http.Response) ([]byte, error) {
 	defer func() { _ = resp.Body.Close() }()
 	// Bound the body read so a misbehaving/hostile endpoint can't stream
 	// unbounded data into the signing goroutine. Transit replies are small
