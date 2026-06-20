@@ -23,9 +23,9 @@ func TestIsValidResponseMode(t *testing.T) {
 		tc := tc
 		t.Run(tc.mode, func(t *testing.T) {
 			t.Parallel()
-			got := isValidResponseMode(tc.mode)
+			got := IsValidResponseMode(tc.mode)
 			if got != tc.want {
-				t.Errorf("isValidResponseMode(%q) = %v, want %v", tc.mode, got, tc.want)
+				t.Errorf("IsValidResponseMode(%q) = %v, want %v", tc.mode, got, tc.want)
 			}
 		})
 	}

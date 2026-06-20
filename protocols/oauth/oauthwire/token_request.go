@@ -1,4 +1,4 @@
-package oauth
+package oauthwire
 
 // TokenRequest is the bound /token endpoint request — every parameter across
 // every grant type (authorization_code, refresh_token, device_code, CIBA,

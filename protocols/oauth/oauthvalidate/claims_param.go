@@ -1,4 +1,4 @@
-package oauth
+package oauthvalidate
 
 import (
 	"encoding/json"

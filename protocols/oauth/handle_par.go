@@ -188,7 +188,7 @@ func validatePARRequestParams(ctx core.HandlerContext, req *parRequestForm, clie
 	// OIDC Form Post 1.0: reject malformed response_mode at PAR time
 	// so the caller fails fast (whole point of PAR — surface
 	// validation upstream of the user-agent redirect).
-	if req.ResponseMode != "" && !isValidResponseMode(req.ResponseMode) {
+	if req.ResponseMode != "" && !IsValidResponseMode(req.ResponseMode) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return false
 	}

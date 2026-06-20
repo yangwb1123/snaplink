@@ -15,9 +15,9 @@ import (
 // gate produced it. Called ONLY after a successful store write — the
 // failed-auth paths short-circuit earlier and emit nothing (anti-enumeration).
 func recordRegistrationCreated(d RegisterDeps, ctx core.HandlerContext, policy *DCRPolicy, clientID string) {
-	method := dcrMethodInitialAccessToken
+	method := DCRMethodInitialAccessToken
 	if policy.AllowOpenRegistration {
-		method = dcrMethodOpen
+		method = DCRMethodOpen
 	}
 	recordDCRLifecycle(d, ctx, audit.EventClientRegistered, clientID, method)
 }

@@ -1,4 +1,4 @@
-package oauth
+package oauthvalidate
 
 import (
 	"crypto/rand"
@@ -68,14 +68,14 @@ const (
 )
 
 // DCR audit-metadata keys + values for the EventClientRegistered lifecycle
-// event. metaKeyDCRMethod records HOW the registration was authorized so a
+// event. MetaKeyDCRMethod records HOW the registration was authorized so a
 // SIEM can separate operator-gated registrations from open ones; these are
 // internal audit signals, not wire values.
 const (
-	metaKeyDCRMethod = "registration_method"
+	MetaKeyDCRMethod = "registration_method"
 
-	dcrMethodInitialAccessToken = "initial_access_token"
-	dcrMethodOpen               = "open"
+	DCRMethodInitialAccessToken = "initial_access_token"
+	DCRMethodOpen               = "open"
 )
 
 // GenerateClientID mints a base32 client identifier — short enough

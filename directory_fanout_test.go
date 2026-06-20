@@ -51,7 +51,6 @@ var dirFileCountExemptions = map[string]int{
 	"interfaces/snapshot":               14,
 	"interfaces/sso":                    54,
 	"platform/audit":                    23,
-	"protocols/oauth":                   24,
 	"protocols/scim":                    19,
 	"shared/core":                       21,
 }
@@ -172,7 +171,7 @@ func checkDirBudget(t *testing.T, kind string, threshold int, value func(dirFano
 // caps (only) when you remove exemptions, so a new over-cap dir cannot be
 // silently grandfathered.
 const (
-	maxDirFileExemptions   = 12
+	maxDirFileExemptions   = 11
 	maxDirSubdirExemptions = 1
 )
 

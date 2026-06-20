@@ -1,4 +1,4 @@
-package oauth
+package oauthwire
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"github.com/snaplink/sso/protocols/oauth/oauthspi"
+	"github.com/snaplink/sso/protocols/oauth/oauthvalidate"
 )
 
 // PKCEMethodPlain is the PKCE challenge method "plain" (RFC 7636 §4.3).
@@ -118,7 +121,7 @@ func IsScopeSubset(want, have []string) bool {
 // IssueAuthCodeParams contains the parameters for issuing an auth code.
 type IssueAuthCodeParams struct {
 	AuthCodeTTL          time.Duration
-	AuthCodeStore        AuthCodeStore
+	AuthCodeStore        oauthspi.AuthCodeStore
 	UserID               string
 	ClientID             string
 	RedirectURI          string
@@ -146,7 +149,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute // DefaultAuthCodeTTL fallback
 	}
-	entry := &AuthCode{
+	entry := &oauthspi.AuthCode{
 		UserID:               p.UserID,
 		ClientID:             p.ClientID,
 		RedirectURI:          p.RedirectURI,
@@ -160,7 +163,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 		CodeChallenge:        p.CodeChallenge,
 		CodeChallengeMethod:  p.CodeChallengeMethod,
 		Resources:            append([]string(nil), p.Resources...),
-		AuthorizationDetails: CloneRawJSON(p.AuthorizationDetails),
+		AuthorizationDetails: oauthvalidate.CloneRawJSON(p.AuthorizationDetails),
 		SID:                  p.SID,
 		ExpiresAt:            time.Now().Add(ttl),
 	}
@@ -174,7 +177,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 type IssueRefreshTokenParams struct {
 	RefreshTokenTTL   time.Duration
 	RefreshTokenStore interface {
-		Issue(ctx context.Context, token string, info *RefreshToken) error
+		Issue(ctx context.Context, token string, info *oauthspi.RefreshToken) error
 	}
 	UserID               string
 	ClientID             string
@@ -212,7 +215,7 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 		p.FamilyID = fid
 	}
 	now := time.Now()
-	entry := &RefreshToken{
+	entry := &oauthspi.RefreshToken{
 		UserID:               p.UserID,
 		ClientID:             p.ClientID,
 		Provider:             p.Provider,
@@ -222,7 +225,7 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 		ExpiresAt:            now.Add(ttl),
 		FamilyID:             p.FamilyID,
 		Resources:            append([]string(nil), p.Resources...),
-		AuthorizationDetails: CloneRawJSON(p.AuthorizationDetails),
+		AuthorizationDetails: oauthvalidate.CloneRawJSON(p.AuthorizationDetails),
 		SID:                  p.SID,
 	}
 	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {

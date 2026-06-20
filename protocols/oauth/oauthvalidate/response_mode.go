@@ -1,4 +1,4 @@
-package oauth
+package oauthvalidate
 
 // Response mode constants per OIDC Core §3.1.2.5 + Form Post 1.0 §2.
 // Duplicated here (also present in oidc/discovery_options.go) so the
@@ -10,11 +10,11 @@ const (
 	responseModeFormPost = "form_post"
 )
 
-// isValidResponseMode reports whether the supplied response_mode
+// IsValidResponseMode reports whether the supplied response_mode
 // value is one this server understands. Empty is always valid
 // (means "use the response_type-defined default") so callers MUST
 // short-circuit on empty before this check.
-func isValidResponseMode(mode string) bool {
+func IsValidResponseMode(mode string) bool {
 	switch mode {
 	case responseModeQuery, responseModeFragment, responseModeFormPost:
 		return true

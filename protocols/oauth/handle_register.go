@@ -334,7 +334,7 @@ func recordDCRLifecycle(d RegisterDeps, ctx core.HandlerContext, t audit.EventTy
 	e.Type = t
 	e.Outcome = audit.OutcomeSuccess
 	e.ClientID = clientID
-	audit.SetMeta(e, metaKeyDCRMethod, method) // SetMeta skips an empty method
+	audit.SetMeta(e, MetaKeyDCRMethod, method) // SetMeta skips an empty method
 	rec.Record(ctx.Request().Context(), e)
 }
 

@@ -1,4 +1,4 @@
-package oauth
+package oauthwire
 
 import (
 	"encoding/json"
