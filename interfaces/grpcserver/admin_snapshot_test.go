@@ -9,7 +9,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
 	"google.golang.org/grpc"

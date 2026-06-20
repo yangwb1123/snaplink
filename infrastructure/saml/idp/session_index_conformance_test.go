@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	samlidp "github.com/snaplink/sso/saml/idp"
-	"github.com/snaplink/sso/saml/samltest/sessionindextest"
+	"github.com/snaplink/sso/saml/samltestsessionindextest"
 )
 
 // spsPerSubjectCapForTest is a small per-subject SP cap so the cap conformance

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/encryption/aesgcm"
+	"github.com/snaplink/sso/interfaces/snapshot/encryptionaesgcm"
 )
 
 func mkKey(t *testing.T) []byte {

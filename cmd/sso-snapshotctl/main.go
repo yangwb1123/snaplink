@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	encryptionnone "github.com/snaplink/sso/interfaces/snapshot/encryption/none"
-	encryptionpass "github.com/snaplink/sso/interfaces/snapshot/encryption/passphrase"
-	storagefile "github.com/snaplink/sso/interfaces/snapshot/storage/file"
+	encryptionnone "github.com/snaplink/sso/interfaces/snapshot/encryptionnone"
+	encryptionpass "github.com/snaplink/sso/interfaces/snapshot/encryptionpassphrase"
+	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
 )
 
 const progName = "sso-snapshotctl"

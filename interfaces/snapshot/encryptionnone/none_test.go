@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/encryption/none"
+	"github.com/snaplink/sso/interfaces/snapshot/encryptionnone"
 )
 
 func TestNew_SatisfiesSealerInterface(t *testing.T) {

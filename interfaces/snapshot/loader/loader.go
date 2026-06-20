@@ -24,8 +24,8 @@ import (
 	"strings"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/file"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/storagefile"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinner/noop"
+	"github.com/snaplink/sso/platform/releases/pinnernoop"
 )
 
 func TestPinForwardAndRollbackReturnNil(t *testing.T) {

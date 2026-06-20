@@ -17,7 +17,7 @@ import (
 	"github.com/snaplink/sso/shared/spi"
 
 	"github.com/snaplink/sso/config"
-	webauthnsqlite "github.com/snaplink/sso/domains/authenticators/webauthn/sqlite"
+	webauthnsqlite "github.com/snaplink/sso/domains/authenticators/webauthnsqlite"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/platform/metrics"
 )

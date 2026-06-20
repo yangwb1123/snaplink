@@ -7,8 +7,8 @@ import (
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/snapshot"
-	encryptionnone "github.com/snaplink/sso/interfaces/snapshot/encryption/none"
-	storageinline "github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	encryptionnone "github.com/snaplink/sso/interfaces/snapshot/encryptionnone"
+	storageinline "github.com/snaplink/sso/interfaces/snapshot/storageinline"
 	"github.com/snaplink/sso/interfaces/sso"
 )
 

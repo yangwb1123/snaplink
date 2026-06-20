@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinner/static"
+	"github.com/snaplink/sso/platform/releases/pinnerstatic"
 )
 
 // stagedBundle materialises a fake bundle directory inside dir so the

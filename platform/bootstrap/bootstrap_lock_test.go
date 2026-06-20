@@ -11,8 +11,8 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/bootstrap"
 	"github.com/snaplink/sso/platform/bootstrap/lock"
-	"github.com/snaplink/sso/platform/bootstrap/lock/file"
-	"github.com/snaplink/sso/platform/bootstrap/lock/noop"
+	"github.com/snaplink/sso/platform/bootstrap/lockfile"
+	"github.com/snaplink/sso/platform/bootstrap/locknoop"
 	"github.com/snaplink/sso/platform/bootstrap/memory"
 )
 

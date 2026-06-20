@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/platform/releases"
-	probehttp "github.com/snaplink/sso/platform/releases/probe/http"
+	probehttp "github.com/snaplink/sso/platform/releases/probehttp"
 )
 
 func TestProbe_2xxIsHealthy(t *testing.T) {

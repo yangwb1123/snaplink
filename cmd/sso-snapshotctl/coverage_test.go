@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	storagefile "github.com/snaplink/sso/interfaces/snapshot/storage/file"
+	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
 )
 
 // ---- runList edge cases ----

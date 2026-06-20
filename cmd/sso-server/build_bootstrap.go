@@ -12,12 +12,12 @@ import (
 	bootstrapfile "github.com/snaplink/sso/platform/bootstrap/file"
 	"github.com/snaplink/sso/platform/bootstrap/lock"
 
-	lockEtcd "github.com/snaplink/sso/platform/bootstrap/lock/etcd"
+	lockEtcd "github.com/snaplink/sso/platform/bootstrap/locketcd"
 
-	lockFile "github.com/snaplink/sso/platform/bootstrap/lock/file"
+	lockFile "github.com/snaplink/sso/platform/bootstrap/lockfile"
 
 	"github.com/snaplink/sso/config"
-	lockNoop "github.com/snaplink/sso/platform/bootstrap/lock/noop"
+	lockNoop "github.com/snaplink/sso/platform/bootstrap/locknoop"
 )
 
 func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {

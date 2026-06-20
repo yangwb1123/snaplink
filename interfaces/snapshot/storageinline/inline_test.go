@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 )
 
 func TestRoundtrip(t *testing.T) {

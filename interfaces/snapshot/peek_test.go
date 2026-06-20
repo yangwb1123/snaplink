@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 )
 
 func TestPeekEnvelope_RoundTrip(t *testing.T) {

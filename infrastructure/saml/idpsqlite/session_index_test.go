@@ -9,7 +9,7 @@ import (
 
 	"github.com/snaplink/sso/platform/migrate"
 	samlidp "github.com/snaplink/sso/saml/idp"
-	"github.com/snaplink/sso/saml/samltest/sessionindextest"
+	"github.com/snaplink/sso/saml/samltestsessionindextest"
 )
 
 const testSPCap = 8

@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/encryption/none"
-	"github.com/snaplink/sso/interfaces/snapshot/encryption/passphrase"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/encryptionnone"
+	"github.com/snaplink/sso/interfaces/snapshot/encryptionpassphrase"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 )
 
 func TestJSONCodec_Roundtrip(t *testing.T) {

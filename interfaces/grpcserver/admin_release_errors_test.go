@@ -9,7 +9,7 @@ import (
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinner/noop"
+	"github.com/snaplink/sso/platform/releases/pinnernoop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"

@@ -6,7 +6,7 @@ import (
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 	"github.com/snaplink/sso/platform/bootstrap/memory"
 )
 

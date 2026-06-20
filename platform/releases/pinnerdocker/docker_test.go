@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinner/docker"
+	"github.com/snaplink/sso/platform/releases/pinnerdocker"
 )
 
 // recorder captures every Exec call so tests can assert the docker

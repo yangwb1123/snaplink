@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/store/memory"
+	"github.com/snaplink/sso/platform/releases/storememory"
 )
 
 // captureP records each call so tests can assert ordering + count.

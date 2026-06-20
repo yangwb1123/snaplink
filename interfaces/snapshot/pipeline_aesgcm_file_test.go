@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/encryption/aesgcm"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/file"
-	"github.com/snaplink/sso/interfaces/snapshot/storage/inline"
+	"github.com/snaplink/sso/interfaces/snapshot/encryptionaesgcm"
+	"github.com/snaplink/sso/interfaces/snapshot/storagefile"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 )
 
 // makeAESKey returns a deterministic 32-byte AES-256 key for tests.

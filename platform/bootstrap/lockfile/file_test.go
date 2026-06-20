@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/bootstrap/lock"
-	"github.com/snaplink/sso/platform/bootstrap/lock/file"
+	"github.com/snaplink/sso/platform/bootstrap/lockfile"
 )
 
 func TestAcquireRelease_RoundTrip(t *testing.T) {

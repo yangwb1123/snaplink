@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/bootstrap/lock"
-	"github.com/snaplink/sso/platform/bootstrap/lock/noop"
+	"github.com/snaplink/sso/platform/bootstrap/locknoop"
 )
 
 // Contract: noop always succeeds, returns zero token, Renew/Release nil.

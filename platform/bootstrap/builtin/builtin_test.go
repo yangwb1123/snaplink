@@ -7,7 +7,7 @@ import (
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/snapshot"
-	storagefile "github.com/snaplink/sso/interfaces/snapshot/storage/file"
+	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/bootstrap"
 	"github.com/snaplink/sso/platform/bootstrap/builtin"

@@ -16,7 +16,7 @@ import (
 	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinner/noop"
+	"github.com/snaplink/sso/platform/releases/pinnernoop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
