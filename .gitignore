@@ -42,9 +42,13 @@ coverage.out
 /docs/agent-os/TODO.md
 __pycache__/
 
-# Compiled binaries
-sso-audit-verify
-sso-server
-sso-migrate
-sso-snapshotctl
-sso-import
+# Compiled binaries (root-anchored: the build output dir /bin/ is ignored
+# above; these leading-slash patterns catch a stray `go build` at the repo
+# root WITHOUT matching the cmd/sso-server source directory — a bare
+# `sso-server` pattern previously ignored the entire cmd/sso-server/ package).
+/sso-server
+/sso-ctl
+/sso-audit-verify
+/sso-migrate
+/sso-snapshotctl
+/sso-import

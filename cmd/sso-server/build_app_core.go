@@ -1,0 +1,410 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
+	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/protocols/caep"
+)
+
+// wireIdentitySigning constructs metrics, the seeded client store, the user
+// provider + session manager, the signing issuer, and the base Option set.
+func (b *appBuilder) wireIdentitySigning() error {
+	cfg := b.cfg
+	if cfg.Metrics.Enabled {
+		b.metricsRegistry = metrics.New()
+	}
+
+	clientStore, err := buildClientStore(cfg.Identity)
+	if err != nil {
+		return fmt.Errorf("identity client_store: %w", err)
+	}
+	if err := b.seedClients(clientStore); err != nil {
+		return err
+	}
+	b.clientStore = clientStore
+
+	userProvider, err := buildUserProvider(cfg.Identity)
+	if err != nil {
+		return fmt.Errorf("identity user_provider: %w", err)
+	}
+	sessionMgr, err := buildSessionManager(cfg.Identity, cfg.Server.SessionTTL)
+	if err != nil {
+		return fmt.Errorf("identity session_manager: %w", err)
+	}
+	b.userProvider = userProvider
+	b.sessionMgr = sessionMgr
+	// Schema-version boot gate: refuse to start when any SQLite store's
+	// live schema is ahead of what this binary knows. A memory backend
+	// silently no-ops (no DB() method). This must run before traffic is
+	// accepted so an operator doing a canary rollback sees a clear error
+	// instead of silent data corruption.
+	b.schemaCtx = context.Background()
+	if err := checkSQLiteSchema(b.schemaCtx, clientStore, "clients", sqlitestores.ClientsMaxVersion()); err != nil {
+		return fmt.Errorf("schema check clients: %w", err)
+	}
+	if err := checkSQLiteSchema(b.schemaCtx, userProvider, "users", sqlitestores.UsersMaxVersion()); err != nil {
+		return fmt.Errorf("schema check users: %w", err)
+	}
+	if err := checkSQLiteSchema(b.schemaCtx, sessionMgr, "sessions", sqlitestores.SessionsMaxVersion()); err != nil {
+		return fmt.Errorf("schema check sessions: %w", err)
+	}
+	return b.wireSigningIssuer()
+}
+
+// seedClients loads the configured clients into the freshly-built store,
+// validating each CAEP receiver endpoint at boot.
+func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
+	for _, c := range b.cfg.Clients {
+		seeded := &sso.Client{
+			ID:                               c.ID,
+			Secret:                           c.Secret,
+			Name:                             c.Name,
+			RedirectURIs:                     c.RedirectURIs,
+			AllowedScopes:                    c.AllowedScopes,
+			AllowedAuthenticators:            c.AllowedAuthenticators,
+			TokenStrategy:                    c.TokenStrategy,
+			Active:                           c.Active,
+			TenantID:                         c.TenantID,
+			RequirePKCE:                      c.RequirePKCE,
+			AllowedResources:                 c.AllowedResources,
+			PostLogoutRedirectURIs:           c.PostLogoutRedirectURIs,
+			AllowedAuthorizationDetailsTypes: c.AllowedAuthorizationDetailsTypes,
+			RefreshTokenTTL:                  c.RefreshTokenTTL,
+			AccessTokenTTL:                   c.AccessTokenTTL,
+			AllowedPKCEMethods:               c.AllowedPKCEMethods,
+			RequireSignedRequestObject:       c.RequireSignedRequestObject,
+			RequirePAR:                       c.RequirePAR,
+			AllowedRequestURIs:               c.AllowedRequestURIs,
+			DeviceCodeTTL:                    c.DeviceCodeTTL,
+			DeviceCodePollInterval:           c.DeviceCodePollInterval,
+			UserinfoSignedResponseAlg:        c.UserinfoSignedResponseAlg,
+			BackchannelLogoutURI:             c.BackchannelLogoutURI,
+			SubjectType:                      c.SubjectType,
+			SectorIdentifierURI:              c.SectorIdentifierURI,
+			FrontchannelLogoutURI:            c.FrontchannelLogoutURI,
+			JWKS:                             convertClientJWKs(c.JWKS),
+			Attributes:                       c.Attributes,
+			SkipConsent:                      c.SkipConsent,
+			ConsentRefreshInterval:           c.ConsentRefreshInterval,
+		}
+		// Validate the CAEP receiver endpoint (https) at boot — a
+		// non-https receiver would mean a SET (carrying a revocation
+		// signal) is exfiltrated over plaintext. Same anti-exfil rule the
+		// admin gRPC path enforces.
+		if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
+			if err := caep.ValidateReceiverEndpoint(ep); err != nil {
+				return fmt.Errorf("client %q caep_receiver_endpoint: %w", c.ID, err)
+			}
+		}
+		if err := clientStore.Add(context.Background(), seeded); err != nil && !errors.Is(err, sso.ErrClientExists) {
+			return fmt.Errorf("seed client %q: %w", c.ID, err)
+		}
+	}
+	return nil
+}
+
+// wireSigningIssuer builds the signing issuer + base Option set (router,
+// logger, tracing, token issuers, OIDC id-token issuer, supported algs) and
+// registers the identity-store readiness checks + storage-health sources.
+func (b *appBuilder) wireSigningIssuer() error {
+	cfg, logger := b.cfg, b.logger
+	// Signing issuer: EdDSA (default) / ES256 / RS256|PS256, optionally
+	// backed by an external KMS/HSM signer. Both concrete types satisfy
+	// the same interface set; only the scheduled rotation loop below is
+	// EdDSA-specific (type-asserted there).
+	jwtIssuer, signingAlg, externalSigner, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.metricsRegistry, logger)
+	if err != nil {
+		return err
+	}
+	sessionIssuer := defaultimpl.NewSessionTokenIssuer(
+		defaultimpl.WithSessionTokenTTL(cfg.Server.SessionTTL),
+	)
+	b.jwtIssuer = jwtIssuer
+	b.signingAlg = signingAlg
+	b.externalSigner = externalSigner
+	b.tokenIssuers = map[string]sso.TokenIssuer{
+		sso.TokenStrategyJWT:     jwtIssuer,
+		sso.TokenStrategySession: sessionIssuer,
+	}
+
+	b.opts = append(cfg.ServerOptions(),
+		sso.WithRouter(sso.NewStdRouter()),
+		sso.WithLogger(logger),
+		sso.WithTracingMiddleware(),   // legacy request-id middleware (not OTel)
+		sso.WithTracing("sso-server"), // OTel HTTP-span middleware; no-op until tracing.Init activates
+		sso.WithTokenIssuer(sso.TokenStrategyJWT, jwtIssuer),
+		sso.WithTokenIssuer(sso.TokenStrategySession, sessionIssuer),
+		sso.WithUserProvider(b.userProvider),
+		sso.WithClientStore(b.clientStore),
+		sso.WithSessionManager(b.sessionMgr),
+		// Ed25519JWTIssuer satisfies oidc.IDTokenIssuer — sharing one
+		// signing key keeps JWKS single-entry. Without this option the
+		// id_token field is omitted from every /token + /auth/login
+		// response and OIDC is silently disabled, which is the wrong
+		// default for a binary called "sso-server".
+		sso.WithIDTokenIssuer(jwtIssuer),
+		// Pin the Server-level Validate alg gate to the wired signing
+		// alg so an RP can never select the verification algorithm
+		// (anti alg-confusion); discovery also reflects this set.
+		sso.WithSupportedSigningAlgs(signingAlg),
+	)
+	logger.Info("signing issuer configured", "alg", signingAlg)
+	b.registerIdentityHealth()
+	return nil
+}
+
+// registerIdentityHealth registers the /readyz checks + storage-health sources
+// for the external signer and the identity stores. The external KMS/HSM signer
+// is a runtime dependency the in-process key path never had, so its passive
+// probe trips /readyz when wedged; nil (in-process key) silently no-ops. Each
+// SQLite store's DB() handle drives migrate.Status; memory backends contribute
+// nothing.
+func (b *appBuilder) registerIdentityHealth() {
+	b.opts = appendReadyCheck(b.opts, "external-signer", b.externalSigner)
+	b.opts = appendReadyCheck(b.opts, "sqlite-identity-clients", b.clientStore)
+	b.opts = appendReadyCheck(b.opts, "sqlite-identity-users", b.userProvider)
+	b.opts = appendReadyCheck(b.opts, "sqlite-identity-sessions", b.sessionMgr)
+	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-identity-clients", b.clientStore)
+	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-identity-users", b.userProvider)
+	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-identity-sessions", b.sessionMgr)
+}
+
+// wireAudit builds the audit recorder + sink stack (primary, webhook fan-out,
+// async wrap), the retention scheduler, and the audit API + readiness wiring.
+func (b *appBuilder) wireAudit() error {
+	cfg, logger := b.cfg, b.logger
+	if !cfg.Audit.Enabled {
+		return nil
+	}
+	primary, primaryName, err := buildPrimaryAuditSink(cfg.Audit, logger)
+	if err != nil {
+		return fmt.Errorf("audit: build primary sink: %w", err)
+	}
+	if err := b.startAuditRetention(primary, primaryName); err != nil {
+		return err
+	}
+	sink := primary
+	if w := cfg.Audit.Webhook; w.Enabled {
+		sink, err = b.wireAuditWebhook(primary, w)
+		if err != nil {
+			return err
+		}
+	}
+	// Async wrap when configured. The buffered hot path keeps slow
+	// (e.g. webhook) sinks from blocking request latency. Memory
+	// sink benefits little — the wrap is opt-in per operator.
+	if cfg.Audit.Async.Enabled {
+		sink = b.wireAuditAsync(sink)
+	}
+	recorder, err := b.buildRecorder(sink)
+	if err != nil {
+		return err
+	}
+	b.recorder = recorder
+	b.opts = append(b.opts, sso.WithAuditRecorder(recorder))
+	if cfg.Audit.APIEnabled {
+		b.opts = append(b.opts, sso.WithAuditAPI())
+	}
+	// Register a readycheck for the primary sink if it satisfies
+	// the Ping interface — the SQLite sink does; MemorySink
+	// silently no-ops.
+	b.opts = appendReadyCheck(b.opts, "audit-"+primaryName, primary)
+	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
+	return nil
+}
+
+// startAuditRetention boots the retention prune loop against the SQLite primary
+// sink. The in-memory ring buffer self-prunes by capacity; cmd type-asserts the
+// concrete *auditsqlite.Sink so the memory path silently skips, letting an
+// operator flip retention.enabled without coordinating with the backend choice.
+func (b *appBuilder) startAuditRetention(primary audit.Sink, primaryName string) error {
+	rc := b.cfg.Audit.Retention
+	if !rc.Enabled || primaryName != "sqlite" {
+		return nil
+	}
+	sqliteSink, ok := primary.(*auditsqlite.Sink)
+	if !ok {
+		return errors.New("audit.retention.enabled requires audit.backend=sqlite (assert failed — internal bug)")
+	}
+	if rc.MaxAge <= 0 {
+		return errors.New("audit.retention.max_age required when retention.enabled")
+	}
+	interval := rc.Interval
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	retentionCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	b.auditRetentionCancel = cancel
+	b.auditRetentionDone = done
+	go runAuditRetention(retentionCtx, done, sqliteSink, interval, rc.MaxAge, b.logger, b.metricsRegistry)
+	b.logger.Info("audit: retention scheduler enabled",
+		"max_age", rc.MaxAge, "interval", interval)
+	return nil
+}
+
+// wireAuditWebhook wraps the primary sink with a retrying webhook fan-out.
+// Compose order: MultiSink(Primary, RetryingSink(WebhookSink)) so in-process
+// /audit query reads still see every event.
+func (b *appBuilder) wireAuditWebhook(primary audit.Sink, w config.AuditWebhookConfig) (audit.Sink, error) {
+	if w.URL == "" {
+		return nil, errors.New("audit.webhook.url required when audit.webhook.enabled")
+	}
+	webhookOpts := []audit.WebhookOption{}
+	if w.Timeout > 0 {
+		webhookOpts = append(webhookOpts, audit.WithWebhookTimeout(w.Timeout))
+	}
+	for k, v := range w.Headers {
+		webhookOpts = append(webhookOpts, audit.WithWebhookHeader(k, v))
+	}
+	webhook := audit.NewWebhookSink(w.URL, webhookOpts...)
+	retryOpts := []audit.RetryOption{}
+	if w.Retry.MaxAttempts > 0 {
+		retryOpts = append(retryOpts, audit.WithRetryMaxAttempts(w.Retry.MaxAttempts))
+	}
+	if w.Retry.InitialBackoff > 0 {
+		retryOpts = append(retryOpts, audit.WithRetryInitialBackoff(w.Retry.InitialBackoff))
+	}
+	if w.Retry.MaxBackoff > 0 {
+		retryOpts = append(retryOpts, audit.WithRetryMaxBackoff(w.Retry.MaxBackoff))
+	}
+	retrying := audit.NewRetryingSink(webhook, retryOpts...)
+	b.logger.Info("audit: webhook fan-out enabled",
+		"url", w.URL,
+		"max_attempts", w.Retry.MaxAttempts,
+		"header_count", len(w.Headers),
+	)
+	return audit.NewMultiSink(primary, retrying), nil
+}
+
+// wireAuditAsync wraps the sink in a buffered AsyncSink and starts it.
+func (b *appBuilder) wireAuditAsync(sink audit.Sink) audit.Sink {
+	logger := b.logger
+	asyncOpts := []audit.AsyncOption{
+		audit.WithAsyncDropHandler(func(_ *audit.Event, err error) {
+			logger.Error("audit async drop", "error", err)
+		}),
+	}
+	if n := b.cfg.Audit.Async.BufferSize; n > 0 {
+		asyncOpts = append(asyncOpts, audit.WithAsyncBuffer(n))
+	}
+	if n := b.cfg.Audit.Async.Workers; n > 0 {
+		asyncOpts = append(asyncOpts, audit.WithAsyncWorkers(n))
+	}
+	if ms := b.cfg.Audit.Async.RecordTimeoutMs; ms > 0 {
+		asyncOpts = append(asyncOpts, audit.WithAsyncRecordTimeout(time.Duration(ms)*time.Millisecond))
+	}
+	b.asyncSink = audit.NewAsyncSink(sink, asyncOpts...)
+	b.asyncSink.Start()
+	return b.asyncSink
+}
+
+// buildRecorder assembles the audit Recorder with PII redaction + hash chain
+// options as configured.
+func (b *appBuilder) buildRecorder(sink audit.Sink) (*audit.Recorder, error) {
+	logger := b.logger
+	recorderOpts := []audit.Option{
+		audit.WithErrorHandler(func(err error) { logger.Error("audit sink", "error", err) }),
+	}
+	if pii := b.cfg.Audit.PIIRedaction; pii.Enabled {
+		salt, err := resolvePIISalt(pii)
+		if err != nil {
+			return nil, fmt.Errorf("audit pii_redaction salt: %w", err)
+		}
+		recorderOpts = append(recorderOpts, audit.WithRedactor(audit.DefaultPIIRedactor(salt)))
+		logger.Info("audit: pii redaction enabled (actor hashed, ip truncated, user-agent stripped)")
+	}
+	if b.cfg.Audit.HashChain {
+		recorderOpts = append(recorderOpts, audit.WithHashChain())
+		logger.Info("audit: hash chain enabled — Events carry PrevHash + Hash for tamper-evidence")
+	}
+	return audit.New(sink, recorderOpts...), nil
+}
+
+// wirePermissions builds + wires the permissions provider, minting a memory
+// provider when admin needs one for scope checks but none is configured.
+func (b *appBuilder) wirePermissions() error {
+	cfg, logger := b.cfg, b.logger
+	provider, err := buildPermissionsProvider(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("permissions: %w", err)
+	}
+	if provider != nil {
+		b.opts = append(b.opts, sso.WithPermissionProvider(provider))
+		b.opts = appendReadyCheck(b.opts, "sqlite-permissions", provider)
+		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-permissions", provider)
+		if cfg.Permissions.EmbedInLogin {
+			b.opts = append(b.opts, sso.WithEmbedPermissionsInLogin())
+		}
+	}
+	// Admin needs a non-nil permission provider for scope checks. Mint a
+	// memory provider so first-boot bootstrap can seed into something.
+	if cfg.Admin.Enabled && provider == nil {
+		mp := permissions.NewMemoryProvider()
+		provider = mp
+		b.opts = append(b.opts, sso.WithPermissionProvider(provider))
+	}
+	b.provider = provider
+	return nil
+}
+
+// wireNetwork builds the network-policy store + classifier, starts the
+// self-healing Watch loop, and wires the policy + API + readiness options.
+// The caller (buildApp) owns the on-failure netCancel cleanup defer since a
+// defer here would fire at method return, not at buildApp's scope.
+func (b *appBuilder) wireNetwork() error {
+	cfg, logger := b.cfg, b.logger
+	netStore, netStoreKind, err := buildNetworkStore(&cfg.Network, logger)
+	if err != nil {
+		return fmt.Errorf("network policy store: %w", err)
+	}
+	b.netStore = netStore
+	if netStore == nil {
+		return nil
+	}
+	classifier := netpolicy.NewClassifier(
+		netpolicy.WithClassifierMetrics(b.metricsRegistry),
+		netpolicy.WithClassifierLogger(logger),
+	)
+	b.classifier = classifier
+	// Cancellable run ctx so shutdown stops the self-healing Watch loop
+	// cleanly (it exits on ctx cancel). Without it the loop would treat the
+	// shutdown store-Close as a Watch failure and flip degraded on the way
+	// out, emitting a spurious degraded signal + reconnect churn.
+	netCtx, netCancel := context.WithCancel(context.Background())
+	b.netCancel = netCancel
+	done, err := classifier.Start(netCtx, netStore)
+	if err != nil {
+		netCancel()
+		_ = netStore.Close()
+		return fmt.Errorf("network classifier: %w", err)
+	}
+	b.netStop = done
+	b.opts = append(b.opts, sso.WithNetworkPolicy(netStore, classifier))
+	if cfg.Network.APIEnabled {
+		b.opts = append(b.opts, sso.WithNetworkPolicyAPI())
+	}
+	if netStoreKind == "etcd" {
+		b.opts = appendReadyCheck(b.opts, "etcd-netpolicy", netStore)
+		// The Classifier's self-healing Watch loop flips degraded when the
+		// etcd watch closes under a live context (compaction/leader change):
+		// it keeps serving its frozen snapshot but stops applying policy
+		// edits. Surface that on /readyz so a stuck-stale replica is visible
+		// (Ready ignores ctx — it reads an atomic flag, no I/O).
+		cls := classifier
+		b.opts = append(b.opts, sso.WithReadyCheck("netpolicy-classifier", func(context.Context) error { return cls.Ready() }))
+	}
+	return nil
+}
