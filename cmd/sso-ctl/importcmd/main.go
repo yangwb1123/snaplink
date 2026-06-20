@@ -1,8 +1,9 @@
-// sso-import is an operator CLI for bulk-importing users from external
-// identity providers (Auth0, Keycloak, generic CSV) into the SSO server's
-// SQLite user store. It writes directly to the database without requiring a
-// running server instance, making it safe to use as a migration pre-step
-// before the first deploy or as part of a scripted cutover.
+// Package importcmd is the bulk user-import subcommand for the sso-ctl
+// multi-command binary. It bulk-imports users from external identity providers
+// (Auth0, Keycloak, generic CSV) into the SSO server's SQLite user store. It
+// writes directly to the database without requiring a running server instance,
+// making it safe to use as a migration pre-step before the first deploy or as
+// part of a scripted cutover.
 //
 // Supported formats:
 //
@@ -27,7 +28,7 @@
 //
 // A --dry-run counts the records that would be imported and prints a sample
 // without touching the database.
-package main
+package importcmd
 
 import (
 	"context"
@@ -72,8 +73,13 @@ type importFlags struct {
 	batchSize int
 }
 
-func main() {
-	cfg := parseFlags(os.Args[1:])
+// Run executes the import subcommand. args is the argument slice WITHOUT the
+// leading program name (the dispatcher strips it). It returns the process exit
+// code: 0 on success. Parse/validation failures still terminate the process
+// via parseFlags (os.Exit 2) and fatal I/O errors via fatalf (os.Exit 1),
+// matching the original standalone CLI exactly.
+func Run(args []string) int {
+	cfg := parseFlags(args)
 
 	r, err := openInput(cfg.file)
 	if err != nil {
@@ -88,7 +94,7 @@ func main() {
 
 	if cfg.dryRun {
 		runDryRun(users)
-		return
+		return 0
 	}
 
 	db, err := openDB(cfg.dsn)
@@ -100,6 +106,7 @@ func main() {
 	if err := runImport(context.Background(), db, users, cfg.batchSize); err != nil {
 		fatalf("import: %v", err)
 	}
+	return 0
 }
 
 // parseFlags parses argv into importFlags, enforcing required-flag rules. It

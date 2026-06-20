@@ -192,7 +192,7 @@ def cmd_build():
     r1 = run("go", "build", "-trimpath", "-o", str(bin_dir / "sso-server"), "./cmd/sso-server")
     if r1.returncode != 0:
         return r1.returncode
-    return run("go", "build", "-trimpath", "-o", str(bin_dir / "sso-import"), "./cmd/sso-import").returncode
+    return run("go", "build", "-trimpath", "-o", str(bin_dir / "sso-ctl"), "./cmd/sso-ctl").returncode
 
 
 def cmd_lint():

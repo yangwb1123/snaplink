@@ -42,6 +42,28 @@ builds:
       - goos: windows
         goarch: arm64
 
+  - id: sso-ctl
+    # Offline operator toolbelt (audit-verify / import / migrate / snapshot
+    # subcommands). Same pure-Go, no-CGO build as sso-server.
+    main: ./cmd/sso-ctl
+    binary: sso-ctl
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
 archives:
   - id: default
     # tar.gz everywhere except Windows (zip — Powershell unpacks it

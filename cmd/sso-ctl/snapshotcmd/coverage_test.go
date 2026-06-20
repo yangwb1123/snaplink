@@ -1,4 +1,4 @@
-package main
+package snapshotcmd
 
 import (
 	"context"
@@ -158,7 +158,7 @@ func TestStorageRoundTrip(t *testing.T) {
 	}
 }
 
-// ---- usage + main dispatch (non-exit paths) ----
+// ---- usage + Run dispatch (non-exit paths) ----
 
 // TestUsage_PrintsBanner — banner names the program + all three
 // subcommands.
@@ -171,26 +171,25 @@ func TestUsage_PrintsBanner(t *testing.T) {
 	}
 }
 
-// TestMain_HelpReturns drives the help branch of main(), which returns
-// normally (no os.Exit) — covering the dispatch switch + usage call.
-func TestMain_HelpReturns(t *testing.T) {
-	defer swapArgs([]string{progName, "help"})()
-	_ = captureStderr(t, main)
+// TestRun_HelpReturns drives the help branch of Run, which returns exit
+// code 0 — covering the dispatch switch + usage call.
+func TestRun_HelpReturns(t *testing.T) {
+	var code int
+	_ = captureStderr(t, func() { code = Run([]string{"help"}) })
+	if code != 0 {
+		t.Errorf("Run(help) = %d; want 0", code)
+	}
 }
 
-// TestMain_ListSuccess drives the list-success path through main() so
-// the dispatch case + normal return are covered without a subprocess.
-func TestMain_ListSuccess(t *testing.T) {
+// TestRun_ListSuccess drives the list-success path through Run so the
+// dispatch case + zero exit code are covered without a subprocess.
+func TestRun_ListSuccess(t *testing.T) {
 	dir := t.TempDir()
-	defer swapArgs([]string{progName, "list", "--dir", dir})()
-	_ = captureStdout(t, main)
-}
-
-// swapArgs replaces os.Args for the duration of a test.
-func swapArgs(args []string) func() {
-	orig := os.Args
-	os.Args = args
-	return func() { os.Args = orig }
+	var code int
+	_ = captureStdout(t, func() { code = Run([]string{"list", "--dir", dir}) })
+	if code != 0 {
+		t.Errorf("Run(list) = %d; want 0", code)
+	}
 }
 
 // captureStderr redirects os.Stderr while fn runs and returns the

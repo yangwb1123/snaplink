@@ -1,20 +1,19 @@
-// sso-snapshotctl is an operator CLI for offline snapshot
-// inspection + verification — useful for backup-pipeline integrity
-// checks and disaster-recovery drills where the live admin gRPC
-// API isn't reachable.
+// Package snapshotcmd is the offline snapshot inspection + verification
+// subcommand of sso-ctl — useful for backup-pipeline integrity checks and
+// disaster-recovery drills where the live admin gRPC API isn't reachable.
 //
 // Subcommands:
 //
-//	sso-snapshotctl list    --dir /var/lib/sso/snapshots
-//	sso-snapshotctl inspect --dir /var/lib/sso/snapshots --id <id>
-//	sso-snapshotctl verify  --dir /var/lib/sso/snapshots --id <id>
-//	                                                     [--passphrase=X | --passphrase-file=P]
+//	sso-ctl snapshot list    --dir /var/lib/sso/snapshots
+//	sso-ctl snapshot inspect --dir /var/lib/sso/snapshots --id <id>
+//	sso-ctl snapshot verify  --dir /var/lib/sso/snapshots --id <id>
+//	                                                       [--passphrase=X | --passphrase-file=P]
 //
 // All subcommands operate directly against the file storage
 // backend — no SSO server needs to be running. `list` + `inspect`
 // only touch the unencrypted envelope header; `verify` runs the
 // full Pipeline.Load including checksum validation + decryption.
-package main
+package snapshotcmd
 
 import (
 	"context"
@@ -34,13 +33,16 @@ import (
 
 const progName = "sso-snapshotctl"
 
-func main() {
-	if len(os.Args) < 2 {
+// Run executes the snapshot subcommand with args (program name already
+// stripped) and returns the process exit code. Mirrors the original
+// main() dispatch verbatim: os.Exit(n) becomes return n.
+func Run(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
-	cmd := os.Args[1]
-	rest := os.Args[2:]
+	cmd := args[0]
+	rest := args[1:]
 	var err error
 	switch cmd {
 	case "list":
@@ -51,16 +53,17 @@ func main() {
 		err = runVerify(rest)
 	case "-h", "--help", "help":
 		usage()
-		return
+		return 0
 	default:
 		fmt.Fprintf(os.Stderr, progName+": unknown subcommand %q\n", cmd)
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, progName+": %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // usage prints the standard "<prog> — <desc> / Usage / Subcommands" banner.

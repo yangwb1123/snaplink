@@ -1,4 +1,4 @@
-package main
+package importcmd
 
 import (
 	"bytes"
@@ -483,36 +483,47 @@ func TestRunDryRun_NoHash(t *testing.T) {
 	}
 }
 
-// TestMain_DryRun drives main() through the dry-run branch (parse flags
-// → openInput(file) → parseInput → runDryRun → normal return), which
-// never touches a DB and never calls os.Exit. main() uses its own flag
-// set, so repeated calls are safe.
-func TestMain_DryRun(t *testing.T) {
+// TestRun_DryRun drives Run through the dry-run branch (parse flags →
+// openInput(file) → parseInput → runDryRun → return 0), which never
+// touches a DB and never calls os.Exit. Run uses its own flag set, so
+// repeated calls are safe. args carry NO leading program name — the
+// dispatcher strips it before calling Run.
+func TestRun_DryRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "users.csv")
 	if err := os.WriteFile(path, []byte("email,name\na@x.z,Alice\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	defer swapArgs([]string{progName, "--format", "csv", "--file", path, "--dry-run"})()
-	out := captureStdout(t, main)
+	var code int
+	out := captureStdout(t, func() {
+		code = Run([]string{"--format", "csv", "--file", path, "--dry-run"})
+	})
+	if code != 0 {
+		t.Errorf("Run exit code = %d; want 0", code)
+	}
 	if !strings.Contains(out, "dry-run") || !strings.Contains(out, "would import 1 users") {
-		t.Errorf("dry-run main output unexpected:\n%s", out)
+		t.Errorf("dry-run Run output unexpected:\n%s", out)
 	}
 }
 
-// TestMain_FullImport drives main() through the write path (parse →
-// openInput → parseInput → openDB → runImport → normal return) against a
-// real SQLite DB, then confirms the row landed.
-func TestMain_FullImport(t *testing.T) {
+// TestRun_FullImport drives Run through the write path (parse → openInput
+// → parseInput → openDB → runImport → return 0) against a real SQLite DB,
+// then confirms the row landed.
+func TestRun_FullImport(t *testing.T) {
 	csvPath := filepath.Join(t.TempDir(), "users.csv")
 	if err := os.WriteFile(csvPath, []byte("email,name,password_hash\nm@x.z,Mallory,$2b$10$abc\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dbPath := filepath.Join(t.TempDir(), "import.db")
 	dsn := "file:" + dbPath
-	defer swapArgs([]string{progName, "--format", "csv", "--file", csvPath, "--dsn", dsn})()
-	out := captureStdout(t, main)
+	var code int
+	out := captureStdout(t, func() {
+		code = Run([]string{"--format", "csv", "--file", csvPath, "--dsn", dsn})
+	})
+	if code != 0 {
+		t.Errorf("Run exit code = %d; want 0", code)
+	}
 	if !strings.Contains(out, "imported 1 users") {
-		t.Errorf("full-import main output unexpected:\n%s", out)
+		t.Errorf("full-import Run output unexpected:\n%s", out)
 	}
 
 	// Re-open the DB and confirm persistence.
@@ -523,19 +534,11 @@ func TestMain_FullImport(t *testing.T) {
 	defer func() { _ = p.Close() }()
 	u, err := p.GetByID(context.Background(), "csv:m@x.z")
 	if err != nil {
-		t.Fatalf("GetByID after main import: %v", err)
+		t.Fatalf("GetByID after Run import: %v", err)
 	}
 	if u.Email != "m@x.z" || u.Attributes["password_hash_format"] != "bcrypt" {
 		t.Errorf("imported user wrong: %+v", u)
 	}
-}
-
-// swapArgs swaps os.Args for the duration of a test, returning a restore
-// func to defer.
-func swapArgs(args []string) func() {
-	orig := os.Args
-	os.Args = args
-	return func() { os.Args = orig }
 }
 
 // captureStdout redirects os.Stdout for the duration of fn and returns

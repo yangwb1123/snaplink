@@ -1,4 +1,4 @@
-package main
+package migratecmd
 
 import (
 	"context"
@@ -117,29 +117,55 @@ func TestStatus_OnSeededDB(t *testing.T) {
 	}
 }
 
-// TestMain_HelpReturns drives the help branch of main(), which returns
-// normally (no os.Exit) — covering the arg-dispatch switch + usage call
-// without spawning a subprocess.
-func TestMain_HelpReturns(t *testing.T) {
-	defer swapArgs([]string{progName, "--help"})()
-	_ = captureStderr(t, main) // returns; must not exit the test process
+// TestRun_HelpReturns drives the help branch of Run, which returns exit
+// code 0 — covering the arg-dispatch switch + usage call.
+func TestRun_HelpReturns(t *testing.T) {
+	var code int
+	_ = captureStderr(t, func() { code = Run([]string{"--help"}) })
+	if code != 0 {
+		t.Errorf("Run(--help) exit code = %d, want 0", code)
+	}
 }
 
-// TestMain_StatusSuccess drives the status-success branch of main()
-// (dispatch → runStatus → non-error return). Uses a seeded DB so
-// runStatus succeeds and main() falls through to its normal return.
-func TestMain_StatusSuccess(t *testing.T) {
+// TestRun_StatusSuccess drives the status-success branch of Run
+// (dispatch → runStatus → exit code 0). Uses a seeded DB so runStatus
+// succeeds and Run returns 0.
+func TestRun_StatusSuccess(t *testing.T) {
 	dsn := seedDB(t)
-	defer swapArgs([]string{progName, "status", "--dsn", dsn})()
-	_ = captureStdout(t, main)
+	var code int
+	_ = captureStdout(t, func() { code = Run([]string{"status", "--dsn", dsn}) })
+	if code != 0 {
+		t.Errorf("Run(status) exit code = %d, want 0", code)
+	}
 }
 
-// swapArgs replaces os.Args for the duration of a test, returning a
-// restore func to defer.
-func swapArgs(args []string) func() {
-	orig := os.Args
-	os.Args = args
-	return func() { os.Args = orig }
+// TestRun_NoArgs — a bare invocation prints usage and returns exit code 2.
+func TestRun_NoArgs(t *testing.T) {
+	var code int
+	_ = captureStderr(t, func() { code = Run(nil) })
+	if code != 2 {
+		t.Errorf("Run(nil) exit code = %d, want 2", code)
+	}
+}
+
+// TestRun_UnknownSubcommand — an unrecognized subcommand prints usage and
+// returns exit code 2.
+func TestRun_UnknownSubcommand(t *testing.T) {
+	var code int
+	_ = captureStderr(t, func() { code = Run([]string{"bogus"}) })
+	if code != 2 {
+		t.Errorf("Run(bogus) exit code = %d, want 2", code)
+	}
+}
+
+// TestRun_StatusError — a status invocation whose runStatus fails (missing
+// --dsn) returns exit code 1.
+func TestRun_StatusError(t *testing.T) {
+	var code int
+	_ = captureStderr(t, func() { code = Run([]string{"status"}) })
+	if code != 1 {
+		t.Errorf("Run(status) with no --dsn exit code = %d, want 1", code)
+	}
 }
 
 // captureStdout redirects os.Stdout while fn runs and returns the

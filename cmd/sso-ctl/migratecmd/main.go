@@ -1,10 +1,10 @@
-// sso-migrate is an operator CLI for offline inspection of a SQLite
-// database's schema-migration state — useful for deploy pre-checks and
+// Package migratecmd is an operator subcommand for offline inspection of a
+// SQLite database's schema-migration state — useful for deploy pre-checks and
 // disaster-recovery drills where the live server isn't running.
 //
 // Subcommands:
 //
-//	sso-migrate status --dsn <sqlite-dsn> [--json]
+//	sso-ctl migrate status --dsn <sqlite-dsn> [--json]
 //
 // status reads the schema_migrations_<namespace> tables the SDK's
 // SQLite backends maintain and reports the latest applied version per
@@ -15,7 +15,7 @@
 //
 // Pass a read-only DSN (e.g. `file:/var/lib/sso/sso.db?mode=ro`) to
 // inspect a live database safely.
-package main
+package migratecmd
 
 import (
 	"context"
@@ -34,27 +34,32 @@ import (
 
 const progName = "sso-migrate"
 
-func main() {
-	if len(os.Args) < 2 {
+// Run is the migrate subcommand entry point. args is the argument slice with
+// the leading program name already stripped (i.e. the dispatcher's os.Args[2:]
+// when invoked as `sso-ctl migrate ...`). It returns the process exit code the
+// standalone CLI's main() would have produced.
+func Run(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "status":
-		err = runStatus(os.Args[2:])
+		err = runStatus(args[1:])
 	case "-h", "--help", "help":
 		usage()
-		return
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, progName+": unknown subcommand %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, progName+": unknown subcommand %q\n", args[0])
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, progName+":", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // usage prints the standard "<prog> — <desc> / Usage / Subcommands" banner.

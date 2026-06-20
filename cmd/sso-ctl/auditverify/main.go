@@ -1,11 +1,11 @@
-// sso-audit-verify reads audit events (from a JSON file or the live
+// Package auditverify reads audit events (from a JSON file or the live
 // /api/v1/audit/events API) and runs them through audit.VerifyChain
 // to confirm the tamper-evident hash chain is intact.
 //
 // Usage:
 //
-//	sso-audit-verify --from-file events.json
-//	sso-audit-verify --from-url https://sso.example.com --bearer $ADMIN_TOKEN
+//	sso-ctl audit-verify --from-file events.json
+//	sso-ctl audit-verify --from-url https://sso.example.com --bearer $ADMIN_TOKEN
 //
 // Either source is mutually exclusive. URL mode pages through
 // /api/v1/audit/events newest-first and reverses the buffer before
@@ -14,7 +14,7 @@
 // audit.MaxQueryLimit (1000); --page-size lets operators tune.
 //
 // Exit code: 0 on a clean chain, 1 on a break / error.
-package main
+package auditverify
 
 import (
 	"encoding/json"
@@ -35,7 +35,12 @@ import (
 const progName = "sso-audit-verify"
 
 // usage prints the standard "<prog> — <desc> / Usage / Flags" banner.
-// Wired as flag.Usage so -h and parse errors render it.
+// Wired as the FlagSet's Usage so -h and parse errors render it. The
+// flag defaults come from the FlagSet built in Run; usageFlags holds
+// that set so the standalone banner (also exercised directly in tests)
+// stays self-contained.
+var usageFlags *flag.FlagSet
+
 func usage() {
 	fmt.Fprint(os.Stderr, progName+` — verify the tamper-evident audit hash chain offline.
 
@@ -45,18 +50,27 @@ Usage:
 
 Flags:
 `)
-	flag.PrintDefaults()
+	if usageFlags != nil {
+		usageFlags.PrintDefaults()
+	}
 }
 
-func main() {
-	flag.Usage = usage
-	fromFile := flag.String("from-file", "", "path to JSON array of audit events (mutually exclusive with --from-url)")
-	fromURL := flag.String("from-url", "", "base URL of the SSO server (mutually exclusive with --from-file)")
-	bearer := flag.String("bearer", "", "admin bearer token for the /api/v1/audit/events API (required with --from-url)")
-	limit := flag.Int("limit", 10_000, "max events to load")
-	pageSize := flag.Int("page-size", 500, "URL-mode pagination batch size (caps at audit.MaxQueryLimit=1000)")
-	timeoutSec := flag.Int("timeout-sec", 30, "URL-mode HTTP timeout in seconds")
-	flag.Parse()
+// Run executes the audit-verify subcommand over args (the argument
+// slice WITHOUT the leading program name). It returns the process exit
+// code: 0 on a clean chain / empty input, 1 on a chain break or load
+// error. CLI-misuse paths (usageErr) and runtime load errors (errorf)
+// exit the process directly, preserving the original main() behavior.
+func Run(args []string) int {
+	fs := flag.NewFlagSet("sso-ctl audit-verify", flag.ExitOnError)
+	usageFlags = fs
+	fs.Usage = usage
+	fromFile := fs.String("from-file", "", "path to JSON array of audit events (mutually exclusive with --from-url)")
+	fromURL := fs.String("from-url", "", "base URL of the SSO server (mutually exclusive with --from-file)")
+	bearer := fs.String("bearer", "", "admin bearer token for the /api/v1/audit/events API (required with --from-url)")
+	limit := fs.Int("limit", 10_000, "max events to load")
+	pageSize := fs.Int("page-size", 500, "URL-mode pagination batch size (caps at audit.MaxQueryLimit=1000)")
+	timeoutSec := fs.Int("timeout-sec", 30, "URL-mode HTTP timeout in seconds")
+	_ = fs.Parse(args)
 
 	if *fromFile == "" && *fromURL == "" {
 		usageErr("one of --from-file or --from-url is required")
@@ -80,14 +94,15 @@ func main() {
 	}
 	if len(events) == 0 {
 		fmt.Println("no events to verify")
-		os.Exit(0)
+		return 0
 	}
 
 	if err := audit.VerifyChain(events); err != nil {
 		fmt.Fprintf(os.Stderr, "chain BROKEN: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("chain verified: %d event(s), head=%s\n", len(events), events[len(events)-1].Hash)
+	return 0
 }
 
 // readFromFile reads a JSON file containing an array of Events.

@@ -1,8 +1,7 @@
-package main
+package auditverify
 
 import (
 	"encoding/json"
-	"flag"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,31 +128,26 @@ func TestReadFromURL_NonPositivePageSizeDefaults(t *testing.T) {
 	}
 }
 
-// TestMain_VerifyHappyPath drives main() end to end on the happy verify
+// TestRun_VerifyHappyPath drives Run end to end on the happy verify
 // path (file mode → readFromFile → VerifyChain → success print), which
-// returns normally without calling os.Exit. main() registers its flags
-// on the global flag set, so this runs exactly once in the package.
-func TestMain_VerifyHappyPath(t *testing.T) {
+// returns exit code 0. Run uses a local FlagSet, so no global flag/os.Args
+// juggling is needed and the call is reentrant across sibling tests.
+func TestRun_VerifyHappyPath(t *testing.T) {
 	events := chainedEvents(t, 3)
 	raw, _ := json.Marshal(events)
 	path := filepath.Join(t.TempDir(), "events.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Restore os.Args + the global flag set so the test framework's own
-	// flags aren't disturbed for sibling tests.
-	origArgs := os.Args
-	origFlags := flag.CommandLine
-	t.Cleanup(func() {
-		os.Args = origArgs
-		flag.CommandLine = origFlags
+	var code int
+	out := captureStdout(t, func() {
+		code = Run([]string{"--from-file", path})
 	})
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	os.Args = []string{progName, "--from-file", path}
-
-	out := captureStdout(t, main)
+	if code != 0 {
+		t.Errorf("Run exit code = %d; want 0", code)
+	}
 	if !strings.Contains(out, "chain verified") {
-		t.Errorf("main happy path missing 'chain verified' line; got:\n%s", out)
+		t.Errorf("Run happy path missing 'chain verified' line; got:\n%s", out)
 	}
 }
 
