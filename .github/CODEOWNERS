@@ -40,7 +40,7 @@ radius/ @snaplink/auth
 .githooks/ @snaplink/core
 .prompts/ @snaplink/core
 skills/ @snaplink/core
-HARNESS.md @snaplink/core
-ARCHITECTURE.md @snaplink/core
-BOOTSTRAP.md @snaplink/core
-EVALUATION.md @snaplink/core
+docs/agent-os/HARNESS.md @snaplink/core
+docs/agent-os/ARCHITECTURE.md @snaplink/core
+docs/agent-os/BOOTSTRAP.md @snaplink/core
+docs/agent-os/EVALUATION.md @snaplink/core

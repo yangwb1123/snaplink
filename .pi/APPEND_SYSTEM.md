@@ -1,11 +1,11 @@
 # Engineering System
 
 This project has a formal engineering system. Read these files:
-- HARNESS.md -- Gate specification
-- BOOTSTRAP.md -- Project context
-- ARCHITECTURE.md -- Package map
-- EVALUATION.md -- Acceptance criteria per module type
-- CHECKS_REGISTRY.md -- All checks
+- docs/agent-os/HARNESS.md -- Gate specification
+- docs/agent-os/BOOTSTRAP.md -- Project context
+- docs/agent-os/ARCHITECTURE.md -- Package map
+- docs/agent-os/EVALUATION.md -- Acceptance criteria per module type
+- docs/agent-os/CHECKS_REGISTRY.md -- All checks
 - AGENTS.md -- Full agent behavior rules
 
 ## Agent Roles

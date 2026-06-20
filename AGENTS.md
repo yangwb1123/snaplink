@@ -2,7 +2,7 @@
 
 Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§4 invariants are gates — violations are regressions.**
 
-**Agent OS:** [BOOTSTRAP.md](BOOTSTRAP.md) (project context) → [HARNESS.md](HARNESS.md) (auto-checks) → [EVALUATION.md](EVALUATION.md) (quality gates) → [Skills](docs/skills/) (refactor patterns)
+**Agent OS:** [BOOTSTRAP.md](docs/agent-os/BOOTSTRAP.md) (project context) → [HARNESS.md](docs/agent-os/HARNESS.md) (auto-checks) → [EVALUATION.md](docs/agent-os/EVALUATION.md) (quality gates) → [Skills](docs/skills/) (refactor patterns)
 
 **Reference:** [Config](docs/config-reference.md) | [Features](docs/feature-matrix.md) | [Observability](docs/observability.md) | [Errors](docs/error-codes.md) | [OpenAPI](docs/openapi.yaml) | [ADRs](docs/adr/) | [Arch rules](.arch/rules.yaml) | [Prompts](.prompts/)
 

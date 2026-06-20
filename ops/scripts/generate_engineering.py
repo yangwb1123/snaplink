@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Regenerate engineering scaffolding (replaces generate-engineering.sh).
 
-Generates: HARNESS.md, BOOTSTRAP.md, ARCHITECTURE.md, EVALUATION.md,
-CHECKS_REGISTRY.md, TODO.md, .githooks/, skills/, .pi/, docs/*.
+Generates the agent-OS docs under docs/agent-os/ (HARNESS.md, BOOTSTRAP.md,
+ARCHITECTURE.md, EVALUATION.md, CHECKS_REGISTRY.md, TODO.md) plus .githooks/,
+skills/, .pi/, docs/*.
 """
 
 import shutil
@@ -86,7 +87,9 @@ Functions >15 cyclo (frozen backlog in maintainability_complexity_test.go):
 7. [x] CI integration (2 workflows)
 8. [x] 7 engineering skills (split, refactor, add-handler, oracle-leak, post-edit, arch-fix, reorganization)
 """
-    (ROOT / "TODO.md").write_text(content)
+    out = ROOT / "docs" / "agent-os" / "TODO.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(content)
 
 
 def write_review_checklist():
@@ -184,11 +187,11 @@ def write_appendix_system():
     content = """# Engineering System
 
 This project has a formal engineering system. Read these files:
-- HARNESS.md -- Gate specification
-- BOOTSTRAP.md -- Project context
-- ARCHITECTURE.md -- Package map
-- EVALUATION.md -- Acceptance criteria per module type
-- CHECKS_REGISTRY.md -- All checks
+- docs/agent-os/HARNESS.md -- Gate specification
+- docs/agent-os/BOOTSTRAP.md -- Project context
+- docs/agent-os/ARCHITECTURE.md -- Package map
+- docs/agent-os/EVALUATION.md -- Acceptance criteria per module type
+- docs/agent-os/CHECKS_REGISTRY.md -- All checks
 - AGENTS.md -- Full agent behavior rules
 
 ## Agent Roles
@@ -281,12 +284,12 @@ def run():
     print("  [gen] Generating engineering scaffolding...")
     print("  [gen] checks/ (13 files, source-controlled)")
 
-    # Core documents (self-copy from root — source-controlled files)
+    # Core documents (relocated to docs/agent-os/; gitignored scaffolding)
     for doc in ["HARNESS.md", "BOOTSTRAP.md", "ARCHITECTURE.md", "EVALUATION.md", "CHECKS_REGISTRY.md"]:
-        if (ROOT / doc).exists():
-            print(f"  [gen] {doc}")
+        if (ROOT / "docs" / "agent-os" / doc).exists():
+            print(f"  [gen] docs/agent-os/{doc}")
         else:
-            print(f"  [WARN] {doc} not found")
+            print(f"  [WARN] docs/agent-os/{doc} not found")
     write_todo_md()
     print("  [gen] TODO.md")
 

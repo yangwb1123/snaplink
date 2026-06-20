@@ -3,7 +3,7 @@
 Thanks for your interest. This file covers the contributor-facing
 process. **For day-to-day development conventions** (commit style,
 coding rules, "things not to do" list, repository layout, capability
-catalog) read [`AGENTS.md`](AGENTS.md) — that's the source of truth
+catalog) read [`AGENTS.md`](../AGENTS.md) — that's the source of truth
 and is significantly more detailed than this file.
 
 ## TL;DR
@@ -31,7 +31,7 @@ gh pr create
 
 ## Development setup
 
-The full setup walkthrough lives in [`AGENTS.md` §"Setup commands"](AGENTS.md#setup-commands).
+The full setup walkthrough lives in [`AGENTS.md` §"Setup commands"](../AGENTS.md#setup-commands).
 Short version:
 
 - Go (version pinned in `go.mod`)
@@ -49,12 +49,12 @@ Short version:
    PR is easier to review than the same cleanup tangled with a
    feature.
 3. **Tests** — every new behavior gets a test in the same package.
-   See [`AGENTS.md` §"Test instructions"](AGENTS.md#test-instructions)
+   See [`AGENTS.md` §"Test instructions"](../AGENTS.md#test-instructions)
    for the coverage convention (informational, not a gate).
 4. **`make ci`** must stay green locally before pushing. CI runs the
    same checks; failing CI on a fixable thing slows everyone down.
 5. **Conventional commits** — `<type>(scope): summary` (see [§"Commit
-   conventions" in AGENTS.md](AGENTS.md#commit-conventions)).
+   conventions" in AGENTS.md](../AGENTS.md#commit-conventions)).
    Common types: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`,
    `ci`, `deploy`.
 
@@ -84,7 +84,7 @@ git commit -s -m "feat(scope): summary"
 
 This adds a `Signed-off-by:` trailer affirming you have the right to
 contribute the change under the project's license (Apache 2.0, see
-[`LICENSE`](LICENSE)).
+[`LICENSE`](../LICENSE)).
 
 CI will block merges of unsigned commits. To retroactively sign past
 commits:
@@ -95,7 +95,7 @@ git rebase --signoff HEAD~N
 
 ## Coding conventions
 
-The full list is in [`AGENTS.md` §"Conventions"](AGENTS.md#conventions).
+The full list is in [`AGENTS.md` §"Conventions"](../AGENTS.md#conventions).
 Highlights:
 
 - **No literals leak** — paths / headers / error codes go in

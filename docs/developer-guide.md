@@ -36,7 +36,7 @@ make test
 
 ## Engineering System Overview
 
-The project uses a formal engineering system (see `HARNESS.md`) with 6 automated gates:
+The project uses a formal engineering system (see `agent-os/HARNESS.md`) with 6 automated gates:
 
 | Gate | What | When |
 |---|---|---|

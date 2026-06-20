@@ -4,10 +4,11 @@ import sys
 from pathlib import Path
 
 EXEMPT = {
-    "README.md", "CHANGELOG.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
-    "RELEASE.md", "ROADMAP.md",
-    "AGENTS.md", "HARNESS.md", "ARCHITECTURE.md", "EVALUATION.md",
-    "BOOTSTRAP.md", "CHECKS_REGISTRY.md", "TODO.md", "CLAUDE.md",
+    # Project docs live under docs/ and .github/; agent-OS docs under
+    # docs/agent-os/. Only the canonical agent entry points (AGENTS.md +
+    # its CLAUDE.md loader) and build/config remain at root.
+    "README.md", "LICENSE",
+    "AGENTS.md", "CLAUDE.md",
     "go.mod", "go.sum", "Makefile", "Taskfile.yml", "cli.py", "pyproject.toml",
     "Dockerfile", ".gitignore", ".editorconfig", ".golangci.yml", ".goreleaser.yaml",
 }

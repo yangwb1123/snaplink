@@ -83,7 +83,7 @@ def run() -> int:
 
     print("--- 4. docs ---")
     for d in ["HARNESS.md", "BOOTSTRAP.md", "ARCHITECTURE.md", "EVALUATION.md"]:
-        if (ROOT / d).exists():
+        if (ROOT / "docs" / "agent-os" / d).exists():
             p(f"{d} exists")
         else:
             f(f"{d} missing")

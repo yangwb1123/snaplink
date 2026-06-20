@@ -10,7 +10,7 @@ encode the missing rules as **committed tests** that run inside the normal
 ## Why tests (not Makefile / hooks / CI scripts)
 
 `make harness` generates a separate gate stack (`.check-*.sh`, `.githooks/`,
-`HARNESS.md`, `SKILLS/`) and historically also rewrites `Makefile` / `AGENTS.md`,
+`docs/agent-os/HARNESS.md`, `SKILLS/`) and historically also rewrites `Makefile` / `AGENTS.md`,
 so anything placed there is fragile and gets clobbered. A gate written as a
 committed Go test is **conflict-free**: it can't be regenerated away, it runs
 everywhere `go test` runs (CI's `go test -race`, `make race`, a developer's
