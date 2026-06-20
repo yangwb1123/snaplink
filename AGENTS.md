@@ -19,6 +19,10 @@ Operational guide for AI agents. Follows [agents.md](https://agents.md). User in
 | Cyclomatic complexity | ≤ 15 | Run `skills/refactor-high-complexity.md` |
 | If-nesting depth | ≤ 3 | Guard clauses / early return |
 | Directory depth | ≤ 3 | Flatten (merge leaf dir into parent name); `gen/`, `ops/deploy/`, `testdata` exempt |
+| Go files per dir | ≤ 10 | Split flat package into cohesive sub-packages (`package main` dirs first; library splits change import paths) |
+| Subdirs per dir | ≤ 15 | Regroup leaf packages; see `directory_fanout_test.go` |
+
+All budgets are committed gates (`maintainability_*_test.go`, `directory_fanout_test.go`, `maxdepth_test.go`); the per-file and per-function backlogs are now **zero** (extract/split, never re-exempt).
 
 **Cardinal rule:** If your edit pushes a file OVER 500 lines, you MUST split first, then continue. Refactoring always outranks feature work (480+ line file you'll exceed → refactor pre-existing violation first).
 

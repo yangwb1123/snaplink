@@ -54,10 +54,44 @@ one-way-rule violations that precede them), and it runs over the existing tree
 with no import-path moves. Pre-existing upward edges are grandfathered in a
 shrink-only `layerExemptions` (9 at adoption, mostly the root god-package fan-in).
 
+### 4. Per-function complexity & length — `maintainability_complexity_test.go`
+
+Fails any non-exempt parent-module function over **cyclomatic 15** or **50
+lines** (the line span runs `func` keyword to closing brace and includes nested
+closures; the count is the gocyclo algorithm). This is the committed,
+whole-module equivalent of the golangci `funlen`/`gocyclo` linters: it runs
+inside `make ci` without the linter binaries installed, keys exemptions
+precisely by `file:func` (not by substring), and freezes each exemption's value
+at introduction as a ceiling so an exempt function may not regress. **The
+`cycloExemptions` and `funcLenExemptions` maps are now empty (caps 0) — every
+function is within budget.** Regenerate after a refactor with
+`SEED_MAINTAINABILITY=1 go test -run TestSeedMaintainabilityExemptions -v .`.
+
+### 5. Directory fan-out — `directory_fanout_test.go`
+
+Fails any directory holding more than **10 non-test `.go` files** or more than
+**15 subdirectories**. Oversized *flat* packages are hard for humans and agents
+to navigate; this nudges new code toward cohesive sub-packages. Same
+frozen-ceiling ratchet: the dirs already over a cap (the large library packages
+plus the module root's subdir count) are grandfathered shrink-only; a new
+over-cap dir fails. Reducing a library package means a sub-package split — a
+public-API (import-path) change — so the existing ones are grandfathered rather
+than force-split; `package main` dirs (e.g. `cmd/`, consolidated to
+`sso-server` + `sso-ctl`) come down first. Regenerate with
+`SEED_DIRFANOUT=1 go test -run TestSeedDirectoryFanout -v .`.
+
+### 6. Directory depth — `maxdepth_test.go`
+
+Fails any package nested deeper than **3 levels** under the module root
+(`gen/`, `ops/deploy/`, `testdata` exempt). Keeps the tree shallow enough to
+navigate; a new backend/variant flattens into the parent name
+(`webauthnsqlite`, `encryptionaesgcm`) rather than nesting a 4th level.
+
 ## The ratchet rule (important)
 
-Both gates carry an exemption list of the files that already violated the rule
-when the gate was introduced. **The list may only shrink.**
+Every gate above carries a frozen exemption list of the files / functions / dirs
+that already violated the rule when the gate was introduced (the per-function
+and per-file lists have since reached **zero**). **A list may only shrink.**
 
 - A **new** violation fails the build — fix it, don't add to the list.
 - The gate also flags **stale** exemptions (a file refactored back under budget,
@@ -69,6 +103,8 @@ when the gate was introduced. **The list may only shrink.**
 | Failure | Do | Don't |
 |---|---|---|
 | File > 500 lines | Split cohesive groups into `*_<domain>.go` in the same package (see `handlers_admin.go` / `handlers_b2b.go` — pure relocation, `goimports -w`, build+test). | Add it to the exemption map. |
+| Function > 50 lines / cyclo > 15 | Extract behavior-preserving sub-functions (see `skills/refactor-high-complexity.md`); keep wire codes / gate order verbatim. | Self-exempt the new function. |
+| Dir > 10 `.go` files / > 15 subdirs | Split the flat package into cohesive sub-packages (for `package main` dirs this is non-breaking). | Grandfather a new dir. |
 | Forbidden import | Invert the dependency (move the shared type to `core`, or pass a dep via an interface). | Add it to `exempt`. |
 | Stale exemption flagged | Delete the entry. | Leave it. |
 
@@ -81,10 +117,12 @@ fails a deliberately-bad probe before committing.
 
 ## Relationship to the existing gates
 
-- **golangci** (`.golangci.yml`, `make lint`): per-**function** complexity
-  (`funlen` 60/40, `gocyclo` 15, `gocognit` 20). Complements these per-**file**
-  / per-**package** gates. (Note: `lint` is a separate target — it is not part
-  of the committed `make ci` target; CI runs it as its own job.)
+- **golangci** (`.golangci.yml`, `make lint`): additional per-**function**
+  checks (`gocognit`, style/bug linters) beyond the committed cyclo/funlen gate
+  (gate 4 above), which is the source of truth for cyclomatic ≤ 15 / length ≤ 50
+  and runs inside `make ci` without the linter installed. (Note: `lint` is a
+  separate target — not part of the committed `make ci`; CI runs it as its own
+  job.)
 
 ## Roadmap (not yet built)
 

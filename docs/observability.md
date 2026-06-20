@@ -34,7 +34,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 
 ### Pipeline
 
-Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; verify via `sso-audit-verify`. Bounded dimensions: outcome/type/client/provider (see AGENTS.md §4 cardinality rule).
+Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; verify via `sso-ctl audit-verify`. Bounded dimensions: outcome/type/client/provider (see AGENTS.md §4 cardinality rule).
 
 ### Hard Constraints
 
