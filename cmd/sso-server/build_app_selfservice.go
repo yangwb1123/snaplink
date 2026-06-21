@@ -6,6 +6,9 @@ import (
 	"fmt"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/cmd/sso-server/serverwebauthn"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
@@ -25,7 +28,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	// users and mounts /me/password; the SAME instance backs both the verifier
 	// (login) and the change endpoint so a changed password takes effect on the
 	// next login. Empty backend = nil = YAML-only verifier (byte-identical).
-	passwordStore, err := buildPasswordCredentialStore(cfg.SelfService.Password)
+	passwordStore, err := serverbuildstore.BuildPasswordCredentialStore(cfg.SelfService.Password)
 	if err != nil {
 		return fmt.Errorf("self_service password store: %w", err)
 	}
@@ -74,7 +77,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 // reset-token store plus the default identifier/delivery resolvers.
 func (b *appBuilder) wirePasswordReset() error {
 	cfg, logger := b.cfg, b.logger
-	passwordResetStore, err := buildPasswordResetStore(cfg.SelfService.PasswordReset)
+	passwordResetStore, err := serverbuildstore.BuildPasswordResetStore(cfg.SelfService.PasswordReset)
 	if err != nil {
 		return fmt.Errorf("self_service password_reset store: %w", err)
 	}
@@ -111,7 +114,7 @@ func (b *appBuilder) wirePasswordReset() error {
 // residency check, and the risk scorer — in that order so risk rules see geo.
 func (b *appBuilder) wireGeoRegionRisk() error {
 	cfg, logger := b.cfg, b.logger
-	geoProvider, err := buildGeoProvider(cfg, logger)
+	geoProvider, err := serverbuildstore.BuildGeoProvider(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("geo provider: %w", err)
 	}
@@ -128,9 +131,9 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 
 	// Risk scorer wired AFTER geo so country-based rules see the
 	// populated GeoInfo on RiskRequest.Geo. When risk.enabled is
-	// false, buildRiskScorer returns nil and cmd skips
+	// false, serverbuildplatform.BuildRiskScorer returns nil and cmd skips
 	// WithRiskScorer entirely — zero overhead on /auth/login.
-	riskScorer, err := buildRiskScorer(&cfg.Risk, logger)
+	riskScorer, err := serverbuildplatform.BuildRiskScorer(&cfg.Risk, logger)
 	if err != nil {
 		return fmt.Errorf("risk scorer: %w", err)
 	}
@@ -141,13 +144,13 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 }
 
 // wireRegion wires the serving-region resolver + residency enforcement.
-// buildRegionResolver returns nil when region is unconfigured → the middleware
+// serverbuildstore.BuildRegionResolver returns nil when region is unconfigured → the middleware
 // is NOT installed and the residency check stays inert (byte-identical). When
 // configured, the middleware-level AllowedRegions backstop mirrors the header
 // resolver's allowlist, and the residency engine enforces the tenant's policy.
 func (b *appBuilder) wireRegion() {
 	cfg := b.cfg
-	regionResolver := buildRegionResolver(cfg)
+	regionResolver := serverbuildstore.BuildRegionResolver(cfg)
 	b.regionResolver = regionResolver
 	if regionResolver == nil {
 		return
@@ -185,16 +188,16 @@ func (b *appBuilder) wireWebAuthnMFA() error {
 	}
 	b.webauthnHelper = webauthnHelper
 	b.webauthnUsers = webauthnUsers
-	if err := checkSQLiteSchema(b.schemaCtx, webauthnUsers, "webauthn_users", webauthnsqlite.UsersMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, webauthnUsers, "webauthn_users", webauthnsqlite.UsersMaxVersion()); err != nil {
 		return fmt.Errorf("schema check webauthn_users: %w", err)
 	}
-	if err := checkSQLiteSchema(b.schemaCtx, webauthnSessions, "webauthn_sessions", webauthnsqlite.SessionsMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, webauthnSessions, "webauthn_sessions", webauthnsqlite.SessionsMaxVersion()); err != nil {
 		return fmt.Errorf("schema check webauthn_sessions: %w", err)
 	}
-	b.opts = appendReadyCheck(b.opts, "sqlite-webauthn-users", webauthnUsers)
-	b.opts = appendReadyCheck(b.opts, "sqlite-webauthn-sessions", webauthnSessions)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-webauthn-users", webauthnUsers)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-webauthn-sessions", webauthnSessions)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-webauthn-users", webauthnUsers)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-webauthn-sessions", webauthnSessions)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-webauthn-users", webauthnUsers)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-webauthn-sessions", webauthnSessions)
 
 	b.wireMFAEnrollment()
 	// Authenticated self-service passkey registration over the SAME ceremony
@@ -243,37 +246,37 @@ func (b *appBuilder) wireMFAProvider() error {
 	// both Provider + Store opts, RequireMFA decays to Allow — same
 	// back-compat fall-through embedders see when they ship a Risk
 	// scorer ahead of MFA.
-	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, pushNotify, err := buildMFA(cfg.MFA, b.totpAuth, b.webauthnHelper, logger)
+	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, pushNotify, err := serverbuildstore.BuildMFA(cfg.MFA, b.totpAuth, b.webauthnHelper, logger)
 	if err != nil {
 		return fmt.Errorf("mfa: %w", err)
 	}
 	b.pushApprovalStore = pushApprovalStore
 	b.pushNotify = pushNotify
 	if mfaProvider != nil && mfaStore != nil {
-		if err := checkSQLiteSchema(b.schemaCtx, mfaStore, "mfa_challenges", sqlitestores.MFAChallengesMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, mfaStore, "mfa_challenges", sqlitestores.MFAChallengesMaxVersion()); err != nil {
 			return fmt.Errorf("schema check mfa_challenges: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithMFAProvider(mfaProvider))
 		b.opts = append(b.opts, sso.WithMFAChallengeStore(mfaStore, mfaTTL))
-		b.opts = appendReadyCheck(b.opts, "sqlite-mfa-challenges", mfaStore)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-mfa-challenges", mfaStore)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-mfa-challenges", mfaStore)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-mfa-challenges", mfaStore)
 	}
 	// When push MFA wired with SQLite backend, surface the store
 	// handle for /readyz wiring + the optional PruneExpired loop
 	// (operators wanting bounded approval-table growth without
 	// running external cron).
 	if pushApprovalStore != nil {
-		if err := checkSQLiteSchema(b.schemaCtx, pushApprovalStore, "push_approvals", sqlitestores.PushApprovalsMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, pushApprovalStore, "push_approvals", sqlitestores.PushApprovalsMaxVersion()); err != nil {
 			return fmt.Errorf("schema check push_approvals: %w", err)
 		}
-		b.opts = appendReadyCheck(b.opts, "sqlite-push-approvals", pushApprovalStore)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-push-approvals", pushApprovalStore)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-push-approvals", pushApprovalStore)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-push-approvals", pushApprovalStore)
 		if pi := cfg.MFA.Provider.Push.PruneInterval; pi > 0 {
 			pruneCtx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
 			b.pushPruneCancel = cancel
 			b.pushPruneDone = done
-			go runPushApprovalPrune(pruneCtx, done, pushApprovalStore, pi, logger, b.metricsRegistry)
+			go serverbuildsign.RunPushApprovalPrune(pruneCtx, done, pushApprovalStore, pi, logger, b.metricsRegistry)
 			logger.Info("push approvals: prune scheduler enabled", "interval", pi)
 		}
 	}
@@ -294,18 +297,18 @@ func (b *appBuilder) wireAnomaly() error {
 	}
 	b.opts = append(b.opts, sso.WithAnomalyRunner(anomalyRT.runner))
 	if anomalyRT.recentSQLite != nil {
-		if err := checkSQLiteSchema(b.schemaCtx, anomalyRT.recentSQLite, "recent_login", sqlitestores.RecentLoginMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, anomalyRT.recentSQLite, "recent_login", sqlitestores.RecentLoginMaxVersion()); err != nil {
 			return fmt.Errorf("schema check recent_login: %w", err)
 		}
-		b.opts = appendReadyCheck(b.opts, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-anomaly-recent-logins", anomalyRT.recentSQLite)
 	}
 	if anomalyRT.ipFailSQLite != nil {
-		if err := checkSQLiteSchema(b.schemaCtx, anomalyRT.ipFailSQLite, "ip_failure_counter", sqlitestores.IPFailureCounterMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, anomalyRT.ipFailSQLite, "ip_failure_counter", sqlitestores.IPFailureCounterMaxVersion()); err != nil {
 			return fmt.Errorf("schema check ip_failure_counter: %w", err)
 		}
-		b.opts = appendReadyCheck(b.opts, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-anomaly-ip-failures", anomalyRT.ipFailSQLite)
 	}
 	logger.Info("anomaly detection: enabled",
 		"recent_login_backend", cfg.Anomaly.RecentLogin.Backend,

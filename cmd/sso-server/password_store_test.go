@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func TestBuildPasswordCredentialStore_DisabledByDefault(t *testing.T) {
-	s, err := buildPasswordCredentialStore(config.SelfServiceStoreConfig{})
+	s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{})
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
 	}
@@ -23,13 +24,13 @@ func TestBuildPasswordCredentialStore_DisabledByDefault(t *testing.T) {
 }
 
 func TestBuildPasswordCredentialStore_SQLiteNeedsDSN(t *testing.T) {
-	if _, err := buildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildPasswordCredentialStore_UnknownBackend(t *testing.T) {
-	if _, err := buildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "bogus"}); err == nil {
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "bogus"}); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }

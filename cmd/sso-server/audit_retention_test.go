@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/platform/audit"
 	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
 )
@@ -45,7 +46,7 @@ func TestRunAuditRetention_PrunesOldEventsAtInterval(t *testing.T) {
 	// 50ms ticker; maxAge 1s — first prune fires after 50ms and
 	// evicts the two olds. The fresh event is 1h in the future so
 	// stays safe across the test budget.
-	go runAuditRetention(runCtx, done, sink, 50*time.Millisecond, 1*time.Second, quietLogger(), nil)
+	go serverbuildstore.RunAuditRetention(runCtx, done, sink, 50*time.Millisecond, 1*time.Second, quietLogger(), nil)
 
 	// Wait for at least one tick to fire (the prune happens after
 	// the first 50ms — give it a generous 250ms then count).
@@ -80,7 +81,7 @@ func TestRunAuditRetention_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go runAuditRetention(runCtx, done, sink, 1*time.Hour, 30*24*time.Hour, quietLogger(), nil)
+	go serverbuildstore.RunAuditRetention(runCtx, done, sink, 1*time.Hour, 30*24*time.Hour, quietLogger(), nil)
 
 	cancel()
 	select {
@@ -104,7 +105,7 @@ func TestRunAuditRetention_PruneErrorDoesNotStopLoop(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go runAuditRetention(runCtx, done, sink, 30*time.Millisecond, 30*24*time.Hour, quietLogger(), nil)
+	go serverbuildstore.RunAuditRetention(runCtx, done, sink, 30*time.Millisecond, 30*24*time.Hour, quietLogger(), nil)
 
 	// Let at least two ticks fire — the loop should still be
 	// running after the failed Prunes.

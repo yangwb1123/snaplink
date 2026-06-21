@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 )
 
@@ -28,7 +29,7 @@ func TestBuildApp_RefreshRotationGrace_BuildsCleanly(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_DisabledByDefault(t *testing.T) {
-	a, err := buildTenantUsageAggregator(config.TenantUsageMeteringConfig{})
+	a, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{})
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
 	}
@@ -38,7 +39,7 @@ func TestBuildTenantUsageAggregator_DisabledByDefault(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_Memory(t *testing.T) {
-	a, err := buildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "memory"})
+	a, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "memory"})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -48,14 +49,14 @@ func TestBuildTenantUsageAggregator_Memory(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_SQLiteNeedsDSN(t *testing.T) {
-	if _, err := buildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "sqlite"}); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildTenantUsageAggregator_SQLiteOpensFile(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db") + "?_journal=WAL"
-	a, err := buildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "sqlite", DSN: dsn})
+	a, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "sqlite", DSN: dsn})
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestBuildTenantUsageAggregator_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_UnknownBackend(t *testing.T) {
-	if _, err := buildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "bogus"}); err == nil {
+	if _, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "bogus"}); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }

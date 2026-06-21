@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"errors"
@@ -19,7 +19,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 )
 
-// buildMFA materializes the MFA orchestration triple: provider, store,
+// BuildMFA materializes the MFA orchestration triple: provider, store,
 // per-challenge TTL. Returns (nil, nil, 0, "", nil) when MFA is
 // disabled so cmd skips WithMFAProvider / WithMFAChallengeStore entirely
 // — RequireMFA then decays to Allow (back-compat).
@@ -33,7 +33,7 @@ import (
 //
 // The returned mode string is a short backend identifier emitted in
 // the startup log + suitable for /readyz wiring suffixes.
-func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, func(string), error) {
+func BuildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, func(string), error) {
 	if !cfg.Enabled {
 		return nil, nil, 0, "", nil, nil, nil
 	}
@@ -79,7 +79,7 @@ func buildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 // provider is a misconfiguration; use the leaf kind directly).
 // pushStoreCapture is buildMFAProviderByKind's side-channel for
 // surfacing push-factor handles through the recursive multi-build.
-// cmd's buildMFA inspects store to register a /readyz check + launch
+// cmd's BuildMFA inspects store to register a /readyz check + launch
 // the PruneExpired loop, and notify to wire the channel-notify wakeup
 // into the reference approval callback. Both stay nil for
 // memory-backed push, absent push, or (notify) channel_notify=false.
@@ -179,12 +179,12 @@ func buildMultiMFAProvider(outerKinds []string, pushCfg config.MFAPushConfig, to
 // the optional PruneExpired loop. Error path: nil/nil/<err> when
 // backend / transport / SQLite validation fails — kind=push is a
 // misconfig if any of those components are absent.
-// buildPushWebhookTransport validates the webhook config + returns
+// BuildPushWebhookTransport validates the webhook config + returns
 // the constructed transport. URL is required; everything else is
 // optional + defaults apply. Operators wiring transport=webhook
 // without a URL see a boot-time error rather than runtime delivery
 // failures.
-func buildPushWebhookTransport(cfg config.MFAPushWebhookConfig) (defaultimpl.PushTransport, error) {
+func BuildPushWebhookTransport(cfg config.MFAPushWebhookConfig) (defaultimpl.PushTransport, error) {
 	if cfg.URL == "" {
 		return nil, errors.New("mfa.provider.push.webhook.url required when transport=webhook")
 	}

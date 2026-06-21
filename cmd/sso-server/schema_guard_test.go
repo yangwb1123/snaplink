@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/platform/migrate"
 )
@@ -30,7 +31,7 @@ func stampSchemaVersion(t *testing.T, store interface{ DB() *sql.DB }, table str
 // TestCheckSQLiteSchema_RefusesAheadDB proves the boot guard fails loud when
 // the live DB schema is ahead of the binary's max known version — the rollback
 // foot-gun. We open a REAL sqlite client store (no mocks), stamp its version
-// table to an impossibly-high version, then assert checkSQLiteSchema returns
+// table to an impossibly-high version, then assert serverbuildsign.CheckSQLiteSchema returns
 // ErrSchemaTooNew so startup aborts before any traffic is served.
 func TestCheckSQLiteSchema_RefusesAheadDB(t *testing.T) {
 	dir := t.TempDir()
@@ -44,7 +45,7 @@ func TestCheckSQLiteSchema_RefusesAheadDB(t *testing.T) {
 	binaryMax := sqlitestores.ClientsMaxVersion()
 	stampSchemaVersion(t, store, "schema_migrations_clients", binaryMax+1)
 
-	err = checkSQLiteSchema(context.Background(), store, "clients", binaryMax)
+	err = serverbuildsign.CheckSQLiteSchema(context.Background(), store, "clients", binaryMax)
 	if err == nil {
 		t.Fatal("expected fatal error when DB schema is ahead of binary")
 	}
@@ -70,21 +71,21 @@ func TestCheckSQLiteSchema_AllowsEqualAndBehind(t *testing.T) {
 	binaryMax := sqlitestores.ClientsMaxVersion()
 
 	// Equal: the store just ran its migrations to ClientsMaxVersion().
-	if err := checkSQLiteSchema(ctx, store, "clients", binaryMax); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(ctx, store, "clients", binaryMax); err != nil {
 		t.Errorf("equal versions: unexpected error: %v", err)
 	}
 	// Behind: pretend this binary knows a far newer schema than the DB has.
-	if err := checkSQLiteSchema(ctx, store, "clients", binaryMax+99); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(ctx, store, "clients", binaryMax+99); err != nil {
 		t.Errorf("db behind binary: unexpected error: %v", err)
 	}
 }
 
 // TestCheckSQLiteSchema_MemoryBackendNoOps proves the guard silently skips
-// backends without a DB() handle (memory stores), mirroring appendReadyCheck's
+// backends without a DB() handle (memory stores), mirroring serverbuildsign.AppendReadyCheck's
 // additive gating — no false rollback alarm for a process-local store.
 func TestCheckSQLiteSchema_MemoryBackendNoOps(t *testing.T) {
 	// A value with no DB() *sql.DB method must not trip the guard.
-	if err := checkSQLiteSchema(context.Background(), struct{}{}, "clients", 0); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(context.Background(), struct{}{}, "clients", 0); err != nil {
 		t.Errorf("memory backend: unexpected error: %v", err)
 	}
 }

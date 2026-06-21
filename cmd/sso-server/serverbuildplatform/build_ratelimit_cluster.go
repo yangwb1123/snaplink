@@ -1,4 +1,4 @@
-package main
+package serverbuildplatform
 
 import (
 	"errors"
@@ -29,7 +29,7 @@ import (
 	signingkeysmemory "github.com/snaplink/sso/platform/signingkeys/memory"
 )
 
-// buildRateLimitPolicy translates RateLimitConfig into a ratelimit.Policy.
+// BuildRateLimitPolicy translates RateLimitConfig into a ratelimit.Policy.
 // Each prefix becomes its own Limiter (sized by per_sec + burst);
 // Default kicks in for paths no prefix matches. A zero DefaultPerSec
 // leaves Default nil (no limit on unmatched paths — useful when only
@@ -42,7 +42,7 @@ import (
 //   - "sqlite" — SQLiteLimiter against cfg.SQLite.DSN; each prefix
 //     gets a distinct bucket_name so multiple rules can share one
 //     DSN file without colliding.
-func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) {
+func BuildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) {
 	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
@@ -83,7 +83,7 @@ func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) 
 	return p, nil
 }
 
-// buildRegistry materializes the service registry for cmd.
+// BuildRegistry materializes the service registry for cmd.
 //
 // Memory backend is per-process (no peer discovery, no TTL); etcd
 // is cluster-shared via lease + KeepAlive. The etcd path is
@@ -91,7 +91,7 @@ func buildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) 
 // registry SPI. Returns the kind ("memory" or "etcd") so caller
 // can decide whether a /readyz check is meaningful (memory has no
 // backend state to probe).
-func buildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Registry, string, error) {
+func BuildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Registry, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "", "memory":
@@ -121,15 +121,15 @@ func buildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Regi
 	}
 }
 
-// buildInvalidationBus materializes the cross-replica cluster.Bus.
+// BuildInvalidationBus materializes the cross-replica cluster.Bus.
 //
 // Unset backend → nil bus: single-node deployments invalidate caches
 // locally and need no bus, so this is the safe default. memory is
 // per-process (a no-op for multi-replica); etcd is cluster-shared. The
 // etcd path is constructed here so the transitive dep stays out of the
-// cluster SPI, mirroring buildRegistry. Returns the kind for logging;
+// cluster SPI, mirroring BuildRegistry. Returns the kind for logging;
 // the bus is fail-open, so it intentionally gets no /readyz check.
-func buildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (cluster.Bus, string, error) {
+func BuildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (cluster.Bus, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "":
@@ -160,16 +160,16 @@ func buildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (clus
 	}
 }
 
-// buildSigningKeyRegistry constructs the shared signing-key registry for
+// BuildSigningKeyRegistry constructs the shared signing-key registry for
 // leaderless multi-replica JWKS aggregation. Returns (nil, "", nil) when
 // disabled. memory is per-process (single-node / test); etcd is cluster-
 // shared — each replica announces its public keys under a lease and peers
 // Watch + adopt, so a token signed on one replica verifies on every replica.
 // The etcd path is constructed here so the transitive dep stays out of the
-// signingkeys SPI, mirroring buildInvalidationBus. The registry is fail-open
+// signingkeys SPI, mirroring BuildInvalidationBus. The registry is fail-open
 // (a dropped announcement only narrows a verify-set back toward local keys),
 // so it intentionally gets no /readyz check.
-func buildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Logger) (signingkeys.Registry, string, error) {
+func BuildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Logger) (signingkeys.Registry, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "":
@@ -203,11 +203,11 @@ func buildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Lo
 	}
 }
 
-// signingKeyRotationConfig translates the YAML rotation config into a
+// SigningKeyRotationConfig translates the YAML rotation config into a
 // defaultimpl.RotationConfig (without OnRotate, which the caller
 // attaches), returning ok=false when rotation is disabled or
 // misconfigured (interval <= 0). Pure so it is unit-testable.
-func signingKeyRotationConfig(cfg config.KeyRotationConfig) (defaultimpl.RotationConfig, bool) {
+func SigningKeyRotationConfig(cfg config.KeyRotationConfig) (defaultimpl.RotationConfig, bool) {
 	if !cfg.Enabled || cfg.Interval <= 0 {
 		return defaultimpl.RotationConfig{}, false
 	}
@@ -217,12 +217,12 @@ func signingKeyRotationConfig(cfg config.KeyRotationConfig) (defaultimpl.Rotatio
 	}, true
 }
 
-// resolveServiceID derives the registry Service.ID. Explicit YAML
+// ResolveServiceID derives the registry Service.ID. Explicit YAML
 // wins; otherwise we synthesize from the issuer + the host's short
 // hostname so two replicas of the same issuer don't write the same
 // etcd key and clobber each other's lease. Hostname lookup failure
 // falls back to a fixed suffix — better stable-ish than panic.
-func resolveServiceID(explicit, issuer string) string {
+func ResolveServiceID(explicit, issuer string) string {
 	if id := strings.TrimSpace(explicit); id != "" {
 		return id
 	}

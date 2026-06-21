@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"errors"
@@ -15,13 +15,13 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 )
 
-// buildAuthCodeStore / buildRefreshTokenStore / buildDeviceCodeStore
+// BuildAuthCodeStore / BuildRefreshTokenStore / BuildDeviceCodeStore
 // pick between memory + sqlite per cfg.Backend. SQLite needs a DSN;
 // memory needs nothing. Each SQLite call opens its own connection
 // pool — for SQLite that's fine (OS-level file lock coordinates),
 // for a future shared *sql.DB across stores a different abstraction
 // is needed.
-func buildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
+func BuildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryAuthCodeStore(), nil
@@ -35,7 +35,7 @@ func buildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
 	}
 }
 
-func buildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, error) {
+func BuildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		s := defaultimpl.NewMemoryRefreshTokenStore()
@@ -58,7 +58,7 @@ func buildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, er
 	}
 }
 
-func buildDeviceCodeStore(cfg config.OAuthConfig) (oauth.DeviceCodeStore, error) {
+func BuildDeviceCodeStore(cfg config.OAuthConfig) (oauth.DeviceCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryDeviceCodeStore(), nil
@@ -72,7 +72,7 @@ func buildDeviceCodeStore(cfg config.OAuthConfig) (oauth.DeviceCodeStore, error)
 	}
 }
 
-func buildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
+func BuildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryPARStore(), nil
@@ -86,11 +86,11 @@ func buildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
 	}
 }
 
-// resolvePairwiseSalt reads the pairwise hash salt with the same
+// ResolvePairwiseSalt reads the pairwise hash salt with the same
 // file-wins-over-inline precedence the PII redactor uses. Empty
 // salt falls back to security.DefaultPairwiseSalt — fine for tests, not
 // fine for production (publicly known).
-func resolvePairwiseSalt(cfg config.PairwiseSubjectsConfig) (string, error) {
+func ResolvePairwiseSalt(cfg config.PairwiseSubjectsConfig) (string, error) {
 	if cfg.SaltFile != "" {
 		b, err := os.ReadFile(cfg.SaltFile)
 		if err != nil {
@@ -101,12 +101,12 @@ func resolvePairwiseSalt(cfg config.PairwiseSubjectsConfig) (string, error) {
 	return cfg.Salt, nil
 }
 
-// resolvePIISalt reads the redaction salt from inline YAML or a file
+// ResolvePIISalt reads the redaction salt from inline YAML or a file
 // (file wins when both set — operators typically use file for prod).
 // Returns an error when both are empty so a misconfiguration becomes
 // loud at boot rather than silently degrading to an empty salt that
 // makes hash inversion trivial.
-func resolvePIISalt(cfg config.AuditPIIRedactionConfig) (string, error) {
+func ResolvePIISalt(cfg config.AuditPIIRedactionConfig) (string, error) {
 	if cfg.SaltFile != "" {
 		b, err := os.ReadFile(cfg.SaltFile)
 		if err != nil {

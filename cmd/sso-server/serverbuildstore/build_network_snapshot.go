@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 	"github.com/snaplink/sso/interfaces/snapshot"
 )
 
-// buildNetworkStore materializes the netpolicy.Store for cmd.
+// BuildNetworkStore materializes the netpolicy.Store for cmd.
 //
 // Memory backend defers to [config.Config.BuildNetworkStore] (which
 // applies seeds itself). The etcd backend is constructed here so the
@@ -32,7 +32,7 @@ import (
 // Returns (nil, "", nil) when network is disabled. The returned kind
 // is "memory" or "etcd"; cmd uses it to decide whether to register a
 // /readyz check (memory has no backend health signal to report).
-func buildNetworkStore(cfg *config.NetworkConfig, logger spi.Logger) (netpolicy.Store, string, error) {
+func BuildNetworkStore(cfg *config.NetworkConfig, logger spi.Logger) (netpolicy.Store, string, error) {
 	if !cfg.Enabled {
 		return nil, "", nil
 	}
@@ -74,11 +74,11 @@ func buildNetworkStore(cfg *config.NetworkConfig, logger spi.Logger) (netpolicy.
 	}
 }
 
-// buildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
+// BuildSnapshotSubsystem materializes the snapshot Pipeline + Storage from
 // SnapshotConfig. Returns (nil, nil, nil) when snapshot.enabled=false. The
 // Snapshotter / Restorer that depend on the runtime stores are wired
 // separately inside buildApp once those stores exist.
-func buildSnapshotSubsystem(cfg *config.Config, logger spi.Logger) (*snapshot.Pipeline, snapshot.Storage, error) {
+func BuildSnapshotSubsystem(cfg *config.Config, logger spi.Logger) (*snapshot.Pipeline, snapshot.Storage, error) {
 	if !cfg.Snapshot.Enabled {
 		return nil, nil, nil
 	}
@@ -93,7 +93,7 @@ func buildSnapshotSubsystem(cfg *config.Config, logger spi.Logger) (*snapshot.Pi
 	return &snapshot.Pipeline{Sealer: sealer}, store, nil
 }
 
-// loadAESGCMKey resolves the snapshot AES-GCM key from inline YAML
+// LoadAESGCMKey resolves the snapshot AES-GCM key from inline YAML
 // (cfg.Key — discouraged, secrets in YAML hit git logs) or a file
 // (cfg.KeyFile — recommended; KMS-fetched DEKs land there). The
 // file or string can be raw 32 bytes, hex-encoded 64 chars, or
@@ -103,7 +103,7 @@ func buildSnapshotSubsystem(cfg *config.Config, logger spi.Logger) (*snapshot.Pi
 // Fails loud when neither source is set OR when no decoding scheme
 // produces exactly 32 bytes — silent fallback would surface as
 // cryptic AEAD errors at first Seal/Open.
-func loadAESGCMKey(cfg config.SnapshotEncryptionConfig) ([]byte, error) {
+func LoadAESGCMKey(cfg config.SnapshotEncryptionConfig) ([]byte, error) {
 	raw := []byte(cfg.Key)
 	if len(raw) == 0 && cfg.KeyFile != "" {
 		b, err := os.ReadFile(cfg.KeyFile)
@@ -141,28 +141,28 @@ func loadAESGCMKey(cfg config.SnapshotEncryptionConfig) ([]byte, error) {
 	return nil, fmt.Errorf("snapshot aes-gcm: key must decode to exactly 32 bytes (raw / hex / base64)")
 }
 
-// snapshotRestorerAdapter bridges releases.SnapshotRestorer onto the
+// SnapshotRestorerAdapter bridges releases.SnapshotRestorer onto the
 // snapshot.Pipeline + snapshot.Storage + snapshot.Restorer trio.
 // Lives in the cmd binary so the releases package stays free of any
 // snapshot import — keeping the two SDKs independently evolvable.
-type snapshotRestorerAdapter struct {
-	pipeline *snapshot.Pipeline
-	storage  snapshot.Storage
-	restorer *snapshot.Restorer
+type SnapshotRestorerAdapter struct {
+	Pipeline *snapshot.Pipeline
+	Storage  snapshot.Storage
+	Restorer *snapshot.Restorer
 }
 
-func (a *snapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID string) error {
-	if a.pipeline == nil || a.storage == nil || a.restorer == nil {
+func (a *SnapshotRestorerAdapter) RestoreByID(ctx context.Context, snapshotID string) error {
+	if a.Pipeline == nil || a.Storage == nil || a.Restorer == nil {
 		return fmt.Errorf("snapshot subsystem not configured")
 	}
-	snap, err := a.pipeline.Load(ctx, a.storage, snapshotID)
+	snap, err := a.Pipeline.Load(ctx, a.Storage, snapshotID)
 	if err != nil {
 		return fmt.Errorf("load snapshot %q: %w", snapshotID, err)
 	}
 	// AdvanceBootstrap=false because rollback shouldn't move the
 	// bootstrap high-water mark — that's a one-way ratchet for
 	// first-boot init, not a release-flip mechanism.
-	if _, err := a.restorer.Restore(ctx, snap, snapshot.RestoreOptions{Mode: snapshot.ModeOverwrite}); err != nil {
+	if _, err := a.Restorer.Restore(ctx, snap, snapshot.RestoreOptions{Mode: snapshot.ModeOverwrite}); err != nil {
 		return fmt.Errorf("restore snapshot %q: %w", snapshotID, err)
 	}
 	return nil

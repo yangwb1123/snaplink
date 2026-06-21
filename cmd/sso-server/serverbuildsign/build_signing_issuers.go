@@ -1,4 +1,4 @@
-package main
+package serverbuildsign
 
 import (
 	"context"
@@ -33,12 +33,12 @@ func resolveExternalSigner(sc config.SigningConfig, m *metrics.Metrics, logger s
 		return nil, "", fmt.Errorf("keys.signing.external %q returned a nil signer", name)
 	}
 	// Instrument the KMS/HSM round-trip (no-op when metrics disabled).
-	extSigner := instrumentSigner(s, normalizeAlgLabel(sc.Alg), m, logger)
+	extSigner := InstrumentSigner(s, normalizeAlgLabel(sc.Alg), m, logger)
 	logger.Info("signing key: external signer", "name", name, "kid", kid)
 	return extSigner, kid, nil
 }
 
-func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (signingIssuer, string, crypto.Signer, error) {
+func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (SigningIssuer, string, crypto.Signer, error) {
 	opts := []defaultimpl.Ed25519Option{
 		defaultimpl.WithEd25519Issuer(srv.Issuer),
 		defaultimpl.WithEd25519TokenTTL(srv.TokenTTL),
@@ -61,7 +61,7 @@ func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer,
 	return iss, "EdDSA", extSigner, nil
 }
 
-func buildECDSASigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (signingIssuer, string, crypto.Signer, error) {
+func buildECDSASigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (SigningIssuer, string, crypto.Signer, error) {
 	opts := []defaultimpl.ECDSAOption{
 		defaultimpl.WithECDSAIssuer(srv.Issuer),
 		defaultimpl.WithECDSATokenTTL(srv.TokenTTL),
@@ -84,7 +84,7 @@ func buildECDSASigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, e
 	return iss, "ES256", extSigner, nil
 }
 
-func buildRSASigningIssuer(alg string, srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (signingIssuer, string, crypto.Signer, error) {
+func buildRSASigningIssuer(alg string, srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (SigningIssuer, string, crypto.Signer, error) {
 	signingAlg := "RS256"
 	if alg == "ps256" {
 		signingAlg = "PS256"

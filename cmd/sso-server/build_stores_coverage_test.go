@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
@@ -41,14 +43,14 @@ func writeJWKSFile(t *testing.T, issuer string) string {
 }
 
 // -----------------------------------------------------------------------------
-// subordinateConstraints
+// serverbuildplatform.SubordinateConstraints
 // -----------------------------------------------------------------------------
 
 // TestSubordinateConstraints_NilReturnsNil — operators who configure no §6.2
 // constraints get no constraints claim in the Subordinate Statement at all.
 func TestSubordinateConstraints_NilReturnsNil(t *testing.T) {
-	if got := subordinateConstraints(nil); got != nil {
-		t.Errorf("subordinateConstraints(nil) = %v; want nil", got)
+	if got := serverbuildplatform.SubordinateConstraints(nil); got != nil {
+		t.Errorf("serverbuildplatform.SubordinateConstraints(nil) = %v; want nil", got)
 	}
 }
 
@@ -64,9 +66,9 @@ func TestSubordinateConstraints_NamingAndEntityTypes(t *testing.T) {
 		NamingConstraintsPermitted: []string{"https://sub.fed.test/"},
 		AllowedEntityTypes:         &emptyTypes,
 	}
-	out := subordinateConstraints(c)
+	out := serverbuildplatform.SubordinateConstraints(c)
 	if out == nil {
-		t.Fatal("subordinateConstraints returned nil for a populated config")
+		t.Fatal("serverbuildplatform.SubordinateConstraints returned nil for a populated config")
 	}
 	if out.MaxPathLength == nil || *out.MaxPathLength != 0 {
 		t.Errorf("MaxPathLength = %v; want pointer to 0", out.MaxPathLength)
@@ -86,7 +88,7 @@ func TestSubordinateConstraints_NamingAndEntityTypes(t *testing.T) {
 // empty must emit NO naming_constraints object (a present-but-empty object
 // would over-constrain).
 func TestSubordinateConstraints_NoNamingObjectWhenBothEmpty(t *testing.T) {
-	out := subordinateConstraints(&config.SubordinateConstraintsConfig{})
+	out := serverbuildplatform.SubordinateConstraints(&config.SubordinateConstraintsConfig{})
 	if out == nil {
 		t.Fatal("nil for non-nil empty config")
 	}
@@ -99,28 +101,28 @@ func TestSubordinateConstraints_NoNamingObjectWhenBothEmpty(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildSPIFFEOption
+// serverbuildplatform.BuildSPIFFEOption
 // -----------------------------------------------------------------------------
 
 // TestBuildSPIFFEOption_RequiresTrustDomain / Audience / JWKSFile — each
 // required field is independently fatal so a half-wired SPIFFE token-exchange
 // never silently admits or rejects every SVID.
 func TestBuildSPIFFEOption_RequiresTrustDomain(t *testing.T) {
-	_, err := buildSPIFFEOption(config.SPIFFEConfig{})
+	_, err := serverbuildplatform.BuildSPIFFEOption(config.SPIFFEConfig{})
 	if err == nil || !strings.Contains(err.Error(), "trust_domain") {
 		t.Fatalf("err = %v; want trust_domain required", err)
 	}
 }
 
 func TestBuildSPIFFEOption_RequiresAudience(t *testing.T) {
-	_, err := buildSPIFFEOption(config.SPIFFEConfig{TrustDomain: "example.org"})
+	_, err := serverbuildplatform.BuildSPIFFEOption(config.SPIFFEConfig{TrustDomain: "example.org"})
 	if err == nil || !strings.Contains(err.Error(), "audience") {
 		t.Fatalf("err = %v; want audience required", err)
 	}
 }
 
 func TestBuildSPIFFEOption_RequiresJWKSFile(t *testing.T) {
-	_, err := buildSPIFFEOption(config.SPIFFEConfig{TrustDomain: "example.org", Audience: "spiffe-aud"})
+	_, err := serverbuildplatform.BuildSPIFFEOption(config.SPIFFEConfig{TrustDomain: "example.org", Audience: "spiffe-aud"})
 	if err == nil || !strings.Contains(err.Error(), "jwks_file") {
 		t.Fatalf("err = %v; want jwks_file required", err)
 	}
@@ -129,7 +131,7 @@ func TestBuildSPIFFEOption_RequiresJWKSFile(t *testing.T) {
 // TestBuildSPIFFEOption_MissingJWKSFileErrors — a configured-but-unreadable
 // trust bundle is a boot error.
 func TestBuildSPIFFEOption_MissingJWKSFileErrors(t *testing.T) {
-	_, err := buildSPIFFEOption(config.SPIFFEConfig{
+	_, err := serverbuildplatform.BuildSPIFFEOption(config.SPIFFEConfig{
 		TrustDomain: "example.org",
 		Audience:    "spiffe-aud",
 		JWKSFile:    filepath.Join(t.TempDir(), "does-not-exist.json"),
@@ -142,7 +144,7 @@ func TestBuildSPIFFEOption_MissingJWKSFileErrors(t *testing.T) {
 // TestBuildSPIFFEOption_HappyPath — a valid trust bundle yields a non-nil
 // sso.Option (the MaxClockSkew>0 branch is also exercised).
 func TestBuildSPIFFEOption_HappyPath(t *testing.T) {
-	opt, err := buildSPIFFEOption(config.SPIFFEConfig{
+	opt, err := serverbuildplatform.BuildSPIFFEOption(config.SPIFFEConfig{
 		TrustDomain:  "example.org",
 		Audience:     "spiffe-aud",
 		JWKSFile:     writeJWKSFile(t, "https://spire.example.org"),
@@ -157,7 +159,7 @@ func TestBuildSPIFFEOption_HappyPath(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// caepSubjectMode
+// serverbuildplatform.CaepSubjectMode
 // -----------------------------------------------------------------------------
 
 func TestCAEPSubjectMode(t *testing.T) {
@@ -174,23 +176,23 @@ func TestCAEPSubjectMode(t *testing.T) {
 		{"bogus", 0, true},
 	}
 	for _, tc := range cases {
-		got, err := caepSubjectMode(tc.in)
+		got, err := serverbuildplatform.CaepSubjectMode(tc.in)
 		if (err != nil) != tc.wantErr {
-			t.Errorf("caepSubjectMode(%q) err = %v; wantErr %v", tc.in, err, tc.wantErr)
+			t.Errorf("serverbuildplatform.CaepSubjectMode(%q) err = %v; wantErr %v", tc.in, err, tc.wantErr)
 			continue
 		}
 		if !tc.wantErr && got != tc.want {
-			t.Errorf("caepSubjectMode(%q) = %v; want %v", tc.in, got, tc.want)
+			t.Errorf("serverbuildplatform.CaepSubjectMode(%q) = %v; want %v", tc.in, got, tc.want)
 		}
 	}
 }
 
 // -----------------------------------------------------------------------------
-// buildCAEPReceiverOption
+// serverbuildplatform.BuildCAEPReceiverOption
 // -----------------------------------------------------------------------------
 
 func TestBuildCAEPReceiverOption_RequiresAudience(t *testing.T) {
-	_, err := buildCAEPReceiverOption(
+	_, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{},
 		defaultimpl.NewMemorySessionManager(),
 		defaultimpl.NewMemoryRefreshTokenStore(),
@@ -204,7 +206,7 @@ func TestBuildCAEPReceiverOption_RequiresAudience(t *testing.T) {
 }
 
 func TestBuildCAEPReceiverOption_RequiresTransmitter(t *testing.T) {
-	_, err := buildCAEPReceiverOption(
+	_, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{Audience: "https://recv.test"},
 		defaultimpl.NewMemorySessionManager(),
 		defaultimpl.NewMemoryRefreshTokenStore(),
@@ -218,7 +220,7 @@ func TestBuildCAEPReceiverOption_RequiresTransmitter(t *testing.T) {
 }
 
 func TestBuildCAEPReceiverOption_TransmitterRequiresIssuer(t *testing.T) {
-	_, err := buildCAEPReceiverOption(
+	_, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{
 			Audience:     "https://recv.test",
 			Transmitters: []config.CAEPTransmitterConfig{{JWKSFile: writeJWKSFile(t, "https://tx.test")}},
@@ -235,7 +237,7 @@ func TestBuildCAEPReceiverOption_TransmitterRequiresIssuer(t *testing.T) {
 }
 
 func TestBuildCAEPReceiverOption_TransmitterRequiresJWKSFile(t *testing.T) {
-	_, err := buildCAEPReceiverOption(
+	_, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{
 			Audience:     "https://recv.test",
 			Transmitters: []config.CAEPTransmitterConfig{{Issuer: "https://tx.test"}},
@@ -255,7 +257,7 @@ func TestBuildCAEPReceiverOption_TransmitterRequiresJWKSFile(t *testing.T) {
 // empty provider is insecure (cross-IdP subject hijack); the cmd guard names
 // the exact knob before the SDK's own check.
 func TestBuildCAEPReceiverOption_IssSubRequiresProvider(t *testing.T) {
-	_, err := buildCAEPReceiverOption(
+	_, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{
 			Audience: "https://recv.test",
 			Transmitters: []config.CAEPTransmitterConfig{{
@@ -276,7 +278,7 @@ func TestBuildCAEPReceiverOption_IssSubRequiresProvider(t *testing.T) {
 }
 
 func TestBuildCAEPReceiverOption_BadSubjectMode(t *testing.T) {
-	_, err := buildCAEPReceiverOption(
+	_, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{
 			Audience: "https://recv.test",
 			Transmitters: []config.CAEPTransmitterConfig{{
@@ -299,7 +301,7 @@ func TestBuildCAEPReceiverOption_BadSubjectMode(t *testing.T) {
 // TestBuildCAEPReceiverOption_HappyPath — a fully-formed receiver wires a
 // non-nil option (opaque mode, no provider required, MaxClockSkew branch).
 func TestBuildCAEPReceiverOption_HappyPath(t *testing.T) {
-	opt, err := buildCAEPReceiverOption(
+	opt, err := serverbuildplatform.BuildCAEPReceiverOption(
 		config.CAEPReceiverConfig{
 			Audience:     "https://recv.test",
 			MaxClockSkew: 90 * time.Second,
@@ -324,11 +326,11 @@ func TestBuildCAEPReceiverOption_HappyPath(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildPasswordResetStore
+// serverbuildstore.BuildPasswordResetStore
 // -----------------------------------------------------------------------------
 
 func TestBuildPasswordResetStore_DisabledReturnsNil(t *testing.T) {
-	store, err := buildPasswordResetStore(config.PasswordResetConfig{})
+	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -338,7 +340,7 @@ func TestBuildPasswordResetStore_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildPasswordResetStore_Memory(t *testing.T) {
-	store, err := buildPasswordResetStore(config.PasswordResetConfig{Backend: "memory"})
+	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "memory"})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -348,7 +350,7 @@ func TestBuildPasswordResetStore_Memory(t *testing.T) {
 }
 
 func TestBuildPasswordResetStore_SQLiteRequiresDSN(t *testing.T) {
-	_, err := buildPasswordResetStore(config.PasswordResetConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "sqlite"})
 	if err == nil || !strings.Contains(err.Error(), "dsn") {
 		t.Fatalf("err = %v; want dsn required", err)
 	}
@@ -356,7 +358,7 @@ func TestBuildPasswordResetStore_SQLiteRequiresDSN(t *testing.T) {
 
 func TestBuildPasswordResetStore_SQLiteHappyPath(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "reset.db") + "?_journal=WAL"
-	store, err := buildPasswordResetStore(config.PasswordResetConfig{
+	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{
 		Backend: "sqlite",
 		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
 	})
@@ -369,18 +371,18 @@ func TestBuildPasswordResetStore_SQLiteHappyPath(t *testing.T) {
 }
 
 func TestBuildPasswordResetStore_UnknownBackendErrors(t *testing.T) {
-	_, err := buildPasswordResetStore(config.PasswordResetConfig{Backend: "redis"})
+	_, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "redis"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// resolvePairwiseSalt
+// serverbuildstore.ResolvePairwiseSalt
 // -----------------------------------------------------------------------------
 
 func TestResolvePairwiseSalt_InlineSalt(t *testing.T) {
-	got, err := resolvePairwiseSalt(config.PairwiseSubjectsConfig{Salt: "inline-salt"})
+	got, err := serverbuildstore.ResolvePairwiseSalt(config.PairwiseSubjectsConfig{Salt: "inline-salt"})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -394,7 +396,7 @@ func TestResolvePairwiseSalt_FileTrimsNewline(t *testing.T) {
 	if err := os.WriteFile(path, []byte("file-salt\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := resolvePairwiseSalt(config.PairwiseSubjectsConfig{SaltFile: path})
+	got, err := serverbuildstore.ResolvePairwiseSalt(config.PairwiseSubjectsConfig{SaltFile: path})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -404,7 +406,7 @@ func TestResolvePairwiseSalt_FileTrimsNewline(t *testing.T) {
 }
 
 func TestResolvePairwiseSalt_MissingFileErrors(t *testing.T) {
-	_, err := resolvePairwiseSalt(config.PairwiseSubjectsConfig{
+	_, err := serverbuildstore.ResolvePairwiseSalt(config.PairwiseSubjectsConfig{
 		SaltFile: filepath.Join(t.TempDir(), "nope"),
 	})
 	if err == nil {
@@ -413,11 +415,11 @@ func TestResolvePairwiseSalt_MissingFileErrors(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildSigningKeyRegistry
+// serverbuildplatform.BuildSigningKeyRegistry
 // -----------------------------------------------------------------------------
 
 func TestBuildSigningKeyRegistry_DisabledReturnsNil(t *testing.T) {
-	reg, kind, err := buildSigningKeyRegistry(&config.SigningKeyRegistryConfig{}, quietLogger())
+	reg, kind, err := serverbuildplatform.BuildSigningKeyRegistry(&config.SigningKeyRegistryConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -427,7 +429,7 @@ func TestBuildSigningKeyRegistry_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildSigningKeyRegistry_Memory(t *testing.T) {
-	reg, kind, err := buildSigningKeyRegistry(&config.SigningKeyRegistryConfig{Backend: "memory"}, quietLogger())
+	reg, kind, err := serverbuildplatform.BuildSigningKeyRegistry(&config.SigningKeyRegistryConfig{Backend: "memory"}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -437,25 +439,25 @@ func TestBuildSigningKeyRegistry_Memory(t *testing.T) {
 }
 
 func TestBuildSigningKeyRegistry_EtcdRequiresEndpoints(t *testing.T) {
-	_, _, err := buildSigningKeyRegistry(&config.SigningKeyRegistryConfig{Backend: "etcd"}, quietLogger())
+	_, _, err := serverbuildplatform.BuildSigningKeyRegistry(&config.SigningKeyRegistryConfig{Backend: "etcd"}, quietLogger())
 	if err == nil || !strings.Contains(err.Error(), "etcd_endpoints") {
 		t.Fatalf("err = %v; want etcd_endpoints required", err)
 	}
 }
 
 func TestBuildSigningKeyRegistry_UnknownBackendErrors(t *testing.T) {
-	_, _, err := buildSigningKeyRegistry(&config.SigningKeyRegistryConfig{Backend: "consul"}, quietLogger())
+	_, _, err := serverbuildplatform.BuildSigningKeyRegistry(&config.SigningKeyRegistryConfig{Backend: "consul"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// buildRegionResolver
+// serverbuildstore.BuildRegionResolver
 // -----------------------------------------------------------------------------
 
 func TestBuildRegionResolver_UnconfiguredReturnsNil(t *testing.T) {
-	if r := buildRegionResolver(&config.Config{}); r != nil {
+	if r := serverbuildstore.BuildRegionResolver(&config.Config{}); r != nil {
 		t.Errorf("unconfigured region returned %v; want nil", r)
 	}
 }
@@ -465,7 +467,7 @@ func TestBuildRegionResolver_ServingRegionPins(t *testing.T) {
 	cfg.Region.ServingRegion = "eu-west-1"
 	cfg.Region.AllowedRegions = []string{"eu-west-1", "us-east-1"}
 	cfg.Region.HeaderName = "X-Region"
-	r := buildRegionResolver(cfg)
+	r := serverbuildstore.BuildRegionResolver(cfg)
 	if r == nil {
 		t.Fatal("resolver nil despite serving_region set")
 	}
@@ -483,7 +485,7 @@ func TestBuildRegionResolver_ServingRegionPins(t *testing.T) {
 func TestBuildRegionResolver_HeaderOnlyInstalls(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Region.HeaderName = "X-Region" // serving region empty but header set
-	if r := buildRegionResolver(cfg); r == nil {
+	if r := serverbuildstore.BuildRegionResolver(cfg); r == nil {
 		t.Error("resolver nil despite header_name set")
 	}
 }
@@ -538,18 +540,18 @@ func TestBuildPasswordHealthChecker_UnknownKindErrors(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildPushWebhookTransport
+// serverbuildstore.BuildPushWebhookTransport
 // -----------------------------------------------------------------------------
 
 func TestBuildPushWebhookTransport_RequiresURL(t *testing.T) {
-	_, err := buildPushWebhookTransport(config.MFAPushWebhookConfig{})
+	_, err := serverbuildstore.BuildPushWebhookTransport(config.MFAPushWebhookConfig{})
 	if err == nil || !strings.Contains(err.Error(), "url") {
 		t.Fatalf("err = %v; want url required", err)
 	}
 }
 
 func TestBuildPushWebhookTransport_HappyPathWithAllOptions(t *testing.T) {
-	tr, err := buildPushWebhookTransport(config.MFAPushWebhookConfig{
+	tr, err := serverbuildstore.BuildPushWebhookTransport(config.MFAPushWebhookConfig{
 		URL:                 "https://push.test/notify",
 		BearerToken:         "secret",
 		Headers:             map[string]string{"X-Tenant": "acme"},
@@ -567,11 +569,11 @@ func TestBuildPushWebhookTransport_HappyPathWithAllOptions(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildCIBA
+// serverbuildstore.BuildCIBA
 // -----------------------------------------------------------------------------
 
 func TestBuildCIBA_MemoryLogTransport(t *testing.T) {
-	store, transport, sqliteStore, err := buildCIBA(config.CIBAConfig{}, quietLogger())
+	store, transport, sqliteStore, err := serverbuildstore.BuildCIBA(config.CIBAConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -584,7 +586,7 @@ func TestBuildCIBA_MemoryLogTransport(t *testing.T) {
 }
 
 func TestBuildCIBA_SQLiteRequiresDSN(t *testing.T) {
-	_, _, _, err := buildCIBA(config.CIBAConfig{Backend: "sqlite"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "sqlite"}, quietLogger())
 	if err == nil || !strings.Contains(err.Error(), "sqlite_dsn") {
 		t.Fatalf("err = %v; want sqlite_dsn required", err)
 	}
@@ -592,7 +594,7 @@ func TestBuildCIBA_SQLiteRequiresDSN(t *testing.T) {
 
 func TestBuildCIBA_SQLiteHappyPath(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "ciba.db") + "?_journal=WAL"
-	store, _, sqliteStore, err := buildCIBA(config.CIBAConfig{Backend: "sqlite", SQLiteDSN: dsn}, quietLogger())
+	store, _, sqliteStore, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "sqlite", SQLiteDSN: dsn}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -602,21 +604,21 @@ func TestBuildCIBA_SQLiteHappyPath(t *testing.T) {
 }
 
 func TestBuildCIBA_UnknownBackendErrors(t *testing.T) {
-	_, _, _, err := buildCIBA(config.CIBAConfig{Backend: "redis"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "redis"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildCIBA_WebhookTransportRequiresURL(t *testing.T) {
-	_, _, _, err := buildCIBA(config.CIBAConfig{Transport: "webhook"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Transport: "webhook"}, quietLogger())
 	if err == nil || !strings.Contains(err.Error(), "url") {
 		t.Fatalf("err = %v; want webhook url required", err)
 	}
 }
 
 func TestBuildCIBA_WebhookTransportHappyPath(t *testing.T) {
-	store, transport, _, err := buildCIBA(config.CIBAConfig{
+	store, transport, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{
 		Transport: "webhook",
 		Webhook:   config.MFAPushWebhookConfig{URL: "https://ciba.test/push"},
 	}, quietLogger())
@@ -629,14 +631,14 @@ func TestBuildCIBA_WebhookTransportHappyPath(t *testing.T) {
 }
 
 func TestBuildCIBA_UnknownTransportErrors(t *testing.T) {
-	_, _, _, err := buildCIBA(config.CIBAConfig{Transport: "carrier-pigeon"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Transport: "carrier-pigeon"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error for unknown transport")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// runCIBAPrune / runSnapshotRetention (background loops)
+// serverbuildstore.RunCIBAPrune / serverbuildstore.RunSnapshotRetention (background loops)
 // -----------------------------------------------------------------------------
 
 func TestRunCIBAPrune_ExitsOnCancel(t *testing.T) {
@@ -649,14 +651,14 @@ func TestRunCIBAPrune_ExitsOnCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go runCIBAPrune(ctx, done, store, 20*time.Millisecond, quietLogger(), nil)
+	go serverbuildstore.RunCIBAPrune(ctx, done, store, 20*time.Millisecond, quietLogger(), nil)
 
 	time.Sleep(60 * time.Millisecond) // let at least one tick fire
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("runCIBAPrune did not exit after cancel")
+		t.Fatal("serverbuildstore.RunCIBAPrune did not exit after cancel")
 	}
 }
 
@@ -664,20 +666,20 @@ func TestRunSnapshotRetention_ExitsOnCancel(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
-	_, storage, err := buildSnapshotSubsystem(cfg, quietLogger())
+	_, storage, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
 	if err != nil {
-		t.Fatalf("buildSnapshotSubsystem: %v", err)
+		t.Fatalf("serverbuildstore.BuildSnapshotSubsystem: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go runSnapshotRetention(ctx, done, storage, 20*time.Millisecond, 5, quietLogger(), nil)
+	go serverbuildstore.RunSnapshotRetention(ctx, done, storage, 20*time.Millisecond, 5, quietLogger(), nil)
 
 	time.Sleep(60 * time.Millisecond)
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("runSnapshotRetention did not exit after cancel")
+		t.Fatal("serverbuildstore.RunSnapshotRetention did not exit after cancel")
 	}
 }
 

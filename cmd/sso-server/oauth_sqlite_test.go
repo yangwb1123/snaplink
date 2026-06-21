@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 )
 
 func TestBuildAuthCodeStore_MemoryDefault(t *testing.T) {
-	s, err := buildAuthCodeStore(config.OAuthConfig{})
+	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -19,7 +20,7 @@ func TestBuildAuthCodeStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildAuthCodeStore_SQLiteNeedsDSN(t *testing.T) {
-	_, err := buildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -28,7 +29,7 @@ func TestBuildAuthCodeStore_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildAuthCodeStore_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "auth.db") + "?_journal=WAL"
-	s, err := buildAuthCodeStore(config.OAuthConfig{
+	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
 	})
@@ -43,7 +44,7 @@ func TestBuildAuthCodeStore_SQLiteOpensFile(t *testing.T) {
 func TestBuildRefreshTokenStore_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "refresh.db") + "?_journal=WAL"
-	s, err := buildRefreshTokenStore(config.OAuthConfig{
+	s, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
 	})
@@ -56,14 +57,14 @@ func TestBuildRefreshTokenStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildDeviceCodeStore_UnknownBackendErrors(t *testing.T) {
-	_, err := buildDeviceCodeStore(config.OAuthConfig{Backend: "redis"})
+	_, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildPARStore_MemoryDefault(t *testing.T) {
-	s, err := buildPARStore(config.OAuthConfig{})
+	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestBuildPARStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildPARStore_SQLiteNeedsDSN(t *testing.T) {
-	_, err := buildPARStore(config.OAuthConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -82,7 +83,7 @@ func TestBuildPARStore_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildPARStore_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "par.db") + "?_journal=WAL"
-	s, err := buildPARStore(config.OAuthConfig{
+	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
 	})
@@ -95,14 +96,14 @@ func TestBuildPARStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildPARStore_UnknownBackendErrors(t *testing.T) {
-	_, err := buildPARStore(config.OAuthConfig{Backend: "redis"})
+	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "redis"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildClientStore_MemoryDefault(t *testing.T) {
-	s, err := buildClientStore(config.IdentityConfig{})
+	s, err := serverbuildstore.BuildClientStore(config.IdentityConfig{})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -112,14 +113,14 @@ func TestBuildClientStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildClientStore_SQLiteNeedsDSN(t *testing.T) {
-	_, err := buildClientStore(config.IdentityConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildSessionManager_MemoryDefault(t *testing.T) {
-	m, err := buildSessionManager(config.IdentityConfig{}, time.Hour)
+	m, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{}, time.Hour)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestBuildSessionManager_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildSessionManager_SQLiteNeedsDSN(t *testing.T) {
-	_, err := buildSessionManager(config.IdentityConfig{Backend: "sqlite"}, time.Hour)
+	_, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, time.Hour)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -138,7 +139,7 @@ func TestBuildSessionManager_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildSessionManager_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "sessions.db") + "?_journal=WAL"
-	m, err := buildSessionManager(config.IdentityConfig{
+	m, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{
 		Backend: "sqlite",
 		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
 	}, time.Hour)

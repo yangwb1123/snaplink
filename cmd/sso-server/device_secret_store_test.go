@@ -4,11 +4,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 )
 
 func TestBuildDeviceSecretStore_DisabledByDefault(t *testing.T) {
-	s, err := buildDeviceSecretStore(config.NativeSSOConfig{})
+	s, err := serverbuildstore.BuildDeviceSecretStore(config.NativeSSOConfig{})
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
 	}
@@ -18,7 +19,7 @@ func TestBuildDeviceSecretStore_DisabledByDefault(t *testing.T) {
 }
 
 func TestBuildDeviceSecretStore_Memory(t *testing.T) {
-	s, err := buildDeviceSecretStore(config.NativeSSOConfig{Backend: "memory"})
+	s, err := serverbuildstore.BuildDeviceSecretStore(config.NativeSSOConfig{Backend: "memory"})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -28,14 +29,14 @@ func TestBuildDeviceSecretStore_Memory(t *testing.T) {
 }
 
 func TestBuildDeviceSecretStore_SQLiteNeedsDSN(t *testing.T) {
-	if _, err := buildDeviceSecretStore(config.NativeSSOConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildDeviceSecretStore(config.NativeSSOConfig{Backend: "sqlite"}); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildDeviceSecretStore_SQLiteOpensFile(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "ds.db") + "?_journal=WAL"
-	s, err := buildDeviceSecretStore(config.NativeSSOConfig{Backend: "sqlite", SQLite: config.IdentitySQLiteConfig{DSN: dsn}})
+	s, err := serverbuildstore.BuildDeviceSecretStore(config.NativeSSOConfig{Backend: "sqlite", SQLite: config.IdentitySQLiteConfig{DSN: dsn}})
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestBuildDeviceSecretStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildDeviceSecretStore_UnknownBackend(t *testing.T) {
-	if _, err := buildDeviceSecretStore(config.NativeSSOConfig{Backend: "bogus"}); err == nil {
+	if _, err := serverbuildstore.BuildDeviceSecretStore(config.NativeSSOConfig{Backend: "bogus"}); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }

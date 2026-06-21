@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 )
 
@@ -29,9 +30,9 @@ func acmeConnectionsConfig() config.ConnectionsConfig {
 
 func TestBuildConnectionStore_SeedsAndResolves(t *testing.T) {
 	cfg := &config.Config{Connections: acmeConnectionsConfig()}
-	store, err := buildConnectionStore(cfg, quietLogger())
+	store, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger())
 	if err != nil {
-		t.Fatalf("buildConnectionStore: %v", err)
+		t.Fatalf("serverbuildstore.BuildConnectionStore: %v", err)
 	}
 	if store == nil {
 		t.Fatal("store is nil when connections enabled")
@@ -51,9 +52,9 @@ func TestBuildConnectionStore_SeedsAndResolves(t *testing.T) {
 
 func TestBuildConnectionStore_DisabledIsNil(t *testing.T) {
 	cfg := &config.Config{}
-	store, err := buildConnectionStore(cfg, quietLogger())
+	store, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger())
 	if err != nil {
-		t.Fatalf("buildConnectionStore: %v", err)
+		t.Fatalf("serverbuildstore.BuildConnectionStore: %v", err)
 	}
 	if store != nil {
 		t.Error("store must be nil when connections disabled")
@@ -62,14 +63,14 @@ func TestBuildConnectionStore_DisabledIsNil(t *testing.T) {
 
 func TestBuildConnectionStore_SQLiteRequiresDSN(t *testing.T) {
 	cfg := &config.Config{Connections: config.ConnectionsConfig{Enabled: true, Backend: "sqlite"}}
-	if _, err := buildConnectionStore(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger()); err == nil {
 		t.Error("sqlite backend without dsn must error")
 	}
 }
 
 func TestBuildConnectionStore_UnknownBackend(t *testing.T) {
 	cfg := &config.Config{Connections: config.ConnectionsConfig{Enabled: true, Backend: "redis"}}
-	if _, err := buildConnectionStore(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger()); err == nil {
 		t.Error("unknown backend must error")
 	}
 }

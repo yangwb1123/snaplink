@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 )
 
@@ -27,9 +28,9 @@ func TestLoadAESGCMKey_RawBytes(t *testing.T) {
 	if err := os.WriteFile(path, key, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	got, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
+	got, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
 	if err != nil {
-		t.Fatalf("loadAESGCMKey: %v", err)
+		t.Fatalf("serverbuildstore.LoadAESGCMKey: %v", err)
 	}
 	if string(got) != string(key) {
 		t.Fatalf("key mismatch")
@@ -44,9 +45,9 @@ func TestLoadAESGCMKey_HexEncoded(t *testing.T) {
 	if err := os.WriteFile(path, []byte(encoded), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	got, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
+	got, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
 	if err != nil {
-		t.Fatalf("loadAESGCMKey: %v", err)
+		t.Fatalf("serverbuildstore.LoadAESGCMKey: %v", err)
 	}
 	if string(got) != string(key) {
 		t.Fatalf("key mismatch (hex)")
@@ -61,9 +62,9 @@ func TestLoadAESGCMKey_Base64Encoded(t *testing.T) {
 	if err := os.WriteFile(path, []byte(encoded), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	got, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
+	got, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
 	if err != nil {
-		t.Fatalf("loadAESGCMKey: %v", err)
+		t.Fatalf("serverbuildstore.LoadAESGCMKey: %v", err)
 	}
 	if string(got) != string(key) {
 		t.Fatalf("key mismatch (base64)")
@@ -72,9 +73,9 @@ func TestLoadAESGCMKey_Base64Encoded(t *testing.T) {
 
 func TestLoadAESGCMKey_InlineKeyHex(t *testing.T) {
 	key := mkAESGCMKey(t)
-	got, err := loadAESGCMKey(config.SnapshotEncryptionConfig{Key: hex.EncodeToString(key)})
+	got, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{Key: hex.EncodeToString(key)})
 	if err != nil {
-		t.Fatalf("loadAESGCMKey: %v", err)
+		t.Fatalf("serverbuildstore.LoadAESGCMKey: %v", err)
 	}
 	if string(got) != string(key) {
 		t.Fatalf("inline key mismatch")
@@ -96,9 +97,9 @@ func TestLoadAESGCMKey_RawKeyEndingInNewlineByte(t *testing.T) {
 		if err := os.WriteFile(path, key, 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
-		got, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
+		got, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
 		if err != nil {
-			t.Fatalf("last=%#x: loadAESGCMKey: %v", last, err)
+			t.Fatalf("last=%#x: serverbuildstore.LoadAESGCMKey: %v", last, err)
 		}
 		if len(got) != 32 || string(got) != string(key) {
 			t.Fatalf("last=%#x: raw key truncated/altered: got %d bytes", last, len(got))
@@ -107,7 +108,7 @@ func TestLoadAESGCMKey_RawKeyEndingInNewlineByte(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_RejectsMissing(t *testing.T) {
-	_, err := loadAESGCMKey(config.SnapshotEncryptionConfig{})
+	_, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{})
 	if err == nil {
 		t.Fatal("want error when neither key nor key_file set")
 	}
@@ -119,14 +120,14 @@ func TestLoadAESGCMKey_RejectsWrongLength(t *testing.T) {
 	if err := os.WriteFile(path, []byte("only-16-bytes-yo"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	_, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
+	_, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: path})
 	if err == nil {
 		t.Fatal("want error on wrong-length key")
 	}
 }
 
 func TestLoadAESGCMKey_RejectsMissingFile(t *testing.T) {
-	_, err := loadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: "/nonexistent/path"})
+	_, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: "/nonexistent/path"})
 	if err == nil {
 		t.Fatal("want error when key_file missing")
 	}

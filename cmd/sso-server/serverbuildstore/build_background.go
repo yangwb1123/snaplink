@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"context"
@@ -23,13 +23,13 @@ import (
 	"github.com/snaplink/sso/interfaces/snapshot"
 )
 
-// buildCIBA wires the CIBA poll-mode subsystem: the request store
+// BuildCIBA wires the CIBA poll-mode subsystem: the request store
 // (memory | sqlite via the migrate framework) + the out-of-band
 // challenge transport. The transport reuses the push primitives
 // (log | webhook); since root sso cannot import defaultimpl, the
 // PushTransport is adapted to oauth.CIBATransport via CIBATransportFunc.
 // Returns the typed sqlite handle (or nil) for /readyz + prune wiring.
-func buildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth.CIBATransport, *sqlitestores.CIBAStore, error) {
+func BuildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth.CIBATransport, *sqlitestores.CIBAStore, error) {
 	var (
 		store       oauth.CIBAStore
 		sqliteStore *sqlitestores.CIBAStore
@@ -60,7 +60,7 @@ func buildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth
 			return nil
 		})
 	case "webhook":
-		t, err := buildPushWebhookTransport(cfg.Webhook)
+		t, err := BuildPushWebhookTransport(cfg.Webhook)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -71,11 +71,11 @@ func buildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth
 	return store, oauth.CIBATransportFunc(pt.Send), sqliteStore, nil
 }
 
-// runCIBAPrune wakes every interval and calls CIBAStore.PruneExpired
+// RunCIBAPrune wakes every interval and calls CIBAStore.PruneExpired
 // to bound the request table. Same shutdown contract as the audit /
 // snapshot / push retention loops: close done on exit, errors logged
 // but never tear down the loop, first prune fires after the interval.
-func runCIBAPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.CIBAStore, interval time.Duration, logger spi.Logger, m *metrics.Metrics) {
+func RunCIBAPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.CIBAStore, interval time.Duration, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -102,15 +102,15 @@ func runCIBAPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores
 	}
 }
 
-// runSnapshotRetention is the background loop cmd launches when
+// RunSnapshotRetention is the background loop cmd launches when
 // snapshot.retention.enabled wires it. Same shutdown contract as
-// runAuditRetention (close done channel on exit). First prune
+// RunAuditRetention (close done channel on exit). First prune
 // fires after the first interval, not immediately.
 //
 // PruneOldest errors don't tear down the loop — a transient
 // storage outage shouldn't suspend retention forever; the loop
 // logs + waits for the next tick.
-func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger spi.Logger, m *metrics.Metrics) {
+func RunSnapshotRetention(ctx context.Context, done chan<- struct{}, storage snapshot.Storage, interval time.Duration, keep int, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -138,7 +138,7 @@ func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage sna
 	}
 }
 
-// runAuditRetention is the background loop cmd launches when
+// RunAuditRetention is the background loop cmd launches when
 // audit.retention.enabled wires it. Wakes every interval (after
 // the first interval — not at start so short-lived deploys don't
 // trigger expensive bulk deletes during boot), calls
@@ -149,7 +149,7 @@ func runSnapshotRetention(ctx context.Context, done chan<- struct{}, storage sna
 //
 // Prune errors are logged but don't stop the loop — a transient
 // SQLite contention shouldn't tear down retention forever.
-func runAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger spi.Logger, m *metrics.Metrics) {
+func RunAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsqlite.Sink, interval, maxAge time.Duration, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

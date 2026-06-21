@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
@@ -45,7 +46,7 @@ type appBuilder struct {
 	clientStore    sso.ClientStore
 	userProvider   sso.UserProvider
 	sessionMgr     sso.SessionManager
-	jwtIssuer      signingIssuer
+	jwtIssuer      serverbuildsign.SigningIssuer
 	signingAlg     string
 	externalSigner crypto.Signer
 	tokenIssuers   map[string]sso.TokenIssuer
@@ -186,7 +187,7 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		pushPruneDone:           b.pushPruneDone,
 		cibaPruneCancel:         b.cibaPruneCancel,
 		cibaPruneDone:           b.cibaPruneDone,
-		pushApprovalStore:       pushApprovalStoreIface(b.pushApprovalStore),
+		pushApprovalStore:       serverbuildsign.PushApprovalStoreIface(b.pushApprovalStore),
 		pushNotify:              b.pushNotify,
 		metrics:                 b.metricsRegistry,
 		netStop:                 b.netStop,

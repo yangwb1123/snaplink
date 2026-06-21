@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 )
 
@@ -21,7 +22,7 @@ func TestSigningKeyRotationConfig(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rc, ok := signingKeyRotationConfig(tc.in)
+			rc, ok := serverbuildplatform.SigningKeyRotationConfig(tc.in)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
 			}

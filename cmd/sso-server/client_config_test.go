@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/sso"
 )
@@ -103,7 +104,7 @@ func TestConvertClientJWKs_PreservesEveryField(t *testing.T) {
 		{Kty: "RSA", Kid: "rsa-1", Use: "sig", Alg: "RS256", N: "MOD", E: "EXP"},
 		{Kty: "OKP", Kid: "ed-1", Use: "sig", Alg: "EdDSA", Crv: "Ed25519", X: "PUB"},
 	}
-	out := convertClientJWKs(in)
+	out := serverbuildstore.ConvertClientJWKs(in)
 	if len(out) != 2 {
 		t.Fatalf("len = %d want 2", len(out))
 	}
@@ -119,10 +120,10 @@ func TestConvertClientJWKs_PreservesEveryField(t *testing.T) {
 }
 
 func TestConvertClientJWKs_EmptyReturnsNil(t *testing.T) {
-	if got := convertClientJWKs(nil); got != nil {
+	if got := serverbuildstore.ConvertClientJWKs(nil); got != nil {
 		t.Fatalf("nil input: got %v want nil", got)
 	}
-	if got := convertClientJWKs([]config.ClientJWK{}); got != nil {
+	if got := serverbuildstore.ConvertClientJWKs([]config.ClientJWK{}); got != nil {
 		t.Fatalf("empty input: got %v want nil", got)
 	}
 }

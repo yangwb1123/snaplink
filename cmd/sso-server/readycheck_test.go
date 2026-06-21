@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -21,7 +22,7 @@ import (
 // than register a check that would always fail.
 func TestAppendReadyCheck_MemoryNoOps(t *testing.T) {
 	memStore := struct{}{}
-	opts := appendReadyCheck(nil, "noop", memStore)
+	opts := serverbuildsign.AppendReadyCheck(nil, "noop", memStore)
 	if len(opts) != 0 {
 		t.Fatalf("memory candidate added %d opts; want 0", len(opts))
 	}
@@ -35,7 +36,7 @@ func TestAppendReadyCheck_SQLitePings(t *testing.T) {
 		called = true
 		return nil
 	}}
-	opts := appendReadyCheck(nil, "sqlite-stub", candidate)
+	opts := serverbuildsign.AppendReadyCheck(nil, "sqlite-stub", candidate)
 	if len(opts) != 1 {
 		t.Fatalf("Pinger candidate added %d opts; want 1", len(opts))
 	}
@@ -140,7 +141,7 @@ func (p pingerStub) Ping(ctx context.Context) error {
 
 // pingerLimiter is a ratelimit.Limiter that also implements Ping —
 // mirrors the shape of *ratelimit.SQLiteLimiter so tests for the
-// appendRateLimitReadyChecks wiring don't need a real SQLite DSN.
+// serverbuildsign.AppendRateLimitReadyChecks wiring don't need a real SQLite DSN.
 type pingerLimiter struct{ pingerStub }
 
 func (p pingerLimiter) Allow(_ string) (bool, time.Duration) { return true, 0 }
@@ -160,8 +161,8 @@ func TestSanitizeReadyCheckSuffix_Paths(t *testing.T) {
 		{"FOO/bar", "FOO-bar"},
 	}
 	for _, c := range cases {
-		if got := sanitizeReadyCheckSuffix(c.in); got != c.want {
-			t.Errorf("sanitizeReadyCheckSuffix(%q) = %q; want %q", c.in, got, c.want)
+		if got := serverbuildsign.SanitizeReadyCheckSuffix(c.in); got != c.want {
+			t.Errorf("serverbuildsign.SanitizeReadyCheckSuffix(%q) = %q; want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -181,9 +182,9 @@ func TestAppendRateLimitReadyChecks_MixedBackends(t *testing.T) {
 			{Prefix: "/token/revoke", Limiter: pingerLimiter{pingerStub: pingerStub{fn: okPing}}},
 		},
 	}
-	opts := appendRateLimitReadyChecks(nil, policy)
+	opts := serverbuildsign.AppendRateLimitReadyChecks(nil, policy)
 	if got, want := len(opts), 3; got != want {
-		t.Fatalf("appendRateLimitReadyChecks returned %d opts; want %d (default + /token + /token/revoke)", got, want)
+		t.Fatalf("serverbuildsign.AppendRateLimitReadyChecks returned %d opts; want %d (default + /token + /token/revoke)", got, want)
 	}
 
 	srv := sso.NewServer(opts...)
@@ -217,7 +218,7 @@ func TestAppendRateLimitReadyChecks_MixedBackends(t *testing.T) {
 // guards against a startup regression that would register a stray
 // failing check for an unwired rate limiter.
 func TestAppendRateLimitReadyChecks_EmptyPolicy(t *testing.T) {
-	opts := appendRateLimitReadyChecks(nil, ratelimit.Policy{})
+	opts := serverbuildsign.AppendRateLimitReadyChecks(nil, ratelimit.Policy{})
 	if len(opts) != 0 {
 		t.Fatalf("empty policy produced %d opts; want 0", len(opts))
 	}

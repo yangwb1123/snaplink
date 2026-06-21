@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -16,7 +18,7 @@ import (
 // per-tenant token-strategy bindings, and the usage-metering aggregator.
 func (b *appBuilder) wireTenant() error {
 	cfg, logger := b.cfg, b.logger
-	tenantStore, err := buildTenantStore(cfg, logger)
+	tenantStore, err := serverbuildstore.BuildTenantStore(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("tenant store: %w", err)
 	}
@@ -26,10 +28,10 @@ func (b *appBuilder) wireTenant() error {
 	}
 	b.opts = append(b.opts, sso.WithTenantStore(tenantStore))
 	// SQLite-backed tenant store implements Ping → /readyz. Memory-backed
-	// silently no-ops (Ping isn't on the interface; appendReadyCheck only
+	// silently no-ops (Ping isn't on the interface; serverbuildsign.AppendReadyCheck only
 	// registers when the concrete type satisfies it).
-	b.opts = appendReadyCheck(b.opts, "sqlite-tenant", tenantStore)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-tenant", tenantStore)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-tenant", tenantStore)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-tenant", tenantStore)
 	if cfg.Tenant.LookupTimeout > 0 || cfg.Tenant.IncludeSuspended {
 		b.opts = append(b.opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
 			Timeout:          cfg.Tenant.LookupTimeout,
@@ -44,7 +46,7 @@ func (b *appBuilder) wireTenant() error {
 	}
 	// Per-tenant usage metering report (sso.WithTenantUsageAggregator →
 	// GET /api/v1/admin/tenants/:id/usage). Reads the audit_events table.
-	agg, err := buildTenantUsageAggregator(cfg.Tenant.UsageMetering)
+	agg, err := serverbuildstore.BuildTenantUsageAggregator(cfg.Tenant.UsageMetering)
 	if err != nil {
 		return fmt.Errorf("tenant usage metering: %w", err)
 	}
@@ -81,7 +83,7 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 	// B2B enterprise connections + home-realm discovery (sso.WithConnectionStore
 	// → /auth/home-realm). Seeded from config; nil when disabled so the endpoint
 	// is not mounted (byte-identical).
-	connectionStore, err := buildConnectionStore(cfg, b.logger)
+	connectionStore, err := serverbuildstore.BuildConnectionStore(cfg, b.logger)
 	if err != nil {
 		return fmt.Errorf("connection store: %w", err)
 	}
@@ -89,9 +91,9 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 	if connectionStore != nil {
 		b.opts = append(b.opts, sso.WithConnectionStore(connectionStore))
 		// SQLite-backed connections store implements Ping → /readyz; memory
-		// silently no-ops (appendReadyCheck only registers satisfying types).
-		b.opts = appendReadyCheck(b.opts, "sqlite-connections", connectionStore)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-connections", connectionStore)
+		// silently no-ops (serverbuildsign.AppendReadyCheck only registers satisfying types).
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-connections", connectionStore)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-connections", connectionStore)
 	}
 	// Opt-in per-login ClientStore metadata cache (identity.client_cache).
 	// TTL 0 falls back to sso.DefaultClientStoreCacheTTL inside the SDK.
@@ -119,7 +121,7 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 func (b *appBuilder) wireDPoP() error {
 	cfg := b.cfg
 	if cfg.Security.DPoPNonce.Enabled {
-		provider, err := buildDPoPNonceProvider(cfg.Security.DPoPNonce, b.logger)
+		provider, err := serverbuildstore.BuildDPoPNonceProvider(cfg.Security.DPoPNonce, b.logger)
 		if err != nil {
 			return fmt.Errorf("dpop nonce provider: %w", err)
 		}
@@ -142,16 +144,16 @@ func (b *appBuilder) wireDPoP() error {
 func (b *appBuilder) wireOAuthGrantStores() error {
 	cfg := b.cfg
 	if cfg.OAuth.AuthCode.Enabled {
-		store, err := buildAuthCodeStore(cfg.OAuth)
+		store, err := serverbuildstore.BuildAuthCodeStore(cfg.OAuth)
 		if err != nil {
 			return fmt.Errorf("oauth.auth_code: %w", err)
 		}
-		if err := checkSQLiteSchema(b.schemaCtx, store, "auth_codes", sqlitestores.AuthCodesMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "auth_codes", sqlitestores.AuthCodesMaxVersion()); err != nil {
 			return fmt.Errorf("schema check auth_codes: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithAuthCodeStore(store, cfg.OAuth.AuthCode.TTL))
-		b.opts = appendReadyCheck(b.opts, "sqlite-oauth-auth-codes", store)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-auth-codes", store)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-auth-codes", store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-auth-codes", store)
 	}
 	if err := b.wireRefreshToken(); err != nil {
 		return err
@@ -194,16 +196,16 @@ func (b *appBuilder) wireRefreshToken() error {
 	if !cfg.OAuth.RefreshToken.Enabled {
 		return nil
 	}
-	store, err := buildRefreshTokenStore(cfg.OAuth)
+	store, err := serverbuildstore.BuildRefreshTokenStore(cfg.OAuth)
 	if err != nil {
 		return fmt.Errorf("oauth.refresh_token: %w", err)
 	}
-	if err := checkSQLiteSchema(b.schemaCtx, store, "refresh_tokens", sqlitestores.RefreshTokensMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "refresh_tokens", sqlitestores.RefreshTokensMaxVersion()); err != nil {
 		return fmt.Errorf("schema check refresh_tokens: %w", err)
 	}
 	b.opts = append(b.opts, sso.WithRefreshTokenStore(store, cfg.OAuth.RefreshToken.TTL))
-	b.opts = appendReadyCheck(b.opts, "sqlite-oauth-refresh-tokens", store)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-refresh-tokens", store)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-refresh-tokens", store)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-refresh-tokens", store)
 	b.refreshTokenStore = store
 	b.refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
 	// Opt-in refresh-rotation grace window: a concurrent double-submit of
@@ -221,11 +223,11 @@ func (b *appBuilder) wireRefreshToken() error {
 func (b *appBuilder) wireDeviceCodePAR() error {
 	cfg := b.cfg
 	if cfg.OAuth.DeviceCode.Enabled {
-		store, err := buildDeviceCodeStore(cfg.OAuth)
+		store, err := serverbuildstore.BuildDeviceCodeStore(cfg.OAuth)
 		if err != nil {
 			return fmt.Errorf("oauth.device_code: %w", err)
 		}
-		if err := checkSQLiteSchema(b.schemaCtx, store, "device_codes", sqlitestores.DeviceCodesMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "device_codes", sqlitestores.DeviceCodesMaxVersion()); err != nil {
 			return fmt.Errorf("schema check device_codes: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithDeviceCodeStore(
@@ -234,20 +236,20 @@ func (b *appBuilder) wireDeviceCodePAR() error {
 			cfg.OAuth.DeviceCode.PollInterval,
 			cfg.OAuth.DeviceCode.VerificationBaseURL,
 		))
-		b.opts = appendReadyCheck(b.opts, "sqlite-oauth-device-codes", store)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-device-codes", store)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-device-codes", store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-device-codes", store)
 	}
 	if cfg.OAuth.PAR.Enabled {
-		store, err := buildPARStore(cfg.OAuth)
+		store, err := serverbuildstore.BuildPARStore(cfg.OAuth)
 		if err != nil {
 			return fmt.Errorf("par store: %w", err)
 		}
-		if err := checkSQLiteSchema(b.schemaCtx, store, "par", sqlitestores.PARMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "par", sqlitestores.PARMaxVersion()); err != nil {
 			return fmt.Errorf("schema check par: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithPARStore(store, cfg.OAuth.PAR.TTL))
-		b.opts = appendReadyCheck(b.opts, "sqlite-oauth-par", store)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-par", store)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-oauth-par", store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-par", store)
 	}
 	return nil
 }
@@ -258,23 +260,23 @@ func (b *appBuilder) wireCIBA() error {
 	if !cfg.CIBA.Enabled {
 		return nil
 	}
-	store, transport, sqliteStore, err := buildCIBA(cfg.CIBA, logger)
+	store, transport, sqliteStore, err := serverbuildstore.BuildCIBA(cfg.CIBA, logger)
 	if err != nil {
 		return fmt.Errorf("ciba: %w", err)
 	}
 	b.opts = append(b.opts, sso.WithCIBA(store, transport, cfg.CIBA.RequestTTL, cfg.CIBA.Interval))
 	if sqliteStore != nil {
-		if err := checkSQLiteSchema(b.schemaCtx, sqliteStore, "ciba_requests", sqlitestores.CIBARequestsMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, sqliteStore, "ciba_requests", sqlitestores.CIBARequestsMaxVersion()); err != nil {
 			return fmt.Errorf("schema check ciba_requests: %w", err)
 		}
-		b.opts = appendReadyCheck(b.opts, "sqlite-ciba", sqliteStore)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-ciba", sqliteStore)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-ciba", sqliteStore)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-ciba", sqliteStore)
 		if pi := cfg.CIBA.PruneInterval; pi > 0 {
 			pruneCtx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
 			b.cibaPruneCancel = cancel
 			b.cibaPruneDone = done
-			go runCIBAPrune(pruneCtx, done, sqliteStore, pi, logger, b.metricsRegistry)
+			go serverbuildstore.RunCIBAPrune(pruneCtx, done, sqliteStore, pi, logger, b.metricsRegistry)
 			logger.Info("ciba: prune scheduler enabled", "interval", pi)
 		}
 	}

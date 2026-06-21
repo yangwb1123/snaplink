@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 )
@@ -16,7 +17,7 @@ import (
 // §3.1.2 federation-resolved trust-mark issuer path (slice 4c): the opt-in flag
 // must have a root of trust (a configured anchor), and a required type must have
 // SOME authorized-issuer source (configured issuers OR the resolved path).
-// buildFederationConfig is package-private; this test is package main.
+// serverbuildplatform.BuildFederationConfig is package-private; this test is package main.
 
 // writeAnchorJWKSFile writes a minimal valid single-key JWKS document (a real
 // Ed25519 public key) to a temp file and returns its path — enough for the
@@ -48,9 +49,9 @@ func TestBuildFederationConfig_ResolvedFlagWithoutAnchors_BootError(t *testing.T
 		AllowFederationResolvedTrustMarkIssuers: true,
 		// No TrustAnchors.
 	}
-	_, err := buildFederationConfig(cfg)
+	_, err := serverbuildplatform.BuildFederationConfig(cfg)
 	if err == nil {
-		t.Fatal("buildFederationConfig(flag on, no anchors) = nil, want a boot error")
+		t.Fatal("serverbuildplatform.BuildFederationConfig(flag on, no anchors) = nil, want a boot error")
 	}
 	if !strings.Contains(err.Error(), "trust_anchors") {
 		t.Errorf("error = %q, want it to name the missing trust_anchors", err)
@@ -65,9 +66,9 @@ func TestBuildFederationConfig_RequiredTypeNoIssuerSource_BootError(t *testing.T
 		AllowFederationResolvedTrustMarkIssuers: false,
 		// No TrustMarkIssuers, flag off.
 	}
-	_, err := buildFederationConfig(cfg)
+	_, err := serverbuildplatform.BuildFederationConfig(cfg)
 	if err == nil {
-		t.Fatal("buildFederationConfig(required type, no issuer source) = nil, want a boot error")
+		t.Fatal("serverbuildplatform.BuildFederationConfig(required type, no issuer source) = nil, want a boot error")
 	}
 	if !strings.Contains(err.Error(), "trust_mark_issuers") {
 		t.Errorf("error = %q, want it to name trust_mark_issuers", err)
@@ -87,9 +88,9 @@ func TestBuildFederationConfig_ResolvedFlagSatisfiesIssuerSource_OK(t *testing.T
 		AllowFederationResolvedTrustMarkIssuers: true,
 		// No TrustMarkIssuers — the resolved path is the only source, and it's on.
 	}
-	out, err := buildFederationConfig(cfg)
+	out, err := serverbuildplatform.BuildFederationConfig(cfg)
 	if err != nil {
-		t.Fatalf("buildFederationConfig(resolved flag + anchor, no configured issuers) = %v, want ok", err)
+		t.Fatalf("serverbuildplatform.BuildFederationConfig(resolved flag + anchor, no configured issuers) = %v, want ok", err)
 	}
 	if !out.AllowFederationResolvedTrustMarkIssuers {
 		t.Error("AllowFederationResolvedTrustMarkIssuers not propagated to the SDK config")

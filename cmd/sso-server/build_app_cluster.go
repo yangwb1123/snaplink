@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverassets"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -58,19 +61,19 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 	// Service registry built before NewServer so its etcd Ping can participate
 	// in /readyz alongside the SQLite peers. Self-registration happens later
 	// (needs cfg.Server.Listen resolved).
-	reg, regKind, err := buildRegistry(&cfg.Registry, logger)
+	reg, regKind, err := serverbuildplatform.BuildRegistry(&cfg.Registry, logger)
 	if err != nil {
 		return nil, fmt.Errorf("service registry: %w", err)
 	}
 	cw.reg = reg
 	cw.regKind = regKind
 	if regKind == "etcd" {
-		b.opts = appendReadyCheck(b.opts, "etcd-registry", reg)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "etcd-registry", reg)
 	}
 
 	// Cross-replica invalidation bus built before NewServer so the option is in
 	// place; the subscriber is started just after (needs the Server).
-	invalidationBus, _, err := buildInvalidationBus(&cfg.Cluster.Bus, logger)
+	invalidationBus, _, err := serverbuildplatform.BuildInvalidationBus(&cfg.Cluster.Bus, logger)
 	if err != nil {
 		return nil, fmt.Errorf("invalidation bus: %w", err)
 	}
@@ -80,7 +83,7 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 	// Shared signing-key registry (opt-in leaderless multi-replica JWKS
 	// aggregation). Built before NewServer so the option is in place; the
 	// publish/subscribe loop starts just after (needs the Server).
-	signingKeyRegistry, _, err := buildSigningKeyRegistry(&cfg.Keys.SigningKeyRegistry, logger)
+	signingKeyRegistry, _, err := serverbuildplatform.BuildSigningKeyRegistry(&cfg.Keys.SigningKeyRegistry, logger)
 	if err != nil {
 		return nil, fmt.Errorf("signing key registry: %w", err)
 	}
@@ -139,7 +142,7 @@ func (b *appBuilder) wireSigningKeyRegistryOpts(signingKeyRegistry signingkeys.R
 	// registry uses, so two replicas of one issuer announce distinct ids.
 	replicaID := strings.TrimSpace(cfg.Keys.SigningKeyRegistry.ReplicaID)
 	if replicaID == "" {
-		replicaID = resolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer)
+		replicaID = serverbuildplatform.ResolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer)
 	}
 	b.opts = append(b.opts,
 		sso.WithSharedSigningKeyRegistry(signingKeyRegistry),
@@ -192,7 +195,7 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 	cfg, logger := b.cfg, b.logger
 	// Self-service consent store. Opt-in: enabling it turns ON the consent gate
 	// at /auth/login and mounts /consents/me.
-	consentStore, err := buildConsentStore(cfg.SelfService.Consent)
+	consentStore, err := serverbuildstore.BuildConsentStore(cfg.SelfService.Consent)
 	if err != nil {
 		return fmt.Errorf("self_service consent store: %w", err)
 	}
@@ -202,7 +205,7 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 	}
 
 	// OpenID Connect Native SSO 1.0 device_secret store. Opt-in.
-	deviceSecretStore, err := buildDeviceSecretStore(cfg.NativeSSO)
+	deviceSecretStore, err := serverbuildstore.BuildDeviceSecretStore(cfg.NativeSSO)
 	if err != nil {
 		return fmt.Errorf("native_sso device secret store: %w", err)
 	}
@@ -262,7 +265,7 @@ func (b *appBuilder) startBackgroundWorkers(srv *sso.Server, cw *clusterWiring) 
 // has no scheduled-rotation support.
 func (b *appBuilder) startKeyRotation(srv *sso.Server) (<-chan struct{}, context.CancelFunc) {
 	cfg, logger := b.cfg, b.logger
-	rc, ok := signingKeyRotationConfig(cfg.Keys.Rotation)
+	rc, ok := serverbuildplatform.SigningKeyRotationConfig(cfg.Keys.Rotation)
 	if ok && strings.TrimSpace(cfg.Keys.Signing.External) != "" {
 		// An external signer owns its key lifecycle in the KMS/HSM; in-process
 		// RotateKey would mint a key the backend never sees.
@@ -330,7 +333,7 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 	cfg, logger := b.cfg, b.logger
 	srw := &snapshotReleaseWiring{}
 
-	pipeline, snapStorage, err := buildSnapshotSubsystem(cfg, logger)
+	pipeline, snapStorage, err := serverbuildstore.BuildSnapshotSubsystem(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot subsystem: %w", err)
 	}
@@ -340,7 +343,7 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 		b.buildSnapshotterRestorer(srw)
 	}
 
-	releaseRegistry, releaseStore, err := buildReleaseSubsystem(cfg, logger)
+	releaseRegistry, releaseStore, err := serverbuildplatform.BuildReleaseSubsystem(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("release subsystem: %w", err)
 	}
@@ -355,10 +358,10 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 	// receives a fully-formed adapter with the runtime restorer/pipeline in
 	// scope.
 	if releaseRegistry != nil && pipeline != nil && cfg.Releases.SnapshotIntegration {
-		releaseRegistry.SnapshotRestorer = &snapshotRestorerAdapter{
-			pipeline: pipeline,
-			storage:  snapStorage,
-			restorer: srw.restorer,
+		releaseRegistry.SnapshotRestorer = &serverbuildstore.SnapshotRestorerAdapter{
+			Pipeline: pipeline,
+			Storage:  snapStorage,
+			Restorer: srw.restorer,
 		}
 		logger.Info("release rollback wired with snapshot restore")
 	}
@@ -411,7 +414,7 @@ func (b *appBuilder) startSnapshotRetention(srw *snapshotReleaseWiring) error {
 	done := make(chan struct{})
 	srw.retentionCancel = cancel
 	srw.retentionDone = done
-	go runSnapshotRetention(retentionCtx, done, srw.storage, interval, rc.Keep, b.logger, b.metricsRegistry)
+	go serverbuildstore.RunSnapshotRetention(retentionCtx, done, srw.storage, interval, rc.Keep, b.logger, b.metricsRegistry)
 	b.logger.Info("snapshot: retention scheduler enabled",
 		"keep", rc.Keep, "interval", interval)
 	return nil
@@ -441,7 +444,7 @@ func (b *appBuilder) registerService(cw *clusterWiring) error {
 		ttl = 30 * time.Second
 	}
 	if err := cw.reg.Register(context.Background(), &registry.Service{
-		ID:      resolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer),
+		ID:      serverbuildplatform.ResolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer),
 		Name:    "sso",
 		Address: addr,
 		Tags:    tags,

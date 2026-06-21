@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
@@ -298,12 +299,12 @@ func TestPushCallback_NotifyFiresOnSuccess(t *testing.T) {
 }
 
 // TestBuildMFA_PushChannelNotifySurfacesNotifier proves the channel_notify
-// toggle controls whether buildMFA returns a live wakeup func: present
+// toggle controls whether serverbuildstore.BuildMFA returns a live wakeup func: present
 // when true, nil when false (so the callback wiring degrades to poll).
 func TestBuildMFA_PushChannelNotifySurfacesNotifier(t *testing.T) {
 	mk := func(channelNotify bool) func(string) {
 		t.Helper()
-		_, _, _, _, _, notify, err := buildMFA(config.MFAConfig{
+		_, _, _, _, _, notify, err := serverbuildstore.BuildMFA(config.MFAConfig{
 			Enabled: true,
 			Provider: config.MFAProviderConfig{
 				Kind: "push",
@@ -316,7 +317,7 @@ func TestBuildMFA_PushChannelNotifySurfacesNotifier(t *testing.T) {
 			Challenge: config.MFAChallengeConfig{Backend: "memory", TTL: time.Minute},
 		}, nil, nil, quietLogger())
 		if err != nil {
-			t.Fatalf("buildMFA(channel_notify=%v): %v", channelNotify, err)
+			t.Fatalf("serverbuildstore.BuildMFA(channel_notify=%v): %v", channelNotify, err)
 		}
 		return notify
 	}

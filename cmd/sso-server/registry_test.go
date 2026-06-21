@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 )
 
@@ -14,7 +15,7 @@ import (
 func TestBuildRegistry_MemoryDefault(t *testing.T) {
 	for _, name := range []string{"", "memory"} {
 		t.Run("backend="+name, func(t *testing.T) {
-			reg, kind, err := buildRegistry(&config.RegistryConfig{Backend: name}, quietLogger())
+			reg, kind, err := serverbuildplatform.BuildRegistry(&config.RegistryConfig{Backend: name}, quietLogger())
 			if err != nil {
 				t.Fatalf("err = %v", err)
 			}
@@ -28,10 +29,10 @@ func TestBuildRegistry_MemoryDefault(t *testing.T) {
 
 // TestBuildRegistry_EtcdRequiresEndpoints proves the etcd path
 // surfaces a clear operator-facing error instead of dialing with
-// no endpoints — same contract buildNetworkStore enforces.
+// no endpoints — same contract serverbuildstore.BuildNetworkStore enforces.
 func TestBuildRegistry_EtcdRequiresEndpoints(t *testing.T) {
 	cfg := &config.RegistryConfig{Backend: "etcd"}
-	_, _, err := buildRegistry(cfg, quietLogger())
+	_, _, err := serverbuildplatform.BuildRegistry(cfg, quietLogger())
 	if err == nil {
 		t.Fatal("expected error when etcd_endpoints is empty")
 	}
@@ -44,7 +45,7 @@ func TestBuildRegistry_EtcdRequiresEndpoints(t *testing.T) {
 // boundary — typos in YAML must fail fast.
 func TestBuildRegistry_UnknownBackendErrors(t *testing.T) {
 	cfg := &config.RegistryConfig{Backend: "mythical"}
-	if _, _, err := buildRegistry(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildplatform.BuildRegistry(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
@@ -53,12 +54,12 @@ func TestBuildRegistry_UnknownBackendErrors(t *testing.T) {
 // short-circuits hostname lookup — operators with strict naming
 // schemes (e.g. k8s pod name templating) need that override path.
 func TestResolveServiceID_ExplicitWins(t *testing.T) {
-	if got := resolveServiceID("pod-7", "sso"); got != "pod-7" {
-		t.Errorf("resolveServiceID(explicit) = %q; want pod-7", got)
+	if got := serverbuildplatform.ResolveServiceID("pod-7", "sso"); got != "pod-7" {
+		t.Errorf("serverbuildplatform.ResolveServiceID(explicit) = %q; want pod-7", got)
 	}
 	// Whitespace-only is treated as empty (matches the
 	// strings.TrimSpace gate).
-	got := resolveServiceID("   ", "sso")
+	got := serverbuildplatform.ResolveServiceID("   ", "sso")
 	if got == "   " {
 		t.Errorf("whitespace explicit not trimmed: %q", got)
 	}
@@ -78,7 +79,7 @@ func TestResolveServiceID_DerivesFromHostname(t *testing.T) {
 		short = short[:idx]
 	}
 	want := "sso-" + short
-	if got := resolveServiceID("", "sso"); got != want {
-		t.Errorf("resolveServiceID(default) = %q; want %q", got, want)
+	if got := serverbuildplatform.ResolveServiceID("", "sso"); got != want {
+		t.Errorf("serverbuildplatform.ResolveServiceID(default) = %q; want %q", got, want)
 	}
 }

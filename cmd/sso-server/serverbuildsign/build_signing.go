@@ -1,4 +1,4 @@
-package main
+package serverbuildsign
 
 import (
 	"context"
@@ -24,12 +24,12 @@ import (
 
 // buildApp wires every SDK component the config asks for and returns them
 // as a bundle so HTTP and gRPC entrypoints can share instances.
-// signingIssuer is the interface set cmd needs from the JWT signing
+// SigningIssuer is the interface set cmd needs from the JWT signing
 // issuer — satisfied by both *defaultimpl.Ed25519JWTIssuer and
 // *defaultimpl.ECDSAJWTIssuer. The EdDSA-specific scheduled rotation
 // loop is reached via a separate type assertion (ECDSA has no
 // StartRotation today).
-type signingIssuer interface {
+type SigningIssuer interface {
 	sso.TokenIssuer
 	oidc.IDTokenIssuer
 	sso.LogoutTokenIssuer
@@ -39,7 +39,7 @@ type signingIssuer interface {
 	caep.JWTSigner
 }
 
-// buildSigningIssuer constructs the JWT signing issuer for the configured
+// BuildSigningIssuer constructs the JWT signing issuer for the configured
 // algorithm, optionally backed by an external KMS/HSM signer registered
 // via RegisterExternalSigner. It returns the issuer, its canonical alg
 // name (for logging + rotation gating), and any wiring error. An external
@@ -47,15 +47,15 @@ type signingIssuer interface {
 // a mismatched key shape fails closed here at startup.
 //
 // The third return value is the instrumented external signer (nil for the
-// in-process key path) — the caller hands it to appendReadyCheck so a
+// in-process key path) — the caller hands it to AppendReadyCheck so a
 // wedged KMS/HSM trips /readyz.
-func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *metrics.Metrics, logger spi.Logger) (signingIssuer, string, crypto.Signer, error) {
+func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *metrics.Metrics, logger spi.Logger) (SigningIssuer, string, crypto.Signer, error) {
 	extSigner, extKID, err := resolveExternalSigner(sc, m, logger)
 	if err != nil {
 		return nil, "", nil, err
 	}
 
-	revStore, err := buildRevocationStore(sc)
+	revStore, err := BuildRevocationStore(sc)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -72,12 +72,12 @@ func buildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 	}
 }
 
-// buildRevocationStore constructs the optional durable RevocationStore from
+// BuildRevocationStore constructs the optional durable RevocationStore from
 // keys.signing.revocation_backend so access-token revocations survive a
 // restart (defaultimpl.RevocationStore). "" = nil (in-process only). The
 // sqlite store's *sql.DB lives for the process lifetime like the signing
 // issuer it backs (no /readyz ping wired yet — a follow-on).
-func buildRevocationStore(sc config.SigningConfig) (defaultimpl.RevocationStore, error) {
+func BuildRevocationStore(sc config.SigningConfig) (defaultimpl.RevocationStore, error) {
 	switch strings.ToLower(strings.TrimSpace(sc.RevocationBackend)) {
 	case "":
 		return nil, nil
@@ -109,18 +109,18 @@ func seedRevocations(iss interface {
 	return iss.SeedRevocations(context.Background())
 }
 
-// pushApprovalStoreIface adapts the sqlite-typed handle into the
+// PushApprovalStoreIface adapts the sqlite-typed handle into the
 // defaultimpl interface — nil handle in → nil interface out so the
 // callback wiring's nil-check works (a typed-nil-in-interface
 // would slip past it).
-func pushApprovalStoreIface(s *sqlitestores.PushApprovalStore) defaultimpl.PushApprovalStore {
+func PushApprovalStoreIface(s *sqlitestores.PushApprovalStore) defaultimpl.PushApprovalStore {
 	if s == nil {
 		return nil
 	}
 	return s
 }
 
-// runPushApprovalPrune wakes every interval and calls
+// RunPushApprovalPrune wakes every interval and calls
 // PushApprovalStore.PruneExpired to bound the table size.
 // Operators wanting bounded push-approval growth across an
 // indefinite deployment lifetime wire this through
@@ -130,7 +130,7 @@ func pushApprovalStoreIface(s *sqlitestores.PushApprovalStore) defaultimpl.PushA
 // Same shutdown contract as the audit / snapshot retention loops:
 // close done on exit; Prune errors logged but don't tear down the
 // loop. First prune fires after the first interval, not immediately.
-func runPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger spi.Logger, m *metrics.Metrics) {
+func RunPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores.PushApprovalStore, interval time.Duration, logger spi.Logger, m *metrics.Metrics) {
 	defer close(done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

@@ -157,7 +157,7 @@ func fullFeatureConfig(t *testing.T) *config.Config {
 
 	// NOTE: cluster.bus is intentionally left off — its subscriber goroutine
 	// is owned by the Server's lifecycle (not the cmd app), so a test can't
-	// cleanly join it. buildInvalidationBus has dedicated coverage in
+	// cleanly join it. serverbuildplatform.BuildInvalidationBus has dedicated coverage in
 	// cluster_bus_test.go.
 
 	cfg.Geo.Enabled = true
@@ -192,7 +192,7 @@ func fullFeatureConfig(t *testing.T) *config.Config {
 	cfg.BackchannelLogout.Enabled = true
 	cfg.BackchannelLogout.Index.Backend = "memory"
 
-	// CIBA on sqlite (+ prune loop + ping notifier) — exercises buildCIBA,
+	// CIBA on sqlite (+ prune loop + ping notifier) — exercises serverbuildstore.BuildCIBA,
 	// the sqlite readycheck/schema branch, the prune scheduler, and the
 	// ping-mode wiring. shutdownApp cancels the prune loop.
 	cfg.CIBA.Enabled = true
@@ -257,7 +257,7 @@ func fullFeatureConfig(t *testing.T) *config.Config {
 	}}
 
 	// OpenID Federation 1.0 entity config — signed by the JWT issuer, no
-	// extra trust setup. Exercises buildFederationConfig via buildApp.
+	// extra trust setup. Exercises serverbuildplatform.BuildFederationConfig via buildApp.
 	cfg.Federation.Enabled = true
 	cfg.Federation.OrganizationName = "Kitchen Sink Org"
 

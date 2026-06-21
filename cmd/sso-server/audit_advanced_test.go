@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/platform/audit"
 )
@@ -88,7 +89,7 @@ func TestResolvePIISalt_EmptyFileIsError(t *testing.T) {
 	if err := os.WriteFile(saltPath, []byte(""), 0o600); err != nil {
 		t.Fatalf("write empty: %v", err)
 	}
-	_, err := resolvePIISalt(config.AuditPIIRedactionConfig{Enabled: true, SaltFile: saltPath})
+	_, err := serverbuildstore.ResolvePIISalt(config.AuditPIIRedactionConfig{Enabled: true, SaltFile: saltPath})
 	if err == nil {
 		t.Fatal("expected error for empty salt file")
 	}

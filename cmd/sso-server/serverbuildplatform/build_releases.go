@@ -1,4 +1,4 @@
-package main
+package serverbuildplatform
 
 import (
 	"errors"
@@ -22,7 +22,7 @@ import (
 	releasememory "github.com/snaplink/sso/platform/releases/storememory"
 )
 
-func buildReleaseSubsystem(cfg *config.Config, logger spi.Logger) (*releases.Registry, releases.ReleaseStore, error) {
+func BuildReleaseSubsystem(cfg *config.Config, logger spi.Logger) (*releases.Registry, releases.ReleaseStore, error) {
 	if !cfg.Releases.Enabled {
 		return nil, nil, nil
 	}

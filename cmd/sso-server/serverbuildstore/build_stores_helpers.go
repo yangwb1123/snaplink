@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"context"
@@ -92,7 +92,7 @@ func buildPushTransport(cfg config.MFAPushConfig, logger spi.Logger) (defaultimp
 			return nil
 		}), nil
 	case "webhook":
-		return buildPushWebhookTransport(cfg.Webhook)
+		return BuildPushWebhookTransport(cfg.Webhook)
 	default:
 		return nil, fmt.Errorf("unknown mfa.provider.push.transport %q (supported: log, webhook)", transport)
 	}
@@ -138,7 +138,7 @@ func buildSnapshotStorage(cfg config.SnapshotStorageConfig, logger spi.Logger) (
 
 // buildSnapshotSealer selects the snapshot Sealer (none, passphrase, or
 // aes-gcm). passphrase reads its secret inline or from a file; aes-gcm resolves
-// the 32-byte key via loadAESGCMKey.
+// the 32-byte key via LoadAESGCMKey.
 func buildSnapshotSealer(cfg config.SnapshotEncryptionConfig, logger spi.Logger) (snapshot.Sealer, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "none":
@@ -158,7 +158,7 @@ func buildSnapshotSealer(cfg config.SnapshotEncryptionConfig, logger spi.Logger)
 		logger.Info("snapshot encryption: passphrase (argon2id+chacha20poly1305)")
 		return encryptionpass.NewFromString(pass), nil
 	case "aes-gcm", "aes-256-gcm":
-		key, err := loadAESGCMKey(cfg)
+		key, err := LoadAESGCMKey(cfg)
 		if err != nil {
 			return nil, err
 		}

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 )
 
@@ -10,7 +11,7 @@ import (
 // silent no-op when risk.enabled is false so cmd doesn't pay the
 // scorer cost on every /auth/login.
 func TestBuildRiskScorer_DisabledReturnsNil(t *testing.T) {
-	scorer, err := buildRiskScorer(&config.RiskConfig{Enabled: false}, quietLogger())
+	scorer, err := serverbuildplatform.BuildRiskScorer(&config.RiskConfig{Enabled: false}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -24,7 +25,7 @@ func TestBuildRiskScorer_DisabledReturnsNil(t *testing.T) {
 // rules (a single deny-list entry) actually apply.
 func TestBuildRiskScorer_EnabledReturnsScorer(t *testing.T) {
 	cfg := &config.RiskConfig{Enabled: true, IPDenyList: []string{"203.0.113.5"}}
-	scorer, err := buildRiskScorer(cfg, quietLogger())
+	scorer, err := serverbuildplatform.BuildRiskScorer(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -39,7 +40,7 @@ func TestBuildRiskScorer_EnabledReturnsScorer(t *testing.T) {
 // shipping with a permissive scorer.
 func TestBuildRiskScorer_BadCIDRSurfaces(t *testing.T) {
 	cfg := &config.RiskConfig{Enabled: true, IPDenyList: []string{"not-an-ip"}}
-	if _, err := buildRiskScorer(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildplatform.BuildRiskScorer(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error on malformed CIDR")
 	}
 }

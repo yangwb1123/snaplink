@@ -4,6 +4,9 @@ import (
 	"fmt"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -24,12 +27,12 @@ func (b *appBuilder) wireBodyAndRateLimit() error {
 		logger.Info("security: body limit override", "prefix", ov.Prefix, "max_bytes", ov.MaxBytes)
 	}
 	if rl := cfg.Security.RateLimit; rl.Enabled {
-		policy, err := buildRateLimitPolicy(rl)
+		policy, err := serverbuildplatform.BuildRateLimitPolicy(rl)
 		if err != nil {
 			return fmt.Errorf("rate limit policy: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithRateLimit(policy))
-		b.opts = appendRateLimitReadyChecks(b.opts, policy)
+		b.opts = serverbuildsign.AppendRateLimitReadyChecks(b.opts, policy)
 		backend := rl.Backend
 		if backend == "" {
 			backend = "memory"
@@ -52,12 +55,12 @@ func (b *appBuilder) wireJTIReplaySPIFFE() error {
 		if err != nil {
 			return fmt.Errorf("jti replay store: %w", err)
 		}
-		if err := checkSQLiteSchema(b.schemaCtx, store, "jti_replay", sqlitestores.JTIReplayMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "jti_replay", sqlitestores.JTIReplayMaxVersion()); err != nil {
 			return fmt.Errorf("schema check jti_replay: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithJTIReplayStore(store))
-		b.opts = appendReadyCheck(b.opts, "sqlite-jti-replay", store)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-jti-replay", store)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-jti-replay", store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-jti-replay", store)
 		if cfg.Security.JTIReplay.FailClosed {
 			// Reject when the store can't confirm a jti is unseen, instead of
 			// falling through. Closes the replay window during a store outage at
@@ -67,7 +70,7 @@ func (b *appBuilder) wireJTIReplaySPIFFE() error {
 		logger.Info("security: jti replay protection enabled", "backend", mode, "fail_closed", cfg.Security.JTIReplay.FailClosed)
 	}
 	if cfg.SPIFFE.Enabled {
-		spiffeOpt, err := buildSPIFFEOption(cfg.SPIFFE)
+		spiffeOpt, err := serverbuildplatform.BuildSPIFFEOption(cfg.SPIFFE)
 		if err != nil {
 			return fmt.Errorf("spiffe jwt-svid: %w", err)
 		}
@@ -91,7 +94,7 @@ func (b *appBuilder) wireCAEPReceiverMesh() error {
 		// and revokes the mapped subject's local access via the SAME seams
 		// /token/revoke-all uses. Fail-closed validation; unmapped subject ⇒ ack
 		// + no-op (no wrongful revocation).
-		rcvOpt, err := buildCAEPReceiverOption(cfg.CAEP.Receiver, b.sessionMgr, b.refreshTokenStore, b.clientStore, b.userProvider, b.recorder, b.metricsRegistry, logger)
+		rcvOpt, err := serverbuildplatform.BuildCAEPReceiverOption(cfg.CAEP.Receiver, b.sessionMgr, b.refreshTokenStore, b.clientStore, b.userProvider, b.recorder, b.metricsRegistry, logger)
 		if err != nil {
 			return fmt.Errorf("caep receiver: %w", err)
 		}
@@ -125,7 +128,7 @@ func (b *appBuilder) wireCAEPReceiverMesh() error {
 func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Security.MTLS.Enabled {
-		extractor, mode, err := buildClientCertExtractor(cfg.Security.MTLS)
+		extractor, mode, err := serverbuildstore.BuildClientCertExtractor(cfg.Security.MTLS)
 		if err != nil {
 			return fmt.Errorf("mtls extractor: %w", err)
 		}
@@ -137,12 +140,12 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 		if err != nil {
 			return fmt.Errorf("account lockout: %w", err)
 		}
-		if err := checkSQLiteSchema(b.schemaCtx, lockout, "account_lockout", sqlitestores.AccountLockoutMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, lockout, "account_lockout", sqlitestores.AccountLockoutMaxVersion()); err != nil {
 			return fmt.Errorf("schema check account_lockout: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithAccountLockout(lockout))
-		b.opts = appendReadyCheck(b.opts, "sqlite-account-lockout", lockout)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-account-lockout", lockout)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-account-lockout", lockout)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-account-lockout", lockout)
 		logger.Info("security: account lockout enabled",
 			"backend", mode,
 			"max_failures", al.MaxFailures,

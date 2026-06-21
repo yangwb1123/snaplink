@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/sso"
 )
@@ -15,7 +17,7 @@ import (
 // -----------------------------------------------------------------------------
 
 // TestBuildApp_AllSQLiteBackends drives buildApp's sqlite branches: the
-// schema-version boot gate, the appendReadyCheck/appendStorageHealthSource
+// schema-version boot gate, the serverbuildsign.AppendReadyCheck/serverbuildsign.AppendStorageHealthSource
 // Ping+DB() type-assertion paths, audit sqlite primary sink + retention loop,
 // and the sqlite store constructors. A memory-only buildApp never exercises
 // these (no DB() method), so this is the only place the sqlite assembly path
@@ -113,7 +115,7 @@ func TestBuildApp_AuditRetentionRequiresMaxAge(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildFederationConfig — full success path
+// serverbuildplatform.BuildFederationConfig — full success path
 // -----------------------------------------------------------------------------
 
 // TestBuildFederationConfig_FullSuccess exercises the anchor + trust-mark
@@ -147,9 +149,9 @@ func TestBuildFederationConfig_FullSuccess(t *testing.T) {
 			},
 		}},
 	}
-	out, err := buildFederationConfig(cfg)
+	out, err := serverbuildplatform.BuildFederationConfig(cfg)
 	if err != nil {
-		t.Fatalf("buildFederationConfig: %v", err)
+		t.Fatalf("serverbuildplatform.BuildFederationConfig: %v", err)
 	}
 	if len(out.TrustAnchors) != 1 || len(out.TrustMarkIssuers) != 1 || len(out.Subordinates) != 1 {
 		t.Errorf("anchors=%d issuers=%d subs=%d; want 1/1/1",
@@ -170,7 +172,7 @@ func TestBuildFederationConfig_AnchorMissingJWKSFileErrors(t *testing.T) {
 	cfg := config.FederationConfig{
 		TrustAnchors: []config.TrustAnchorConfig{{EntityID: "https://anchor.fed.test"}},
 	}
-	if _, err := buildFederationConfig(cfg); err == nil {
+	if _, err := serverbuildplatform.BuildFederationConfig(cfg); err == nil {
 		t.Fatal("expected error for anchor without jwks_file")
 	}
 }
@@ -184,13 +186,13 @@ func TestBuildFederationConfig_SubordinateBadJWKSFileErrors(t *testing.T) {
 			JWKSFile: filepath.Join(t.TempDir(), "missing.json"),
 		}},
 	}
-	if _, err := buildFederationConfig(cfg); err == nil {
+	if _, err := serverbuildplatform.BuildFederationConfig(cfg); err == nil {
 		t.Fatal("expected error for subordinate with unreadable jwks_file")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// buildReleaseSubsystem — file store + static pinner
+// serverbuildplatform.BuildReleaseSubsystem — file store + static pinner
 // -----------------------------------------------------------------------------
 
 func TestBuildReleaseSubsystem_FileStoreStaticPinner(t *testing.T) {
@@ -200,9 +202,9 @@ func TestBuildReleaseSubsystem_FileStoreStaticPinner(t *testing.T) {
 	cfg.Releases.Store.File.Dir = filepath.Join(t.TempDir(), "releases")
 	cfg.Releases.Pinner.Backend = "static"
 	cfg.Releases.Pinner.Static.BundleDir = t.TempDir() // must exist
-	reg, store, err := buildReleaseSubsystem(cfg, quietLogger())
+	reg, store, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger())
 	if err != nil {
-		t.Fatalf("buildReleaseSubsystem: %v", err)
+		t.Fatalf("serverbuildplatform.BuildReleaseSubsystem: %v", err)
 	}
 	if reg == nil || reg.Store == nil || reg.Pinner == nil || store == nil {
 		t.Fatalf("incomplete registry: %+v", reg)
@@ -217,7 +219,7 @@ func TestBuildReleaseSubsystem_HTTPProbeRequiresURL(t *testing.T) {
 	cfg.Releases.Store.Backend = "memory"
 	cfg.Releases.Pinner.Backend = "noop"
 	cfg.Releases.Probe.Backend = "http"
-	if _, _, err := buildReleaseSubsystem(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error: http probe requires url")
 	}
 }
@@ -290,7 +292,7 @@ func TestLogEndpoints_MinimalAndFull(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildSnapshotSubsystem — aes-gcm encryption branch
+// serverbuildstore.BuildSnapshotSubsystem — aes-gcm encryption branch
 // -----------------------------------------------------------------------------
 
 func TestBuildSnapshotSubsystem_AESGCMInlineKey(t *testing.T) {
@@ -300,9 +302,9 @@ func TestBuildSnapshotSubsystem_AESGCMInlineKey(t *testing.T) {
 	cfg.Snapshot.Encryption.Backend = "aes-gcm"
 	// 32 hex-pairs = 32 bytes.
 	cfg.Snapshot.Encryption.Key = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-	pipe, _, err := buildSnapshotSubsystem(cfg, quietLogger())
+	pipe, _, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
 	if err != nil {
-		t.Fatalf("buildSnapshotSubsystem (aes-gcm): %v", err)
+		t.Fatalf("serverbuildstore.BuildSnapshotSubsystem (aes-gcm): %v", err)
 	}
 	if pipe == nil || pipe.Sealer == nil {
 		t.Fatal("aes-gcm sealer not wired")
@@ -315,7 +317,7 @@ func TestBuildSnapshotSubsystem_AESGCMRequiresKey(t *testing.T) {
 	cfg.Snapshot.Storage.Backend = "inline"
 	cfg.Snapshot.Encryption.Backend = "aes-gcm"
 	// No key / key_file.
-	if _, _, err := buildSnapshotSubsystem(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error: aes-gcm requires key or key_file")
 	}
 }
@@ -325,44 +327,44 @@ func TestBuildSnapshotSubsystem_AESGCMRequiresKey(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStoreBuilders_SQLiteDSNRequired(t *testing.T) {
-	if _, err := buildUserProvider(config.IdentityConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildUserProvider: expected dsn-required error")
+	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildUserProvider: expected dsn-required error")
 	}
-	if _, err := buildSessionManager(config.IdentityConfig{Backend: "sqlite"}, 0); err == nil {
-		t.Error("buildSessionManager: expected dsn-required error")
+	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, 0); err == nil {
+		t.Error("serverbuildstore.BuildSessionManager: expected dsn-required error")
 	}
-	if _, err := buildClientStore(config.IdentityConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildClientStore: expected dsn-required error")
+	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildClientStore: expected dsn-required error")
 	}
-	if _, err := buildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildAuthCodeStore: expected dsn-required error")
+	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildAuthCodeStore: expected dsn-required error")
 	}
-	if _, err := buildRefreshTokenStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildRefreshTokenStore: expected dsn-required error")
+	if _, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildRefreshTokenStore: expected dsn-required error")
 	}
-	if _, err := buildDeviceCodeStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildDeviceCodeStore: expected dsn-required error")
+	if _, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildDeviceCodeStore: expected dsn-required error")
 	}
 }
 
 func TestStoreBuilders_UnknownBackend(t *testing.T) {
-	if _, err := buildUserProvider(config.IdentityConfig{Backend: "redis"}); err == nil {
-		t.Error("buildUserProvider: expected unknown-backend error")
+	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildUserProvider: expected unknown-backend error")
 	}
-	if _, err := buildSessionManager(config.IdentityConfig{Backend: "redis"}, 0); err == nil {
-		t.Error("buildSessionManager: expected unknown-backend error")
+	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "redis"}, 0); err == nil {
+		t.Error("serverbuildstore.BuildSessionManager: expected unknown-backend error")
 	}
-	if _, err := buildAuthCodeStore(config.OAuthConfig{Backend: "redis"}); err == nil {
-		t.Error("buildAuthCodeStore: expected unknown-backend error")
+	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildAuthCodeStore: expected unknown-backend error")
 	}
-	if _, err := buildRefreshTokenStore(config.OAuthConfig{Backend: "redis"}); err == nil {
-		t.Error("buildRefreshTokenStore: expected unknown-backend error")
+	if _, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildRefreshTokenStore: expected unknown-backend error")
 	}
-	if _, err := buildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}); err == nil {
-		t.Error("buildDeviceCodeStore: expected unknown-backend error")
+	if _, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildDeviceCodeStore: expected unknown-backend error")
 	}
-	if _, err := buildClientStore(config.IdentityConfig{Backend: "redis"}); err == nil {
-		t.Error("buildClientStore: expected unknown-backend error")
+	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildClientStore: expected unknown-backend error")
 	}
 }
 
@@ -370,33 +372,33 @@ func TestStoreBuilders_UnknownBackend(t *testing.T) {
 // unknown-backend, for the consent + password-credential selectors.
 func TestSelfServiceStoreBuilders(t *testing.T) {
 	// Consent store.
-	if s, err := buildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}); err != nil || s == nil {
-		t.Errorf("buildConsentStore memory: store=%v err=%v", s, err)
+	if s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}); err != nil || s == nil {
+		t.Errorf("serverbuildstore.BuildConsentStore memory: store=%v err=%v", s, err)
 	}
-	if _, err := buildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildConsentStore sqlite without dsn: expected error")
+	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildConsentStore sqlite without dsn: expected error")
 	}
-	if _, err := buildConsentStore(config.SelfServiceStoreConfig{Backend: "redis"}); err == nil {
-		t.Error("buildConsentStore unknown backend: expected error")
+	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildConsentStore unknown backend: expected error")
 	}
 	// Password-credential store.
-	if s, err := buildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "memory"}); err != nil || s == nil {
-		t.Errorf("buildPasswordCredentialStore memory: store=%v err=%v", s, err)
+	if s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "memory"}); err != nil || s == nil {
+		t.Errorf("serverbuildstore.BuildPasswordCredentialStore memory: store=%v err=%v", s, err)
 	}
-	if _, err := buildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
-		t.Error("buildPasswordCredentialStore sqlite without dsn: expected error")
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+		t.Error("serverbuildstore.BuildPasswordCredentialStore sqlite without dsn: expected error")
 	}
-	if _, err := buildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "redis"}); err == nil {
-		t.Error("buildPasswordCredentialStore unknown backend: expected error")
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "redis"}); err == nil {
+		t.Error("serverbuildstore.BuildPasswordCredentialStore unknown backend: expected error")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// bootstrapLogger + snapshotRestorerAdapter
+// serverbuildstore.BootstrapLogger + serverbuildstore.SnapshotRestorerAdapter
 // -----------------------------------------------------------------------------
 
 func TestBootstrapLogger_DelegatesToInner(t *testing.T) {
-	bl := bootstrapLogger{inner: quietLogger()}
+	bl := serverbuildstore.BootstrapLogger{Inner: quietLogger()}
 	// NopLogger swallows output; the assertion is no-panic + the adapter
 	// satisfies the bootstrap.Logger Info/Error pair.
 	bl.Info("boot info", "k", "v")
@@ -404,7 +406,7 @@ func TestBootstrapLogger_DelegatesToInner(t *testing.T) {
 }
 
 func TestSnapshotRestorerAdapter_UnconfiguredErrors(t *testing.T) {
-	a := &snapshotRestorerAdapter{} // all nil
+	a := &serverbuildstore.SnapshotRestorerAdapter{} // all nil
 	if err := a.RestoreByID(context.Background(), "snap-1"); err == nil {
 		t.Fatal("expected error when snapshot subsystem not configured")
 	}

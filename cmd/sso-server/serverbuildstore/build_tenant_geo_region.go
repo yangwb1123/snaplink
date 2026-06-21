@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"context"
@@ -28,15 +28,15 @@ import (
 	"github.com/snaplink/sso/domains/tenant"
 )
 
-// buildTenantStore materialises the tenant.Store from TenantConfig
+// BuildTenantStore materialises the tenant.Store from TenantConfig
 // and seeds any declared tenants + domains. Returns (nil, nil)
 // when tenant.enabled=false so cmd can pass the result to
 // sso.WithTenantStore unconditionally (the option no-ops on nil).
-// buildTenantUsageAggregator selects the per-tenant usage metering backend.
+// BuildTenantUsageAggregator selects the per-tenant usage metering backend.
 // Empty backend returns (nil, nil) — the usage endpoint stays unmounted. The
 // sqlite aggregator reads the audit_events table, so its DSN is normally the
 // audit SQLite DSN.
-func buildTenantUsageAggregator(cfg config.TenantUsageMeteringConfig) (metering.Aggregator, error) {
+func BuildTenantUsageAggregator(cfg config.TenantUsageMeteringConfig) (metering.Aggregator, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -52,7 +52,7 @@ func buildTenantUsageAggregator(cfg config.TenantUsageMeteringConfig) (metering.
 	}
 }
 
-func buildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, error) {
+func BuildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, error) {
 	if !cfg.Tenant.Enabled {
 		return nil, nil
 	}
@@ -70,12 +70,12 @@ func buildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, erro
 	return store, nil
 }
 
-// buildConnectionStore materialises the connections.Store from
+// BuildConnectionStore materialises the connections.Store from
 // ConnectionsConfig and seeds it. Returns (nil, nil) when disabled — cmd then
 // skips sso.WithConnectionStore, so the /auth/home-realm endpoint is not mounted
 // (byte-identical). This is the only way the runnable binary can populate B2B
 // enterprise connections; without it the home-realm feature was SDK-only.
-func buildConnectionStore(cfg *config.Config, logger spi.Logger) (connections.Store, error) {
+func BuildConnectionStore(cfg *config.Config, logger spi.Logger) (connections.Store, error) {
 	if !cfg.Connections.Enabled {
 		return nil, nil
 	}
@@ -119,10 +119,10 @@ func buildConnectionStore(cfg *config.Config, logger spi.Logger) (connections.St
 	return store, nil
 }
 
-// buildGeoProvider materialises the geo.Provider from GeoConfig.
+// BuildGeoProvider materialises the geo.Provider from GeoConfig.
 // Returns nil when geo.enabled=false so cmd can pass the result to
 // sso.WithGeoProvider unconditionally (the option no-ops on nil).
-func buildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, error) {
+func BuildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, error) {
 	if !cfg.Geo.Enabled {
 		return nil, nil
 	}
@@ -147,10 +147,10 @@ func buildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, erro
 	}
 }
 
-// buildRegionResolver materialises the region.Resolver from RegionConfig.
+// BuildRegionResolver materialises the region.Resolver from RegionConfig.
 // Returns nil when NEITHER ServingRegion NOR HeaderName is configured so cmd
 // can skip WithRegionMiddleware entirely (the middleware is then NOT installed
-// → byte-identical to a pre-region build). Mirrors buildGeoProvider's
+// → byte-identical to a pre-region build). Mirrors BuildGeoProvider's
 // nil-when-disabled discipline.
 //
 // When configured it builds a ChainResolver that tries the trusted header
@@ -158,7 +158,7 @@ func buildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, erro
 // allowlisted by AllowedRegions), then falls back to the pinned ServingRegion.
 // The HeaderResolver's Default is the pinned region too, so a single-region
 // deployment that sets only ServingRegion still resolves every request to it.
-func buildRegionResolver(cfg *config.Config) region.Resolver {
+func BuildRegionResolver(cfg *config.Config) region.Resolver {
 	servingRegion := region.ID(cfg.Region.ServingRegion)
 	if servingRegion == "" && cfg.Region.HeaderName == "" {
 		return nil
@@ -180,8 +180,8 @@ func buildRegionResolver(cfg *config.Config) region.Resolver {
 	}}
 }
 
-// bootstrapLogger adapts spi.Logger to bootstrap.Logger (Info/Error pair).
-type bootstrapLogger struct{ inner spi.Logger }
+// BootstrapLogger adapts spi.Logger to bootstrap.Logger (Info/Error pair).
+type BootstrapLogger struct{ Inner spi.Logger }
 
-func (b bootstrapLogger) Info(msg string, kv ...any)  { b.inner.Info(msg, kv...) }
-func (b bootstrapLogger) Error(msg string, kv ...any) { b.inner.Error(msg, kv...) }
+func (b BootstrapLogger) Info(msg string, kv ...any)  { b.Inner.Info(msg, kv...) }
+func (b BootstrapLogger) Error(msg string, kv ...any) { b.Inner.Error(msg, kv...) }

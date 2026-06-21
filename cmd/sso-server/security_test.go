@@ -9,13 +9,15 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/shared/security"
 )
 
 func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
-	p, err := buildRateLimitPolicy(config.RateLimitConfig{
+	p, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		DefaultPerSec: 5,
 		DefaultBurst:  10,
@@ -25,7 +27,7 @@ func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("buildRateLimitPolicy: %v", err)
+		t.Fatalf("serverbuildplatform.BuildRateLimitPolicy: %v", err)
 	}
 	if p.Default == nil {
 		t.Fatal("Default limiter unexpectedly nil")
@@ -46,7 +48,7 @@ func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
 func TestBuildRateLimitPolicy_ZeroDefaultLeavesDefaultLimiterNil(t *testing.T) {
 	// A zero DefaultPerSec means "no limit on unmatched paths" — only
 	// the prefix rules apply.
-	p, err := buildRateLimitPolicy(config.RateLimitConfig{
+	p, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		DefaultPerSec: 0,
 		Prefixes: []config.RateLimitPrefixConfig{
@@ -54,7 +56,7 @@ func TestBuildRateLimitPolicy_ZeroDefaultLeavesDefaultLimiterNil(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("buildRateLimitPolicy: %v", err)
+		t.Fatalf("serverbuildplatform.BuildRateLimitPolicy: %v", err)
 	}
 	if p.Default != nil {
 		t.Errorf("Default limiter should be nil when DefaultPerSec=0")
@@ -109,7 +111,7 @@ func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
 }
 
 func TestBuildRateLimitPolicy_SQLiteRequiresDSN(t *testing.T) {
-	_, err := buildRateLimitPolicy(config.RateLimitConfig{
+	_, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		Backend:       "sqlite",
 		DefaultPerSec: 1,
@@ -124,7 +126,7 @@ func TestBuildRateLimitPolicy_SQLiteOpensFileForEachPrefix(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "ratelimit.db") + "?_journal=WAL"
 
-	p, err := buildRateLimitPolicy(config.RateLimitConfig{
+	p, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		Backend:       "sqlite",
 		SQLite:        config.RateLimitSQLiteConfig{DSN: dsn},
@@ -155,7 +157,7 @@ func TestBuildRateLimitPolicy_SQLiteOpensFileForEachPrefix(t *testing.T) {
 }
 
 func TestBuildRateLimitPolicy_UnknownBackendErrors(t *testing.T) {
-	_, err := buildRateLimitPolicy(config.RateLimitConfig{
+	_, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled: true,
 		Backend: "redis",
 	})
@@ -320,7 +322,7 @@ func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
-	ex, mode, err := buildClientCertExtractor(config.MTLSConfig{Enabled: true})
+	ex, mode, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true})
 	if err != nil {
 		t.Fatalf("default backend: %v", err)
 	}
@@ -333,14 +335,14 @@ func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_HeaderRequiresName(t *testing.T) {
-	_, _, err := buildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"})
+	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"})
 	if err == nil {
 		t.Fatal("expected error when header backend has empty name")
 	}
 }
 
 func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
-	ex, mode, err := buildClientCertExtractor(config.MTLSConfig{
+	ex, mode, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{
 		Enabled: true,
 		Backend: "header",
 		Header:  config.MTLSHeaderConfig{Name: "X-SSL-Client-Cert", Encoding: "url-pem"},
@@ -375,7 +377,7 @@ func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
-			got, err := parseHeaderCertEncoding(c.in)
+			got, err := serverbuildstore.ParseHeaderCertEncoding(c.in)
 			if err != nil {
 				t.Fatalf("parse %q: %v", c.in, err)
 			}
@@ -387,14 +389,14 @@ func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_UnknownBackend(t *testing.T) {
-	_, _, err := buildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "spiffe"})
+	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "spiffe"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildClientCertExtractor_UnknownEncoding(t *testing.T) {
-	_, _, err := buildClientCertExtractor(config.MTLSConfig{
+	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{
 		Enabled: true,
 		Backend: "header",
 		Header:  config.MTLSHeaderConfig{Name: "X-Client-Cert", Encoding: "asn1"},

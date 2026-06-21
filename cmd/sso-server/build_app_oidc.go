@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -65,15 +68,15 @@ func (b *appBuilder) wireDCRBackchannel() error {
 		if err != nil {
 			return fmt.Errorf("subject_client_index: %w", err)
 		}
-		if err := checkSQLiteSchema(b.schemaCtx, idx, "subject_client_index", sqlitestores.SubjectClientIndexMaxVersion()); err != nil {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, idx, "subject_client_index", sqlitestores.SubjectClientIndexMaxVersion()); err != nil {
 			return fmt.Errorf("schema check subject_client_index: %w", err)
 		}
 		b.opts = append(b.opts,
 			sso.WithBackchannelLogout(b.jwtIssuer, sso.NewHTTPLogoutNotifier()),
 			sso.WithSubjectClientIndex(idx),
 		)
-		b.opts = appendReadyCheck(b.opts, "sqlite-bcl-subject-client-index", idx)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-bcl-subject-client-index", idx)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-bcl-subject-client-index", idx)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-bcl-subject-client-index", idx)
 		if n := cfg.BackchannelLogout.MaxConcurrent; n > 0 {
 			b.opts = append(b.opts, sso.WithBackchannelLogoutMaxConcurrent(n))
 		}
@@ -120,7 +123,7 @@ func (b *appBuilder) wireFederation() error {
 	if !cfg.Federation.Enabled {
 		return nil
 	}
-	fedCfg, err := buildFederationConfig(cfg.Federation)
+	fedCfg, err := serverbuildplatform.BuildFederationConfig(cfg.Federation)
 	if err != nil {
 		return fmt.Errorf("federation: %w", err)
 	}
@@ -213,7 +216,7 @@ func (b *appBuilder) wireProfilesAndMetadata() error {
 // wirePairwiseSubjects wires the OIDC pairwise subject store + salt.
 func (b *appBuilder) wirePairwiseSubjects() error {
 	cfg := b.cfg
-	salt, err := resolvePairwiseSalt(cfg.Server.PairwiseSubjects)
+	salt, err := serverbuildstore.ResolvePairwiseSalt(cfg.Server.PairwiseSubjects)
 	if err != nil {
 		return fmt.Errorf("pairwise_subjects salt: %w", err)
 	}
@@ -221,15 +224,15 @@ func (b *appBuilder) wirePairwiseSubjects() error {
 	if err != nil {
 		return fmt.Errorf("pairwise_subjects store: %w", err)
 	}
-	if err := checkSQLiteSchema(b.schemaCtx, store, "pairwise", sqlitestores.PairwiseMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "pairwise", sqlitestores.PairwiseMaxVersion()); err != nil {
 		return fmt.Errorf("schema check pairwise: %w", err)
 	}
 	b.opts = append(b.opts,
 		sso.WithPairwiseSubjectStore(store),
 		sso.WithPairwiseSalt(salt),
 	)
-	b.opts = appendReadyCheck(b.opts, "sqlite-pairwise-subjects", store)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-pairwise-subjects", store)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-pairwise-subjects", store)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-pairwise-subjects", store)
 	b.logger.Info("oidc pairwise subjects: enabled", "store", mode)
 	return nil
 }

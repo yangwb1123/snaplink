@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
@@ -27,7 +30,7 @@ func (b *appBuilder) wireIdentitySigning() error {
 		b.metricsRegistry = metrics.New()
 	}
 
-	clientStore, err := buildClientStore(cfg.Identity)
+	clientStore, err := serverbuildstore.BuildClientStore(cfg.Identity)
 	if err != nil {
 		return fmt.Errorf("identity client_store: %w", err)
 	}
@@ -36,11 +39,11 @@ func (b *appBuilder) wireIdentitySigning() error {
 	}
 	b.clientStore = clientStore
 
-	userProvider, err := buildUserProvider(cfg.Identity)
+	userProvider, err := serverbuildstore.BuildUserProvider(cfg.Identity)
 	if err != nil {
 		return fmt.Errorf("identity user_provider: %w", err)
 	}
-	sessionMgr, err := buildSessionManager(cfg.Identity, cfg.Server.SessionTTL)
+	sessionMgr, err := serverbuildstore.BuildSessionManager(cfg.Identity, cfg.Server.SessionTTL)
 	if err != nil {
 		return fmt.Errorf("identity session_manager: %w", err)
 	}
@@ -52,13 +55,13 @@ func (b *appBuilder) wireIdentitySigning() error {
 	// accepted so an operator doing a canary rollback sees a clear error
 	// instead of silent data corruption.
 	b.schemaCtx = context.Background()
-	if err := checkSQLiteSchema(b.schemaCtx, clientStore, "clients", sqlitestores.ClientsMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, clientStore, "clients", sqlitestores.ClientsMaxVersion()); err != nil {
 		return fmt.Errorf("schema check clients: %w", err)
 	}
-	if err := checkSQLiteSchema(b.schemaCtx, userProvider, "users", sqlitestores.UsersMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, userProvider, "users", sqlitestores.UsersMaxVersion()); err != nil {
 		return fmt.Errorf("schema check users: %w", err)
 	}
-	if err := checkSQLiteSchema(b.schemaCtx, sessionMgr, "sessions", sqlitestores.SessionsMaxVersion()); err != nil {
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, sessionMgr, "sessions", sqlitestores.SessionsMaxVersion()); err != nil {
 		return fmt.Errorf("schema check sessions: %w", err)
 	}
 	return b.wireSigningIssuer()
@@ -95,7 +98,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			SubjectType:                      c.SubjectType,
 			SectorIdentifierURI:              c.SectorIdentifierURI,
 			FrontchannelLogoutURI:            c.FrontchannelLogoutURI,
-			JWKS:                             convertClientJWKs(c.JWKS),
+			JWKS:                             serverbuildstore.ConvertClientJWKs(c.JWKS),
 			Attributes:                       c.Attributes,
 			SkipConsent:                      c.SkipConsent,
 			ConsentRefreshInterval:           c.ConsentRefreshInterval,
@@ -125,7 +128,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
 	// EdDSA-specific (type-asserted there).
-	jwtIssuer, signingAlg, externalSigner, err := buildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.metricsRegistry, logger)
+	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.metricsRegistry, logger)
 	if err != nil {
 		return err
 	}
@@ -173,13 +176,13 @@ func (b *appBuilder) wireSigningIssuer() error {
 // SQLite store's DB() handle drives migrate.Status; memory backends contribute
 // nothing.
 func (b *appBuilder) registerIdentityHealth() {
-	b.opts = appendReadyCheck(b.opts, "external-signer", b.externalSigner)
-	b.opts = appendReadyCheck(b.opts, "sqlite-identity-clients", b.clientStore)
-	b.opts = appendReadyCheck(b.opts, "sqlite-identity-users", b.userProvider)
-	b.opts = appendReadyCheck(b.opts, "sqlite-identity-sessions", b.sessionMgr)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-identity-clients", b.clientStore)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-identity-users", b.userProvider)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-identity-sessions", b.sessionMgr)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "external-signer", b.externalSigner)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-clients", b.clientStore)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-users", b.userProvider)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-identity-sessions", b.sessionMgr)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-clients", b.clientStore)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-users", b.userProvider)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-identity-sessions", b.sessionMgr)
 }
 
 // wireAudit builds the audit recorder + sink stack (primary, webhook fan-out,
@@ -221,8 +224,8 @@ func (b *appBuilder) wireAudit() error {
 	// Register a readycheck for the primary sink if it satisfies
 	// the Ping interface — the SQLite sink does; MemorySink
 	// silently no-ops.
-	b.opts = appendReadyCheck(b.opts, "audit-"+primaryName, primary)
-	b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "audit-"+primaryName, primary)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
 	return nil
 }
 
@@ -250,7 +253,7 @@ func (b *appBuilder) startAuditRetention(primary audit.Sink, primaryName string)
 	done := make(chan struct{})
 	b.auditRetentionCancel = cancel
 	b.auditRetentionDone = done
-	go runAuditRetention(retentionCtx, done, sqliteSink, interval, rc.MaxAge, b.logger, b.metricsRegistry)
+	go serverbuildstore.RunAuditRetention(retentionCtx, done, sqliteSink, interval, rc.MaxAge, b.logger, b.metricsRegistry)
 	b.logger.Info("audit: retention scheduler enabled",
 		"max_age", rc.MaxAge, "interval", interval)
 	return nil
@@ -320,7 +323,7 @@ func (b *appBuilder) buildRecorder(sink audit.Sink) (*audit.Recorder, error) {
 		audit.WithErrorHandler(func(err error) { logger.Error("audit sink", "error", err) }),
 	}
 	if pii := b.cfg.Audit.PIIRedaction; pii.Enabled {
-		salt, err := resolvePIISalt(pii)
+		salt, err := serverbuildstore.ResolvePIISalt(pii)
 		if err != nil {
 			return nil, fmt.Errorf("audit pii_redaction salt: %w", err)
 		}
@@ -338,14 +341,14 @@ func (b *appBuilder) buildRecorder(sink audit.Sink) (*audit.Recorder, error) {
 // provider when admin needs one for scope checks but none is configured.
 func (b *appBuilder) wirePermissions() error {
 	cfg, logger := b.cfg, b.logger
-	provider, err := buildPermissionsProvider(cfg, logger)
+	provider, err := serverbuildplatform.BuildPermissionsProvider(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("permissions: %w", err)
 	}
 	if provider != nil {
 		b.opts = append(b.opts, sso.WithPermissionProvider(provider))
-		b.opts = appendReadyCheck(b.opts, "sqlite-permissions", provider)
-		b.storageHealthSources = appendStorageHealthSource(b.storageHealthSources, "sqlite-permissions", provider)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-permissions", provider)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-permissions", provider)
 		if cfg.Permissions.EmbedInLogin {
 			b.opts = append(b.opts, sso.WithEmbedPermissionsInLogin())
 		}
@@ -367,7 +370,7 @@ func (b *appBuilder) wirePermissions() error {
 // defer here would fire at method return, not at buildApp's scope.
 func (b *appBuilder) wireNetwork() error {
 	cfg, logger := b.cfg, b.logger
-	netStore, netStoreKind, err := buildNetworkStore(&cfg.Network, logger)
+	netStore, netStoreKind, err := serverbuildstore.BuildNetworkStore(&cfg.Network, logger)
 	if err != nil {
 		return fmt.Errorf("network policy store: %w", err)
 	}
@@ -398,7 +401,7 @@ func (b *appBuilder) wireNetwork() error {
 		b.opts = append(b.opts, sso.WithNetworkPolicyAPI())
 	}
 	if netStoreKind == "etcd" {
-		b.opts = appendReadyCheck(b.opts, "etcd-netpolicy", netStore)
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "etcd-netpolicy", netStore)
 		// The Classifier's self-healing Watch loop flips degraded when the
 		// etcd watch closes under a live context (compaction/leader change):
 		// it keeps serving its frozen snapshot but stops applying policy

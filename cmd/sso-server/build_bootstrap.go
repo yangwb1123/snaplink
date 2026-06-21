@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/platform/bootstrap"
 	"github.com/snaplink/sso/platform/bootstrap/builtin"
 	"github.com/snaplink/sso/shared/spi"
@@ -126,7 +127,7 @@ func applyBootstrapSnapshotRestore(cfg *config.Config, a *app, tracker *bootstra
 func bootstrapRunnerOptions(cfg *config.Config, a *app, bootLock lock.Lock, logger spi.Logger) []bootstrap.Option {
 	opts := []bootstrap.Option{
 		bootstrap.WithRecorder(a.recorder),
-		bootstrap.WithLogger(bootstrapLogger{inner: logger}),
+		bootstrap.WithLogger(serverbuildstore.BootstrapLogger{Inner: logger}),
 	}
 	if bootLock == nil {
 		return opts
@@ -183,7 +184,7 @@ func buildBootstrapLock(cfg *config.Config, logger spi.Logger) (lock.Lock, func(
 // instantiate it explicitly because nil-Lock has the same effect.
 var _ = lockNoop.New
 
-// buildDPoPNonceProvider materializes the RFC 9449 §8 nonce
+// serverbuildstore.BuildDPoPNonceProvider materializes the RFC 9449 §8 nonce
 // provider from config. When KeyFile is set, the file's contents
 // (raw bytes or hex-encoded — both shapes are accepted, hex first)
 // seed the HMAC. Without a file, a process-local 32-byte secret is

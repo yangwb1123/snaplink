@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 )
@@ -39,7 +40,7 @@ func TestRunPushApprovalPrune_RemovesExpiredAtInterval(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
-	go runPushApprovalPrune(runCtx, done, store, 30*time.Millisecond, quietLogger(), nil)
+	go serverbuildsign.RunPushApprovalPrune(runCtx, done, store, 30*time.Millisecond, quietLogger(), nil)
 
 	// Wait for at least one tick.
 	time.Sleep(150 * time.Millisecond)
@@ -69,7 +70,7 @@ func TestRunPushApprovalPrune_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go runPushApprovalPrune(runCtx, done, store, 1*time.Hour, quietLogger(), nil)
+	go serverbuildsign.RunPushApprovalPrune(runCtx, done, store, 1*time.Hour, quietLogger(), nil)
 
 	cancel()
 	select {
@@ -89,7 +90,7 @@ func TestRunPushApprovalPrune_PruneErrorDoesNotStopLoop(t *testing.T) {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go runPushApprovalPrune(runCtx, done, store, 30*time.Millisecond, quietLogger(), nil)
+	go serverbuildsign.RunPushApprovalPrune(runCtx, done, store, 30*time.Millisecond, quietLogger(), nil)
 
 	time.Sleep(100 * time.Millisecond)
 	cancel()

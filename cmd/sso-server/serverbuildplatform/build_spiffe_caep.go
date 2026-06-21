@@ -1,4 +1,4 @@
-package main
+package serverbuildplatform
 
 import (
 	"errors"
@@ -24,21 +24,21 @@ import (
 	"github.com/snaplink/sso/shared/security"
 )
 
-// buildSPIFFEOption assembles the WithSPIFFEJWTSVID option from config,
+// BuildSPIFFEOption assembles the WithSPIFFEJWTSVID option from config,
 // loading the SPIRE trust-bundle JWKS from disk into a StaticJWKS. It
 // fails LOUD on any missing required field — there is no safe default for
 // the trust domain, the audience the SVID must bind to, or the trust
 // bundle itself, and silently degrading would leave an operator believing
 // SVID acceptance is on when it isn't (or, worse, accepting tokens it
 // shouldn't).
-// subordinateConstraints translates the YAML §6.2 constraints config onto the
+// SubordinateConstraints translates the YAML §6.2 constraints config onto the
 // SDK federation.EntityConstraints authored into a Subordinate Statement.
 // Returns nil when the operator configured no constraints (so the statement
 // carries no constraints claim). Preserves the pointer/empty-slice distinctions
 // the SDK relies on (max_path_length 0 = "no intermediates"; a non-nil empty
 // allowed_entity_types = "only federation_entity"); a naming_constraints object
 // is emitted only when at least one of permitted/excluded is non-empty.
-func subordinateConstraints(c *config.SubordinateConstraintsConfig) *federation.EntityConstraints {
+func SubordinateConstraints(c *config.SubordinateConstraintsConfig) *federation.EntityConstraints {
 	if c == nil {
 		return nil
 	}
@@ -56,7 +56,7 @@ func subordinateConstraints(c *config.SubordinateConstraintsConfig) *federation.
 	return out
 }
 
-func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
+func BuildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
 	if cfg.TrustDomain == "" {
 		return nil, errors.New("spiffe.trust_domain required when spiffe.enabled")
 	}
@@ -81,11 +81,11 @@ func buildSPIFFEOption(cfg config.SPIFFEConfig) (sso.Option, error) {
 	return sso.WithSPIFFEJWTSVID(cfg.TrustDomain, cfg.Audience, source, vopts...), nil
 }
 
-// caepSubjectMode maps the YAML subject_mode string onto the SDK enum. It
+// CaepSubjectMode maps the YAML subject_mode string onto the SDK enum. It
 // fails LOUD on an unrecognised value rather than silently defaulting —
 // the wrong mode is a wrong-subject-revocation risk, so an operator typo
 // must surface, not degrade.
-func caepSubjectMode(raw string) (caep.SubjectMapMode, error) {
+func CaepSubjectMode(raw string) (caep.SubjectMapMode, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "opaque":
 		return caep.SubjectMapOpaque, nil
@@ -96,7 +96,7 @@ func caepSubjectMode(raw string) (caep.SubjectMapMode, error) {
 	}
 }
 
-// buildCAEPReceiverOption assembles the WithCAEPReceiver option — the
+// BuildCAEPReceiverOption assembles the WithCAEPReceiver option — the
 // INBOUND half of OpenID Shared Signals. It loads each trusted
 // transmitter's trust-bundle JWKS from disk, composes the revocation seam
 // (sessions + refresh tokens) from the already-built stores, and wires a
@@ -111,7 +111,7 @@ func caepSubjectMode(raw string) (caep.SubjectMapMode, error) {
 // the RefreshTokenSubjectIndex (when the refresh store supports it) + the
 // SessionManager. A receiver that could revoke NOTHING (no session manager
 // AND no subject-index refresh store) is rejected.
-func buildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.SessionManager, refreshStore oauth.RefreshTokenStore, clientStore sso.ClientStore, userProvider sso.UserProvider, recorder *audit.Recorder, metricsReg *metrics.Metrics, logger spi.Logger) (sso.Option, error) {
+func BuildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.SessionManager, refreshStore oauth.RefreshTokenStore, clientStore sso.ClientStore, userProvider sso.UserProvider, recorder *audit.Recorder, metricsReg *metrics.Metrics, logger spi.Logger) (sso.Option, error) {
 	if cfg.Audience == "" {
 		return nil, errors.New("caep.receiver.audience required when caep.receiver.enabled")
 	}
@@ -171,7 +171,7 @@ func buildCAEPTransmitters(in []config.CAEPTransmitterConfig) ([]caep.TrustedTra
 		if err != nil {
 			return nil, fmt.Errorf("parse caep.receiver.transmitters[%d] trust bundle: %w", i, err)
 		}
-		mode, err := caepSubjectMode(tt.SubjectMode)
+		mode, err := CaepSubjectMode(tt.SubjectMode)
 		if err != nil {
 			return nil, err
 		}

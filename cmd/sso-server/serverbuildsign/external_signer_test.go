@@ -1,4 +1,4 @@
-package main
+package serverbuildsign
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func staticSigner(s crypto.Signer) ExternalSignerFactory {
 	}
 }
 
-func keyIDOf(t *testing.T, iss signingIssuer) string {
+func keyIDOf(t *testing.T, iss SigningIssuer) string {
 	t.Helper()
 	k, ok := iss.(interface{ KeyID() string })
 	if !ok {
@@ -48,9 +48,9 @@ func registerExternalSignerForTest(t *testing.T, name string, f ExternalSignerFa
 	t.Helper()
 	RegisterExternalSigner(name, f)
 	t.Cleanup(func() {
-		externalSignerRegistry.mu.Lock()
-		defer externalSignerRegistry.mu.Unlock()
-		delete(externalSignerRegistry.factories, name)
+		ExternalSignerRegistry.mu.Lock()
+		defer ExternalSignerRegistry.mu.Unlock()
+		delete(ExternalSignerRegistry.factories, name)
 	})
 }
 
@@ -73,14 +73,14 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 			name := "ext-" + tc.alg
 			registerExternalSignerForTest(t, name, staticSigner(tc.signer))
 
-			iss, _, _, err := buildSigningIssuer(
+			iss, _, _, err := BuildSigningIssuer(
 				config.SigningConfig{Alg: tc.alg, External: name},
 				config.ServerConfig{Issuer: "https://sso.test"},
 				nil,
 				spi.NopLogger{},
 			)
 			if err != nil {
-				t.Fatalf("buildSigningIssuer: %v", err)
+				t.Fatalf("BuildSigningIssuer: %v", err)
 			}
 			if kid := keyIDOf(t, iss); kid != "kms-test-kid" {
 				t.Errorf("kid = %q, want kms-test-kid (external signer not wired)", kid)
@@ -90,7 +90,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 }
 
 func TestBuildSigningIssuer_UnregisteredExternal(t *testing.T) {
-	_, _, _, err := buildSigningIssuer(
+	_, _, _, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa", External: "does-not-exist"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
@@ -106,7 +106,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 	// startup rather than minting tokens no verifier accepts.
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
 	registerExternalSignerForTest(t, "ext-mismatch", staticSigner(edPriv))
-	_, _, _, err := buildSigningIssuer(
+	_, _, _, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-mismatch"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
@@ -119,14 +119,14 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 
 func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 	// Empty External keeps the historical in-process key path.
-	iss, alg, probe, err := buildSigningIssuer(
+	iss, alg, probe, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
 		spi.NopLogger{},
 	)
 	if err != nil {
-		t.Fatalf("buildSigningIssuer: %v", err)
+		t.Fatalf("BuildSigningIssuer: %v", err)
 	}
 	if alg != "EdDSA" {
 		t.Errorf("alg = %q, want EdDSA", alg)
@@ -135,7 +135,7 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 		t.Error("in-process path unexpectedly used the external kid")
 	}
 	if probe != nil {
-		t.Error("in-process path returned a non-nil readiness probe; appendReadyCheck would register a bogus /readyz dependency")
+		t.Error("in-process path returned a non-nil readiness probe; AppendReadyCheck would register a bogus /readyz dependency")
 	}
 }
 
@@ -147,14 +147,14 @@ func TestExternalSignerMetrics(t *testing.T) {
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	registerExternalSignerForTest(t, "ext-metrics", staticSigner(ecPriv))
 
-	iss, _, _, err := buildSigningIssuer(
+	iss, _, _, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-metrics"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		m,
 		spi.NopLogger{},
 	)
 	if err != nil {
-		t.Fatalf("buildSigningIssuer: %v", err)
+		t.Fatalf("BuildSigningIssuer: %v", err)
 	}
 	if _, err := iss.Issue(context.Background(), &sso.Subject{ID: "u1", ClientID: "c1"}, []string{"read"}); err != nil {
 		t.Fatalf("issue: %v", err)
@@ -172,7 +172,7 @@ func TestSigningBackendUpGauge(t *testing.T) {
 	m := metrics.New()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	flaky := &flakySigner{inner: ecPriv}
-	wrapped := instrumentSigner(flaky, "es256", m, spi.NopLogger{})
+	wrapped := InstrumentSigner(flaky, "es256", m, spi.NopLogger{})
 	digest := make([]byte, 32)
 
 	if _, err := wrapped.Sign(rand.Reader, digest, crypto.SHA256); err != nil {
@@ -245,10 +245,10 @@ func TestInstrumentSigner_ReadinessProbe(t *testing.T) {
 	flaky := &flakySigner{inner: ecPriv}
 
 	// Wrap WITHOUT metrics — readiness must not depend on metrics.
-	wrapped := instrumentSigner(flaky, "es256", nil, spi.NopLogger{})
+	wrapped := InstrumentSigner(flaky, "es256", nil, spi.NopLogger{})
 	probe, ok := wrapped.(interface{ Ping(context.Context) error })
 	if !ok {
-		t.Fatal("instrumented signer does not expose Ping; appendReadyCheck would skip it")
+		t.Fatal("instrumented signer does not expose Ping; AppendReadyCheck would skip it")
 	}
 
 	// Fresh server, no signing yet: healthy (startup proved reachability).
@@ -310,7 +310,7 @@ func TestInstrumentSigner_LogsOnlyTransitions(t *testing.T) {
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	flaky := &flakySigner{inner: ecPriv}
 	lg := &captureLogger{}
-	wrapped := instrumentSigner(flaky, "es256", nil, lg)
+	wrapped := InstrumentSigner(flaky, "es256", nil, lg)
 	digest := make([]byte, 32)
 
 	sign := func() { _, _ = wrapped.Sign(rand.Reader, digest, crypto.SHA256) }
@@ -334,7 +334,7 @@ func TestInstrumentSigner_LogsOnlyTransitions(t *testing.T) {
 }
 
 func TestSignerHealth_StaleFailureRecovers(t *testing.T) {
-	var h signerHealth
+	var h SignerHealth
 	h.record(errKMSDown)
 	if h.check() == nil {
 		t.Fatal("recent failure should read unhealthy")
@@ -342,7 +342,7 @@ func TestSignerHealth_StaleFailureRecovers(t *testing.T) {
 	// Age the failure past the window with no traffic since: assumed
 	// recovered so /readyz doesn't latch red forever on an idle server.
 	h.mu.Lock()
-	h.lastErrAt = time.Now().Add(-externalSignerHealthWindow - time.Second)
+	h.lastErrAt = time.Now().Add(-ExternalSignerHealthWindow - time.Second)
 	h.mu.Unlock()
 	if err := h.check(); err != nil {
 		t.Errorf("stale failure = %v, want healthy (assumed recovered)", err)

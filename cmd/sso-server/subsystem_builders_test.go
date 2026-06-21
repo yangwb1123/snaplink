@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/platform/geo"
 )
 
 // -----------------------------------------------------------------------------
-// buildSnapshotSubsystem
+// serverbuildstore.BuildSnapshotSubsystem
 // -----------------------------------------------------------------------------
 
 // TestBuildSnapshotSubsystem_DisabledReturnsNils — operators who
@@ -22,7 +24,7 @@ import (
 func TestBuildSnapshotSubsystem_DisabledReturnsNils(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = false
-	pipe, store, err := buildSnapshotSubsystem(cfg, quietLogger())
+	pipe, store, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -38,7 +40,7 @@ func TestBuildSnapshotSubsystem_InlineStorage(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
-	pipe, store, err := buildSnapshotSubsystem(cfg, quietLogger())
+	pipe, store, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -55,7 +57,7 @@ func TestBuildSnapshotSubsystem_FileStorageWithDir(t *testing.T) {
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "file"
 	cfg.Snapshot.Storage.File.Dir = filepath.Join(t.TempDir(), "snaps")
-	pipe, store, err := buildSnapshotSubsystem(cfg, quietLogger())
+	pipe, store, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -70,7 +72,7 @@ func TestBuildSnapshotSubsystem_UnknownBackendErrors(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "s3"
-	if _, _, err := buildSnapshotSubsystem(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown storage backend")
 	}
 }
@@ -83,7 +85,7 @@ func TestBuildSnapshotSubsystem_PassphraseRequiresValue(t *testing.T) {
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
 	cfg.Snapshot.Encryption.Backend = "passphrase"
-	if _, _, err := buildSnapshotSubsystem(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for passphrase backend without passphrase")
 	}
 }
@@ -97,7 +99,7 @@ func TestBuildSnapshotSubsystem_PassphraseFromInline(t *testing.T) {
 	cfg.Snapshot.Storage.Backend = "inline"
 	cfg.Snapshot.Encryption.Backend = "passphrase"
 	cfg.Snapshot.Encryption.Passphrase = "correct-horse-battery-staple"
-	pipe, _, err := buildSnapshotSubsystem(cfg, quietLogger())
+	pipe, _, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -107,7 +109,7 @@ func TestBuildSnapshotSubsystem_PassphraseFromInline(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildReleaseSubsystem
+// serverbuildplatform.BuildReleaseSubsystem
 // -----------------------------------------------------------------------------
 
 // TestBuildReleaseSubsystem_DisabledReturnsNils — same shape as
@@ -116,7 +118,7 @@ func TestBuildSnapshotSubsystem_PassphraseFromInline(t *testing.T) {
 func TestBuildReleaseSubsystem_DisabledReturnsNils(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = false
-	reg, store, err := buildReleaseSubsystem(cfg, quietLogger())
+	reg, store, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -134,7 +136,7 @@ func TestBuildReleaseSubsystem_MemoryStoreNoopPinner(t *testing.T) {
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "memory"
 	cfg.Releases.Pinner.Backend = "noop"
-	reg, store, err := buildReleaseSubsystem(cfg, quietLogger())
+	reg, store, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -154,7 +156,7 @@ func TestBuildReleaseSubsystem_StaticPinnerRequiresBundleDir(t *testing.T) {
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "memory"
 	cfg.Releases.Pinner.Backend = "static"
-	if _, _, err := buildReleaseSubsystem(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for static pinner without bundle_dir")
 	}
 }
@@ -165,13 +167,13 @@ func TestBuildReleaseSubsystem_UnknownStoreBackendErrors(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "redis"
-	if _, _, err := buildReleaseSubsystem(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown release store backend")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// buildTenantStore
+// serverbuildstore.BuildTenantStore
 // -----------------------------------------------------------------------------
 
 // TestBuildTenantStore_DisabledReturnsNil — multi-tenant deployments
@@ -180,7 +182,7 @@ func TestBuildReleaseSubsystem_UnknownStoreBackendErrors(t *testing.T) {
 func TestBuildTenantStore_DisabledReturnsNil(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = false
-	store, err := buildTenantStore(cfg, quietLogger())
+	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -203,7 +205,7 @@ func TestBuildTenantStore_SeedsTenantsAndDomains(t *testing.T) {
 	cfg.Tenant.Domains = []config.TenantDomainConfig{
 		{Hostname: "alpha.example.com", TenantID: "t-a"},
 	}
-	store, err := buildTenantStore(cfg, quietLogger())
+	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -241,13 +243,13 @@ func TestBuildTenantStore_UnknownBackendErrors(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = true
 	cfg.Tenant.Backend = "postgres"
-	if _, err := buildTenantStore(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildstore.BuildTenantStore(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown tenant backend")
 	}
 }
 
 // -----------------------------------------------------------------------------
-// buildGeoProvider
+// serverbuildstore.BuildGeoProvider
 // -----------------------------------------------------------------------------
 
 // TestBuildGeoProvider_DisabledReturnsNil — geo is a UX hint;
@@ -256,7 +258,7 @@ func TestBuildTenantStore_UnknownBackendErrors(t *testing.T) {
 func TestBuildGeoProvider_DisabledReturnsNil(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = false
-	p, err := buildGeoProvider(cfg, quietLogger())
+	p, err := serverbuildstore.BuildGeoProvider(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -276,7 +278,7 @@ func TestBuildGeoProvider_StaticSeedsCIDREntries(t *testing.T) {
 		{CIDR: "10.0.0.0/8", CountryCode: "US", RecommendedLanguage: "en-US"},
 		{CIDR: "2001:db8::/32", CountryCode: "JP", RecommendedLanguage: "ja-JP"},
 	}
-	p, err := buildGeoProvider(cfg, quietLogger())
+	p, err := serverbuildstore.BuildGeoProvider(cfg, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -300,7 +302,7 @@ func TestBuildGeoProvider_BadCIDRSurfaces(t *testing.T) {
 	cfg.Geo.Static.Entries = []config.GeoStaticEntry{
 		{CIDR: "not-a-cidr", CountryCode: "US"},
 	}
-	if _, err := buildGeoProvider(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildstore.BuildGeoProvider(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for malformed CIDR")
 	}
 }
@@ -312,7 +314,7 @@ func TestBuildGeoProvider_UnknownBackendErrors(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = true
 	cfg.Geo.Backend = "maxmind"
-	if _, err := buildGeoProvider(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildstore.BuildGeoProvider(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown geo backend")
 	}
 }

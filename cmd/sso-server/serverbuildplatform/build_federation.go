@@ -1,4 +1,4 @@
-package main
+package serverbuildplatform
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/snaplink/sso/shared/security"
 )
 
-func buildFederationConfig(cfg config.FederationConfig) (*federation.Config, error) {
+func BuildFederationConfig(cfg config.FederationConfig) (*federation.Config, error) {
 	anchors, err := loadFederationAnchors(cfg.TrustAnchors)
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func loadFederationSubordinates(in []config.SubordinateConfig) ([]federation.Sub
 			JWKSFile:       sub.JWKSFile,
 			Keys:           keys,
 			MetadataPolicy: sub.MetadataPolicy,
-			Constraints:    subordinateConstraints(sub.Constraints),
+			Constraints:    SubordinateConstraints(sub.Constraints),
 		})
 	}
 	return subordinates, nil

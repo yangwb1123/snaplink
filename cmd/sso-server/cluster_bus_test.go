@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 )
 
@@ -11,7 +12,7 @@ import (
 // yields a nil bus — single-node deployments invalidate locally and
 // must not be forced to stand up a bus.
 func TestBuildInvalidationBus_UnsetIsNil(t *testing.T) {
-	bus, kind, err := buildInvalidationBus(&config.ClusterBusConfig{}, quietLogger())
+	bus, kind, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -25,7 +26,7 @@ func TestBuildInvalidationBus_UnsetIsNil(t *testing.T) {
 
 // TestBuildInvalidationBus_Memory proves the in-process backend wires up.
 func TestBuildInvalidationBus_Memory(t *testing.T) {
-	bus, kind, err := buildInvalidationBus(&config.ClusterBusConfig{Backend: "memory"}, quietLogger())
+	bus, kind, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{Backend: "memory"}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -35,11 +36,11 @@ func TestBuildInvalidationBus_Memory(t *testing.T) {
 	defer func() { _ = bus.Close() }()
 }
 
-// TestBuildInvalidationBus_EtcdRequiresEndpoints mirrors buildRegistry's
+// TestBuildInvalidationBus_EtcdRequiresEndpoints mirrors serverbuildplatform.BuildRegistry's
 // contract: the etcd path must fail fast with an operator-facing error
 // rather than dialing nothing.
 func TestBuildInvalidationBus_EtcdRequiresEndpoints(t *testing.T) {
-	_, _, err := buildInvalidationBus(&config.ClusterBusConfig{Backend: "etcd"}, quietLogger())
+	_, _, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{Backend: "etcd"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error when etcd_endpoints is empty")
 	}
@@ -50,7 +51,7 @@ func TestBuildInvalidationBus_EtcdRequiresEndpoints(t *testing.T) {
 
 // TestBuildInvalidationBus_UnknownBackendErrors guards YAML typos.
 func TestBuildInvalidationBus_UnknownBackendErrors(t *testing.T) {
-	_, _, err := buildInvalidationBus(&config.ClusterBusConfig{Backend: "mythical"}, quietLogger())
+	_, _, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{Backend: "mythical"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

@@ -1,4 +1,4 @@
-package main
+package serverbuildplatform
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
 )
 
-// buildPermissionsProvider returns the wired permissions.Provider
+// BuildPermissionsProvider returns the wired permissions.Provider
 // (memory or sqlite per config) seeded with cfg.Permissions.Apps +
 // cfg.Permissions.UserRoles. Returns (nil, nil) when permissions
 // disabled.
@@ -27,7 +27,7 @@ import (
 // DSN see harmless duplicate-seed warnings rather than wedged
 // startup. AssignRoles overwrites (matches the memory peer's SET
 // semantics) so re-seeds idempotently re-apply the YAML state.
-func buildPermissionsProvider(cfg *config.Config, logger spi.Logger) (permissions.Provider, error) {
+func BuildPermissionsProvider(cfg *config.Config, logger spi.Logger) (permissions.Provider, error) {
 	if !cfg.Permissions.Enabled {
 		return nil, nil
 	}
@@ -108,7 +108,7 @@ func seedAppRoles(ctx context.Context, p permissions.Provider, app config.AppPer
 	return seeded
 }
 
-// buildRiskScorer materializes the reference rule-based
+// BuildRiskScorer materializes the reference rule-based
 // [defaultimpl.RuleBasedRiskScorer] from RiskConfig. Returns nil
 // when risk.enabled=false so cmd skips WithRiskScorer entirely
 // (zero overhead on the login path).
@@ -118,7 +118,7 @@ func seedAppRoles(ctx context.Context, p permissions.Provider, app config.AppPer
 // sso.WithRiskScorer with their own implementation — the
 // RuleBasedRiskScorer is the declarative 80% case, not a
 // framework for embedding richer policies.
-func buildRiskScorer(cfg *config.RiskConfig, logger spi.Logger) (spi.RiskScorer, error) {
+func BuildRiskScorer(cfg *config.RiskConfig, logger spi.Logger) (spi.RiskScorer, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}

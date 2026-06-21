@@ -42,7 +42,7 @@ const (
 //
 //	SEED_DIRFANOUT=1 go test -run TestSeedDirectoryFanout -v .
 var dirFileCountExemptions = map[string]int{
-	"cmd/sso-server":                    43,
+	"cmd/sso-server":                    23,
 	"config":                            28,
 	"domains/authenticators":            18,
 	"domains/federation":                24,

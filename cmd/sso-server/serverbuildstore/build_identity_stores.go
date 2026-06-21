@@ -1,4 +1,4 @@
-package main
+package serverbuildstore
 
 import (
 	"encoding/hex"
@@ -20,7 +20,7 @@ import (
 	"github.com/snaplink/sso/shared/security"
 )
 
-func convertClientJWKs(in []config.ClientJWK) []sso.JWK {
+func ConvertClientJWKs(in []config.ClientJWK) []sso.JWK {
 	if len(in) == 0 {
 		return nil
 	}
@@ -43,7 +43,7 @@ func convertClientJWKs(in []config.ClientJWK) []sso.JWK {
 // The second return value is a human-readable mode label suitable
 // for the boot log so operators can confirm the wiring matches the
 // surrounding network topology.
-func buildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, string, error) {
+func BuildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "", "tls", "peer":
@@ -52,7 +52,7 @@ func buildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, s
 		if cfg.Header.Name == "" {
 			return nil, "", fmt.Errorf("security.mtls.header.name required when backend=%q", backend)
 		}
-		enc, err := parseHeaderCertEncoding(cfg.Header.Encoding)
+		enc, err := ParseHeaderCertEncoding(cfg.Header.Encoding)
 		if err != nil {
 			return nil, "", err
 		}
@@ -62,7 +62,7 @@ func buildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, s
 	}
 }
 
-func parseHeaderCertEncoding(s string) (security.HeaderCertEncoding, error) {
+func ParseHeaderCertEncoding(s string) (security.HeaderCertEncoding, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "url-pem", "urlpem", "url_pem":
 		return security.HeaderCertEncodingURLPEM, nil
@@ -75,7 +75,7 @@ func parseHeaderCertEncoding(s string) (security.HeaderCertEncoding, error) {
 	}
 }
 
-func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger spi.Logger) (sso.DPoPNonceProvider, error) {
+func BuildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger spi.Logger) (sso.DPoPNonceProvider, error) {
 	if cfg.KeyFile != "" {
 		raw, err := os.ReadFile(cfg.KeyFile)
 		if err != nil {
@@ -95,12 +95,12 @@ func buildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger spi.Logger) (sso.
 	return sso.NewHMACNonceProvider(cfg.TTL)
 }
 
-// buildClientStore / buildUserProvider pick the identity-domain
+// BuildClientStore / BuildUserProvider pick the identity-domain
 // backend. Memory keeps the simple-bootstrap story; SQLite persists
 // DCR registrations + password users across restarts. Same DSN can
 // be shared with OAuth.SQLite — SQLite OS-file-lock handles
 // cross-pool coordination.
-func buildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
+func BuildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryClientStore(), nil
@@ -114,14 +114,14 @@ func buildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
 	}
 }
 
-// buildConsentStore selects the self-service consent store backend. An empty
+// BuildConsentStore selects the self-service consent store backend. An empty
 // backend returns (nil, nil) — consent enforcement stays OFF and the routes
 // stay unmounted (byte-identical). memory is dev/single-node; sqlite is durable
 // and required for the GDPR consent-record retention a real deployment needs.
-// buildDeviceSecretStore selects the Native SSO device_secret backend. Empty
+// BuildDeviceSecretStore selects the Native SSO device_secret backend. Empty
 // backend returns (nil, nil) — the feature stays off (byte-identical). sqlite
 // is durable + multi-replica-safe.
-func buildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, error) {
+func BuildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -137,9 +137,9 @@ func buildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, 
 	}
 }
 
-// buildPasswordResetStore selects the forgot-password reset-token backend.
+// BuildPasswordResetStore selects the forgot-password reset-token backend.
 // Empty backend = the flow stays disabled (byte-identical).
-func buildPasswordResetStore(cfg config.PasswordResetConfig) (sso.PasswordResetStore, error) {
+func BuildPasswordResetStore(cfg config.PasswordResetConfig) (sso.PasswordResetStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -155,7 +155,7 @@ func buildPasswordResetStore(cfg config.PasswordResetConfig) (sso.PasswordResetS
 	}
 }
 
-func buildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, error) {
+func BuildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -171,12 +171,12 @@ func buildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, err
 	}
 }
 
-// buildPasswordCredentialStore selects the self-service password store backend.
+// BuildPasswordCredentialStore selects the self-service password store backend.
 // Empty backend returns (nil, nil) — /me/password stays unmounted and the
 // password authenticator keeps its YAML-only verifier (byte-identical). When
 // set, the store is seeded from the YAML password users and login is served
 // from it, so a password changed via /me/password takes effect on next login.
-func buildPasswordCredentialStore(cfg config.SelfServiceStoreConfig) (sso.PasswordCredentialStore, error) {
+func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig) (sso.PasswordCredentialStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -192,7 +192,7 @@ func buildPasswordCredentialStore(cfg config.SelfServiceStoreConfig) (sso.Passwo
 	}
 }
 
-func buildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
+func BuildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryUserProvider(), nil
@@ -206,11 +206,11 @@ func buildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 	}
 }
 
-// buildSessionManager picks the SessionManager backend. Same memory|
+// BuildSessionManager picks the SessionManager backend. Same memory|
 // sqlite selector as the rest of identity-domain stores so operators
 // running TokenStrategySession across multiple replicas get cross-
 // replica session redemption against a shared SQLite file.
-func buildSessionManager(cfg config.IdentityConfig, ttl time.Duration) (sso.SessionManager, error) {
+func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration) (sso.SessionManager, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemorySessionManager(ttl), nil

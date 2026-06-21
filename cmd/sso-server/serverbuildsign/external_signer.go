@@ -1,4 +1,4 @@
-package main
+package serverbuildsign
 
 import (
 	"context"
@@ -25,13 +25,13 @@ import (
 // for rs256/ps256). The kid is typically the stable KMS key id / ARN.
 type ExternalSignerFactory func(ctx context.Context) (crypto.Signer, string, error)
 
-// externalSignerRegistry holds operator-registered KMS/HSM signer
+// ExternalSignerRegistry holds operator-registered KMS/HSM signer
 // factories. The vendor KMS SDK (AWS/GCP/Azure/PKCS#11) lives in the
 // operator's forked binary, not this module — the operator calls
 // RegisterExternalSigner from their main before running the server, then
 // selects the factory by name via keys.signing.external. This mirrors how
 // the repo keeps etcd and push-transport SDKs out of the SPI.
-var externalSignerRegistry = struct {
+var ExternalSignerRegistry = struct {
 	mu        sync.RWMutex
 	factories map[string]ExternalSignerFactory
 }{factories: map[string]ExternalSignerFactory{}}
@@ -47,21 +47,21 @@ func RegisterExternalSigner(name string, f ExternalSignerFactory) {
 	if f == nil {
 		panic(fmt.Sprintf("RegisterExternalSigner: nil factory for %q", name))
 	}
-	externalSignerRegistry.mu.Lock()
-	defer externalSignerRegistry.mu.Unlock()
-	if _, dup := externalSignerRegistry.factories[name]; dup {
+	ExternalSignerRegistry.mu.Lock()
+	defer ExternalSignerRegistry.mu.Unlock()
+	if _, dup := ExternalSignerRegistry.factories[name]; dup {
 		panic(fmt.Sprintf("RegisterExternalSigner: %q already registered", name))
 	}
-	externalSignerRegistry.factories[name] = f
+	ExternalSignerRegistry.factories[name] = f
 }
 
-// externalSignerHealthWindow bounds how long a failed external-signing
+// ExternalSignerHealthWindow bounds how long a failed external-signing
 // attempt keeps /readyz red with no fresh traffic. A failure older than
 // this — with no signing since — is treated as recovered, so the probe
 // doesn't latch red forever on an idle server; real /token traffic
 // re-proves health. Sized for kubelet poll cadence, not tuned per
 // deployment (no config surface).
-const externalSignerHealthWindow = 30 * time.Second
+const ExternalSignerHealthWindow = 30 * time.Second
 
 // healthTransition reports whether a recorded outcome flipped the
 // backend's health relative to the previous one — the rare edge an
@@ -74,10 +74,10 @@ const (
 	transitionUp                    // failing -> healthy
 )
 
-// signerHealth tracks the most recent external-signing outcome so a
+// SignerHealth tracks the most recent external-signing outcome so a
 // passive /readyz probe can report KMS/HSM reachability WITHOUT spending
 // a KMS round-trip per poll — production signing traffic is the probe.
-type signerHealth struct {
+type SignerHealth struct {
 	mu          sync.Mutex
 	lastErr     error
 	lastErrAt   time.Time
@@ -88,7 +88,7 @@ type signerHealth struct {
 
 // record stores the outcome and reports any health transition. The first
 // recorded outcome is never a transition (no prior state to flip from).
-func (h *signerHealth) record(err error) healthTransition {
+func (h *SignerHealth) record(err error) healthTransition {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := time.Now()
@@ -116,10 +116,10 @@ func (h *signerHealth) record(err error) healthTransition {
 // failure (no traffic since) is assumed recovered. A fresh server with no
 // traffic reads healthy — startup already proved reachability by fetching
 // the public key.
-func (h *signerHealth) check() error {
+func (h *SignerHealth) check() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.lastErrAt.After(h.lastOKAt) && time.Since(h.lastErrAt) < externalSignerHealthWindow {
+	if h.lastErrAt.After(h.lastOKAt) && time.Since(h.lastErrAt) < ExternalSignerHealthWindow {
 		return h.lastErr
 	}
 	return nil
@@ -130,13 +130,13 @@ func (h *signerHealth) check() error {
 // probe, both at the KMS/HSM round-trip boundary. It is the same
 // crypto.Signer interface, so it slots transparently between the
 // operator's factory and the cryptosigner bridge, and also exposes
-// Ping(ctx) so appendReadyCheck wires it into /readyz.
+// Ping(ctx) so AppendReadyCheck wires it into /readyz.
 type instrumentedSigner struct {
 	inner  crypto.Signer
 	alg    string
 	m      *metrics.Metrics // nil when metrics are disabled
 	logger spi.Logger       // nil-safe via logSigner
-	health signerHealth
+	health SignerHealth
 }
 
 func (s *instrumentedSigner) Public() crypto.PublicKey { return s.inner.Public() }
@@ -175,17 +175,17 @@ func (s *instrumentedSigner) logSigner() spi.Logger {
 	return s.logger
 }
 
-// Ping satisfies the readycheck contract appendReadyCheck looks for. It
+// Ping satisfies the readycheck contract AppendReadyCheck looks for. It
 // reports the last recent signing failure (if any) so a wedged KMS/HSM
 // trips /readyz before /token requests fail en masse.
 func (s *instrumentedSigner) Ping(context.Context) error { return s.health.check() }
 
-// instrumentSigner wraps s for metrics + health tracking under the given
+// InstrumentSigner wraps s for metrics + health tracking under the given
 // alg label. Returns nil when s is nil, so callers can wrap
 // unconditionally. The wrap happens even when metrics are disabled —
 // readiness must not depend on metrics being on; the metric writes alone
 // are gated on m != nil.
-func instrumentSigner(s crypto.Signer, alg string, m *metrics.Metrics, logger spi.Logger) crypto.Signer {
+func InstrumentSigner(s crypto.Signer, alg string, m *metrics.Metrics, logger spi.Logger) crypto.Signer {
 	if s == nil {
 		return nil
 	}
@@ -211,19 +211,19 @@ func normalizeAlgLabel(alg string) string {
 
 // lookupExternalSigner returns the factory registered under name.
 func lookupExternalSigner(name string) (ExternalSignerFactory, bool) {
-	externalSignerRegistry.mu.RLock()
-	defer externalSignerRegistry.mu.RUnlock()
-	f, ok := externalSignerRegistry.factories[name]
+	ExternalSignerRegistry.mu.RLock()
+	defer ExternalSignerRegistry.mu.RUnlock()
+	f, ok := ExternalSignerRegistry.factories[name]
 	return f, ok
 }
 
 // registeredExternalSigners returns the sorted names of all registered
 // factories, for diagnostics.
 func registeredExternalSigners() []string {
-	externalSignerRegistry.mu.RLock()
-	defer externalSignerRegistry.mu.RUnlock()
-	names := make([]string, 0, len(externalSignerRegistry.factories))
-	for n := range externalSignerRegistry.factories {
+	ExternalSignerRegistry.mu.RLock()
+	defer ExternalSignerRegistry.mu.RUnlock()
+	names := make([]string, 0, len(ExternalSignerRegistry.factories))
+	for n := range ExternalSignerRegistry.factories {
 		names = append(names, n)
 	}
 	sort.Strings(names)

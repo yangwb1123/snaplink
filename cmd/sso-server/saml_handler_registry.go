@@ -18,7 +18,7 @@ import (
 // from their forked binary WITHOUT the SAML SDK entering this module's
 // go.mod (the firm zero-external-dep invariant; the factory closes over its
 // own crewjam types in the operator's module). It mirrors how
-// ExternalSignerFactory keeps the vendor KMS SDK in the operator's main.
+// serverbuildsign.ExternalSignerFactory keeps the vendor KMS SDK in the operator's main.
 //
 // The factory gets exactly what a SAML SP/IdP surface needs to mint tokens
 // the same way the rest of the server does:
@@ -98,7 +98,7 @@ type SAMLHandlerFactory func(ctx context.Context, deps SAMLServerDeps) (*SAMLHan
 // SAML SDK (crewjam/saml, encoding/xml DSig, etc.) lives in the operator's
 // forked binary, not this module — the operator calls RegisterSAMLHandlers
 // from their main before running the server, then selects the factory by
-// name via saml.handler. This mirrors externalSignerRegistry EXACTLY (which
+// name via saml.handler. This mirrors serverbuildsign.ExternalSignerRegistry EXACTLY (which
 // keeps the vendor KMS SDK out of the SPI the same way).
 var samlHandlerRegistry = struct {
 	mu        sync.RWMutex
@@ -109,7 +109,7 @@ var samlHandlerRegistry = struct {
 // reachable via saml.handler. Intended to be called from an operator's
 // forked main during init/startup. Panics on an empty name, a nil factory,
 // or a duplicate name (all unrecoverable wiring mistakes) — identical to
-// RegisterExternalSigner.
+// serverbuildsign.RegisterExternalSigner.
 func RegisterSAMLHandlers(name string, f SAMLHandlerFactory) {
 	if name == "" {
 		panic("RegisterSAMLHandlers: empty name")

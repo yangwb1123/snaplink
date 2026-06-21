@@ -1,4 +1,4 @@
-package main
+package serverbuildsign
 
 import (
 	"context"
@@ -13,20 +13,20 @@ import (
 	"github.com/snaplink/sso/interfaces/ratelimit"
 )
 
-// buildClientCertExtractor picks the RFC 8705 mTLS extractor backend.
+// serverbuildstore.BuildClientCertExtractor picks the RFC 8705 mTLS extractor backend.
 //   - "" / "tls" — DefaultTLSPeerCertExtractor (in-process TLS only)
 //   - "header"   — HeaderClientCertExtractor (reverse-proxy edge)
 //
-// convertClientJWKs maps cmd-config JWK entries to sso.JWK. Drops
+// serverbuildstore.ConvertClientJWKs maps cmd-config JWK entries to sso.JWK. Drops
 // nothing — every parameter the SDK consumes is exposed in YAML.
-// appendReadyCheck registers v as a /readyz dependency when it
+// AppendReadyCheck registers v as a /readyz dependency when it
 // implements Ping(ctx). All SQLite-backed stores satisfy this via
 // the corresponding sqlite package; memory backends don't, so the
 // type assertion silently no-ops for them — exactly the cadence we
 // want (no readiness signal from a process-local map). name shows up
 // in the /readyz response so operators can tell which dependency
 // failed.
-func appendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
+func AppendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
 	p, ok := v.(interface{ Ping(context.Context) error })
 	if !ok {
 		return opts
@@ -34,14 +34,14 @@ func appendReadyCheck(opts []sso.Option, name string, v any) []sso.Option {
 	return append(opts, sso.WithReadyCheck(name, p.Ping))
 }
 
-// checkSQLiteSchema calls migrate.CheckSchema on the store's underlying
+// CheckSQLiteSchema calls migrate.CheckSchema on the store's underlying
 // database when v exposes a DB() *sql.DB method (every SQLite store does).
 // Memory backends don't implement DB() so the check silently no-ops for
-// them — the same additive pattern as appendReadyCheck. Returns a fatal
+// them — the same additive pattern as AppendReadyCheck. Returns a fatal
 // error when the live schema is ahead of binaryMax; this is a BOOT GATE,
 // not a /readyz check, because a schema mismatch corrupts data before any
 // request is served.
-func checkSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax int) error {
+func CheckSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax int) error {
 	d, ok := v.(interface{ DB() *sql.DB })
 	if !ok {
 		return nil
@@ -53,9 +53,9 @@ func checkSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax i
 	return migrate.CheckSchema(ctx, db, namespace, binaryMax)
 }
 
-// appendStorageHealthSource collects v as a per-store entry for the
+// AppendStorageHealthSource collects v as a per-store entry for the
 // /api/v1/admin/storage-health report (WithStorageHealth). It mirrors
-// appendReadyCheck's gating: only stores exposing Ping(ctx) are added, so
+// AppendReadyCheck's gating: only stores exposing Ping(ctx) are added, so
 // process-local memory backends silently no-op (no reachability signal to
 // report) and the report contains exactly the SQLite-backed stores — the
 // same set /readyz aggregates, but with per-store detail.
@@ -67,7 +67,7 @@ func checkSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax i
 // (no schema_versions). name is operator-facing and MUST NOT carry a DSN or
 // secret — the report never surfaces the connection string, only this label
 // plus a generic reachability error.
-func appendStorageHealthSource(sources []sso.StorageHealthSource, name string, v any) []sso.StorageHealthSource {
+func AppendStorageHealthSource(sources []sso.StorageHealthSource, name string, v any) []sso.StorageHealthSource {
 	p, ok := v.(interface{ Ping(context.Context) error })
 	if !ok {
 		return sources
@@ -92,7 +92,7 @@ func appendStorageHealthSource(sources []sso.StorageHealthSource, name string, v
 	return append(sources, src)
 }
 
-// appendRateLimitReadyChecks registers a /readyz check for the
+// AppendRateLimitReadyChecks registers a /readyz check for the
 // policy's Default limiter and every prefix-rule limiter. Memory
 // limiters silently no-op (no Ping method); the SQLite limiter
 // exposes its database handle here so a wedged cluster-shared
@@ -103,24 +103,24 @@ func appendStorageHealthSource(sources []sso.StorageHealthSource, name string, v
 // becomes `sqlite-ratelimit-token-revoke`. Empty / unrecognized
 // prefixes fall back to a positional `rule-N` name so two
 // configurations can't collide.
-func appendRateLimitReadyChecks(opts []sso.Option, p ratelimit.Policy) []sso.Option {
-	opts = appendReadyCheck(opts, "sqlite-ratelimit-default", p.Default)
+func AppendRateLimitReadyChecks(opts []sso.Option, p ratelimit.Policy) []sso.Option {
+	opts = AppendReadyCheck(opts, "sqlite-ratelimit-default", p.Default)
 	for i, rule := range p.Prefixes {
-		name := sanitizeReadyCheckSuffix(rule.Prefix)
+		name := SanitizeReadyCheckSuffix(rule.Prefix)
 		if name == "" {
 			name = fmt.Sprintf("rule-%d", i)
 		}
-		opts = appendReadyCheck(opts, "sqlite-ratelimit-"+name, rule.Limiter)
+		opts = AppendReadyCheck(opts, "sqlite-ratelimit-"+name, rule.Limiter)
 	}
 	return opts
 }
 
-// sanitizeReadyCheckSuffix turns an arbitrary string into a kebab-
+// SanitizeReadyCheckSuffix turns an arbitrary string into a kebab-
 // safe suffix for a ReadyCheck name. Alphanumerics pass through;
 // every other rune collapses into a single `-` separator. Used by
-// appendRateLimitReadyChecks to derive stable, JSON-payload-friendly
+// AppendRateLimitReadyChecks to derive stable, JSON-payload-friendly
 // names from operator-supplied URL prefixes.
-func sanitizeReadyCheckSuffix(s string) string {
+func SanitizeReadyCheckSuffix(s string) string {
 	var b strings.Builder
 	dashOK := false
 	for _, r := range s {

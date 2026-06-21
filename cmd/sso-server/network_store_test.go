@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 )
 
@@ -11,7 +12,7 @@ import (
 // contract — when network.enabled=false, cmd's wrapper must return
 // (nil, "", nil) so the caller skips classifier wiring.
 func TestBuildNetworkStore_DisabledReturnsNil(t *testing.T) {
-	store, kind, err := buildNetworkStore(&config.NetworkConfig{Enabled: false}, quietLogger())
+	store, kind, err := serverbuildstore.BuildNetworkStore(&config.NetworkConfig{Enabled: false}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -32,9 +33,9 @@ func TestBuildNetworkStore_MemoryAppliesSeeds(t *testing.T) {
 			{Name: "intranet", CIDRs: []string{"10.0.0.0/8"}, Priority: 100},
 		},
 	}
-	store, kind, err := buildNetworkStore(cfg, quietLogger())
+	store, kind, err := serverbuildstore.BuildNetworkStore(cfg, quietLogger())
 	if err != nil {
-		t.Fatalf("buildNetworkStore: %v", err)
+		t.Fatalf("serverbuildstore.BuildNetworkStore: %v", err)
 	}
 	defer func() { _ = store.Close() }()
 	if kind != "memory" {
@@ -55,7 +56,7 @@ func TestBuildNetworkStore_MemoryAppliesSeeds(t *testing.T) {
 // default behavior).
 func TestBuildNetworkStore_EtcdRequiresEndpoints(t *testing.T) {
 	cfg := &config.NetworkConfig{Enabled: true, Store: "etcd"}
-	_, _, err := buildNetworkStore(cfg, quietLogger())
+	_, _, err := serverbuildstore.BuildNetworkStore(cfg, quietLogger())
 	if err == nil {
 		t.Fatal("expected error when etcd_endpoints is empty")
 	}
@@ -69,7 +70,7 @@ func TestBuildNetworkStore_EtcdRequiresEndpoints(t *testing.T) {
 // fall through to a default.
 func TestBuildNetworkStore_UnknownBackendErrors(t *testing.T) {
 	cfg := &config.NetworkConfig{Enabled: true, Store: "mythical"}
-	if _, _, err := buildNetworkStore(cfg, quietLogger()); err == nil {
+	if _, _, err := serverbuildstore.BuildNetworkStore(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
