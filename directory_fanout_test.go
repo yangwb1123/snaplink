@@ -41,6 +41,13 @@ const (
 // split with:
 //
 //	SEED_DIRFANOUT=1 go test -run TestSeedDirectoryFanout -v .
+//
+// The residual entries are the PERMANENT monolith-exemption class
+// (monolithic-shared-state / binary-composition-root / depth-blocked / kernel /
+// security-timing-critical) documented in docs/adr/ADR-0007 — each is pinned by
+// a higher-priority invariant (public import-path stability, methods-on-a-type,
+// depth-3, or const-by-literal-name), so it stays grandfathered rather than be
+// split by exporting internals or breaking the SDK. Do NOT re-attempt those.
 var dirFileCountExemptions = map[string]int{
 	"cmd/sso-server":                    23,
 	"config":                            26,
