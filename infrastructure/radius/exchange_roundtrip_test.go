@@ -412,7 +412,7 @@ func startRadSecServer(t *testing.T, cert tls.Certificate, replySecret string, c
 			wg.Add(1)
 			go func(c net.Conn) {
 				defer wg.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 
 				// Read the length-prefixed request exactly like the client writes it.

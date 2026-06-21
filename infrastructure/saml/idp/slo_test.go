@@ -716,7 +716,7 @@ func inflateLogoutResponseEl(t *testing.T, respB64 string) *etree.Element {
 		t.Fatalf("base64 decode LogoutResponse: %v", err)
 	}
 	fr := flate.NewReader(bytes.NewReader(comp))
-	defer fr.Close()
+	defer func() { _ = fr.Close() }()
 	raw, err := io.ReadAll(fr)
 	if err != nil {
 		t.Fatalf("inflate LogoutResponse: %v", err)

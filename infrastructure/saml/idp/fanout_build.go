@@ -122,7 +122,7 @@ func getSLO(ctx context.Context, client *http.Client, reqURL string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("saml/idp: SP SLO returned status %d", resp.StatusCode)
 	}
@@ -142,7 +142,7 @@ func postSLOForm(ctx context.Context, client *http.Client, sloURL, samlRequestB6
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("saml/idp: SP SLO returned status %d", resp.StatusCode)
 	}

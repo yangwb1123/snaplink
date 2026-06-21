@@ -162,7 +162,7 @@ func (s *SessionIndex) Record(ctx context.Context, subject string, sess samlidp.
 	if err != nil {
 		return fmt.Errorf("saml/idp/sqlite: session index acquire conn: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("saml/idp/sqlite: session index begin: %w", err)
@@ -241,7 +241,7 @@ func (s *SessionIndex) ListBySubject(ctx context.Context, subject string) ([]sam
 	if err != nil {
 		return nil, fmt.Errorf("saml/idp/sqlite: session index list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []samlidp.SAMLSPSession
 	for rows.Next() {

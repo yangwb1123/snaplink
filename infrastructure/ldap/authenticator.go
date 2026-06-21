@@ -204,7 +204,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, req *sso.AuthRequest) 
 		a.logError("ldap dial failed", err)
 		return nil, err // already wrapped as ErrDirectoryUnavailable by dial
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// (2) Service-account (or anonymous) bind for the search leg.
 	if a.cfg.BindDN != "" {
@@ -302,7 +302,7 @@ func (a *Authenticator) dial(ctx context.Context) (conn, error) {
 		// must never fall through to a plaintext bind).
 		if a.cfg.StartTLS {
 			if err := c.StartTLS(tlsCfg); err != nil {
-				c.Close()
+				_ = c.Close()
 				lastErr = fmt.Errorf("StartTLS: %w", err)
 				continue
 			}

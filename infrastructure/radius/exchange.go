@@ -266,7 +266,7 @@ func (e *radiusExchanger) radSecExchange(ctx context.Context, packet *radius.Pac
 	if err != nil {
 		return nil, fmt.Errorf("radius: radsec dial %s: %w", addr, err)
 	}
-	defer rawConn.Close()
+	defer func() { _ = rawConn.Close() }()
 
 	// Propagate the caller's deadline to the socket so a stalled peer cannot hang
 	// past the bounded request timeout.

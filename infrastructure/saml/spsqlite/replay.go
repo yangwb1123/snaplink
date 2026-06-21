@@ -176,7 +176,7 @@ func checkAndRemember(db *sql.DB, log logger, table, id string, expires, now tim
 		log.Error("saml sqlite replay: acquire conn; failing closed", "table", table, "err", err)
 		return false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		log.Error("saml sqlite replay: begin; failing closed", "table", table, "err", err)

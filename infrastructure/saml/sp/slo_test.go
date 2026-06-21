@@ -611,7 +611,7 @@ func inflateAndParse(t *testing.T, b64 string) *etree.Element {
 		t.Fatalf("base64 decode: %v", err)
 	}
 	fr := flate.NewReader(bytes.NewReader(comp))
-	defer fr.Close()
+	defer func() { _ = fr.Close() }()
 	raw, err := io.ReadAll(fr)
 	if err != nil {
 		t.Fatalf("inflate: %v", err)

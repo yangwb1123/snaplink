@@ -150,7 +150,7 @@ func (s *LogoutReplayStore) CheckAndRemember(id string, expires, now time.Time) 
 		s.logErr("acquire conn", err)
 		return false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		s.logErr("begin", err)

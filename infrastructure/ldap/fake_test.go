@@ -50,7 +50,6 @@ type fakeDirectory struct {
 	// startTLSCalled records whether StartTLS was invoked before any bind (the
 	// "credentials never cross plaintext" assertion for the StartTLS path).
 	startTLSCalled bool
-	bindBeforeTLS  bool // set if a Bind happened before StartTLS (a leak)
 
 	// dialErr / searchErr / serviceBindErr / startTLSErr, when set, make the
 	// respective operation fail (drives the operational-failure tests). userBind

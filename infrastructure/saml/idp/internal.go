@@ -55,7 +55,7 @@ func decodeAuthnRequest(samlRequest string, redirectBinding bool) ([]byte, error
 // binding uses (RFC: no zlib header).
 func inflateBounded(b []byte) ([]byte, error) {
 	fr := flate.NewReader(bytes.NewReader(b))
-	defer fr.Close()
+	defer func() { _ = fr.Close() }()
 	// LimitReader caps the inflated size; io.ReadAll over it never allocates
 	// more than the cap +1 sentinel byte.
 	out, err := io.ReadAll(io.LimitReader(fr, maxInflatedRequestBytes+1))

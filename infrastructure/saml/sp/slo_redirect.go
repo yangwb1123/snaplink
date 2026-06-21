@@ -116,7 +116,7 @@ func decodeSLORequest(samlRequestB64 string, redirectBinding bool) ([]byte, erro
 		return b, nil
 	}
 	fr := flate.NewReader(bytes.NewReader(b))
-	defer fr.Close()
+	defer func() { _ = fr.Close() }()
 	out, err := io.ReadAll(io.LimitReader(fr, maxInflatedLogoutBytes+1))
 	if err != nil {
 		return nil, err

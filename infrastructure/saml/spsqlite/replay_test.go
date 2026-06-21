@@ -108,7 +108,9 @@ func TestAssertionReplay_BlankIDShortCircuits(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	now := time.Now()
 	exp := now.Add(time.Hour)
-	if !s.CheckAndRemember("", exp, now) || !s.CheckAndRemember("", exp, now) {
+	first := s.CheckAndRemember("", exp, now)
+	second := s.CheckAndRemember("", exp, now) // a second blank-id call must also read fresh
+	if !first || !second {
 		t.Fatal("blank id should always read fresh (records nothing)")
 	}
 	var n int
