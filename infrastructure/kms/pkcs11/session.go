@@ -335,11 +335,13 @@ func (rs *realSession) ecPublicKeyDER() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	x, y := elliptic.Unmarshal(curve, point)
-	if x == nil {
-		return nil, errors.New("pkcs11: CKA_EC_POINT is not a valid uncompressed point")
+	// ParseUncompressedPublicKey (Go 1.25+) parses the uncompressed SEC1 point
+	// and validates it is on-curve, replacing the deprecated elliptic.Unmarshal
+	// + manual *ecdsa.PublicKey assembly.
+	pub, err := ecdsa.ParseUncompressedPublicKey(curve, point)
+	if err != nil {
+		return nil, fmt.Errorf("pkcs11: CKA_EC_POINT is not a valid uncompressed point: %w", err)
 	}
-	pub := &ecdsa.PublicKey{Curve: curve, X: x, Y: y}
 	return x509.MarshalPKIXPublicKey(pub)
 }
 

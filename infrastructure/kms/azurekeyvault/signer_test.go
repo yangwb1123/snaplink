@@ -233,7 +233,7 @@ func TestPublicKeyParsesAndCaches(t *testing.T) {
 		t.Fatalf("curve = %s, want P-256", pub.Curve.Params().Name)
 	}
 	// The reconstructed public key must equal the fake's real key.
-	if pub.X.Cmp(f.ecKey.X) != 0 || pub.Y.Cmp(f.ecKey.Y) != 0 {
+	if !pub.Equal(&f.ecKey.PublicKey) {
 		t.Fatal("reconstructed EC public point does not match the source key")
 	}
 	// Second + third calls must NOT re-fetch.
@@ -819,7 +819,7 @@ func TestECPointValidation(t *testing.T) {
 		if !ok {
 			t.Fatalf("got %T, want *ecdsa.PublicKey", pub)
 		}
-		if ep.X.Cmp(valid.X) != 0 || ep.Y.Cmp(valid.Y) != 0 {
+		if !ep.Equal(&valid.PublicKey) {
 			t.Fatal("reconstructed point does not match the source")
 		}
 	})

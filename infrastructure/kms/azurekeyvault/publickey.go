@@ -89,7 +89,7 @@ func jwkToPublic(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 		// SubjectPublicKeyInfo via x509.ParsePKIXPublicKey (which validates
 		// internally), whereas this module parses the raw EC components, so the
 		// explicit on-curve check is necessary, not optional.
-		if !curve.IsOnCurve(pub.X, pub.Y) {
+		if !curve.IsOnCurve(pub.X, pub.Y) { //nolint:staticcheck // intentional: raw-JWK on-curve validation (see comment above); deprecated but functionally correct
 			return nil, fmt.Errorf("azurekeyvault: %w: EC public point is not on curve %s", ErrUnsupportedKey, curve.Params().Name)
 		}
 		return pub, nil
