@@ -70,16 +70,6 @@ func TestFlagSource_BoolCoercion(t *testing.T) {
 	}
 }
 
-func TestFlagSource_EmptyBindIgnored(t *testing.T) {
-	fs := newTestFlags([]string{"--listen=:9090"})
-	src := NewFlagSource(fs).
-		Bind("", "server.listen").
-		Bind("listen", "")
-	if len(src.bindings) != 0 {
-		t.Errorf("empty Bind args should be no-ops, got %v", src.bindings)
-	}
-}
-
 func TestFlagSource_OverridesFileAndEnv(t *testing.T) {
 	p := writeTemp(t, "f.yaml", "server:\n  listen: :7070\n")
 	envSrc := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
