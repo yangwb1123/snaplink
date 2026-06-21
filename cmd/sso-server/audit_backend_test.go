@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/platform/audit"
 )
@@ -14,7 +15,7 @@ import (
 // MemorySink behavior. Pins the no-regression for existing
 // reference YAMLs that don't yet name a backend.
 func TestBuildPrimaryAuditSink_DefaultsToMemory(t *testing.T) {
-	sink, name, err := buildPrimaryAuditSink(config.AuditConfig{Enabled: true}, quietLogger())
+	sink, name, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{Enabled: true}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -33,7 +34,7 @@ func TestBuildPrimaryAuditSink_DefaultsToMemory(t *testing.T) {
 // downstream API surfaces.
 func TestBuildPrimaryAuditSink_SqliteRoundTrip(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db") + "?_journal=WAL"
-	sink, name, err := buildPrimaryAuditSink(config.AuditConfig{
+	sink, name, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true,
 		Backend: "sqlite",
 		Sqlite:  config.AuditSqliteConfig{DSN: dsn},
@@ -66,7 +67,7 @@ func TestBuildPrimaryAuditSink_SqliteRoundTrip(t *testing.T) {
 // without a DSN → loud boot error, not a silent crash at first
 // Record.
 func TestBuildPrimaryAuditSink_SqliteRequiresDSN(t *testing.T) {
-	_, _, err := buildPrimaryAuditSink(config.AuditConfig{
+	_, _, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true, Backend: "sqlite",
 	}, quietLogger())
 	if err == nil {
@@ -78,7 +79,7 @@ func TestBuildPrimaryAuditSink_SqliteRequiresDSN(t *testing.T) {
 // surface at boot rather than silently falling back to memory and
 // losing every event the operator expected to persist.
 func TestBuildPrimaryAuditSink_RejectsUnknownBackend(t *testing.T) {
-	_, _, err := buildPrimaryAuditSink(config.AuditConfig{
+	_, _, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true, Backend: "postgres",
 	}, quietLogger())
 	if err == nil {

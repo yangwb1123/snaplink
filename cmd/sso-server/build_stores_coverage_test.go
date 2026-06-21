@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
@@ -488,11 +489,11 @@ func TestBuildRegionResolver_HeaderOnlyInstalls(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// buildPasswordHealthChecker
+// serverbuildauthn.BuildPasswordHealthChecker
 // -----------------------------------------------------------------------------
 
 func TestBuildPasswordHealthChecker_DefaultDictionary(t *testing.T) {
-	c, err := buildPasswordHealthChecker(&config.PasswordHealthConfig{}, quietLogger())
+	c, err := serverbuildauthn.BuildPasswordHealthChecker(&config.PasswordHealthConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -502,7 +503,7 @@ func TestBuildPasswordHealthChecker_DefaultDictionary(t *testing.T) {
 }
 
 func TestBuildPasswordHealthChecker_DictionaryWeakFileMissingErrors(t *testing.T) {
-	_, err := buildPasswordHealthChecker(&config.PasswordHealthConfig{
+	_, err := serverbuildauthn.BuildPasswordHealthChecker(&config.PasswordHealthConfig{
 		Kind:             "dictionary",
 		WeakPasswordFile: filepath.Join(t.TempDir(), "no-such-file"),
 	}, quietLogger())
@@ -512,7 +513,7 @@ func TestBuildPasswordHealthChecker_DictionaryWeakFileMissingErrors(t *testing.T
 }
 
 func TestBuildPasswordHealthChecker_HIBP(t *testing.T) {
-	c, err := buildPasswordHealthChecker(&config.PasswordHealthConfig{
+	c, err := serverbuildauthn.BuildPasswordHealthChecker(&config.PasswordHealthConfig{
 		Kind: "hibp",
 		HIBP: &config.HIBPHealthConfig{
 			BaseURL:   "https://mirror.test/range/",
@@ -530,7 +531,7 @@ func TestBuildPasswordHealthChecker_HIBP(t *testing.T) {
 }
 
 func TestBuildPasswordHealthChecker_UnknownKindErrors(t *testing.T) {
-	_, err := buildPasswordHealthChecker(&config.PasswordHealthConfig{Kind: "bogus"}, quietLogger())
+	_, err := serverbuildauthn.BuildPasswordHealthChecker(&config.PasswordHealthConfig{Kind: "bogus"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error for unknown kind")
 	}
@@ -681,7 +682,7 @@ func TestRunSnapshotRetention_ExitsOnCancel(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// loadCertPool — empty-entry skip branch
+// serverbuildauthn.LoadCertPool — empty-entry skip branch
 // -----------------------------------------------------------------------------
 
 // TestLoadCertPool_SkipsEmptyEntries covers the `if p == "" { continue }`
@@ -689,7 +690,7 @@ func TestRunSnapshotRetention_ExitsOnCancel(t *testing.T) {
 // blank path yields a valid (empty) pool, not an error. Operators who leave a
 // stray empty entry in trusted_ca_files don't trip the missing-file guard.
 func TestLoadCertPool_SkipsEmptyEntries(t *testing.T) {
-	pool, err := loadCertPool([]string{""})
+	pool, err := serverbuildauthn.LoadCertPool([]string{""})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}

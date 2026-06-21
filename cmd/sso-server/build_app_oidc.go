@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -60,7 +61,7 @@ func (b *appBuilder) wireDCRBackchannel() error {
 		}
 	}
 	if cfg.BackchannelLogout.Enabled {
-		idx, mode, err := buildSubjectClientIndex(cfg.BackchannelLogout.Index)
+		idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(cfg.BackchannelLogout.Index)
 		if err != nil {
 			return fmt.Errorf("subject_client_index: %w", err)
 		}
@@ -216,7 +217,7 @@ func (b *appBuilder) wirePairwiseSubjects() error {
 	if err != nil {
 		return fmt.Errorf("pairwise_subjects salt: %w", err)
 	}
-	store, mode, err := buildPairwiseSubjectStore(cfg.Server.PairwiseSubjects)
+	store, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(cfg.Server.PairwiseSubjects)
 	if err != nil {
 		return fmt.Errorf("pairwise_subjects store: %w", err)
 	}

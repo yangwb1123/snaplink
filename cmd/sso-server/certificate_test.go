@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 )
 
@@ -24,7 +25,7 @@ import (
 // every verify call against an empty pool, which is correct
 // fail-closed behavior).
 func TestLoadCertPool_EmptyPathsReturnsEmptyPool(t *testing.T) {
-	pool, err := loadCertPool(nil)
+	pool, err := serverbuildauthn.LoadCertPool(nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -38,7 +39,7 @@ func TestLoadCertPool_EmptyPathsReturnsEmptyPool(t *testing.T) {
 // with a partial trust store that admits some certs the operator
 // thought they had restricted.
 func TestLoadCertPool_MissingFileSurfaces(t *testing.T) {
-	if _, err := loadCertPool([]string{"/nonexistent/ca.pem"}); err == nil {
+	if _, err := serverbuildauthn.LoadCertPool([]string{"/nonexistent/ca.pem"}); err == nil {
 		t.Fatal("expected error for missing file")
 	}
 }
@@ -53,7 +54,7 @@ func TestLoadCertPool_NoPEMBlocksSurfaces(t *testing.T) {
 	if err := os.WriteFile(tmp, []byte("not a pem file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadCertPool([]string{tmp})
+	_, err := serverbuildauthn.LoadCertPool([]string{tmp})
 	if err == nil || !strings.Contains(err.Error(), "no CERTIFICATE PEM blocks") {
 		t.Fatalf("err = %v; want no-blocks error", err)
 	}
@@ -70,7 +71,7 @@ func TestLoadCertPool_GoodCertLoads(t *testing.T) {
 	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := loadCertPool([]string{path})
+	pool, err := serverbuildauthn.LoadCertPool([]string{path})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -96,7 +97,7 @@ func TestBuildAuthenticators_CertificateWiresTrustedCAs(t *testing.T) {
 		Enabled:        true,
 		TrustedCAFiles: []string{path},
 	}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "certificate" {
@@ -113,14 +114,14 @@ func TestBuildAuthenticators_CertificateWiresTrustedCAs(t *testing.T) {
 // path leaves the authenticator out of the registry (logger
 // records the error). The alternative — register with an empty
 // pool — would accept zero certs in production, which is the
-// silent-ship-broken trap loadCertPool exists to prevent.
+// silent-ship-broken trap serverbuildauthn.LoadCertPool exists to prevent.
 func TestBuildAuthenticators_CertificateBadCAGetsSkipped(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Certificate = &config.CertificateConfig{
 		Enabled:        true,
 		TrustedCAFiles: []string{"/no/such/ca.pem"},
 	}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	for _, a := range auths {
 		if a.Name() == "certificate" {
 			t.Fatal("certificate authenticator registered despite missing CA file")

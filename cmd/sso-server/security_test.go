@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/shared/security"
@@ -164,7 +165,7 @@ func TestBuildRateLimitPolicy_UnknownBackendErrors(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
-	s, mode, err := buildJTIReplayStore(config.JTIReplayConfig{})
+	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := buildJTIReplayStore(config.JTIReplayConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -186,7 +187,7 @@ func TestBuildJTIReplayStore_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "jti.db") + "?_journal=WAL"
-	s, mode, err := buildJTIReplayStore(config.JTIReplayConfig{
+	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{
 		Backend: "sqlite",
 		SQLite:  config.JTIReplaySQLiteCfg{DSN: dsn},
 	})
@@ -202,7 +203,7 @@ func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_UnknownBackendErrors(t *testing.T) {
-	_, _, err := buildJTIReplayStore(config.JTIReplayConfig{Backend: "redis"})
+	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "redis"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -241,7 +242,7 @@ func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
 }
 
 func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
-	l, mode, err := buildAccountLockout(config.AccountLockoutConfig{
+	l, mode, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{
 		MaxFailures:     7,
 		LockoutDuration: 30 * security.NewMemoryAccountLockout().LockoutDuration,
 	})
@@ -262,7 +263,7 @@ func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
 }
 
 func TestBuildAccountLockout_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := buildAccountLockout(config.AccountLockoutConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -271,7 +272,7 @@ func TestBuildAccountLockout_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "lockout.db") + "?_journal=WAL"
-	l, mode, err := buildAccountLockout(config.AccountLockoutConfig{
+	l, mode, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{
 		Backend:     "sqlite",
 		SQLite:      config.AccountLockoutSQLiteConfig{DSN: dsn},
 		MaxFailures: 4,
@@ -288,7 +289,7 @@ func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildAccountLockout_UnknownBackendErrors(t *testing.T) {
-	_, _, err := buildAccountLockout(config.AccountLockoutConfig{Backend: "redis"})
+	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "redis"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

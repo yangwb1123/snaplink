@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 )
 
@@ -76,7 +77,7 @@ func TestBuildApp_PairwiseSubjectsFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
-	s, mode, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{})
+	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -98,7 +99,7 @@ func TestBuildPairwiseSubjectStore_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL"
-	s, mode, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{
+	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{
 		Backend: "sqlite",
 		SQLite:  config.PairwiseSubjectsSQLiteCfg{DSN: dsn},
 	})
@@ -114,7 +115,7 @@ func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_UnknownBackendErrors(t *testing.T) {
-	_, _, err := buildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "etcd"})
+	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "etcd"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -47,7 +48,7 @@ func (b *appBuilder) wireBodyAndRateLimit() error {
 func (b *appBuilder) wireJTIReplaySPIFFE() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Security.JTIReplay.Enabled {
-		store, mode, err := buildJTIReplayStore(cfg.Security.JTIReplay)
+		store, mode, err := serverbuildauthn.BuildJTIReplayStore(cfg.Security.JTIReplay)
 		if err != nil {
 			return fmt.Errorf("jti replay store: %w", err)
 		}
@@ -132,7 +133,7 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 		logger.Info("security: mTLS bound tokens enabled", "extractor", mode)
 	}
 	if al := cfg.Security.AccountLockout; al.Enabled {
-		lockout, mode, err := buildAccountLockout(al)
+		lockout, mode, err := serverbuildauthn.BuildAccountLockout(al)
 		if err != nil {
 			return fmt.Errorf("account lockout: %w", err)
 		}

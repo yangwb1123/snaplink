@@ -25,7 +25,7 @@ import (
 // — RequireMFA then decays to Allow (back-compat).
 //
 // totpAuth is the *authenticators.TOTPAuthenticator instance built in
-// buildAuthenticators; webauthnHelper is the *webauthn.Helper built
+// serverbuildauthn.BuildAuthenticators; webauthnHelper is the *webauthn.Helper built
 // earlier in the assembly path. Passing the same instances here means
 // each factor's secret/credential store + policy is single-source
 // between primary auth and MFA step-up — one enrollment, two

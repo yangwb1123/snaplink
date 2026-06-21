@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -26,7 +27,7 @@ import (
 // WithTOTPConsumedStore, but the shipped cmd binary used to construct the
 // keypair + TOTP authenticators WITHOUT them, leaving the default binary
 // replay-vulnerable. The regression is at the WIRING layer (build_stores.go),
-// so these drive the authenticator that buildAuthenticators actually returns
+// so these drive the authenticator that serverbuildauthn.BuildAuthenticators actually returns
 // and assert a replay of the same nonce / code is rejected with NO replay
 // store configured anywhere — i.e. the defense is on by default.
 
@@ -67,9 +68,9 @@ func TestBuildAuthenticators_KeyPairNonceReplayWiredByDefault(t *testing.T) {
 			KeyID: "svc-1", PublicKeyFile: path, SubjectID: "subject-1",
 		}},
 	}
-	auths, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	if err != nil {
-		t.Fatalf("buildAuthenticators: %v", err)
+		t.Fatalf("serverbuildauthn.BuildAuthenticators: %v", err)
 	}
 	a := findAuth(t, auths, "keypair")
 
@@ -102,9 +103,9 @@ func TestBuildAuthenticators_TOTPConsumedWiredByDefault(t *testing.T) {
 	// The cmd path builds its OWN secret store internally and surfaces it as the
 	// unified MFAEnrollmentStore; enroll a secret through that store so the
 	// authenticator can read it back at login, then drive a real login.
-	_, _, totpAuth, enrollStore, err := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	_, _, totpAuth, enrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	if err != nil {
-		t.Fatalf("buildAuthenticators: %v", err)
+		t.Fatalf("serverbuildauthn.BuildAuthenticators: %v", err)
 	}
 	if totpAuth == nil || enrollStore == nil {
 		t.Fatal("totp authenticator / enrollment store not built")

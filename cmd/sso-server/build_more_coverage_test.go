@@ -66,7 +66,7 @@ func TestBuildApp_AllSQLiteBackends(t *testing.T) {
 	cfg.BackchannelLogout.Index.SQLite.DSN = "file:" + filepath.Join(dir, "bcl.db") + "?_journal=WAL"
 
 	// TOTP authenticator (sqlite) so the totp MFA provider can wire — also
-	// covers buildAuthenticators' TOTP + enrollment-store branch.
+	// covers serverbuildauthn.BuildAuthenticators' TOTP + enrollment-store branch.
 	cfg.Authenticators.TOTP = &config.TOTPConfig{
 		Enabled:   true,
 		SQLiteDSN: "file:" + filepath.Join(dir, "totp.db") + "?_journal=WAL",

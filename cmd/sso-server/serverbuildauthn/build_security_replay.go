@@ -1,4 +1,4 @@
-package main
+package serverbuildauthn
 
 import (
 	"errors"
@@ -14,7 +14,7 @@ import (
 	"github.com/snaplink/sso/shared/security"
 )
 
-func buildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (security.PairwiseSubjectStore, string, error) {
+func BuildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (security.PairwiseSubjectStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return security.NewMemoryPairwiseSubjectStore(), "memory (single-replica only)", nil
@@ -32,12 +32,12 @@ func buildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (security.Pair
 	}
 }
 
-// buildAccountLockout picks the lockout backend. memory keeps the
+// BuildAccountLockout picks the lockout backend. memory keeps the
 // single-replica defense; sqlite shares the failure counter so an
 // attacker rotating across replicas can't stay under each replica's
 // local threshold. Policy overrides (MaxFailures / LockoutDuration
 // / FailureWindow) are applied identically to both backends.
-func buildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLockout, string, error) {
+func BuildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLockout, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		l := security.NewMemoryAccountLockout()
@@ -74,11 +74,11 @@ func buildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLocko
 	}
 }
 
-// buildSubjectClientIndex picks the security.SubjectClientIndex backend that
+// BuildSubjectClientIndex picks the security.SubjectClientIndex backend that
 // drives OIDC BCL multi-RP fan-out. memory keeps the single-replica
 // story; sqlite shares the index so a logout reaching any replica
 // fans out to every client a subject has touched cluster-wide.
-func buildSubjectClientIndex(cfg config.BCLIndexConfig) (security.SubjectClientIndex, string, error) {
+func BuildSubjectClientIndex(cfg config.BCLIndexConfig) (security.SubjectClientIndex, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemorySubjectClientIndex(), "memory (single-replica only)", nil
@@ -96,11 +96,11 @@ func buildSubjectClientIndex(cfg config.BCLIndexConfig) (security.SubjectClientI
 	}
 }
 
-// buildJTIReplayStore picks the JTI replay backend. memory keeps
+// BuildJTIReplayStore picks the JTI replay backend. memory keeps
 // the single-replica defense story; sqlite shares the seen-set
 // across the cluster so a replay routed to a different replica still
 // gets rejected.
-func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
+func BuildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemoryJTIReplayStore(), "memory (single-replica only)", nil
@@ -131,7 +131,7 @@ func buildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 // check. mode is for the boot log.
 func buildAuthenticatorReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
 	if cfg.Enabled {
-		return buildJTIReplayStore(cfg)
+		return BuildJTIReplayStore(cfg)
 	}
 	return defaultimpl.NewMemoryJTIReplayStore(), "memory (default; enable security.jti_replay for cluster-shared)", nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/cmd/sso-server/serverwebauthn"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
@@ -30,7 +31,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	}
 	b.passwordStore = passwordStore
 
-	auths, tempStore, totpAuth, totpEnrollStore, err := buildAuthenticators(cfg, logger, passwordStore, b.userProvider)
+	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, logger, passwordStore, b.userProvider)
 	if err != nil {
 		return fmt.Errorf("authenticators: %w", err)
 	}

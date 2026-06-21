@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 )
 
@@ -19,7 +20,7 @@ import (
 // way to lock the round-trip.
 func TestLoadEd25519PublicKeyPEM_GoodFile(t *testing.T) {
 	pub, path := writeEd25519PubKey(t)
-	got, err := loadEd25519PublicKeyPEM(path)
+	got, err := serverbuildauthn.LoadEd25519PublicKeyPEM(path)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -39,7 +40,7 @@ func TestLoadEd25519PublicKeyPEM_RejectsWrongPEMType(t *testing.T) {
 	if err := os.WriteFile(tmp, bogus, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadEd25519PublicKeyPEM(tmp)
+	_, err := serverbuildauthn.LoadEd25519PublicKeyPEM(tmp)
 	if err == nil || !strings.Contains(err.Error(), "PUBLIC KEY") {
 		t.Fatalf("err = %v; want PUBLIC KEY type error", err)
 	}
@@ -49,7 +50,7 @@ func TestLoadEd25519PublicKeyPEM_RejectsWrongPEMType(t *testing.T) {
 // typo a path see the error at boot rather than at first /auth/login
 // against an empty store.
 func TestLoadEd25519PublicKeyPEM_MissingFileSurfaces(t *testing.T) {
-	if _, err := loadEd25519PublicKeyPEM("/no/such/key.pem"); err == nil {
+	if _, err := serverbuildauthn.LoadEd25519PublicKeyPEM("/no/such/key.pem"); err == nil {
 		t.Fatal("expected error for missing file")
 	}
 }
@@ -72,7 +73,7 @@ func TestBuildAuthenticators_KeyPairSeedsRegistered(t *testing.T) {
 			SubjectID:     "subject-test",
 		}},
 	}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "keypair" {
@@ -100,7 +101,7 @@ func TestBuildAuthenticators_KeyPairSkipsBadEntries(t *testing.T) {
 			{KeyID: "bad-path", PublicKeyFile: "/no/such/file.pem", SubjectID: "missing-file"},
 		},
 	}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "keypair" {

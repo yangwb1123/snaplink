@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"golang.org/x/crypto/bcrypt"
@@ -56,7 +57,7 @@ func TestBuildStoredPasswordVerifier_SeedsAndAuthenticates(t *testing.T) {
 	users := []config.PasswordUserConfig{
 		{Username: "alice", SubjectID: "u-alice", BcryptHashFile: writeHashFile(t, "alice-pw")},
 	}
-	v, seeded, err := buildStoredPasswordVerifier(store, users, quietLogger())
+	v, seeded, err := serverbuildauthn.BuildStoredPasswordVerifier(store, users, quietLogger())
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

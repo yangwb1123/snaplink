@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
@@ -23,7 +24,7 @@ func TestLoadBcryptHashFile_GoodHash(t *testing.T) {
 	if err := os.WriteFile(path, hash, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadBcryptHashFile(path)
+	got, err := serverbuildauthn.LoadBcryptHashFile(path)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -42,7 +43,7 @@ func TestLoadBcryptHashFile_TolerateTrailingNewline(t *testing.T) {
 	if err := os.WriteFile(path, append(hash, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadBcryptHashFile(path)
+	got, err := serverbuildauthn.LoadBcryptHashFile(path)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -62,7 +63,7 @@ func TestLoadBcryptHashFile_RejectsPlaintext(t *testing.T) {
 	if err := os.WriteFile(path, []byte("mypassword\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadBcryptHashFile(path)
+	_, err := serverbuildauthn.LoadBcryptHashFile(path)
 	if err == nil || !strings.Contains(err.Error(), "not a bcrypt hash") {
 		t.Fatalf("err = %v; want bcrypt-prefix error", err)
 	}
@@ -77,7 +78,7 @@ func TestLoadBcryptHashFile_RejectsMultiLine(t *testing.T) {
 	if err := os.WriteFile(path, append(hash, '\n', 'X', '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadBcryptHashFile(path)
+	_, err := serverbuildauthn.LoadBcryptHashFile(path)
 	if err == nil || !strings.Contains(err.Error(), "multi-line") {
 		t.Fatalf("err = %v; want multi-line error", err)
 	}
@@ -90,7 +91,7 @@ func TestLoadBcryptHashFile_RejectsEmpty(t *testing.T) {
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadBcryptHashFile(path); err == nil {
+	if _, err := serverbuildauthn.LoadBcryptHashFile(path); err == nil {
 		t.Fatal("expected error for empty file")
 	}
 }
@@ -104,7 +105,7 @@ func TestBcryptVerifier_CorrectPasswordAuthenticates(t *testing.T) {
 	users := []config.PasswordUserConfig{{
 		Username: username, BcryptHashFile: hashPath, SubjectID: "user-alice",
 	}}
-	verifier, seeded := buildBcryptPasswordVerifier(users, quietLogger())
+	verifier, seeded := serverbuildauthn.BuildBcryptPasswordVerifier(users, quietLogger())
 	if seeded != 1 {
 		t.Fatalf("seeded = %d; want 1", seeded)
 	}
@@ -124,7 +125,7 @@ func TestBcryptVerifier_WrongPasswordRejected(t *testing.T) {
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
 	}}
-	verifier, _ := buildBcryptPasswordVerifier(users, quietLogger())
+	verifier, _ := serverbuildauthn.BuildBcryptPasswordVerifier(users, quietLogger())
 	if _, err := verifier.Verify(context.Background(), "u", "wrong"); err == nil {
 		t.Fatal("expected error for wrong password")
 	}
@@ -140,7 +141,7 @@ func TestBcryptVerifier_UnknownUserRejected(t *testing.T) {
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
 	}}
-	verifier, _ := buildBcryptPasswordVerifier(users, quietLogger())
+	verifier, _ := serverbuildauthn.BuildBcryptPasswordVerifier(users, quietLogger())
 	_, errKnown := verifier.Verify(context.Background(), "u", "wrong")
 	_, errUnknown := verifier.Verify(context.Background(), "nobody", "anything")
 	if errKnown == nil || errUnknown == nil {
@@ -164,7 +165,7 @@ func TestBcryptVerifier_UnknownUserTimingMatchesKnown(t *testing.T) {
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
 	}}
-	verifier, _ := buildBcryptPasswordVerifier(users, quietLogger())
+	verifier, _ := serverbuildauthn.BuildBcryptPasswordVerifier(users, quietLogger())
 	const iters = 3
 	known := timeVerify(t, verifier, "u", "wrong", iters)
 	unknown := timeVerify(t, verifier, "nobody", "anything", iters)
@@ -197,7 +198,7 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 		{Username: "ok", BcryptHashFile: goodHashPath, SubjectID: "subject-ok"},
 		{Username: "", BcryptHashFile: goodHashPath, SubjectID: "no-name"},
 	}
-	verifier, seeded := buildBcryptPasswordVerifier(users, quietLogger())
+	verifier, seeded := serverbuildauthn.BuildBcryptPasswordVerifier(users, quietLogger())
 	if seeded != 1 {
 		t.Fatalf("seeded = %d; want 1 (bad entries skipped)", seeded)
 	}
@@ -217,7 +218,7 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	for _, a := range auths {
 		if a.Name() == "password" {
 			return
@@ -247,9 +248,9 @@ func TestBuildAuthenticators_ImportedHashLogin(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true, ImportedHashLogin: true}
-	auths, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, users)
+	auths, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, users)
 	if err != nil {
-		t.Fatalf("buildAuthenticators: %v", err)
+		t.Fatalf("serverbuildauthn.BuildAuthenticators: %v", err)
 	}
 	var pw sso.Authenticator
 	for _, a := range auths {
@@ -289,7 +290,7 @@ func TestBuildAuthenticators_ImportedHashLoginOffByDefault(t *testing.T) {
 	})
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true} // flag off
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, users)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, users)
 	for _, a := range auths {
 		if a.Name() == "password" {
 			if _, err := a.Authenticate(ctx, &sso.AuthRequest{
@@ -310,7 +311,7 @@ func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
 		Enabled: true,
 		Health:  &config.PasswordHealthConfig{Enabled: true},
 	}
-	_, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	_, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error wiring password health: %v", err)
 	}
@@ -328,7 +329,7 @@ func TestBuildAuthenticators_PasswordHealthMissingFileIsLoud(t *testing.T) {
 			WeakPasswordFile: filepath.Join(t.TempDir(), "missing.txt"),
 		},
 	}
-	if _, _, _, _, err := buildAuthenticators(cfg, quietLogger(), nil, nil); err == nil {
+	if _, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil); err == nil {
 		t.Fatal("expected an error for a missing weak-password file, got nil")
 	}
 }

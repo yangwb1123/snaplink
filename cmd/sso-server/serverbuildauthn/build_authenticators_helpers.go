@@ -1,4 +1,4 @@
-package main
+package serverbuildauthn
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 )
 
 // authReplayStoreFn lazily resolves the shared keypair/TOTP replay-defense
-// store on first use. See buildAuthenticators for why it is shared + lazy.
+// store on first use. See BuildAuthenticators for why it is shared + lazy.
 type authReplayStoreFn func() (security.JTIReplayStore, string, error)
 
 func newAuthReplayStore(cfg config.JTIReplayConfig) authReplayStoreFn {
@@ -42,13 +42,13 @@ func buildPasswordAuthVerifier(a *config.PasswordConfig, passwordStore sso.Passw
 		// Self-service password store wired: seed it from the YAML users
 		// (by bcrypt hash) and serve login FROM the store, so a password
 		// changed via /me/password takes effect on the next login.
-		v, n, err := buildStoredPasswordVerifier(passwordStore, a.Users, logger)
+		v, n, err := BuildStoredPasswordVerifier(passwordStore, a.Users, logger)
 		if err != nil {
 			return nil, 0, fmt.Errorf("password store seed: %w", err)
 		}
 		verifier, seeded = v, n
 	} else {
-		verifier, seeded = buildBcryptPasswordVerifier(a.Users, logger)
+		verifier, seeded = BuildBcryptPasswordVerifier(a.Users, logger)
 	}
 	// Imported-user login: chain an attribute-backed multi-format verifier
 	// after the primary so users migrated via cmd/sso-import (whose hash
@@ -87,7 +87,7 @@ func appendPasswordAuthenticator(auths []sso.Authenticator, a *config.PasswordCo
 	}
 	var pwOpts []authenticators.PasswordOption
 	if h := a.Health; h != nil && h.Enabled {
-		checker, err := buildPasswordHealthChecker(h, logger)
+		checker, err := BuildPasswordHealthChecker(h, logger)
 		if err != nil {
 			return nil, fmt.Errorf("password health checker: %w", err)
 		}
@@ -143,7 +143,7 @@ func appendKeyPairAuthenticator(auths []sso.Authenticator, a *config.KeyPairConf
 				"key_id", k.KeyID, "subject_id", k.SubjectID)
 			continue
 		}
-		pub, err := loadEd25519PublicKeyPEM(k.PublicKeyFile)
+		pub, err := LoadEd25519PublicKeyPEM(k.PublicKeyFile)
 		if err != nil {
 			logger.Error("keypair seed skipped (load pub key)",
 				"key_id", k.KeyID, "file", k.PublicKeyFile, "error", err)
@@ -178,7 +178,7 @@ func appendAPIKeyAuthenticator(auths []sso.Authenticator, a *config.APIKeyConfig
 				"key_id", k.KeyID, "subject_id", k.SubjectID)
 			continue
 		}
-		secret, err := loadSecretFile(k.SecretFile)
+		secret, err := LoadSecretFile(k.SecretFile)
 		if err != nil {
 			logger.Error("apikey seed skipped (load secret)",
 				"key_id", k.KeyID, "file", k.SecretFile, "error", err)
@@ -196,14 +196,14 @@ func appendCertificateAuthenticator(auths []sso.Authenticator, a *config.Certifi
 	if a == nil || !a.Enabled {
 		return auths
 	}
-	roots, err := loadCertPool(a.TrustedCAFiles)
+	roots, err := LoadCertPool(a.TrustedCAFiles)
 	if err != nil {
 		logger.Error("certificate authenticator skipped (trusted_ca_files)", "error", err)
 		return auths
 	}
 	var certOpts []authenticators.CertOption
 	if len(a.IntermediateFiles) > 0 {
-		inter, err := loadCertPool(a.IntermediateFiles)
+		inter, err := LoadCertPool(a.IntermediateFiles)
 		if err != nil {
 			logger.Error("certificate authenticator: intermediate_files", "error", err)
 		} else {

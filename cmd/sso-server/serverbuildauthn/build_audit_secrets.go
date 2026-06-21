@@ -1,4 +1,4 @@
-package main
+package serverbuildauthn
 
 import (
 	"context"
@@ -24,12 +24,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// buildPrimaryAuditSink constructs the [audit.Sink] cmd places at
+// BuildPrimaryAuditSink constructs the [audit.Sink] cmd places at
 // the root of the sink composition (the one /audit query reads from
 // + that gets wrapped by MultiSink+Webhook+Async). Backend selects
 // between in-process MemorySink and the SQLite-backed Sink. Returns
 // the sink + a short identifier used as the ReadyCheck suffix.
-func buildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger) (audit.Sink, string, error) {
+func BuildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger) (audit.Sink, string, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		logger.Info("audit: primary sink", "backend", "memory", "capacity", cfg.MemoryCapacity)
@@ -49,14 +49,14 @@ func buildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger) (audit.Sin
 	}
 }
 
-// loadSecretFile reads a secret material file and returns the content
+// LoadSecretFile reads a secret material file and returns the content
 // with a trailing newline (if any) stripped. Empty contents fail so
 // operators see the misconfiguration at boot rather than shipping
 // with an authenticator that admits the empty string as a credential.
 // Matches the file-based secret pattern bootstrap.admin_password_file
 // uses — keeps secrets out of YAML where readers + version control
 // would expose them.
-func loadSecretFile(path string) (string, error) {
+func LoadSecretFile(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
@@ -68,11 +68,11 @@ func loadSecretFile(path string) (string, error) {
 	return s, nil
 }
 
-// loadEd25519PublicKeyPEM reads a PEM file containing a "PUBLIC KEY"
+// LoadEd25519PublicKeyPEM reads a PEM file containing a "PUBLIC KEY"
 // block and returns the parsed Ed25519 key. Refuses any other key
 // type to keep operators from accidentally feeding RSA/ECDSA pubkeys
 // that the verifier would silently reject at signature time.
-func loadEd25519PublicKeyPEM(path string) (ed25519.PublicKey, error) {
+func LoadEd25519PublicKeyPEM(path string) (ed25519.PublicKey, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -95,7 +95,7 @@ func loadEd25519PublicKeyPEM(path string) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// loadCertPool reads one or more PEM files and returns an x509.CertPool
+// LoadCertPool reads one or more PEM files and returns an x509.CertPool
 // containing every CERTIFICATE block found across them. Empty paths
 // list returns an empty (but non-nil) pool — the certificate
 // authenticator refuses to validate against an empty trust store anyway,
@@ -105,7 +105,7 @@ func loadEd25519PublicKeyPEM(path string) (ed25519.PublicKey, error) {
 // whole load so operators see the misconfiguration at boot instead of
 // silently shipping with a partial trust store that admits some
 // expected certs but rejects others.
-func loadCertPool(paths []string) (*x509.CertPool, error) {
+func LoadCertPool(paths []string) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
 	for _, p := range paths {
 		if p == "" {
@@ -146,7 +146,7 @@ type passwordSeed struct {
 	subjectID string
 }
 
-// buildBcryptPasswordVerifier returns a PasswordVerifier closed over
+// BuildBcryptPasswordVerifier returns a PasswordVerifier closed over
 // an in-memory username->bcrypt-hash map seeded from YAML. Bad
 // entries (missing field, unreadable file, malformed hash) log + skip
 // at boot rather than crashing; an empty map yields a verifier that
@@ -160,14 +160,14 @@ type passwordSeed struct {
 // sit in the same order of magnitude — without that, an attacker
 // could split "real cost-10 user" from "dummy cost-12 unknown user"
 // by latency.
-// buildStoredPasswordVerifier seeds the password store from the YAML users (by
+// BuildStoredPasswordVerifier seeds the password store from the YAML users (by
 // bcrypt hash, via the PasswordHashImporter seam) and returns a verifier that
 // authenticates AGAINST the store — so a password later changed through
 // /me/password is the one login checks. Preserves the YAML verifier's contract:
 // AuthResult{UserID: subjectID, ExternalID: username}, anti-enumeration (a
 // cost-matched dummy compare on an unknown username, run by the store), and
 // skip+log of malformed seeds.
-func buildStoredPasswordVerifier(store sso.PasswordCredentialStore, users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int, error) {
+func BuildStoredPasswordVerifier(store sso.PasswordCredentialStore, users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int, error) {
 	importer, ok := store.(sso.PasswordHashImporter)
 	if !ok {
 		return nil, 0, errors.New("password store does not support hash import (cannot seed YAML users)")
@@ -179,7 +179,7 @@ func buildStoredPasswordVerifier(store sso.PasswordCredentialStore, users []conf
 			logger.Error("password seed skipped (missing field)", "username", u.Username, "subject_id", u.SubjectID)
 			continue
 		}
-		hash, err := loadBcryptHashFile(u.BcryptHashFile)
+		hash, err := LoadBcryptHashFile(u.BcryptHashFile)
 		if err != nil {
 			logger.Error("password seed skipped (load hash)", "username", u.Username, "file", u.BcryptHashFile, "error", err)
 			continue
@@ -207,7 +207,7 @@ func buildStoredPasswordVerifier(store sso.PasswordCredentialStore, users []conf
 	return verifier, seeded, nil
 }
 
-func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int) {
+func BuildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger spi.Logger) (authenticators.PasswordVerifier, int) {
 	seeds := make(map[string]passwordSeed, len(users))
 	dummyCost := bcrypt.DefaultCost
 	seeded := 0
@@ -217,7 +217,7 @@ func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger spi.L
 				"username", u.Username, "subject_id", u.SubjectID)
 			continue
 		}
-		hash, err := loadBcryptHashFile(u.BcryptHashFile)
+		hash, err := LoadBcryptHashFile(u.BcryptHashFile)
 		if err != nil {
 			logger.Error("password seed skipped (load hash)",
 				"username", u.Username, "file", u.BcryptHashFile, "error", err)
@@ -252,13 +252,13 @@ func buildBcryptPasswordVerifier(users []config.PasswordUserConfig, logger spi.L
 	return verifier, seeded
 }
 
-// loadBcryptHashFile reads a bcrypt hash from disk. The file's first
+// LoadBcryptHashFile reads a bcrypt hash from disk. The file's first
 // line (newline-stripped) is the hash. Refuses anything that doesn't
 // start with the bcrypt format prefix so a misconfigured file
 // (plaintext password, sha256 hash, accidentally swapped file) fails
 // at boot rather than producing an authenticator that silently never
 // matches.
-func loadBcryptHashFile(path string) ([]byte, error) {
+func LoadBcryptHashFile(path string) ([]byte, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -280,14 +280,14 @@ func loadBcryptHashFile(path string) ([]byte, error) {
 	return []byte(s), nil
 }
 
-// buildPasswordHealthChecker constructs the configured login-time
+// BuildPasswordHealthChecker constructs the configured login-time
 // credential-health checker. Kind selects the implementation: "" /
 // "dictionary" is the fully-offline DictionaryPasswordHealthChecker
 // (default, back-compatible); "hibp" is the online Have I Been Pwned
 // k-anonymity breach checker (only a 5-char SHA-1 prefix ever leaves the
 // process; fail-open so an outage never blocks login). An unknown Kind is
 // a loud boot error rather than a silent fallback.
-func buildPasswordHealthChecker(h *config.PasswordHealthConfig, logger spi.Logger) (spi.PasswordHealthChecker, error) {
+func BuildPasswordHealthChecker(h *config.PasswordHealthConfig, logger spi.Logger) (spi.PasswordHealthChecker, error) {
 	switch h.Kind {
 	case "", "dictionary":
 		checker, err := defaultimpl.NewDictionaryPasswordHealthChecker(defaultimpl.DictionaryPasswordHealthConfig{

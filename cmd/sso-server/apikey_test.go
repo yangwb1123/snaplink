@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/sso"
 )
@@ -20,12 +21,12 @@ func TestLoadSecretFile_TrimsTrailingNewline(t *testing.T) {
 	if err := os.WriteFile(tmp, []byte("topsecret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadSecretFile(tmp)
+	got, err := serverbuildauthn.LoadSecretFile(tmp)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if got != "topsecret" {
-		t.Errorf("loadSecretFile = %q; want %q", got, "topsecret")
+		t.Errorf("serverbuildauthn.LoadSecretFile = %q; want %q", got, "topsecret")
 	}
 }
 
@@ -37,7 +38,7 @@ func TestLoadSecretFile_RejectsEmpty(t *testing.T) {
 	if err := os.WriteFile(tmp, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadSecretFile(tmp)
+	_, err := serverbuildauthn.LoadSecretFile(tmp)
 	if err == nil || !strings.Contains(err.Error(), "empty secret") {
 		t.Fatalf("err = %v; want empty-secret error", err)
 	}
@@ -46,7 +47,7 @@ func TestLoadSecretFile_RejectsEmpty(t *testing.T) {
 // TestLoadSecretFile_MissingFileSurfaces — typo'd path → boot
 // error, not silent zero-credential.
 func TestLoadSecretFile_MissingFileSurfaces(t *testing.T) {
-	if _, err := loadSecretFile("/no/such/secret"); err == nil {
+	if _, err := serverbuildauthn.LoadSecretFile("/no/such/secret"); err == nil {
 		t.Fatal("expected error for missing file")
 	}
 }
@@ -71,7 +72,7 @@ func TestBuildAuthenticators_APIKeySeedAuthenticates(t *testing.T) {
 			SubjectID:  "subject-t",
 		}},
 	}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	var apikey sso.Authenticator
 	for _, a := range auths {
 		if a.Name() == "apikey" {
@@ -109,7 +110,7 @@ func TestBuildAuthenticators_APIKeySkipsBadEntries(t *testing.T) {
 			{KeyID: "bad-path", SecretFile: "/no/such/file", SubjectID: "missing-file"},
 		},
 	}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "apikey" {
@@ -128,7 +129,7 @@ func TestBuildAuthenticators_APIKeySkipsBadEntries(t *testing.T) {
 func TestBuildAuthenticators_APIKeyEmptyKeysList(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.APIKey = &config.APIKeyConfig{Enabled: true}
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 	for _, a := range auths {
 		if a.Name() == "apikey" {
 			return

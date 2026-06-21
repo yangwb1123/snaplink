@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 )
@@ -32,7 +33,7 @@ func TestBuildAuthenticators_OIDCFederationWiresProviderByName(t *testing.T) {
 		},
 	}
 
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 
 	seen := map[string]bool{}
 	for _, a := range auths {
@@ -62,7 +63,7 @@ func TestBuildAuthenticators_OIDCFederationSkipsInvalidEntries(t *testing.T) {
 		nil, // defensive: nil entry must not panic.
 	}
 
-	auths, _, _, _, _ := buildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
 
 	seen := map[string]bool{}
 	for _, a := range auths {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
@@ -188,7 +189,7 @@ func (b *appBuilder) wireAudit() error {
 	if !cfg.Audit.Enabled {
 		return nil
 	}
-	primary, primaryName, err := buildPrimaryAuditSink(cfg.Audit, logger)
+	primary, primaryName, err := serverbuildauthn.BuildPrimaryAuditSink(cfg.Audit, logger)
 	if err != nil {
 		return fmt.Errorf("audit: build primary sink: %w", err)
 	}

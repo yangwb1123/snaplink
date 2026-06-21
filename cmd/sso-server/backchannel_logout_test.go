@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/config"
 )
 
@@ -33,7 +34,7 @@ func TestBuildApp_BackchannelLogoutFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_MemoryDefault(t *testing.T) {
-	idx, mode, err := buildSubjectClientIndex(config.BCLIndexConfig{})
+	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestBuildSubjectClientIndex_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := buildSubjectClientIndex(config.BCLIndexConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "sqlite"})
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -55,7 +56,7 @@ func TestBuildSubjectClientIndex_SQLiteNeedsDSN(t *testing.T) {
 func TestBuildSubjectClientIndex_SQLiteOpensFile(t *testing.T) {
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "sci.db") + "?_journal=WAL"
-	idx, mode, err := buildSubjectClientIndex(config.BCLIndexConfig{
+	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{
 		Backend: "sqlite",
 		SQLite:  config.BCLIndexSQLiteConfig{DSN: dsn},
 	})
@@ -71,7 +72,7 @@ func TestBuildSubjectClientIndex_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_UnknownBackendErrors(t *testing.T) {
-	_, _, err := buildSubjectClientIndex(config.BCLIndexConfig{Backend: "etcd"})
+	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "etcd"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

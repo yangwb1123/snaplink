@@ -1,4 +1,4 @@
-package main
+package serverbuildauthn
 
 import (
 	"github.com/snaplink/sso/interfaces/sso"
@@ -9,7 +9,7 @@ import (
 	"github.com/snaplink/sso/config"
 )
 
-// buildAuthenticators returns the configured authenticators, the temp
+// BuildAuthenticators returns the configured authenticators, the temp
 // token store (when wired), and the *TOTPAuthenticator handle (when
 // TOTP is enabled). Both ancillary returns are separated so admin /
 // MFA wiring downstream can reuse the same backing instances —
@@ -21,7 +21,7 @@ import (
 // Returns an error when an authenticator's config is invalid (e.g. a
 // missing weak-password extension file) — a misconfigured authenticator
 // should fail the boot loudly, not silently degrade.
-func buildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator

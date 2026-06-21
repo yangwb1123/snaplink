@@ -190,7 +190,7 @@ var _ = lockNoop.New
 // generated — fine for single-replica or dev, but DOES break nonce
 // continuity across replicas, so multi-replica deployments MUST
 // supply a key file.
-// buildPairwiseSubjectStore picks the pairwise reverse-lookup
+// serverbuildauthn.BuildPairwiseSubjectStore picks the pairwise reverse-lookup
 // backend. memory keeps the single-replica story; sqlite shares
 // (pairwise → local) so /userinfo + revoke + end_session on any
 // replica can resolve any in-flight bearer token.
