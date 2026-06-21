@@ -18,6 +18,7 @@ import (
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/buildinfo"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -51,7 +52,23 @@ const (
 	bootstrapNamespace = "sso-server"
 )
 
+// version is overridable at build time via -ldflags "-X main.version=v1.2.3";
+// otherwise buildinfo derives it from the embedded module/VCS build info.
+var version = ""
+
 func main() {
+	// Report version and exit before any config work, so `sso-server version`
+	// (or -version) works without a valid config file. The server itself runs
+	// directly (no `run` subcommand) — `sso-server [-config ...]` is the
+	// conventional, unchanged invocation.
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "version", "-version", "--version", "-v":
+			buildinfo.Write(os.Stdout, "sso-server", version)
+			return
+		}
+	}
+
 	flags := parseRuntimeFlags()
 
 	sources, cleanupSources, err := buildConfigSources(flags)

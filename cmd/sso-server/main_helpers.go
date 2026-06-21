@@ -18,7 +18,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, progName+` — OAuth 2.0 / OIDC SSO server.
 
 Usage:
-  `+progName+` [flags]
+  `+progName+` [flags]      run the server (the default; reads --config)
+  `+progName+` version      print the build version and exit
 
 Flags:
 `)
