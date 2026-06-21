@@ -1,4 +1,4 @@
-package sso
+package servercache
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 // DefaultClientStoreCacheTTL bounds how long a successfully-read client
-// entity may be cached between ClientStore.Get round-trips. Mirrors the
+// entity may be cached between core.ClientStore.Get round-trips. Mirrors the
 // suspension cache's 30s default: short enough that an active-flag /
 // metadata edit propagates promptly across the fleet, long enough that
 // the >1k-QPS interactive-login + /token + tenant-bound hot path skips
@@ -29,7 +29,7 @@ type clientCacheEntry struct {
 	expiresAt time.Time
 }
 
-// clientStoreCache is an OPTIONAL, opt-in TTL decorator over a
+// ClientStoreCache is an OPTIONAL, opt-in TTL decorator over a
 // core.ClientStore (WithClientStoreCache). It caches ONLY the metadata
 // Get of an EXISTING client; every other concern stays correct by
 // construction:
@@ -56,7 +56,7 @@ type clientCacheEntry struct {
 // (TenantScopedClientStore / ClientStoreStats) are surfaced via the
 // passthrough type assertions below, so wrapping a backend never strips
 // those capabilities.
-type clientStoreCache struct {
+type ClientStoreCache struct {
 	inner core.ClientStore
 	ttl   time.Duration
 
@@ -70,16 +70,16 @@ type clientStoreCache struct {
 	onOutcome func(outcome string)
 }
 
-// newClientStoreCache wraps inner with a TTL'd Get cache. ttl <= 0 falls
+// NewClientStoreCache wraps inner with a TTL'd Get cache. ttl <= 0 falls
 // back to DefaultClientStoreCacheTTL. The caller (NewServer) is
 // responsible for NOT constructing this when caching is disabled — a nil
 // inner yields a degenerate cache that always reports the wrapped store's
 // nil-deref, which is a programming error, not a runtime path.
-func newClientStoreCache(inner core.ClientStore, ttl time.Duration, onOutcome func(outcome string)) *clientStoreCache {
+func NewClientStoreCache(inner core.ClientStore, ttl time.Duration, onOutcome func(outcome string)) *ClientStoreCache {
 	if ttl <= 0 {
 		ttl = DefaultClientStoreCacheTTL
 	}
-	return &clientStoreCache{
+	return &ClientStoreCache{
 		inner:     inner,
 		ttl:       ttl,
 		entries:   make(map[string]clientCacheEntry),
@@ -88,7 +88,7 @@ func newClientStoreCache(inner core.ClientStore, ttl time.Duration, onOutcome fu
 }
 
 // Interface guard: the decorator is a drop-in core.ClientStore.
-var _ core.ClientStore = (*clientStoreCache)(nil)
+var _ core.ClientStore = (*ClientStoreCache)(nil)
 
 // Get returns the client for clientID, served from the TTL cache on a
 // fresh HIT and otherwise from the inner store. A successful inner read
@@ -96,7 +96,7 @@ var _ core.ClientStore = (*clientStoreCache)(nil)
 // and NEVER cached, so misses always re-hit the inner store. The
 // returned pointer is always a clone — the caller owns it and may mutate
 // it freely without affecting the cached snapshot.
-func (c *clientStoreCache) Get(ctx context.Context, clientID string) (*core.Client, error) {
+func (c *ClientStoreCache) Get(ctx context.Context, clientID string) (*core.Client, error) {
 	if cl, ok := c.getFresh(clientID); ok {
 		c.report("hit")
 		return cl, nil
@@ -117,26 +117,26 @@ func (c *clientStoreCache) Get(ctx context.Context, clientID string) (*core.Clie
 // ValidateSecret ALWAYS passes through to the inner store — the
 // credential decision is never served from cache (§2). No cache read,
 // no cache write.
-func (c *clientStoreCache) ValidateSecret(ctx context.Context, clientID, clientSecret string) error {
+func (c *ClientStoreCache) ValidateSecret(ctx context.Context, clientID, clientSecret string) error {
 	return c.inner.ValidateSecret(ctx, clientID, clientSecret)
 }
 
 // List passes through uncached — the admin/boot listing path is not the
 // per-request hot path the cache targets, and a stale List would mask
 // new/removed clients.
-func (c *clientStoreCache) List(ctx context.Context) ([]*core.Client, error) {
+func (c *ClientStoreCache) List(ctx context.Context) ([]*core.Client, error) {
 	return c.inner.List(ctx)
 }
 
 // Add passes through. A successful Add of a previously-unknown ID needs
 // no eviction (a miss was never cached); evicting defensively is cheap
 // and guards the (illegal) re-add-after-delete-within-TTL edge.
-func (c *clientStoreCache) Add(ctx context.Context, cl *core.Client) error {
+func (c *ClientStoreCache) Add(ctx context.Context, cl *core.Client) error {
 	if err := c.inner.Add(ctx, cl); err != nil {
 		return err
 	}
 	if cl != nil {
-		c.evict(cl.ID)
+		c.Evict(cl.ID)
 	}
 	return nil
 }
@@ -144,41 +144,41 @@ func (c *clientStoreCache) Add(ctx context.Context, cl *core.Client) error {
 // Update passes through, then EVICTS the affected entry so the next Get
 // re-reads the new metadata immediately on THIS replica (peers converge
 // via the Server's InvalidateClientCache bus or their own TTL).
-func (c *clientStoreCache) Update(ctx context.Context, cl *core.Client) error {
+func (c *ClientStoreCache) Update(ctx context.Context, cl *core.Client) error {
 	if err := c.inner.Update(ctx, cl); err != nil {
 		return err
 	}
 	if cl != nil {
-		c.evict(cl.ID)
+		c.Evict(cl.ID)
 	}
 	return nil
 }
 
 // Delete passes through, then EVICTS the affected entry so a deleted
 // client immediately reverts to the inner store's not-found behavior.
-func (c *clientStoreCache) Delete(ctx context.Context, clientID string) error {
+func (c *ClientStoreCache) Delete(ctx context.Context, clientID string) error {
 	if err := c.inner.Delete(ctx, clientID); err != nil {
 		return err
 	}
-	c.evict(clientID)
+	c.Evict(clientID)
 	return nil
 }
 
 // RotateSecret passes through, then EVICTS the affected entry — the
 // cached snapshot carries the now-stale Secret field, so drop it.
-func (c *clientStoreCache) RotateSecret(ctx context.Context, clientID string) (string, error) {
+func (c *ClientStoreCache) RotateSecret(ctx context.Context, clientID string) (string, error) {
 	secret, err := c.inner.RotateSecret(ctx, clientID)
 	if err != nil {
 		return secret, err
 	}
-	c.evict(clientID)
+	c.Evict(clientID)
 	return secret, nil
 }
 
 // ListByTenant forwards to the inner store's TenantScopedClientStore
 // extension when present, preserving that optional capability through the
 // decorator (uncached — admin listing, not the hot path).
-func (c *clientStoreCache) ListByTenant(ctx context.Context, tenantID string) ([]*core.Client, error) {
+func (c *ClientStoreCache) ListByTenant(ctx context.Context, tenantID string) ([]*core.Client, error) {
 	if ts, ok := c.inner.(core.TenantScopedClientStore); ok {
 		return ts.ListByTenant(ctx, tenantID)
 	}
@@ -188,7 +188,7 @@ func (c *clientStoreCache) ListByTenant(ctx context.Context, tenantID string) ([
 // Stats forwards to the inner store's ClientStoreStats extension when
 // present (uncached — the discovery doc has its own TTL cache; this only
 // preserves the capability through the decorator).
-func (c *clientStoreCache) Stats(ctx context.Context) (int, string, error) {
+func (c *ClientStoreCache) Stats(ctx context.Context) (int, string, error) {
 	if st, ok := c.inner.(core.ClientStoreStats); ok {
 		return st.Stats(ctx)
 	}
@@ -197,7 +197,7 @@ func (c *clientStoreCache) Stats(ctx context.Context) (int, string, error) {
 
 // getFresh returns a CLONE of the cached client when a non-expired entry
 // exists. The clone means the caller can never mutate the cached snapshot.
-func (c *clientStoreCache) getFresh(clientID string) (*core.Client, bool) {
+func (c *ClientStoreCache) getFresh(clientID string) (*core.Client, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	e, ok := c.entries[clientID]
@@ -214,7 +214,7 @@ func (c *clientStoreCache) getFresh(clientID string) (*core.Client, bool) {
 // Cloning on store (in addition to on read) means a later mutation of the
 // pointer the inner store returned can't retroactively change the cached
 // snapshot.
-func (c *clientStoreCache) store(clientID string, cl *core.Client) {
+func (c *ClientStoreCache) store(clientID string, cl *core.Client) {
 	clone := cloneClient(cl)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -224,14 +224,14 @@ func (c *clientStoreCache) store(clientID string, cl *core.Client) {
 	}
 }
 
-// evict drops the cached entry for clientID. Idempotent.
-func (c *clientStoreCache) evict(clientID string) {
+// Evict drops the cached entry for clientID. Idempotent.
+func (c *ClientStoreCache) Evict(clientID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, clientID)
 }
 
-func (c *clientStoreCache) report(outcome string) {
+func (c *ClientStoreCache) report(outcome string) {
 	if c.onOutcome != nil {
 		c.onOutcome(outcome)
 	}

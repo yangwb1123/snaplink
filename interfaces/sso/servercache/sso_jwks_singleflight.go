@@ -1,15 +1,15 @@
-package sso
+package servercache
 
 import "sync"
 
-// jwksSingleFlight collapses concurrent JWKS document computations into a
+// JWKSSingleFlight collapses concurrent JWKS document computations into a
 // single one, reduced to one global key (the JWKS doc is not per-host).
 // It is the classic single-flight pattern: callers that arrive while a
 // computation is in flight block on it and share its result instead of
 // each recomputing. Calls that arrive after the in-flight one completes
 // recompute fresh — there is intentionally no result caching, so a key
 // rotation is reflected on the very next poll.
-type jwksSingleFlight struct {
+type JWKSSingleFlight struct {
 	mu     sync.Mutex
 	active *jwksCall
 }
@@ -24,7 +24,7 @@ type jwksCall struct {
 // caller's result. compute must be safe to skip for the followers — it
 // is, since the JWKS doc derives only from the (rotation-guarded) issuer
 // key set, identical for every concurrent caller.
-func (f *jwksSingleFlight) Do(compute func() ([]byte, error)) ([]byte, error) {
+func (f *JWKSSingleFlight) Do(compute func() ([]byte, error)) ([]byte, error) {
 	f.mu.Lock()
 	if c := f.active; c != nil {
 		f.mu.Unlock()

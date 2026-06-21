@@ -1,4 +1,4 @@
-package sso
+package servercache
 
 import (
 	"context"
@@ -120,7 +120,7 @@ var _ core.ClientStore = (*countingClientStore)(nil)
 func TestClientStoreCache_ValidateSecretBypassesCache(t *testing.T) {
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "old", Active: true})
-	cache := newClientStoreCache(inner, time.Minute, nil)
+	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
 
 	// Prime the metadata cache with a Get.
@@ -158,7 +158,7 @@ func TestClientStoreCache_ValidateSecretBypassesCache(t *testing.T) {
 // it (NOT a cached negative entry).
 func TestClientStoreCache_MissNeverCached(t *testing.T) {
 	inner := newCountingClientStore()
-	cache := newClientStoreCache(inner, time.Minute, nil)
+	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
 
 	// Three misses must each reach the inner store.
@@ -188,7 +188,7 @@ func TestClientStoreCache_MissNeverCached(t *testing.T) {
 func TestClientStoreCache_HitServedThenExpires(t *testing.T) {
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true})
-	cache := newClientStoreCache(inner, 40*time.Millisecond, nil)
+	cache := NewClientStoreCache(inner, 40*time.Millisecond, nil)
 	ctx := context.Background()
 
 	// First Get = miss -> inner read (1).
@@ -220,7 +220,7 @@ func TestClientStoreCache_HitServedThenExpires(t *testing.T) {
 func TestClientStoreCache_EvictReReads(t *testing.T) {
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true, RedirectURIs: []string{"https://a"}})
-	cache := newClientStoreCache(inner, time.Minute, nil)
+	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
 
 	first, err := cache.Get(ctx, "c1")
@@ -235,7 +235,7 @@ func TestClientStoreCache_EvictReReads(t *testing.T) {
 	if err := inner.Update(ctx, &core.Client{ID: "c1", Secret: "s", Active: true, RedirectURIs: []string{"https://b"}}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	cache.evict("c1")
+	cache.Evict("c1")
 
 	got, err := cache.Get(ctx, "c1")
 	if err != nil {
@@ -251,7 +251,7 @@ func TestClientStoreCache_EvictReReads(t *testing.T) {
 func TestClientStoreCache_MutationsEvict(t *testing.T) {
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true, Name: "v1"})
-	cache := newClientStoreCache(inner, time.Minute, nil)
+	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
 
 	if _, err := cache.Get(ctx, "c1"); err != nil { // prime
@@ -292,7 +292,7 @@ func TestClientStoreCache_CloneOnReadIsolation(t *testing.T) {
 		Attributes:    map[string]string{"k": "v"},
 		JWKS:          []core.JWK{{Kty: "OKP", Crv: "Ed25519", X: "xxx"}},
 	})
-	cache := newClientStoreCache(inner, time.Minute, nil)
+	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
 
 	a, err := cache.Get(ctx, "c1")
@@ -363,7 +363,7 @@ func TestClientStoreCache_OutcomeCallback(t *testing.T) {
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true})
 	var hits, misses atomic.Int64
-	cache := newClientStoreCache(inner, time.Minute, func(outcome string) {
+	cache := NewClientStoreCache(inner, time.Minute, func(outcome string) {
 		switch outcome {
 		case "hit":
 			hits.Add(1)
@@ -392,7 +392,7 @@ func TestClientStoreCache_ConcurrentGetDuringEvict(t *testing.T) {
 		RedirectURIs: []string{"https://a"},
 		Attributes:   map[string]string{"k": "v"},
 	})
-	cache := newClientStoreCache(inner, time.Minute, nil)
+	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -435,7 +435,7 @@ func TestClientStoreCache_ConcurrentGetDuringEvict(t *testing.T) {
 				case <-stop:
 					return
 				default:
-					cache.evict("c1")
+					cache.Evict("c1")
 				}
 			}
 		}()
@@ -449,57 +449,3 @@ func TestClientStoreCache_ConcurrentGetDuringEvict(t *testing.T) {
 // Wiring: WithClientStoreCache decorates the store; absent the option the store
 // is the raw store (byte-identical off), and InvalidateClientCache is a no-op
 // when unwired.
-func TestClientStoreCache_ServerWiring(t *testing.T) {
-	inner := newCountingClientStore()
-
-	// Unwired: the server's clientStore is the RAW store, no wrapper.
-	plain := NewServer(WithClientStore(inner))
-	if _, isCache := plain.clientStore.(*clientStoreCache); isCache {
-		t.Fatal("clientStore was wrapped WITHOUT WithClientStoreCache (not byte-identical off)")
-	}
-	if plain.clientStore != core.ClientStore(inner) {
-		t.Fatal("unwired clientStore is not the exact raw store")
-	}
-	// InvalidateClientCache is a safe no-op when no cache is wired.
-	plain.InvalidateClientCache("anything")
-
-	// Wired: the store is wrapped.
-	wired := NewServer(WithClientStore(inner), WithClientStoreCache(time.Minute))
-	if _, isCache := wired.clientStore.(*clientStoreCache); !isCache {
-		t.Fatal("WithClientStoreCache did not wrap the store")
-	}
-	if wired.clientStoreCacheRef == nil {
-		t.Fatal("clientStoreCacheRef not retained for InvalidateClientCache")
-	}
-
-	// ttl <= 0 also => no wrapper.
-	zero := NewServer(WithClientStore(inner), WithClientStoreCache(0))
-	if _, isCache := zero.clientStore.(*clientStoreCache); isCache {
-		t.Fatal("WithClientStoreCache(0) wrapped the store; ttl<=0 must be off")
-	}
-}
-
-// InvalidateClientCache on a wired server evicts the local cache so the next
-// Get re-reads (the end-to-end path admin/DCR mutations use).
-func TestServer_InvalidateClientCacheEvicts(t *testing.T) {
-	inner := newCountingClientStore()
-	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true, Name: "v1"})
-	srv := NewServer(WithClientStore(inner), WithClientStoreCache(time.Minute))
-	ctx := context.Background()
-
-	if _, err := srv.clientStore.Get(ctx, "c1"); err != nil {
-		t.Fatalf("prime: %v", err)
-	}
-	if err := inner.Update(ctx, &core.Client{ID: "c1", Secret: "s", Active: true, Name: "v2"}); err != nil {
-		t.Fatalf("inner update: %v", err)
-	}
-	// Without invalidation the cache would still serve v1.
-	srv.InvalidateClientCache("c1")
-	got, err := srv.clientStore.Get(ctx, "c1")
-	if err != nil {
-		t.Fatalf("get after invalidate: %v", err)
-	}
-	if got.Name != "v2" {
-		t.Fatalf("name after InvalidateClientCache = %q, want v2", got.Name)
-	}
-}

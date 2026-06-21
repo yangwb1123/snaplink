@@ -14,7 +14,7 @@ import (
 
 func (s *Server) InvalidateClientCache(clientID string) {
 	if s.clientStoreCacheRef != nil {
-		s.clientStoreCacheRef.evict(clientID)
+		s.clientStoreCacheRef.Evict(clientID)
 	}
 	if s.invalidationBus != nil {
 		evt := cluster.Event{Kind: cluster.KindClientChange, Key: clientID}
@@ -375,7 +375,7 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		// cached client snapshot so the next Get re-reads the authoritative
 		// store. No-op when the opt-in client cache isn't wired.
 		if s.clientStoreCacheRef != nil {
-			s.clientStoreCacheRef.evict(evt.Key)
+			s.clientStoreCacheRef.Evict(evt.Key)
 		}
 	case cluster.KindDiscoveryReload:
 		s.invalidateDiscoveryCaches()

@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -44,7 +45,7 @@ type cacheState struct {
 	// genuinely concurrent calls share a result, so the next poll after
 	// the in-flight one finishes recomputes — preserving the "JWKS
 	// reflects the new key immediately" contract (no staleness window).
-	jwksFlight jwksSingleFlight
+	jwksFlight servercache.JWKSSingleFlight
 
 	// OIDC Core §8 pairwise subject identifiers. Nil pairwiseStore
 	// disables the feature entirely — every client receives a public

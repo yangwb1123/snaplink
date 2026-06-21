@@ -2,6 +2,7 @@ package sso
 
 import (
 	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/interfaces/sso/servercache"
 )
 
 // applyFederationAutoRegistration decorates the wired ClientStore so an
@@ -69,6 +70,6 @@ func (s *Server) applyClientStoreCache() {
 	if s.metrics != nil {
 		onOutcome = s.metrics.ObserveClientStoreCache
 	}
-	s.clientStoreCacheRef = newClientStoreCache(s.clientStore, s.clientStoreCacheTTL, onOutcome)
+	s.clientStoreCacheRef = servercache.NewClientStoreCache(s.clientStore, s.clientStoreCacheTTL, onOutcome)
 	s.clientStore = s.clientStoreCacheRef
 }

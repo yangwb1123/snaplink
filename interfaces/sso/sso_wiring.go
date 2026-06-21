@@ -6,6 +6,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/geo"
@@ -57,7 +58,7 @@ type wiringState struct {
 	// is the constructed decorator (nil when unwired), retained so
 	// InvalidateClientCache can evict locally without re-asserting the type.
 	clientStoreCacheTTL time.Duration
-	clientStoreCacheRef *clientStoreCache
+	clientStoreCacheRef *servercache.ClientStoreCache
 
 	// SPIFFE JWT-SVID acceptance (cluster C1, mesh-native service-to-
 	// service identity). When spiffeValidator is wired
