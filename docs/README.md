@@ -14,6 +14,9 @@ the [root README](../README.md) for integration, or jump to a section below.
   `examples/{remote-app,embedded-app,appcore}` show the consumer modes;
   `examples/grpc-client` drives the admin gRPC API.
 - [openapi.yaml](openapi.yaml) — the OpenAPI 3 contract for the HTTP surface.
+- [deployment.md](deployment.md) — build, run, Kubernetes/Compose, the four call
+  surfaces, and the **distributed architecture** (cluster Bus, shared-state
+  tiers, which modules scale, microservices decomposition).
 
 ## Reference
 
