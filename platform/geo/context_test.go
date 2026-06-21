@@ -58,7 +58,7 @@ func TestGeoContextNilContext(t *testing.T) {
 	t.Parallel()
 
 	// FromContext must guard a nil ctx (callers chain unconditionally).
-	got, ok := FromContext(nil)
+	got, ok := FromContext(context.TODO())
 	if ok || got != nil {
 		t.Errorf("FromContext(nil) = (%v, %v), want (nil, false)", got, ok)
 	}

@@ -99,7 +99,7 @@ func buildAdminSeed(cfg *config.Config, a *app, logger spi.Logger) *builtin.Admi
 // and wires the Restorer's Tracker. No-op when snapshot restore is not
 // configured.
 func applyBootstrapSnapshotRestore(cfg *config.Config, a *app, tracker *bootstrapfile.Tracker, logger spi.Logger) error {
-	if !(cfg.Snapshot.Enabled && cfg.Snapshot.RestoreFrom != "" && a.snapshotPipeline != nil && a.snapshotRestorer != nil) {
+	if !cfg.Snapshot.Enabled || cfg.Snapshot.RestoreFrom == "" || a.snapshotPipeline == nil || a.snapshotRestorer == nil {
 		return nil
 	}
 	a.snapshotRestorer.Tracker = tracker

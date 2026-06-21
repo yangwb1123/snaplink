@@ -50,10 +50,15 @@ func newSoftwareAuthenticator(t *testing.T) *softwareAuthenticator {
 func (a *softwareAuthenticator) cosePublicKey(t *testing.T) []byte {
 	t.Helper()
 	pub := a.key.PublicKey
-	// Left-pad coordinates to the curve byte length (32 for P-256) — the
-	// library rejects coords whose length != byteLen.
-	x := leftPad(pub.X.Bytes(), 32)
-	y := leftPad(pub.Y.Bytes(), 32)
+	// pub.Bytes() is the uncompressed SEC1 encoding 0x04 || X(32) || Y(32)
+	// (Go 1.25+, replacing the deprecated PublicKey.X/.Y). For P-256 each
+	// coordinate is already the curve byte length, so no left-pad is needed.
+	pubBytes, err := pub.Bytes()
+	if err != nil {
+		t.Fatalf("ecdsa public key bytes: %v", err)
+	}
+	x := pubBytes[1:33]
+	y := pubBytes[33:65]
 	cose := webauthncose.EC2PublicKeyData{
 		PublicKeyData: webauthncose.PublicKeyData{
 			KeyType:   int64(webauthncose.EllipticKey),
@@ -143,15 +148,6 @@ func buildAuthenticatorData(rpID string, signCount uint32, userVerified bool) []
 	var counter [4]byte
 	binary.BigEndian.PutUint32(counter[:], signCount)
 	out = append(out, counter[:]...)
-	return out
-}
-
-func leftPad(b []byte, size int) []byte {
-	if len(b) >= size {
-		return b
-	}
-	out := make([]byte, size)
-	copy(out[size-len(b):], b)
 	return out
 }
 

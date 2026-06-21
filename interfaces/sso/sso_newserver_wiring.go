@@ -18,8 +18,8 @@ import (
 // only Get adds the on-miss federation fallback, and a pre-registered client
 // always wins.
 func (s *Server) applyFederationAutoRegistration() {
-	if !(s.federationAutoRegister && s.clientStore != nil &&
-		s.federationEntity != nil && s.federationEntity.Resolver().Enabled()) {
+	if !s.federationAutoRegister || s.clientStore == nil ||
+		s.federationEntity == nil || !s.federationEntity.Resolver().Enabled() {
 		return
 	}
 	// Source the abuse-resistance knobs (negative-cache TTL + size, the
@@ -63,7 +63,7 @@ func (s *Server) applyFederationAutoRegistration() {
 // every s.clientStore.Get is byte-identical to a non-caching build.
 // ValidateSecret bypasses the cache (§2).
 func (s *Server) applyClientStoreCache() {
-	if !(s.clientStoreCacheTTL > 0 && s.clientStore != nil) {
+	if s.clientStoreCacheTTL <= 0 || s.clientStore == nil {
 		return
 	}
 	var onOutcome func(string)

@@ -62,7 +62,7 @@ func TestJWTExpUnsafe(t *testing.T) {
 // exp under MetaRevokedExp, and the published metric must increment.
 func TestPublishTokenRevocation_WireFormat(t *testing.T) {
 	bus := clustermem.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sub, err := bus.Subscribe(ctx)
@@ -106,7 +106,7 @@ func TestPublishTokenRevocation_WireFormat(t *testing.T) {
 // revocation off, nothing is published.
 func TestPublishTokenRevocation_Disabled(t *testing.T) {
 	bus := clustermem.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sub, err := bus.Subscribe(ctx)
@@ -141,7 +141,7 @@ func TestPublishTokenRevocation_NilBusAndEmptyToken(t *testing.T) {
 	PublishTokenRevocation(d, context.Background(), "header.payload.sig", 1)
 
 	bus := clustermem.New()
-	defer bus.Close()
+	defer func() { _ = bus.Close() }()
 	d.InvalidationBus = bus
 	PublishTokenRevocation(d, context.Background(), "", 1) // empty token
 }
@@ -151,7 +151,7 @@ func TestPublishTokenRevocation_NilBusAndEmptyToken(t *testing.T) {
 // the published metric is NOT incremented.
 func TestPublishTokenRevocation_FailOpenOnBusError(t *testing.T) {
 	bus := clustermem.New()
-	bus.Close() // Publish now returns ErrClosed
+	_ = bus.Close() // Publish now returns ErrClosed
 	m := metrics.New()
 	d := &ServerDeps{
 		Logger:                 spi.NopLogger{},

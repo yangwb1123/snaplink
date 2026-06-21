@@ -198,7 +198,7 @@ func TestRcovDisc_PasswordReset(t *testing.T) {
 	}
 
 	// Unknown identifier => still 200 (anti-enumeration).
-	status, out = rcovPostJSON(t, s.http.URL+"/auth/forgot-password", "", map[string]any{
+	status, _ = rcovPostJSON(t, s.http.URL+"/auth/forgot-password", "", map[string]any{
 		"identifier": "nobody@example.com",
 	})
 	if status != http.StatusOK {

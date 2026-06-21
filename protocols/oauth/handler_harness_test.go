@@ -364,7 +364,6 @@ type memJTIStore struct {
 	seen map[string]struct{}
 }
 
-func newMemJTIStore() *memJTIStore { return &memJTIStore{seen: map[string]struct{}{}} }
 
 func (s *memJTIStore) MarkSeen(_ context.Context, jti string, _ time.Time) (bool, error) {
 	s.mu.Lock()

@@ -18,14 +18,14 @@ var version = ""
 func writeVersion(w io.Writer) {
 	v, rev, dirty := resolveVersion()
 	if rev == "" {
-		fmt.Fprintf(w, "%s %s (%s)\n", progName, v, runtime.Version())
+		_, _ = fmt.Fprintf(w, "%s %s (%s)\n", progName, v, runtime.Version())
 		return
 	}
 	suffix := ""
 	if dirty {
 		suffix = " (modified)"
 	}
-	fmt.Fprintf(w, "%s %s\n  revision: %s%s\n  go:       %s\n", progName, v, rev, suffix, runtime.Version())
+	_, _ = fmt.Fprintf(w, "%s %s\n  revision: %s%s\n  go:       %s\n", progName, v, rev, suffix, runtime.Version())
 }
 
 // resolveVersion picks the most specific version string available: an

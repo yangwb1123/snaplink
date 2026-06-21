@@ -3,9 +3,10 @@ package sso
 import (
 	"context"
 	"fmt"
-	"github.com/snaplink/sso/internal/handler"
 	"net/http"
 	"time"
+
+	"github.com/snaplink/sso/internal/handler"
 
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -45,11 +46,6 @@ func isValidPKCEMethod(method string) bool {
 // isPKCEMethodAllowedForClient delegates to oauth.IsPKCEMethodAllowedForClient.
 func isPKCEMethodAllowedForClient(method string, allowed []string) bool {
 	return oauth.IsPKCEMethodAllowedForClient(method, allowed)
-}
-
-// verifyPKCE delegates to oauth.VerifyPKCE.
-func verifyPKCE(method, challenge, verifier string) bool {
-	return oauth.VerifyPKCE(method, challenge, verifier)
 }
 
 // generateAuthCodeBytes delegates to oauth.GenerateAuthCodeBytes.

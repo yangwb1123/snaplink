@@ -2,7 +2,6 @@ package sso
 
 import (
 	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/selfservice"
 )
 
@@ -44,28 +43,6 @@ func (s *Server) handleAdminListUserPasswordResetTokens(ctx HandlerContext) {
 }
 func (s *Server) handleAdminListUserEmailChangeTokens(ctx HandlerContext) {
 	admin.HandleAdminListUserEmailChangeTokens(s, ctx)
-}
-
-// recordAdminUserAction emits an admin_* audit event for a helpdesk action on a
-// user's state. ActorID is the acting ADMIN (from the AdminMiddleware-stamped
-// context). Retained in root for the B2B org handlers (admin/users.go has its
-// own copy for the extracted user-management handlers).
-func (s *Server) recordAdminUserAction(ctx HandlerContext, evtType audit.EventType, targetUser, metaKey, metaVal string) {
-	if s.auditor == nil {
-		return
-	}
-	actor, _, _ := AdminActorFromContext(ctx.Request().Context())
-	evt := &audit.Event{
-		Type:    evtType,
-		Outcome: audit.OutcomeSuccess,
-		ActorID: actor,
-		ActorIP: audit.ClientIP(ctx.Request()),
-	}
-	audit.SetMeta(evt, "target_user", targetUser)
-	if metaKey != "" {
-		audit.SetMeta(evt, metaKey, metaVal)
-	}
-	s.auditor.Record(ctx.Request().Context(), evt)
 }
 
 // B2B org-management handlers — thin wrappers. The enterprise-connection,

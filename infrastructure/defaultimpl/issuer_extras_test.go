@@ -208,7 +208,7 @@ func TestECDSAIssuer_Options(t *testing.T) {
 	if iss.KeyID() != "kid-ec" {
 		t.Errorf("KeyID = %q, want kid-ec", iss.KeyID())
 	}
-	if iss.PublicKey().X.Cmp(priv.PublicKey.X) != 0 {
+	if !iss.PublicKey().Equal(&priv.PublicKey) {
 		t.Error("PublicKey does not match supplied key")
 	}
 	// JWKS publishes both the primary and the extra verify key.

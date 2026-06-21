@@ -34,9 +34,7 @@ func rsaDecrypter(t *testing.T) (*defaultimpl.RSAJWEDecrypter, []core.JWK) {
 		t.Fatalf("decrypter JWKS: %v", err)
 	}
 	jwks := make([]core.JWK, len(ssoJWKS))
-	for i, k := range ssoJWKS {
-		jwks[i] = core.JWK(k)
-	}
+	copy(jwks, ssoJWKS)
 	return dec, jwks
 }
 

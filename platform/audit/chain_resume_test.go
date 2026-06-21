@@ -178,7 +178,7 @@ func TestRecorder_AddSinkNilSafe(t *testing.T) {
 // (only the write path is wrapped).
 func TestComposingSinks_GetDelegatesToInner(t *testing.T) {
 	inner := audit.NewMemorySink(4)
-	inner.Record(context.Background(), &audit.Event{ID: "find-me", Type: audit.EventLogin})
+	_ = inner.Record(context.Background(), &audit.Event{ID: "find-me", Type: audit.EventLogin})
 
 	async := audit.NewAsyncSink(inner)
 	if e, err := async.Get(context.Background(), "find-me"); err != nil || e.ID != "find-me" {

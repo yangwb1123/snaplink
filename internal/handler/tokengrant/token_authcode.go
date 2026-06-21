@@ -90,13 +90,13 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 // (the real /auth/login moment, falling back to now only when zero), issues the
 // access token (fail-CLOSED: a strategy or Issue error aborts the grant), and
 // seeds the response map. ok=false means a wire error was already written.
-func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, info *oauth.AuthCode, scopes []string, dpopJKT, mtlsX5T string) (map[string]any, *core.Token, string, time.Time, []string, bool) {
+func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, info *oauth.AuthCode, scopes []string, dpopJKT, mtlsX5T string) (map[string]any, *core.Token, string, time.Time, []string, bool) { //nolint:staticcheck // SA4009: auth-code grant intentionally uses the code-bound info.Scopes, not the request-scopes param
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
 		return nil, nil, "", time.Time{}, nil, false
 	}
-	scopes = info.Scopes
+	scopes = info.Scopes //nolint:staticcheck // SA4009: see func comment — code-bound scopes are authoritative
 	if len(scopes) == 0 {
 		scopes = strings.Split(req.Scope, " ")
 	}
