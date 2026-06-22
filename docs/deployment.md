@@ -65,17 +65,20 @@ Each pluggable concern picks a backend via its `backend:` key. **What the
 
 | Concern | `backend:` values the binary wires |
 |---|---|
-| Stores (auth-code, refresh, session, consent, clients, users, par, device, ciba, mfa, password, …) | `memory` (default) · `sqlite` (needs `<concern>.sqlite.dsn`) |
+| Hot stores (auth-code, refresh, session, par, device, ciba, jti-replay, mfa-challenge) + `ratelimit` | `memory` (default) · `sqlite` (`<concern>.sqlite.dsn`) · **`redis`** (shared `redis:` block) |
+| Durable stores (clients, users, consent, permissions, …) | `memory` (default) · `sqlite` |
 | `cluster` (the cross-replica event Bus) | `memory` · **`etcd`** (`etcd_endpoints`, `etcd_prefix`, …) |
 | `registry`, `netpolicy` | `memory` · `etcd` |
 | `config` source | file · env · `etcd` |
 
-> **Redis is NOT wired into the stock binary.** A full set of Redis store
-> backends exists in `infrastructure/redis/` (auth_code, refresh_token, session,
-> consent, clients, users, par, device_code, ciba, jti_replay, mfa_challenge,
-> password_credentials, permissions, ratelimit) — but that is a **separate Go
-> module**, reachable only via the SDK (so the redis client dependency stays out
-> of the core). This is the pivotal fact for scaling — see §6.
+> **Redis Cluster is now wired into the stock binary** (`backend: redis` on the
+> hot stores, configured by one shared `redis:` block — single/sentinel/cluster).
+> The Redis backends live in `infrastructure/redis/` (a separate Go module pulled
+> in by `cmd/sso-server` via go.mod `replace`), so go-redis enters the *binary*
+> build but not the SDK library packages. Sessions take their own
+> `identity.session_backend` so the hot session store can be Redis while durable
+> clients/users stay on a DB. Durable stores (clients/users/consent/permissions)
+> remain `memory`/`sqlite` until the Postgres/CockroachDB backend lands — see §6.
 
 ## 4. How clients call it
 
@@ -108,10 +111,15 @@ hardening, `--config /etc/sso/config.yaml`, `SSO_*` env-override hooks), a
 `Service` (8080/8081), a `ConfigMap` (hashed → rollout on change), and a
 `namespace`. The kubelet hits `/livez` + `/readyz` (outside the rate limiter).
 
-**Before production, in an overlay:** pin the image (`:latest` is for the
-quickstart), add an `HPA` + `PodDisruptionBudget`, and — critically — pick a
-**shared-state strategy (§6)**, because the base `replicas: 2` with the default
-`memory` backend is **not** correct for stateful flows (next section).
+**For production, a ready-made HA overlay ships at
+[`ops/deploy/k8s-prod`](../ops/deploy/k8s-prod)** (`kubectl apply -k
+ops/deploy/k8s-prod/`): it layers an `HPA` (safe because state is shared), a
+`PodDisruptionBudget`, zone `topologySpreadConstraints`, a `preStop` drain +
+`terminationGracePeriodSeconds`, a tolerant `/readyz` probe, secret-injected
+backend credentials, and the Tier-B config (hot → Redis Cluster, durable →
+Postgres, coordination → etcd). Still pin the image to a digest and replace the
+placeholder Secret. The base `replicas: 2` with the default `memory` backend is
+**not** correct for stateful flows — pick a **shared-state strategy (§6)**.
 
 `ops/deploy/compose/` runs the same image with Prometheus + Grafana
 (dashboards/alerts provisioned) for a local/observability stack.
@@ -160,14 +168,43 @@ So choose a tier:
 | Tier | Topology | Correct for |
 |---|---|---|
 | **A — single instance** | 1 replica, `sqlite` stores on a PVC, etcd optional | small/medium prod; restart-safe; **no HA** |
-| **B — HA, shared store via SDK** | N replicas, **Redis** stores (`infrastructure/redis`) + etcd Bus | true horizontal scale; requires building a binary that wires the redis module (SDK), or extending `sso-server` to wire it |
+| **B — HA, shared hot store** | N replicas, hot stores `backend: redis` (Redis Cluster) + etcd Bus | true horizontal scale; a config choice on the stock binary today |
 | **C — verification fleet** | Many downstream services, each `ssoclient/remote` (local JWKS) | always — this side scales freely regardless of the SSO server's tier |
 
-> **Enabling Tier B with the stock binary is a deliberate architectural decision
-> you make**, not a config flag today: either (1) embed via the SDK and wire the
-> Redis backends, or (2) add Redis wiring to `cmd/sso-server` (which pulls the
-> redis client into the core module's dependency tree — the reason it is a
-> separate module is to keep that dependency opt-in). Pick consciously.
+> **Tier B is a config choice on the stock binary now.** Set `backend: redis` on
+> the hot stores (auth_code, refresh, session via `identity.session_backend`,
+> par, device_code, ciba, jti_replay, mfa.challenge) and `ratelimit`, give a
+> shared `redis:` block (`mode: cluster`), and turn on the etcd Bus. go-redis is
+> pulled into the binary build (not the SDK library packages) via a go.mod
+> `replace` on the `infrastructure/redis` module. The **durable** stores
+> (clients/users/consent/permissions) stay `sqlite` until the Postgres/CockroachDB
+> backend ships; on a single durable node that is Tier-A-durable + Tier-B-hot.
+
+Tier B `config.yaml` (hot → Redis Cluster; secrets via `SSO_REDIS__PASSWORD`):
+
+```yaml
+redis:
+  mode: cluster
+  addrs: [redis-0:6379, redis-1:6379, redis-2:6379]
+  db: 0                 # cluster requires 0
+  pool_size: 100
+  read_timeout: 300ms   # fail-closed fast on /token
+oauth:    { backend: redis }        # auth_code / refresh / device_code / par
+ciba:     { backend: redis }
+mfa:      { challenge: { backend: redis } }
+security: { jti_replay: { backend: redis }, rate_limit: { backend: redis } }
+identity: { session_backend: redis } # sessions on Redis; clients/users stay durable
+cluster:  { bus: { backend: etcd, endpoints: [etcd-0:2379] }, cross_replica_revocation: true }
+```
+
+> **Operator hard requirement:** the Redis auth keyspace MUST run
+> `maxmemory-policy noeviction` (or `volatile-ttl`). Evicting a live
+> refresh-family ledger or a jti key is a SECURITY regression (reuse/replay
+> detection silently fails), not a cache miss. Keep single-use/replay reads on
+> the master (`route_by_latency`/`read_only` off) so replica lag can't let a
+> replay slip past detection. Migrating single-node → cluster is NOT drop-in
+> (hash-tag key layout changes) — drain rather than expect key continuity;
+> acceptable since hot state is short-TTL.
 
 Reference distributed topology (Tier B):
 
@@ -201,7 +238,8 @@ Reference distributed topology (Tier B):
 | Multi-region / residency / tenant (`region`, `tenant`) | residency gating + Bus invalidation | ✅ |
 | CAEP/SSF (`protocols/caep`) | cross-replica SET transmit to the affected client | ✅ |
 | Token verification (downstream) | `ssoclient/remote` + cached JWKS | ✅ (off hot path) |
-| **Hot-path stores** (codes/sessions/tokens/…) | **Redis** (`infrastructure/redis`) | ⚠️ **SDK module only** |
+| **Hot-path stores** (codes/sessions/refresh/par/device/ciba/jti/mfa-challenge) + ratelimit | **Redis Cluster** (`infrastructure/redis`) | ✅ `backend: redis` |
+| **Durable stores** (clients/users/consent/permissions) | Postgres/CockroachDB | ⚠️ planned — `memory`/`sqlite` today |
 | Signing offload | `infrastructure/kms/*` (AWS/GCP/Azure KMS, PKCS#11) | via config (separate modules) |
 
 ## 8. Microservices decomposition
