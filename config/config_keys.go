@@ -113,6 +113,94 @@ type ClusterBusConfig struct {
 	EtcdPassword    string        `yaml:"etcd_password"`
 }
 
+// RedisConfig is the single shared Redis connection used by every store whose
+// backend is set to "redis". One client is built from this block and fanned
+// out to all redis-backed stores (auth_code, refresh, session, par,
+// device_code, ciba, jti_replay, mfa challenge, ratelimit, ...), so HA tuning
+// lives in one place. cmd maps this onto the redis module's Options (the module
+// owns the go-redis dependency); this struct stays free of any external-SDK
+// import so the core config package does too.
+//
+// Mode selects the topology: "single" (default), "sentinel", or "cluster".
+// Cluster mode requires db=0 and at least one seed addr; sentinel requires
+// master_name. Secrets (password) are typically injected via the env override
+// SSO_REDIS__PASSWORD rather than committed to the file.
+type RedisConfig struct {
+	// Mode is "" (infer: master_name -> sentinel, >1 addr -> cluster, else
+	// single) | "single" | "sentinel" | "cluster".
+	Mode  string   `yaml:"mode"`
+	Addrs []string `yaml:"addrs"`
+
+	Username     string `yaml:"username"`
+	Password     string `yaml:"password"`
+	PasswordFile string `yaml:"password_file"`
+	DB           int    `yaml:"db"`          // single/sentinel only; cluster requires 0
+	MasterName   string `yaml:"master_name"` // required for sentinel
+
+	PoolSize        int           `yaml:"pool_size"`
+	MinIdleConns    int           `yaml:"min_idle_conns"`
+	MaxRetries      int           `yaml:"max_retries"`
+	DialTimeout     time.Duration `yaml:"dial_timeout"`
+	ReadTimeout     time.Duration `yaml:"read_timeout"`
+	WriteTimeout    time.Duration `yaml:"write_timeout"`
+	PoolTimeout     time.Duration `yaml:"pool_timeout"`
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+
+	// RouteByLatency / RouteRandomly / ReadOnly spread reads across cluster
+	// replicas. Keep them OFF (default) for correctness: the single-use and
+	// replay stores must read from the master, or replica lag could let a
+	// replay momentarily evade detection. Enable only for read-mostly stores
+	// in a deployment that pins those hot stores to the master separately.
+	RouteByLatency bool `yaml:"route_by_latency"`
+	RouteRandomly  bool `yaml:"route_randomly"`
+	ReadOnly       bool `yaml:"read_only"`
+
+	TLS RedisTLSConfig `yaml:"tls"`
+}
+
+// RedisTLSConfig configures an optional TLS transport to Redis. Enabled=false
+// (the zero value) is a plaintext connection.
+type RedisTLSConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	CAFile             string `yaml:"ca_file"`
+	CertFile           string `yaml:"cert_file"`
+	KeyFile            string `yaml:"key_file"`
+	ServerName         string `yaml:"server_name"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+// Configured reports whether a Redis connection is declared (at least one
+// addr). The store dispatchers use this to fail loudly when a backend is set
+// to "redis" but no redis block was provided.
+func (c RedisConfig) Configured() bool { return len(c.Addrs) > 0 }
+
+// PostgresConfig is the single shared Postgres-wire connection used by every
+// DURABLE store whose backend is set to "postgres" (clients, users, consent,
+// …). One *sql.DB pool is built from this block and fanned out to all
+// postgres-backed stores, so HA pool tuning lives in one place. cmd maps this
+// onto the postgres module's Config (the module owns the pgx dependency); this
+// struct stays free of any external-SDK import so the core config package does
+// too. dialect selects the small set of behaviors that differ between plain
+// PostgreSQL and CockroachDB (advisory locks vs serialization-retry). DSN is
+// typically injected via env (SSO_POSTGRES__DSN); behind a tx-mode pooler
+// (pgbouncer) add default_query_exec_mode=simple_protocol to the DSN and keep
+// max_open_conns small (N replicas x max_open must stay under DB max_connections).
+type PostgresConfig struct {
+	DSN     string `yaml:"dsn"`
+	Dialect string `yaml:"dialect"` // "" | postgres | cockroach
+
+	MaxOpenConns    int           `yaml:"max_open_conns"`
+	MaxIdleConns    int           `yaml:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time"`
+}
+
+// Configured reports whether a Postgres connection is declared. The store
+// dispatchers use this to fail loudly when a backend is set to "postgres" but
+// no postgres block was provided.
+func (c PostgresConfig) Configured() bool { return c.DSN != "" }
+
 // AnomalyConfig wires the async behavioral anomaly detection
 // subsystem (impossible_travel / velocity / new_device /
 // new_country / brute_force_shadow). Decoupled from RiskConfig

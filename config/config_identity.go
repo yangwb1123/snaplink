@@ -3,9 +3,15 @@ package config
 import "time"
 
 type IdentityConfig struct {
-	Backend     string               `yaml:"backend"` // memory | sqlite
-	SQLite      IdentitySQLiteConfig `yaml:"sqlite"`
-	ClientCache ClientCacheConfig    `yaml:"client_cache"`
+	Backend string `yaml:"backend"` // memory | sqlite (clients + users; durable)
+	// SessionBackend optionally overrides the backend for SESSIONS ONLY:
+	// memory | sqlite | redis. Empty falls back to Backend. This decouples the
+	// hot, ephemeral session store (which belongs in Redis Cluster for HA) from
+	// the durable clients/users system-of-record (sqlite/postgres), so an
+	// operator can run sessions on redis while keeping identity on a DB.
+	SessionBackend string               `yaml:"session_backend"`
+	SQLite         IdentitySQLiteConfig `yaml:"sqlite"`
+	ClientCache    ClientCacheConfig    `yaml:"client_cache"`
 }
 
 // ClientCacheConfig opts into the per-login ClientStore metadata cache

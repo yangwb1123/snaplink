@@ -52,6 +52,35 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | Signing-key registry | `keys.signing_key_registry.backend` |
 | Network policy / Registry | `network.store.backend` / `registry.backend` |
 
+Each `backend` accepts `memory` (default) or `sqlite`. The **hot** stores also
+accept **`redis`** (auth_code/refresh/device/par via `oauth.backend`, plus
+`ciba`, `mfa.challenge`, `security.jti_replay`, `security.rate_limit`, and
+sessions via `identity.session_backend`). All `backend: redis` stores share the
+ONE `redis:` connection block below.
+
+## Redis (shared hot-store backend)
+
+One client (single/sentinel/cluster) fanned out to every `backend: redis` store.
+Secrets are typically injected via env (`SSO_REDIS__PASSWORD`) not the file.
+
+| Key | Effect |
+|---|---|
+| `redis.mode` | `""` (infer: master_name→sentinel, >1 addr→cluster, else single) \| `single` \| `sentinel` \| `cluster` |
+| `redis.addrs` | seed addresses (≥1); >1 implies cluster unless `mode` says otherwise |
+| `redis.{username,password,password_file}` | AUTH; `password_file` read + trimmed at boot |
+| `redis.db` | logical DB (single/sentinel only — **cluster requires 0**, validated at boot) |
+| `redis.master_name` | **required for sentinel** |
+| `redis.{pool_size,min_idle_conns,max_retries}` | pool sizing; go-redis handles MOVED/ASK on cluster transparently |
+| `redis.{dial,read,write,pool}_timeout`, `redis.conn_max_{idle_time,lifetime}` | timeouts; keep read/write ~200–500ms so `/token` fails closed fast |
+| `redis.{route_by_latency,route_randomly,read_only}` | spread cluster reads to replicas — **leave OFF** for correctness (single-use/replay reads must hit the master) |
+| `redis.tls.{enabled,ca_file,cert_file,key_file,server_name,insecure_skip_verify}` | optional TLS transport |
+
+Operator hard requirement: the Redis auth keyspace MUST run
+`maxmemory-policy noeviction` (or `volatile-ttl`) — evicting a refresh-family
+ledger or jti key silently breaks reuse/replay detection (a security regression).
+Single-node→cluster migration is not drop-in (hash-tag key layout changes); drain
+rather than expect key continuity (acceptable — hot state is short-TTL).
+
 ## Tenant & Region
 
 | Key | Effect |

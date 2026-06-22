@@ -36,6 +36,8 @@ type Config struct {
 	MFA                MFAConfig                       `yaml:"mfa"`
 	Anomaly            AnomalyConfig                   `yaml:"anomaly"`
 	Cluster            ClusterConfig                   `yaml:"cluster"`
+	Redis              RedisConfig                     `yaml:"redis"`
+	Postgres           PostgresConfig                  `yaml:"postgres"`
 	Keys               KeysConfig                      `yaml:"keys"`
 	CIBA               CIBAConfig                      `yaml:"ciba"`
 	OIDC               OIDCConfig                      `yaml:"oidc"`
