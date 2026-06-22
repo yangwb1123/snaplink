@@ -63,11 +63,19 @@ func (p *PermissionProvider) Ping(ctx context.Context) error {
 	return p.rdb.Ping(ctx).Err()
 }
 
-func permRolesKey(clientID string) string { return permRolesPrefix + clientID }
-func permMenusKey(clientID string) string { return permMenusPrefix + clientID }
-func permUsersKey(clientID string) string { return permAssignPrefix + clientID + permUsersSuffix }
+// Every per-client key carries a {clientID} hash tag so the role hash, the
+// per-user assignment sets, and the users index all map to ONE Redis Cluster
+// slot. removeRoleScript/assignScript/unassignScript/addRoleToUserScript touch
+// several of these in one Lua call (removeRoleScript even builds per-user akeys
+// dynamically) — without the shared tag those are CROSSSLOT errors on a real
+// cluster. See cluster.go.
+func permRolesKey(clientID string) string { return permRolesPrefix + hashTag(clientID) }
+func permMenusKey(clientID string) string { return permMenusPrefix + hashTag(clientID) }
+func permUsersKey(clientID string) string {
+	return permAssignPrefix + hashTag(clientID) + permUsersSuffix
+}
 func permAssignKey(clientID, userID string) string {
-	return permAssignPrefix + clientID + ":" + userID
+	return permAssignPrefix + hashTag(clientID) + ":" + userID
 }
 
 // --- Role CRUD ---
@@ -161,7 +169,10 @@ return 1
 func (p *PermissionProvider) RemoveRole(ctx context.Context, clientID, roleCode string) error {
 	res, err := removeRoleScript.Run(ctx, p.rdb,
 		[]string{permRolesKey(clientID), permUsersKey(clientID)},
-		roleCode, permAssignPrefix+clientID+":",
+		// ARGV[2] is the per-user assignment-key prefix the Lua concatenates
+		// the user id onto; it MUST include the {clientID} hash tag so each
+		// reconstructed akey shares the script's slot (matches permAssignKey).
+		roleCode, permAssignPrefix+hashTag(clientID)+":",
 	).Int64()
 	if err != nil {
 		return fmt.Errorf("redis: remove role: %w", err)

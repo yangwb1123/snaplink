@@ -39,6 +39,14 @@ type RefreshTokenStore struct {
 	// to the longest refresh TTL the operator expects; a marker older than
 	// this self-evicts (a replay that old can't redeem anyway).
 	familyTTL time.Duration
+
+	// maxRotationsPerWindow + rotationWindow configure the OPTIONAL per-family
+	// rotation velocity cap (RefreshTokenRotationLimiter), matching the memory
+	// and sqlite peers. BOTH must be > 0 for the cap to engage; either zero
+	// disables it (RecordRotation still counts but never reports exceeded). See
+	// refresh_token_rotation.go.
+	maxRotationsPerWindow int
+	rotationWindow        time.Duration
 }
 
 // RefreshTokenOption configures the RefreshTokenStore.
@@ -49,6 +57,18 @@ type RefreshTokenOption func(*RefreshTokenStore)
 // refresh token TTL; longer is better for audit. Default 30 days.
 func WithFamilyTTL(ttl time.Duration) RefreshTokenOption {
 	return func(s *RefreshTokenStore) { s.familyTTL = ttl }
+}
+
+// WithRotationCap enables the per-family rotation velocity cap (anti-abuse):
+// more than max rotations of one family within window is reported as exceeded,
+// which the handler turns into a family-kill. Mirrors the memory/sqlite peers'
+// MaxRotationsPerWindow + RotationWindow fields. Both must be > 0 to engage;
+// zero/zero leaves the cap off (the redis peer's prior behaviour).
+func WithRotationCap(max int, window time.Duration) RefreshTokenOption {
+	return func(s *RefreshTokenStore) {
+		s.maxRotationsPerWindow = max
+		s.rotationWindow = window
+	}
 }
 
 // NewRefreshTokenStore builds the store over an existing go-redis client.
@@ -218,8 +238,11 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 		// Opportunistic GC of both the active key and its family-membership
 		// marker, mirroring the SQLite peer (which deletes the row + ledger
 		// on Inspect expiry) so an expired token can't later surface a stale
-		// reuse event.
-		_ = s.rdb.Del(ctx, rtKey(token), rtFamilyMemKey(token)).Err()
+		// reuse event. Two single-key DELs (not one multi-key DEL) so the op
+		// is Redis-Cluster-safe — the active key and marker hash to different
+		// slots; the cleanup needs no cross-key atomicity (both are idempotent).
+		_ = s.rdb.Del(ctx, rtKey(token)).Err()
+		_ = s.rdb.Del(ctx, rtFamilyMemKey(token)).Err()
 		return nil, oauth.ErrRefreshTokenNotFound
 	}
 	return &out, nil
@@ -230,8 +253,15 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 // too so an explicit revoke can't later mis-trigger a reuse event on the
 // same token.
 func (s *RefreshTokenStore) Delete(ctx context.Context, token string) error {
-	if err := s.rdb.Del(ctx, rtKey(token), rtFamilyMemKey(token)).Err(); err != nil {
+	// Two single-key DELs (not one multi-key DEL): the active key and the
+	// family marker hash to different slots, so a combined DEL is a CROSSSLOT
+	// error on a real cluster. Revoke is idempotent (RFC 7009 §2.2), so the
+	// two deletes need no cross-key atomicity — a retry cleans up either half.
+	if err := s.rdb.Del(ctx, rtKey(token)).Err(); err != nil {
 		return fmt.Errorf("redis: delete refresh_token: %w", err)
+	}
+	if err := s.rdb.Del(ctx, rtFamilyMemKey(token)).Err(); err != nil {
+		return fmt.Errorf("redis: delete refresh_token family marker: %w", err)
 	}
 	return nil
 }

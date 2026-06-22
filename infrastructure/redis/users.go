@@ -127,7 +127,10 @@ func (p *UserProvider) List(ctx context.Context) ([]*sso.User, error) {
 	for i, id := range ids {
 		keys[i] = userKey(id)
 	}
-	vals, err := p.rdb.MGet(ctx, keys...).Result()
+	// Per-key GET pipeline, not MGET: user keys span every hash slot, so a
+	// single MGET is a CROSSSLOT error on a real cluster. mgetCompat returns
+	// the same positional []any (nil for misses) so the loop below is unchanged.
+	vals, err := mgetCompat(ctx, p.rdb, keys)
 	if err != nil {
 		return nil, fmt.Errorf("redis: mget users: %w", err)
 	}

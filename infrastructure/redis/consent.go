@@ -105,7 +105,10 @@ func (s *ConsentStore) ListByUser(ctx context.Context, userID string) ([]sso.Con
 	for i, cid := range clientIDs {
 		keys[i] = consentGrantKey(userID, cid)
 	}
-	vals, err := s.rdb.MGet(ctx, keys...).Result()
+	// Per-key GET pipeline, not MGET: a user's grant keys can span hash slots,
+	// so a single MGET is a CROSSSLOT error on a real cluster. mgetCompat
+	// returns the same positional []any (nil for misses) as MGET.
+	vals, err := mgetCompat(ctx, s.rdb, keys)
 	if err != nil {
 		return nil, fmt.Errorf("redis: mget consent grants: %w", err)
 	}
