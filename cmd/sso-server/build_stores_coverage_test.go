@@ -573,7 +573,7 @@ func TestBuildPushWebhookTransport_HappyPathWithAllOptions(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBuildCIBA_MemoryLogTransport(t *testing.T) {
-	store, transport, sqliteStore, err := serverbuildstore.BuildCIBA(config.CIBAConfig{}, quietLogger())
+	store, transport, sqliteStore, err := serverbuildstore.BuildCIBA(config.CIBAConfig{}, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -586,7 +586,7 @@ func TestBuildCIBA_MemoryLogTransport(t *testing.T) {
 }
 
 func TestBuildCIBA_SQLiteRequiresDSN(t *testing.T) {
-	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "sqlite"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "sqlite"}, quietLogger(), nil)
 	if err == nil || !strings.Contains(err.Error(), "sqlite_dsn") {
 		t.Fatalf("err = %v; want sqlite_dsn required", err)
 	}
@@ -594,7 +594,7 @@ func TestBuildCIBA_SQLiteRequiresDSN(t *testing.T) {
 
 func TestBuildCIBA_SQLiteHappyPath(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "ciba.db") + "?_journal=WAL"
-	store, _, sqliteStore, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "sqlite", SQLiteDSN: dsn}, quietLogger())
+	store, _, sqliteStore, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "sqlite", SQLiteDSN: dsn}, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -604,14 +604,14 @@ func TestBuildCIBA_SQLiteHappyPath(t *testing.T) {
 }
 
 func TestBuildCIBA_UnknownBackendErrors(t *testing.T) {
-	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "redis"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Backend: "redis"}, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildCIBA_WebhookTransportRequiresURL(t *testing.T) {
-	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Transport: "webhook"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Transport: "webhook"}, quietLogger(), nil)
 	if err == nil || !strings.Contains(err.Error(), "url") {
 		t.Fatalf("err = %v; want webhook url required", err)
 	}
@@ -621,7 +621,7 @@ func TestBuildCIBA_WebhookTransportHappyPath(t *testing.T) {
 	store, transport, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{
 		Transport: "webhook",
 		Webhook:   config.MFAPushWebhookConfig{URL: "https://ciba.test/push"},
-	}, quietLogger())
+	}, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -631,7 +631,7 @@ func TestBuildCIBA_WebhookTransportHappyPath(t *testing.T) {
 }
 
 func TestBuildCIBA_UnknownTransportErrors(t *testing.T) {
-	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Transport: "carrier-pigeon"}, quietLogger())
+	_, _, _, err := serverbuildstore.BuildCIBA(config.CIBAConfig{Transport: "carrier-pigeon"}, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("expected error for unknown transport")
 	}

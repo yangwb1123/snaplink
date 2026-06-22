@@ -1,12 +1,15 @@
 package serverbuildstore
 
 import (
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/shared/spi"
@@ -16,9 +19,18 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/snaplink/sso/postgres"
+	redisbackend "github.com/snaplink/sso/redis"
 
 	"github.com/snaplink/sso/shared/security"
 )
+
+// errPostgresNotConfigured is the shared boot error for a backend:postgres
+// selection with no postgres block (no shared pool was built). One message
+// shape across every postgres-capable durable-store dispatcher in this package.
+func errPostgresNotConfigured(domain string) error {
+	return fmt.Errorf("%s.backend=postgres but no postgres block configured (set postgres.dsn)", domain)
+}
 
 func ConvertClientJWKs(in []config.ClientJWK) []sso.JWK {
 	if len(in) == 0 {
@@ -100,7 +112,7 @@ func BuildDPoPNonceProvider(cfg config.DPoPNonceConfig, logger spi.Logger) (sso.
 // DCR registrations + password users across restarts. Same DSN can
 // be shared with OAuth.SQLite — SQLite OS-file-lock handles
 // cross-pool coordination.
-func BuildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
+func BuildClientStore(cfg config.IdentityConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.ClientStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryClientStore(), nil
@@ -109,8 +121,13 @@ func BuildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
 			return nil, errors.New("identity.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewClientStore(cfg.SQLite.DSN)
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("identity")
+		}
+		return postgresbackend.NewClientStoreWithDB(pg, dialect)
 	default:
-		return nil, fmt.Errorf("unknown identity.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown identity.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
@@ -121,7 +138,7 @@ func BuildClientStore(cfg config.IdentityConfig) (sso.ClientStore, error) {
 // BuildDeviceSecretStore selects the Native SSO device_secret backend. Empty
 // backend returns (nil, nil) — the feature stays off (byte-identical). sqlite
 // is durable + multi-replica-safe.
-func BuildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, error) {
+func BuildDeviceSecretStore(cfg config.NativeSSOConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.DeviceSecretStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -132,8 +149,13 @@ func BuildDeviceSecretStore(cfg config.NativeSSOConfig) (sso.DeviceSecretStore, 
 			return nil, errors.New("native_sso.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewDeviceSecretStore(cfg.SQLite.DSN)
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("native_sso")
+		}
+		return postgresbackend.NewDeviceSecretStoreWithDB(pg, dialect)
 	default:
-		return nil, fmt.Errorf("unknown native_sso.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown native_sso.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
@@ -155,7 +177,7 @@ func BuildPasswordResetStore(cfg config.PasswordResetConfig) (sso.PasswordResetS
 	}
 }
 
-func BuildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, error) {
+func BuildConsentStore(cfg config.SelfServiceStoreConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.ConsentStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -166,8 +188,13 @@ func BuildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, err
 			return nil, errors.New("self_service.consent.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewConsentStore(cfg.SQLite.DSN)
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("self_service.consent")
+		}
+		return postgresbackend.NewConsentStoreWithDB(pg, dialect)
 	default:
-		return nil, fmt.Errorf("unknown self_service.consent.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown self_service.consent.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
@@ -176,7 +203,7 @@ func BuildConsentStore(cfg config.SelfServiceStoreConfig) (sso.ConsentStore, err
 // password authenticator keeps its YAML-only verifier (byte-identical). When
 // set, the store is seeded from the YAML password users and login is served
 // from it, so a password changed via /me/password takes effect on next login.
-func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig) (sso.PasswordCredentialStore, error) {
+func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.PasswordCredentialStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
@@ -187,12 +214,17 @@ func BuildPasswordCredentialStore(cfg config.SelfServiceStoreConfig) (sso.Passwo
 			return nil, errors.New("self_service.password.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewPasswordCredentialStore(cfg.SQLite.DSN)
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("self_service.password")
+		}
+		return postgresbackend.NewPasswordCredentialStoreWithDB(pg, dialect)
 	default:
-		return nil, fmt.Errorf("unknown self_service.password.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown self_service.password.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
-func BuildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
+func BuildUserProvider(cfg config.IdentityConfig, pg *sql.DB, dialect postgresbackend.Dialect) (sso.UserProvider, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryUserProvider(), nil
@@ -201,8 +233,13 @@ func BuildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 			return nil, errors.New("identity.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewUserProvider(cfg.SQLite.DSN)
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("identity")
+		}
+		return postgresbackend.NewUserProviderWithDB(pg, dialect)
 	default:
-		return nil, fmt.Errorf("unknown identity.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown identity.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
@@ -210,16 +247,34 @@ func BuildUserProvider(cfg config.IdentityConfig) (sso.UserProvider, error) {
 // sqlite selector as the rest of identity-domain stores so operators
 // running TokenStrategySession across multiple replicas get cross-
 // replica session redemption against a shared SQLite file.
-func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration) (sso.SessionManager, error) {
-	switch strings.ToLower(cfg.Backend) {
+func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb goredis.Cmdable) (sso.SessionManager, error) {
+	// Sessions may run on a different backend than clients/users: the hot,
+	// ephemeral session store belongs in Redis Cluster for HA while identity
+	// stays on a durable DB. session_backend overrides; empty falls back to
+	// the identity backend — EXCEPT when that is postgres, which has no session
+	// store (sessions are hot, not durable). Require an explicit session_backend
+	// then, with a clear message instead of a confusing "unknown backend".
+	backend := strings.ToLower(strings.TrimSpace(cfg.SessionBackend))
+	if backend == "" {
+		backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
+		if backend == "postgres" {
+			return nil, errors.New("sessions cannot use the postgres identity backend (sessions are hot/ephemeral) — set identity.session_backend (redis for HA, or memory/sqlite)")
+		}
+	}
+	switch backend {
 	case "", "memory":
 		return defaultimpl.NewMemorySessionManager(ttl), nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
-			return nil, errors.New("identity.sqlite.dsn required when backend=sqlite")
+			return nil, errors.New("identity.sqlite.dsn required when sessions use backend=sqlite")
 		}
 		return sqlitestores.NewSessionManager(cfg.SQLite.DSN, ttl)
+	case "redis":
+		if rdb == nil {
+			return nil, errors.New("identity session backend=redis but no redis block configured (set redis.addrs)")
+		}
+		return redisbackend.NewSessionManager(rdb, redisbackend.WithSessionTTL(ttl)), nil
 	default:
-		return nil, fmt.Errorf("unknown identity.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown identity session backend %q (supported: memory, sqlite, redis)", backend)
 	}
 }

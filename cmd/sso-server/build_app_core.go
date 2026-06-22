@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
@@ -30,7 +31,7 @@ func (b *appBuilder) wireIdentitySigning() error {
 		b.metricsRegistry = metrics.New()
 	}
 
-	clientStore, err := serverbuildstore.BuildClientStore(cfg.Identity)
+	clientStore, err := serverbuildstore.BuildClientStore(cfg.Identity, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("identity client_store: %w", err)
 	}
@@ -39,11 +40,11 @@ func (b *appBuilder) wireIdentitySigning() error {
 	}
 	b.clientStore = clientStore
 
-	userProvider, err := serverbuildstore.BuildUserProvider(cfg.Identity)
+	userProvider, err := serverbuildstore.BuildUserProvider(cfg.Identity, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("identity user_provider: %w", err)
 	}
-	sessionMgr, err := serverbuildstore.BuildSessionManager(cfg.Identity, cfg.Server.SessionTTL)
+	sessionMgr, err := serverbuildstore.BuildSessionManager(cfg.Identity, cfg.Server.SessionTTL, b.redis)
 	if err != nil {
 		return fmt.Errorf("identity session_manager: %w", err)
 	}
@@ -53,13 +54,18 @@ func (b *appBuilder) wireIdentitySigning() error {
 	// live schema is ahead of what this binary knows. A memory backend
 	// silently no-ops (no DB() method). This must run before traffic is
 	// accepted so an operator doing a canary rollback sees a clear error
-	// instead of silent data corruption.
+	// instead of silent data corruption. The check is SQLite-dialect-specific
+	// (it probes sqlite_master), so skip it for postgres-backed stores — their
+	// own migrate runs at construction; a postgres canary gate is a follow-up.
 	b.schemaCtx = context.Background()
-	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, clientStore, "clients", sqlitestores.ClientsMaxVersion()); err != nil {
-		return fmt.Errorf("schema check clients: %w", err)
-	}
-	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, userProvider, "users", sqlitestores.UsersMaxVersion()); err != nil {
-		return fmt.Errorf("schema check users: %w", err)
+	identityIsPG := strings.EqualFold(strings.TrimSpace(cfg.Identity.Backend), "postgres")
+	if !identityIsPG {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, clientStore, "clients", sqlitestores.ClientsMaxVersion()); err != nil {
+			return fmt.Errorf("schema check clients: %w", err)
+		}
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, userProvider, "users", sqlitestores.UsersMaxVersion()); err != nil {
+			return fmt.Errorf("schema check users: %w", err)
+		}
 	}
 	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, sessionMgr, "sessions", sqlitestores.SessionsMaxVersion()); err != nil {
 		return fmt.Errorf("schema check sessions: %w", err)
@@ -192,7 +198,7 @@ func (b *appBuilder) wireAudit() error {
 	if !cfg.Audit.Enabled {
 		return nil
 	}
-	primary, primaryName, err := serverbuildauthn.BuildPrimaryAuditSink(cfg.Audit, logger)
+	primary, primaryName, err := serverbuildauthn.BuildPrimaryAuditSink(cfg.Audit, logger, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("audit: build primary sink: %w", err)
 	}
@@ -341,7 +347,7 @@ func (b *appBuilder) buildRecorder(sink audit.Sink) (*audit.Recorder, error) {
 // provider when admin needs one for scope checks but none is configured.
 func (b *appBuilder) wirePermissions() error {
 	cfg, logger := b.cfg, b.logger
-	provider, err := serverbuildplatform.BuildPermissionsProvider(cfg, logger)
+	provider, err := serverbuildplatform.BuildPermissionsProvider(cfg, logger, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("permissions: %w", err)
 	}

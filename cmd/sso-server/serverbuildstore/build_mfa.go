@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/shared/spi"
 
 	"github.com/snaplink/sso/domains/authenticators"
@@ -33,7 +35,7 @@ import (
 //
 // The returned mode string is a short backend identifier emitted in
 // the startup log + suitable for /readyz wiring suffixes.
-func BuildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, func(string), error) {
+func BuildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, webauthnHelper *webauthn.Helper, logger spi.Logger, rdb goredis.Cmdable) (spi.MFAProvider, spi.MFAChallengeStore, time.Duration, string, *sqlitestores.PushApprovalStore, func(string), error) {
 	if !cfg.Enabled {
 		return nil, nil, 0, "", nil, nil, nil
 	}
@@ -53,7 +55,7 @@ func BuildMFA(cfg config.MFAConfig, totpAuth *authenticators.TOTPAuthenticator, 
 		return nil, nil, 0, "", nil, nil, err
 	}
 
-	store, storeKind, err := buildMFAChallengeStore(cfg.Challenge)
+	store, storeKind, err := buildMFAChallengeStore(cfg.Challenge, rdb)
 	if err != nil {
 		return nil, nil, 0, "", nil, nil, err
 	}

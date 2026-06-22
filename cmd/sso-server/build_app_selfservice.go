@@ -28,13 +28,13 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	// users and mounts /me/password; the SAME instance backs both the verifier
 	// (login) and the change endpoint so a changed password takes effect on the
 	// next login. Empty backend = nil = YAML-only verifier (byte-identical).
-	passwordStore, err := serverbuildstore.BuildPasswordCredentialStore(cfg.SelfService.Password)
+	passwordStore, err := serverbuildstore.BuildPasswordCredentialStore(cfg.SelfService.Password, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("self_service password store: %w", err)
 	}
 	b.passwordStore = passwordStore
 
-	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, logger, passwordStore, b.userProvider)
+	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, logger, passwordStore, b.userProvider, b.redis)
 	if err != nil {
 		return fmt.Errorf("authenticators: %w", err)
 	}
@@ -246,7 +246,7 @@ func (b *appBuilder) wireMFAProvider() error {
 	// both Provider + Store opts, RequireMFA decays to Allow — same
 	// back-compat fall-through embedders see when they ship a Risk
 	// scorer ahead of MFA.
-	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, pushNotify, err := serverbuildstore.BuildMFA(cfg.MFA, b.totpAuth, b.webauthnHelper, logger)
+	mfaProvider, mfaStore, mfaTTL, _, pushApprovalStore, pushNotify, err := serverbuildstore.BuildMFA(cfg.MFA, b.totpAuth, b.webauthnHelper, logger, b.redis)
 	if err != nil {
 		return fmt.Errorf("mfa: %w", err)
 	}

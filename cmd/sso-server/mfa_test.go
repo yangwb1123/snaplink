@@ -19,7 +19,7 @@ import (
 // entirely when mfa.enabled=false. Risk scorers returning
 // DecisionRequireMFA then decay to Allow (back-compat preserved).
 func TestBuildMFA_DisabledReturnsZeroes(t *testing.T) {
-	provider, store, ttl, mode, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{Enabled: false}, nil, nil, quietLogger())
+	provider, store, ttl, mode, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{Enabled: false}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestBuildMFA_TOTPWithMemoryStore(t *testing.T) {
 			Backend: "memory",
 			TTL:     3 * time.Minute,
 		},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestBuildMFA_TOTPWithSQLiteStore(t *testing.T) {
 			Backend: "sqlite",
 			SQLite:  config.MFAChallengeSQLiteConfig{DSN: dsn},
 		},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestBuildMFA_KindDefaultsToTOTP(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{}, // Kind unset
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestBuildMFA_TOTPRequiresTOTPAuth(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("serverbuildstore.BuildMFA: want error when totp provider requested without TOTPAuthenticator")
 	}
@@ -155,7 +155,7 @@ func TestBuildMFA_UnknownKindRejected(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "fido2"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("serverbuildstore.BuildMFA: want error on unknown provider kind")
 	}
@@ -170,7 +170,7 @@ func TestBuildMFA_SQLiteRequiresDSN(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "sqlite"}, // SQLite.DSN unset
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("serverbuildstore.BuildMFA: want error on sqlite backend without DSN")
 	}
@@ -184,7 +184,7 @@ func TestBuildMFA_UnknownBackendRejected(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "redis"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("serverbuildstore.BuildMFA: want error on unknown challenge backend")
 	}
@@ -199,7 +199,7 @@ func TestBuildMFA_DefaultBackendIsMemory(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{}, // Backend unset
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestBuildMFA_ZeroTTLPassesThrough(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestBuildMFA_StoreSurfacesNotFoundSentinel(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestBuildMFA_WebAuthnWithMemoryStore(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "webauthn"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, helper, quietLogger())
+	}, nil, helper, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestBuildMFA_WebAuthnRequiresHelper(t *testing.T) {
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "webauthn"},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("serverbuildstore.BuildMFA: want error when webauthn provider requested without Helper")
 	}
@@ -326,7 +326,7 @@ func TestBuildMFA_MultiKindComposesBothFactors(t *testing.T) {
 			Kinds: []string{"totp", "webauthn"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, helper, quietLogger())
+	}, totpAuth, helper, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestBuildMFA_MultiRequiresTwoKinds(t *testing.T) {
 					Kinds: tc.kinds,
 				},
 				Challenge: config.MFAChallengeConfig{Backend: "memory"},
-			}, totpAuth, nil, quietLogger())
+			}, totpAuth, nil, quietLogger(), nil)
 			if err == nil {
 				t.Fatalf("want error for kinds=%v", tc.kinds)
 			}
@@ -388,7 +388,7 @@ func TestBuildMFA_MultiRejectsNestedMulti(t *testing.T) {
 			Kinds: []string{"totp", "multi"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("want error when kinds list contains 'multi'")
 	}
@@ -407,7 +407,7 @@ func TestBuildMFA_MultiRejectsDuplicateKinds(t *testing.T) {
 			Kinds: []string{"totp", "totp"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("want error on duplicate kinds entry")
 	}
@@ -426,7 +426,7 @@ func TestBuildMFA_MultiPropagatesInnerKindError(t *testing.T) {
 			Kinds: []string{"totp", "webauthn"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger()) // webauthnHelper=nil
+	}, totpAuth, nil, quietLogger(), nil) // webauthnHelper=nil
 	if err == nil {
 		t.Fatal("want error when inner webauthn kind has no helper")
 	}
@@ -443,7 +443,7 @@ func TestBuildMFA_PushKindWithMemoryStore(t *testing.T) {
 			Push: config.MFAPushConfig{}, // all defaults
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestBuildMFA_PushKindWithSQLiteStore(t *testing.T) {
 			},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestBuildMFA_PushKindMemoryReturnsNilStore(t *testing.T) {
 			Push: config.MFAPushConfig{Backend: "memory"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestBuildMFA_MultiWithPushSQLiteCapture(t *testing.T) {
 			},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestBuildMFA_PushKindRequiresSQLiteDSN(t *testing.T) {
 			Push: config.MFAPushConfig{Backend: "sqlite"}, // DSN unset
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("want error when push sqlite backend missing DSN")
 	}
@@ -566,7 +566,7 @@ func TestBuildMFA_PushKindRejectsUnknownBackend(t *testing.T) {
 			Push: config.MFAPushConfig{Backend: "redis"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("want error on unknown push backend")
 	}
@@ -583,7 +583,7 @@ func TestBuildMFA_PushKindRejectsUnknownTransport(t *testing.T) {
 			Push: config.MFAPushConfig{Transport: "fcm"},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("want error on unknown push transport")
 	}
@@ -605,7 +605,7 @@ func TestBuildMFA_PushWebhookHappyPath(t *testing.T) {
 			},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -625,7 +625,7 @@ func TestBuildMFA_PushWebhookRequiresURL(t *testing.T) {
 			Push: config.MFAPushConfig{Transport: "webhook"}, // URL missing
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("want error when webhook URL missing")
 	}
@@ -648,7 +648,7 @@ func TestBuildMFA_PushKindAppliesPollAndMaxWait(t *testing.T) {
 			},
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}
@@ -669,7 +669,7 @@ func TestBuildMFA_MultiWithPushInner(t *testing.T) {
 			Push:  config.MFAPushConfig{}, // memory + log defaults
 		},
 		Challenge: config.MFAChallengeConfig{Backend: "memory"},
-	}, totpAuth, nil, quietLogger())
+	}, totpAuth, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("serverbuildstore.BuildMFA: %v", err)
 	}

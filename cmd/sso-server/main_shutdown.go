@@ -26,6 +26,14 @@ func closeAppStores(a *app) {
 		_ = a.netStore.Close()
 	}
 	_ = a.registry.Close()
+	// The shared Redis client + Postgres pool back the stores closed above, so
+	// release their connection pools last. Nil for memory/sqlite deployments.
+	if a.redisClient != nil {
+		_ = a.redisClient.Close()
+	}
+	if a.pgDB != nil {
+		_ = a.pgDB.Close()
+	}
 }
 
 // shutdownServers gracefully stops the HTTP, pprof, and gRPC listeners under the

@@ -17,6 +17,9 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/snaplink/sso/redis"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/snaplink/sso/platform/metrics"
 
@@ -29,7 +32,7 @@ import (
 // (log | webhook); since root sso cannot import defaultimpl, the
 // PushTransport is adapted to oauth.CIBATransport via CIBATransportFunc.
 // Returns the typed sqlite handle (or nil) for /readyz + prune wiring.
-func BuildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth.CIBATransport, *sqlitestores.CIBAStore, error) {
+func BuildCIBA(cfg config.CIBAConfig, logger spi.Logger, rdb goredis.Cmdable) (oauth.CIBAStore, oauth.CIBATransport, *sqlitestores.CIBAStore, error) {
 	var (
 		store       oauth.CIBAStore
 		sqliteStore *sqlitestores.CIBAStore
@@ -47,8 +50,13 @@ func BuildCIBA(cfg config.CIBAConfig, logger spi.Logger) (oauth.CIBAStore, oauth
 		}
 		store = s
 		sqliteStore = s
+	case "redis":
+		if rdb == nil {
+			return nil, nil, nil, errRedisNotConfigured("ciba")
+		}
+		store = redisbackend.NewCIBAStore(rdb)
 	default:
-		return nil, nil, nil, fmt.Errorf("unknown ciba.backend %q (supported: memory, sqlite)", cfg.Backend)
+		return nil, nil, nil, fmt.Errorf("unknown ciba.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 
 	var pt defaultimpl.PushTransport

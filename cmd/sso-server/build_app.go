@@ -3,7 +3,12 @@ package main
 import (
 	"context"
 	"crypto"
+	"database/sql"
 	"time"
+
+	goredis "github.com/redis/go-redis/v9"
+
+	postgresbackend "github.com/snaplink/sso/postgres"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/config"
@@ -33,6 +38,19 @@ import (
 type appBuilder struct {
 	cfg    *config.Config
 	logger spi.Logger
+
+	// redis is the one shared Redis client (single/sentinel/cluster) fanned
+	// out to every store whose backend is "redis". Built first by wireRedis so
+	// all later wireXxx can consume it, and Closed once at shutdown. Nil when
+	// no redis block is configured (memory/sqlite deployments are unaffected).
+	redis goredis.UniversalClient
+
+	// pgDB is the one shared Postgres-wire *sql.DB pool fanned out to every
+	// DURABLE store whose backend is "postgres"; pgDialect picks the
+	// postgres/cockroach behavior. Built by wirePostgres, Closed at shutdown.
+	// Nil when no postgres block is configured.
+	pgDB      *sql.DB
+	pgDialect postgresbackend.Dialect
 
 	metricsRegistry *metrics.Metrics
 
@@ -198,5 +216,7 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		signingKeyStop:          rt.signingKeyStop,
 		keyRotationCancel:       rt.keyRotationCancel,
 		keyRotationStop:         rt.keyRotationStop,
+		redisClient:             b.redis,
+		pgDB:                    b.pgDB,
 	}
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuildAuthCodeStore_MemoryDefault(t *testing.T) {
-	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{})
+	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestBuildAuthCodeStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildAuthCodeStore_SQLiteNeedsDSN(t *testing.T) {
-	_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -32,7 +32,7 @@ func TestBuildAuthCodeStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestBuildRefreshTokenStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -57,14 +57,14 @@ func TestBuildRefreshTokenStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildDeviceCodeStore_UnknownBackendErrors(t *testing.T) {
-	_, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"})
+	_, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildPARStore_MemoryDefault(t *testing.T) {
-	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{})
+	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestBuildPARStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildPARStore_SQLiteNeedsDSN(t *testing.T) {
-	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -86,7 +86,7 @@ func TestBuildPARStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -96,14 +96,14 @@ func TestBuildPARStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildPARStore_UnknownBackendErrors(t *testing.T) {
-	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "redis"})
+	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "redis"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildClientStore_MemoryDefault(t *testing.T) {
-	s, err := serverbuildstore.BuildClientStore(config.IdentityConfig{})
+	s, err := serverbuildstore.BuildClientStore(config.IdentityConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -113,14 +113,14 @@ func TestBuildClientStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildClientStore_SQLiteNeedsDSN(t *testing.T) {
-	_, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"}, nil, "")
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildSessionManager_MemoryDefault(t *testing.T) {
-	m, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{}, time.Hour)
+	m, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{}, time.Hour, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestBuildSessionManager_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildSessionManager_SQLiteNeedsDSN(t *testing.T) {
-	_, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, time.Hour)
+	_, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, time.Hour, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -142,7 +142,7 @@ func TestBuildSessionManager_SQLiteOpensFile(t *testing.T) {
 	m, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{
 		Backend: "sqlite",
 		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
-	}, time.Hour)
+	}, time.Hour, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}

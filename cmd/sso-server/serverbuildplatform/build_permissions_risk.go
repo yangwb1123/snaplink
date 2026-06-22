@@ -2,6 +2,7 @@ package serverbuildplatform
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 
 	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
+	postgresbackend "github.com/snaplink/sso/postgres"
 )
 
 // BuildPermissionsProvider returns the wired permissions.Provider
@@ -27,11 +29,11 @@ import (
 // DSN see harmless duplicate-seed warnings rather than wedged
 // startup. AssignRoles overwrites (matches the memory peer's SET
 // semantics) so re-seeds idempotently re-apply the YAML state.
-func BuildPermissionsProvider(cfg *config.Config, logger spi.Logger) (permissions.Provider, error) {
+func BuildPermissionsProvider(cfg *config.Config, logger spi.Logger, pg *sql.DB, dialect postgresbackend.Dialect) (permissions.Provider, error) {
 	if !cfg.Permissions.Enabled {
 		return nil, nil
 	}
-	p, err := newPermissionsBackend(cfg, logger)
+	p, err := newPermissionsBackend(cfg, logger, pg, dialect)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +41,7 @@ func BuildPermissionsProvider(cfg *config.Config, logger spi.Logger) (permission
 	return p, nil
 }
 
-func newPermissionsBackend(cfg *config.Config, logger spi.Logger) (permissions.Provider, error) {
+func newPermissionsBackend(cfg *config.Config, logger spi.Logger, pg *sql.DB, dialect postgresbackend.Dialect) (permissions.Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Permissions.Backend)) {
 	case "", "memory":
 		logger.Info("permissions provider: memory (single-replica only)")
@@ -54,8 +56,18 @@ func newPermissionsBackend(cfg *config.Config, logger spi.Logger) (permissions.P
 		}
 		logger.Info("permissions provider: sqlite (cluster-shared)", "dsn", cfg.Permissions.SQLite.DSN)
 		return sp, nil
+	case "postgres":
+		if pg == nil {
+			return nil, errors.New("permissions.backend=postgres but no postgres block configured (set postgres.dsn)")
+		}
+		sp, err := postgresbackend.NewPermissionProviderWithDB(pg, dialect)
+		if err != nil {
+			return nil, fmt.Errorf("permissions postgres: %w", err)
+		}
+		logger.Info("permissions provider: postgres (cluster-shared)")
+		return sp, nil
 	default:
-		return nil, fmt.Errorf("unknown permissions.backend %q (supported: memory, sqlite)", cfg.Permissions.Backend)
+		return nil, fmt.Errorf("unknown permissions.backend %q (supported: memory, sqlite, postgres)", cfg.Permissions.Backend)
 	}
 }
 

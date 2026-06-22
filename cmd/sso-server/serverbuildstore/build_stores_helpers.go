@@ -2,10 +2,15 @@ package serverbuildstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+
+	goredis "github.com/redis/go-redis/v9"
+
+	postgresbackend "github.com/snaplink/sso/postgres"
 
 	"github.com/snaplink/sso/shared/spi"
 
@@ -13,6 +18,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/snaplink/sso/redis"
 	"github.com/snaplink/sso/interfaces/snapshot"
 
 	encryptionaes "github.com/snaplink/sso/interfaces/snapshot/encryptionaesgcm"
@@ -36,7 +42,7 @@ import (
 // security.AccountLockout / security.SubjectClientIndex use; the schema gets
 // migrated at construction so no separate boot step is required. The returned
 // string is the operator-facing backend label for the startup log.
-func buildMFAChallengeStore(cfg config.MFAChallengeConfig) (spi.MFAChallengeStore, string, error) {
+func buildMFAChallengeStore(cfg config.MFAChallengeConfig, rdb goredis.Cmdable) (spi.MFAChallengeStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemoryMFAChallengeStore(), "memory (single-replica only)", nil
@@ -49,8 +55,13 @@ func buildMFAChallengeStore(cfg config.MFAChallengeConfig) (spi.MFAChallengeStor
 			return nil, "", err
 		}
 		return s, "sqlite (cluster-shared)", nil
+	case "redis":
+		if rdb == nil {
+			return nil, "", errRedisNotConfigured("mfa.challenge")
+		}
+		return redisbackend.NewMFAChallengeStore(rdb), "redis (cluster-shared)", nil
 	default:
-		return nil, "", fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite)", cfg.Backend)
+		return nil, "", fmt.Errorf("unknown mfa.challenge.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 }
 
@@ -175,7 +186,7 @@ func buildSnapshotSealer(cfg config.SnapshotEncryptionConfig, logger spi.Logger)
 
 // buildTenantStoreBackend selects the tenant.Store backend (memory in-process
 // or sqlite cluster-shared).
-func buildTenantStoreBackend(cfg config.TenantConfig, logger spi.Logger) (tenant.Store, error) {
+func buildTenantStoreBackend(cfg config.TenantConfig, logger spi.Logger, pg *sql.DB, dialect postgresbackend.Dialect) (tenant.Store, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		logger.Info("tenant store: memory (in-process)")
@@ -190,8 +201,18 @@ func buildTenantStoreBackend(cfg config.TenantConfig, logger spi.Logger) (tenant
 		}
 		logger.Info("tenant store: sqlite (cluster-shared)", "dsn", cfg.SQLite.DSN)
 		return s, nil
+	case "postgres":
+		if pg == nil {
+			return nil, errPostgresNotConfigured("tenant")
+		}
+		s, err := postgresbackend.NewTenantStoreWithDB(pg, dialect)
+		if err != nil {
+			return nil, fmt.Errorf("tenant postgres: %w", err)
+		}
+		logger.Info("tenant store: postgres (cluster-shared)")
+		return s, nil
 	default:
-		return nil, fmt.Errorf("unknown tenant.backend %q (supported: memory, sqlite)", cfg.Backend)
+		return nil, fmt.Errorf("unknown tenant.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 

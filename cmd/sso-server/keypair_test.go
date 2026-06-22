@@ -73,7 +73,7 @@ func TestBuildAuthenticators_KeyPairSeedsRegistered(t *testing.T) {
 			SubjectID:     "subject-test",
 		}},
 	}
-	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "keypair" {
@@ -101,7 +101,7 @@ func TestBuildAuthenticators_KeyPairSkipsBadEntries(t *testing.T) {
 			{KeyID: "bad-path", PublicKeyFile: "/no/such/file.pem", SubjectID: "missing-file"},
 		},
 	}
-	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
 	found := false
 	for _, a := range auths {
 		if a.Name() == "keypair" {

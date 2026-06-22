@@ -68,7 +68,7 @@ func TestBuildAuthenticators_KeyPairNonceReplayWiredByDefault(t *testing.T) {
 			KeyID: "svc-1", PublicKeyFile: path, SubjectID: "subject-1",
 		}},
 	}
-	auths, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("serverbuildauthn.BuildAuthenticators: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestBuildAuthenticators_TOTPConsumedWiredByDefault(t *testing.T) {
 	// The cmd path builds its OWN secret store internally and surfaces it as the
 	// unified MFAEnrollmentStore; enroll a secret through that store so the
 	// authenticator can read it back at login, then drive a real login.
-	_, _, totpAuth, enrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
+	_, _, totpAuth, enrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("serverbuildauthn.BuildAuthenticators: %v", err)
 	}

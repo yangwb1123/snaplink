@@ -77,7 +77,7 @@ func TestBuildApp_PairwiseSubjectsFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
-	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{})
+	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "sqlite"}, nil, "")
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -102,7 +102,7 @@ func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
 	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{
 		Backend: "sqlite",
 		SQLite:  config.PairwiseSubjectsSQLiteCfg{DSN: dsn},
-	})
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_UnknownBackendErrors(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "etcd"})
+	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "etcd"}, nil, "")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

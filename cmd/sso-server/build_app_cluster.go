@@ -58,17 +58,8 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 	cfg, logger := b.cfg, b.logger
 	cw := &clusterWiring{}
 
-	// Service registry built before NewServer so its etcd Ping can participate
-	// in /readyz alongside the SQLite peers. Self-registration happens later
-	// (needs cfg.Server.Listen resolved).
-	reg, regKind, err := serverbuildplatform.BuildRegistry(&cfg.Registry, logger)
-	if err != nil {
-		return nil, fmt.Errorf("service registry: %w", err)
-	}
-	cw.reg = reg
-	cw.regKind = regKind
-	if regKind == "etcd" {
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "etcd-registry", reg)
+	if err := b.wireServiceRegistry(cw); err != nil {
+		return nil, err
 	}
 
 	// Cross-replica invalidation bus built before NewServer so the option is in
@@ -78,7 +69,9 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 		return nil, fmt.Errorf("invalidation bus: %w", err)
 	}
 	cw.invalidationBus = invalidationBus
-	b.wireInvalidationBusOpts(invalidationBus)
+	if err := b.wireInvalidationBusOpts(invalidationBus); err != nil {
+		return nil, err
+	}
 
 	// Shared signing-key registry (opt-in leaderless multi-replica JWKS
 	// aggregation). Built before NewServer so the option is in place; the
@@ -104,19 +97,38 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 	return cw, nil
 }
 
+// wireServiceRegistry builds the service registry before NewServer so its etcd
+// Ping can participate in /readyz alongside the SQLite peers. Self-registration
+// happens later (needs cfg.Server.Listen resolved).
+func (b *appBuilder) wireServiceRegistry(cw *clusterWiring) error {
+	reg, regKind, err := serverbuildplatform.BuildRegistry(&b.cfg.Registry, b.logger)
+	if err != nil {
+		return fmt.Errorf("service registry: %w", err)
+	}
+	cw.reg = reg
+	cw.regKind = regKind
+	if regKind == "etcd" {
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "etcd-registry", reg)
+	}
+	return nil
+}
+
 // wireInvalidationBusOpts wires the bus Option + the coordinated-rotation and
-// cross-replica-revocation riders gated on a live bus, warning when those
-// features are armed but no bus is wired (they would be inert).
-func (b *appBuilder) wireInvalidationBusOpts(invalidationBus cluster.Bus) {
+// cross-replica-revocation riders. These two are SECURITY features whose only
+// purpose is cross-replica propagation, so arming them without a live Bus is a
+// misconfiguration that would silently leak revoked tokens / skip coordinated
+// cutover. Fail CLOSED at boot (clear, actionable) instead of the old
+// log-and-continue, which left a multi-replica fleet exposed with only a warning.
+func (b *appBuilder) wireInvalidationBusOpts(invalidationBus cluster.Bus) error {
 	cfg, logger := b.cfg, b.logger
 	if invalidationBus == nil {
 		if cfg.Keys.Rotation.CoordinatedCutover {
-			logger.Error("keys.rotation.coordinated_cutover set but no cluster.bus wired — coordinated cutover is INERT")
+			return errors.New("keys.rotation.coordinated_cutover requires a live cluster.bus (set cluster.bus.backend=etcd) — refusing to boot with it INERT")
 		}
 		if cfg.Cluster.CrossReplicaRevocation {
-			logger.Error("cluster.cross_replica_revocation set but no cluster.bus wired — cross-replica revocation is INERT")
+			return errors.New("cluster.cross_replica_revocation requires a live cluster.bus (set cluster.bus.backend=etcd) — refusing to boot with revocation propagation INERT")
 		}
-		return
+		return nil
 	}
 	b.opts = append(b.opts, sso.WithInvalidationBus(invalidationBus))
 	// Deadline-coordinated same-kid rotation cutover rides the same bus.
@@ -129,6 +141,7 @@ func (b *appBuilder) wireInvalidationBusOpts(invalidationBus cluster.Bus) {
 		b.opts = append(b.opts, sso.WithCrossReplicaRevocation())
 		logger.Info("revocation: cross-replica access-token propagation armed")
 	}
+	return nil
 }
 
 // wireSigningKeyRegistryOpts wires the shared signing-key registry + replica
@@ -195,7 +208,7 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 	cfg, logger := b.cfg, b.logger
 	// Self-service consent store. Opt-in: enabling it turns ON the consent gate
 	// at /auth/login and mounts /consents/me.
-	consentStore, err := serverbuildstore.BuildConsentStore(cfg.SelfService.Consent)
+	consentStore, err := serverbuildstore.BuildConsentStore(cfg.SelfService.Consent, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("self_service consent store: %w", err)
 	}
@@ -205,7 +218,7 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 	}
 
 	// OpenID Connect Native SSO 1.0 device_secret store. Opt-in.
-	deviceSecretStore, err := serverbuildstore.BuildDeviceSecretStore(cfg.NativeSSO)
+	deviceSecretStore, err := serverbuildstore.BuildDeviceSecretStore(cfg.NativeSSO, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("native_sso device secret store: %w", err)
 	}

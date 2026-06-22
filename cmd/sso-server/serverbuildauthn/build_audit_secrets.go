@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
+	"database/sql"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/snaplink/sso/config"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	postgresbackend "github.com/snaplink/sso/postgres"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -29,7 +31,7 @@ import (
 // + that gets wrapped by MultiSink+Webhook+Async). Backend selects
 // between in-process MemorySink and the SQLite-backed Sink. Returns
 // the sink + a short identifier used as the ReadyCheck suffix.
-func BuildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger) (audit.Sink, string, error) {
+func BuildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger, pg *sql.DB, dialect postgresbackend.Dialect) (audit.Sink, string, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		logger.Info("audit: primary sink", "backend", "memory", "capacity", cfg.MemoryCapacity)
@@ -44,8 +46,18 @@ func BuildPrimaryAuditSink(cfg config.AuditConfig, logger spi.Logger) (audit.Sin
 		}
 		logger.Info("audit: primary sink", "backend", "sqlite", "dsn", cfg.Sqlite.DSN)
 		return sink, "sqlite", nil
+	case "postgres":
+		if pg == nil {
+			return nil, "", errors.New("audit.backend=postgres but no postgres block configured (set postgres.dsn)")
+		}
+		sink, err := postgresbackend.NewAuditSinkWithDB(pg, dialect)
+		if err != nil {
+			return nil, "", fmt.Errorf("open postgres audit sink: %w", err)
+		}
+		logger.Info("audit: primary sink", "backend", "postgres (cluster-shared)")
+		return sink, "postgres", nil
 	default:
-		return nil, "", fmt.Errorf("audit.backend must be one of memory|sqlite, got %q", cfg.Backend)
+		return nil, "", fmt.Errorf("audit.backend must be one of memory|sqlite|postgres, got %q", cfg.Backend)
 	}
 }
 

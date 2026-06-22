@@ -13,6 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"database/sql"
+
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
@@ -235,6 +239,16 @@ type app struct {
 	// rotation is disabled); keyRotationStop closes when it has exited.
 	keyRotationCancel context.CancelFunc
 	keyRotationStop   <-chan struct{}
+
+	// redisClient is the one shared Redis client fanned out to every
+	// redis-backed store; nil when no redis block is configured. Closed once at
+	// shutdown to release its connection pool.
+	redisClient goredis.UniversalClient
+
+	// pgDB is the one shared Postgres-wire pool fanned out to every
+	// postgres-backed durable store; nil when no postgres block is configured.
+	// Closed once at shutdown.
+	pgDB *sql.DB
 }
 
 func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string) error {

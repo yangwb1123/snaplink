@@ -327,43 +327,43 @@ func TestBuildSnapshotSubsystem_AESGCMRequiresKey(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStoreBuilders_SQLiteDSNRequired(t *testing.T) {
-	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildUserProvider: expected dsn-required error")
 	}
-	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, 0); err == nil {
+	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, 0, nil); err == nil {
 		t.Error("serverbuildstore.BuildSessionManager: expected dsn-required error")
 	}
-	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildClientStore: expected dsn-required error")
 	}
-	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}, nil); err == nil {
 		t.Error("serverbuildstore.BuildAuthCodeStore: expected dsn-required error")
 	}
-	if _, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "sqlite"}, nil); err == nil {
 		t.Error("serverbuildstore.BuildRefreshTokenStore: expected dsn-required error")
 	}
-	if _, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "sqlite"}, nil); err == nil {
 		t.Error("serverbuildstore.BuildDeviceCodeStore: expected dsn-required error")
 	}
 }
 
 func TestStoreBuilders_UnknownBackend(t *testing.T) {
-	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "redis"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildUserProvider: expected unknown-backend error")
 	}
-	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "redis"}, 0); err == nil {
+	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "redis"}, 0, nil); err == nil {
 		t.Error("serverbuildstore.BuildSessionManager: expected unknown-backend error")
 	}
-	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
 		t.Error("serverbuildstore.BuildAuthCodeStore: expected unknown-backend error")
 	}
-	if _, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
 		t.Error("serverbuildstore.BuildRefreshTokenStore: expected unknown-backend error")
 	}
-	if _, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {
 		t.Error("serverbuildstore.BuildDeviceCodeStore: expected unknown-backend error")
 	}
-	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "redis"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildClientStore: expected unknown-backend error")
 	}
 }
@@ -372,23 +372,23 @@ func TestStoreBuilders_UnknownBackend(t *testing.T) {
 // unknown-backend, for the consent + password-credential selectors.
 func TestSelfServiceStoreBuilders(t *testing.T) {
 	// Consent store.
-	if s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}); err != nil || s == nil {
+	if s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}, nil, ""); err != nil || s == nil {
 		t.Errorf("serverbuildstore.BuildConsentStore memory: store=%v err=%v", s, err)
 	}
-	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildConsentStore sqlite without dsn: expected error")
 	}
-	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "redis"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildConsentStore unknown backend: expected error")
 	}
 	// Password-credential store.
-	if s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "memory"}); err != nil || s == nil {
+	if s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "memory"}, nil, ""); err != nil || s == nil {
 		t.Errorf("serverbuildstore.BuildPasswordCredentialStore memory: store=%v err=%v", s, err)
 	}
-	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildPasswordCredentialStore sqlite without dsn: expected error")
 	}
-	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "redis"}); err == nil {
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "redis"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildPasswordCredentialStore unknown backend: expected error")
 	}
 }

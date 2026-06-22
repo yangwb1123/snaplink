@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/protocols/oauth"
 
 	"github.com/snaplink/sso/config"
@@ -13,7 +15,15 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/snaplink/sso/redis"
 )
+
+// errRedisNotConfigured is the shared boot error for a backend:redis selection
+// with no redis block (no shared client was built). One message shape across
+// every redis-capable store dispatcher in this package.
+func errRedisNotConfigured(domain string) error {
+	return fmt.Errorf("%s.backend=redis but no redis block configured (set redis.addrs)", domain)
+}
 
 // BuildAuthCodeStore / BuildRefreshTokenStore / BuildDeviceCodeStore
 // pick between memory + sqlite per cfg.Backend. SQLite needs a DSN;
@@ -21,7 +31,7 @@ import (
 // pool — for SQLite that's fine (OS-level file lock coordinates),
 // for a future shared *sql.DB across stores a different abstraction
 // is needed.
-func BuildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
+func BuildAuthCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.AuthCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryAuthCodeStore(), nil
@@ -30,12 +40,17 @@ func BuildAuthCodeStore(cfg config.OAuthConfig) (oauth.AuthCodeStore, error) {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewAuthCodeStore(cfg.SQLite.DSN)
+	case "redis":
+		if rdb == nil {
+			return nil, errRedisNotConfigured("oauth")
+		}
+		return redisbackend.NewAuthCodeStore(rdb), nil
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 }
 
-func BuildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, error) {
+func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.RefreshTokenStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		s := defaultimpl.NewMemoryRefreshTokenStore()
@@ -53,12 +68,21 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, er
 		s.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
 		s.RotationWindow = cfg.RefreshToken.RotationWindow
 		return s, nil
+	case "redis":
+		if rdb == nil {
+			return nil, errRedisNotConfigured("oauth")
+		}
+		// WithRotationCap restores the per-family velocity cap the memory +
+		// sqlite peers honor (the redis peer dropped it before this wiring).
+		return redisbackend.NewRefreshTokenStore(rdb,
+			redisbackend.WithRotationCap(cfg.RefreshToken.MaxRotationsPerWindow, cfg.RefreshToken.RotationWindow),
+		), nil
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 }
 
-func BuildDeviceCodeStore(cfg config.OAuthConfig) (oauth.DeviceCodeStore, error) {
+func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.DeviceCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryDeviceCodeStore(), nil
@@ -67,12 +91,17 @@ func BuildDeviceCodeStore(cfg config.OAuthConfig) (oauth.DeviceCodeStore, error)
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewDeviceCodeStore(cfg.SQLite.DSN)
+	case "redis":
+		if rdb == nil {
+			return nil, errRedisNotConfigured("oauth")
+		}
+		return redisbackend.NewDeviceCodeStore(rdb), nil
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 }
 
-func BuildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
+func BuildPARStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.PARStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		return defaultimpl.NewMemoryPARStore(), nil
@@ -81,8 +110,13 @@ func BuildPARStore(cfg config.OAuthConfig) (oauth.PARStore, error) {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
 		return sqlitestores.NewPARStore(cfg.SQLite.DSN)
+	case "redis":
+		if rdb == nil {
+			return nil, errRedisNotConfigured("oauth")
+		}
+		return redisbackend.NewPARStore(rdb), nil
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 }
 

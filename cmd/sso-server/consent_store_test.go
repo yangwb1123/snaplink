@@ -11,7 +11,7 @@ import (
 // TestBuildConsentStore_DisabledByDefault: an empty backend returns (nil, nil)
 // so consent enforcement stays off and the routes stay unmounted.
 func TestBuildConsentStore_DisabledByDefault(t *testing.T) {
-	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{})
+	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestBuildConsentStore_DisabledByDefault(t *testing.T) {
 
 // TestBuildConsentStore_Memory: memory backend yields a usable store.
 func TestBuildConsentStore_Memory(t *testing.T) {
-	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"})
+	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestBuildConsentStore_Memory(t *testing.T) {
 
 // TestBuildConsentStore_SQLiteNeedsDSN: sqlite backend without a DSN errors.
 func TestBuildConsentStore_SQLiteNeedsDSN(t *testing.T) {
-	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
@@ -44,7 +44,7 @@ func TestBuildConsentStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{
 		Backend: "sqlite",
 		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
-	})
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestBuildConsentStore_SQLiteOpensFile(t *testing.T) {
 
 // TestBuildConsentStore_UnknownBackend: an unknown backend is a loud error.
 func TestBuildConsentStore_UnknownBackend(t *testing.T) {
-	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "bogus"}); err == nil {
+	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "bogus"}, nil, ""); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }

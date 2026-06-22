@@ -315,9 +315,9 @@ func TestBuildMFA_PushChannelNotifySurfacesNotifier(t *testing.T) {
 				},
 			},
 			Challenge: config.MFAChallengeConfig{Backend: "memory", TTL: time.Minute},
-		}, nil, nil, quietLogger())
+		}, nil, nil, quietLogger(), nil)
 		if err != nil {
-			t.Fatalf("serverbuildstore.BuildMFA(channel_notify=%v): %v", channelNotify, err)
+			t.Fatalf("serverbuildstore.BuildMFA(channel_notify=%v, nil): %v", channelNotify, err)
 		}
 		return notify
 	}

@@ -218,7 +218,7 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
 	for _, a := range auths {
 		if a.Name() == "password" {
 			return
@@ -248,7 +248,7 @@ func TestBuildAuthenticators_ImportedHashLogin(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true, ImportedHashLogin: true}
-	auths, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, users)
+	auths, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, users, nil)
 	if err != nil {
 		t.Fatalf("serverbuildauthn.BuildAuthenticators: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestBuildAuthenticators_ImportedHashLoginOffByDefault(t *testing.T) {
 	})
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true} // flag off
-	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, users)
+	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, users, nil)
 	for _, a := range auths {
 		if a.Name() == "password" {
 			if _, err := a.Authenticate(ctx, &sso.AuthRequest{
@@ -311,7 +311,7 @@ func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
 		Enabled: true,
 		Health:  &config.PasswordHealthConfig{Enabled: true},
 	}
-	_, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil)
+	_, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error wiring password health: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestBuildAuthenticators_PasswordHealthMissingFileIsLoud(t *testing.T) {
 			WeakPasswordFile: filepath.Join(t.TempDir(), "missing.txt"),
 		},
 	}
-	if _, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil); err == nil {
+	if _, _, _, _, err := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil); err == nil {
 		t.Fatal("expected an error for a missing weak-password file, got nil")
 	}
 }

@@ -25,7 +25,7 @@ func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
 			{Prefix: "/auth/login", PerSec: 1, Burst: 2},
 			{Prefix: "/auth/send-code", PerSec: 1, Burst: 2},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("serverbuildplatform.BuildRateLimitPolicy: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestBuildRateLimitPolicy_ZeroDefaultLeavesDefaultLimiterNil(t *testing.T) {
 		Prefixes: []config.RateLimitPrefixConfig{
 			{Prefix: "/auth/login", PerSec: 1, Burst: 2},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("serverbuildplatform.BuildRateLimitPolicy: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildRateLimitPolicy_SQLiteRequiresDSN(t *testing.T) {
 		Backend:       "sqlite",
 		DefaultPerSec: 1,
 		DefaultBurst:  1,
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -136,7 +136,7 @@ func TestBuildRateLimitPolicy_SQLiteOpensFileForEachPrefix(t *testing.T) {
 			{Prefix: "/auth/login", PerSec: 1, Burst: 3},
 			{Prefix: "/auth/send-code", PerSec: 0.1, Burst: 1},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -160,14 +160,14 @@ func TestBuildRateLimitPolicy_UnknownBackendErrors(t *testing.T) {
 	_, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled: true,
 		Backend: "redis",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
 func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
-	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{})
+	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -192,7 +192,7 @@ func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
 	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{
 		Backend: "sqlite",
 		SQLite:  config.JTIReplaySQLiteCfg{DSN: dsn},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_UnknownBackendErrors(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "redis"})
+	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "redis"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

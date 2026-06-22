@@ -6,7 +6,11 @@ import (
 	"os"
 	"strings"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/shared/spi"
+
+	redisbackend "github.com/snaplink/sso/redis"
 
 	"github.com/snaplink/sso/platform/cluster"
 
@@ -42,43 +46,77 @@ import (
 //   - "sqlite" — SQLiteLimiter against cfg.SQLite.DSN; each prefix
 //     gets a distinct bucket_name so multiple rules can share one
 //     DSN file without colliding.
-func BuildRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) {
-	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
-	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
-	switch backend {
+func BuildRateLimitPolicy(cfg config.RateLimitConfig, rdb goredis.Cmdable) (ratelimit.Policy, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
-		if cfg.DefaultPerSec > 0 {
-			p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
-		}
-		for _, r := range cfg.Prefixes {
-			p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
-				Prefix:  r.Prefix,
-				Limiter: ratelimit.NewMemoryLimiter(r.PerSec, r.Burst),
-			})
-		}
+		return memoryRateLimitPolicy(cfg), nil
+	case "redis":
+		return redisRateLimitPolicy(cfg, rdb)
 	case "sqlite":
-		if cfg.SQLite.DSN == "" {
-			return ratelimit.Policy{}, errors.New("security.rate_limit.sqlite.dsn required when backend=sqlite")
-		}
-		if cfg.DefaultPerSec > 0 {
-			lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
-			if err != nil {
-				return ratelimit.Policy{}, fmt.Errorf("rate_limit default sqlite: %w", err)
-			}
-			p.Default = lim
-		}
-		for _, r := range cfg.Prefixes {
-			lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, r.PerSec, r.Burst, r.Prefix)
-			if err != nil {
-				return ratelimit.Policy{}, fmt.Errorf("rate_limit prefix %q sqlite: %w", r.Prefix, err)
-			}
-			p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
-				Prefix:  r.Prefix,
-				Limiter: lim,
-			})
-		}
+		return sqliteRateLimitPolicy(cfg)
 	default:
-		return ratelimit.Policy{}, fmt.Errorf("unknown security.rate_limit.backend %q", cfg.Backend)
+		return ratelimit.Policy{}, fmt.Errorf("unknown security.rate_limit.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
+	}
+}
+
+// memoryRateLimitPolicy builds per-replica MemoryLimiters (the default). Not
+// cluster-shared — the effective limit is N x configured across N replicas, so
+// prefer redis/sqlite for a multi-replica fleet.
+func memoryRateLimitPolicy(cfg config.RateLimitConfig) ratelimit.Policy {
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	if cfg.DefaultPerSec > 0 {
+		p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
+	}
+	for _, r := range cfg.Prefixes {
+		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
+			Prefix:  r.Prefix,
+			Limiter: ratelimit.NewMemoryLimiter(r.PerSec, r.Burst),
+		})
+	}
+	return p
+}
+
+// redisRateLimitPolicy builds shared cluster-wide buckets. Each bucket is a
+// single key, so the limiter's Lua stays single-slot on Redis Cluster.
+// Fail-open on a redis error is the Limiter's contract — an attacker must not be
+// able to DoS the fleet into lockout by killing Redis.
+func redisRateLimitPolicy(cfg config.RateLimitConfig, rdb goredis.Cmdable) (ratelimit.Policy, error) {
+	if rdb == nil {
+		return ratelimit.Policy{}, errors.New("security.rate_limit.backend=redis but no redis block configured (set redis.addrs)")
+	}
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	if cfg.DefaultPerSec > 0 {
+		p.Default = redisbackend.NewLimiterFromRate(rdb, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
+	}
+	for _, r := range cfg.Prefixes {
+		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
+			Prefix:  r.Prefix,
+			Limiter: redisbackend.NewLimiterFromRate(rdb, r.PerSec, r.Burst, r.Prefix),
+		})
+	}
+	return p, nil
+}
+
+// sqliteRateLimitPolicy builds cluster-shared SQLiteLimiters; each prefix gets a
+// distinct bucket_name so multiple rules share one DSN file without colliding.
+func sqliteRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error) {
+	if cfg.SQLite.DSN == "" {
+		return ratelimit.Policy{}, errors.New("security.rate_limit.sqlite.dsn required when backend=sqlite")
+	}
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	if cfg.DefaultPerSec > 0 {
+		lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
+		if err != nil {
+			return ratelimit.Policy{}, fmt.Errorf("rate_limit default sqlite: %w", err)
+		}
+		p.Default = lim
+	}
+	for _, r := range cfg.Prefixes {
+		lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, r.PerSec, r.Burst, r.Prefix)
+		if err != nil {
+			return ratelimit.Policy{}, fmt.Errorf("rate_limit prefix %q sqlite: %w", r.Prefix, err)
+		}
+		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{Prefix: r.Prefix, Limiter: lim})
 	}
 	return p, nil
 }

@@ -15,7 +15,7 @@ import (
 // MemorySink behavior. Pins the no-regression for existing
 // reference YAMLs that don't yet name a backend.
 func TestBuildPrimaryAuditSink_DefaultsToMemory(t *testing.T) {
-	sink, name, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{Enabled: true}, quietLogger())
+	sink, name, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{Enabled: true}, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -38,7 +38,7 @@ func TestBuildPrimaryAuditSink_SqliteRoundTrip(t *testing.T) {
 		Enabled: true,
 		Backend: "sqlite",
 		Sqlite:  config.AuditSqliteConfig{DSN: dsn},
-	}, quietLogger())
+	}, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestBuildPrimaryAuditSink_SqliteRoundTrip(t *testing.T) {
 func TestBuildPrimaryAuditSink_SqliteRequiresDSN(t *testing.T) {
 	_, _, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true, Backend: "sqlite",
-	}, quietLogger())
+	}, quietLogger(), nil, "")
 	if err == nil {
 		t.Fatal("expected error when sqlite backend lacks DSN")
 	}
@@ -81,7 +81,7 @@ func TestBuildPrimaryAuditSink_SqliteRequiresDSN(t *testing.T) {
 func TestBuildPrimaryAuditSink_RejectsUnknownBackend(t *testing.T) {
 	_, _, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true, Backend: "postgres",
-	}, quietLogger())
+	}, quietLogger(), nil, "")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

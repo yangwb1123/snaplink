@@ -27,7 +27,7 @@ func (b *appBuilder) wireBodyAndRateLimit() error {
 		logger.Info("security: body limit override", "prefix", ov.Prefix, "max_bytes", ov.MaxBytes)
 	}
 	if rl := cfg.Security.RateLimit; rl.Enabled {
-		policy, err := serverbuildplatform.BuildRateLimitPolicy(rl)
+		policy, err := serverbuildplatform.BuildRateLimitPolicy(rl, b.redis)
 		if err != nil {
 			return fmt.Errorf("rate limit policy: %w", err)
 		}
@@ -51,7 +51,7 @@ func (b *appBuilder) wireBodyAndRateLimit() error {
 func (b *appBuilder) wireJTIReplaySPIFFE() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Security.JTIReplay.Enabled {
-		store, mode, err := serverbuildauthn.BuildJTIReplayStore(cfg.Security.JTIReplay)
+		store, mode, err := serverbuildauthn.BuildJTIReplayStore(cfg.Security.JTIReplay, b.redis)
 		if err != nil {
 			return fmt.Errorf("jti replay store: %w", err)
 		}

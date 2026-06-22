@@ -13,7 +13,7 @@ import (
 
 func TestBuildPermissionsProvider_DisabledReturnsNil(t *testing.T) {
 	cfg := &config.Config{}
-	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger())
+	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestBuildPermissionsProvider_DisabledReturnsNil(t *testing.T) {
 func TestBuildPermissionsProvider_MemoryDefault(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Permissions = config.PermissionsConfig{Enabled: true}
-	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger())
+	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("serverbuildplatform.BuildPermissionsProvider: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestBuildPermissionsProvider_SQLiteRequiresDSN(t *testing.T) {
 		Enabled: true,
 		Backend: "sqlite",
 	}
-	_, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger())
+	_, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err == nil {
 		t.Fatal("want error when sqlite backend missing DSN")
 	}
@@ -72,7 +72,7 @@ func TestBuildPermissionsProvider_SQLiteSeedsAppsAndAssignments(t *testing.T) {
 			{UserID: "bob", ClientID: "web", Roles: []string{"viewer"}},
 		},
 	}
-	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger())
+	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("serverbuildplatform.BuildPermissionsProvider: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestBuildPermissionsProvider_SQLiteSeedIsIdempotent(t *testing.T) {
 		return cfg
 	}
 	// First seed.
-	p1, err := serverbuildplatform.BuildPermissionsProvider(mkCfg([]string{"v1:a"}), quietLogger())
+	p1, err := serverbuildplatform.BuildPermissionsProvider(mkCfg([]string{"v1:a"}), quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestBuildPermissionsProvider_SQLiteSeedIsIdempotent(t *testing.T) {
 
 	// Second seed with updated permissions list — operator changed
 	// YAML between restarts; reseed should UpdateRole.
-	p2, err := serverbuildplatform.BuildPermissionsProvider(mkCfg([]string{"v2:a", "v2:b"}), quietLogger())
+	p2, err := serverbuildplatform.BuildPermissionsProvider(mkCfg([]string{"v2:a", "v2:b"}), quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("second seed: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestBuildPermissionsProvider_UnknownBackendRejected(t *testing.T) {
 		Enabled: true,
 		Backend: "redis",
 	}
-	_, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger())
+	_, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err == nil {
 		t.Fatal("want error on unknown backend")
 	}
@@ -165,7 +165,7 @@ func TestBuildPermissionsProvider_SQLiteRolesUnknownUser(t *testing.T) {
 		Backend: "sqlite",
 		SQLite:  config.PermissionsSQLiteConfig{DSN: dsn},
 	}
-	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger())
+	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("serverbuildplatform.BuildPermissionsProvider: %v", err)
 	}

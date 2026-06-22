@@ -44,7 +44,7 @@ var skipDirs = map[string]bool{
 	"gen": true, ".claude": true, ".git": true, "web": true, "node_modules": true,
 	"dist": true, "bin": true,
 	// nested modules (own go.mod)
-	"kms": true, "redis": true, "saml": true, "ldap": true,
+	"kms": true, "redis": true, "postgres": true, "saml": true, "ldap": true,
 	"extauthz": true, "kerberos": true, "radius": true,
 }
 

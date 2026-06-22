@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
@@ -17,14 +19,14 @@ import (
 // store on first use. See BuildAuthenticators for why it is shared + lazy.
 type authReplayStoreFn func() (security.JTIReplayStore, string, error)
 
-func newAuthReplayStore(cfg config.JTIReplayConfig) authReplayStoreFn {
+func newAuthReplayStore(cfg config.JTIReplayConfig, rdb goredis.Cmdable) authReplayStoreFn {
 	var replayStore security.JTIReplayStore
 	var replayMode string
 	return func() (security.JTIReplayStore, string, error) {
 		if replayStore != nil {
 			return replayStore, replayMode, nil
 		}
-		s, mode, err := buildAuthenticatorReplayStore(cfg)
+		s, mode, err := buildAuthenticatorReplayStore(cfg, rdb)
 		if err != nil {
 			return nil, "", err
 		}

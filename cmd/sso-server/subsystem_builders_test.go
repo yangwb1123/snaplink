@@ -182,7 +182,7 @@ func TestBuildReleaseSubsystem_UnknownStoreBackendErrors(t *testing.T) {
 func TestBuildTenantStore_DisabledReturnsNil(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = false
-	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger())
+	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -205,7 +205,7 @@ func TestBuildTenantStore_SeedsTenantsAndDomains(t *testing.T) {
 	cfg.Tenant.Domains = []config.TenantDomainConfig{
 		{Hostname: "alpha.example.com", TenantID: "t-a"},
 	}
-	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger())
+	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -243,7 +243,7 @@ func TestBuildTenantStore_UnknownBackendErrors(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = true
 	cfg.Tenant.Backend = "postgres"
-	if _, err := serverbuildstore.BuildTenantStore(cfg, quietLogger()); err == nil {
+	if _, err := serverbuildstore.BuildTenantStore(cfg, quietLogger(), nil, ""); err == nil {
 		t.Fatal("expected error for unknown tenant backend")
 	}
 }

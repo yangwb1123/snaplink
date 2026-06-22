@@ -14,7 +14,7 @@ import (
 )
 
 func TestBuildPasswordCredentialStore_DisabledByDefault(t *testing.T) {
-	s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{})
+	s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
 	}
@@ -24,13 +24,13 @@ func TestBuildPasswordCredentialStore_DisabledByDefault(t *testing.T) {
 }
 
 func TestBuildPasswordCredentialStore_SQLiteNeedsDSN(t *testing.T) {
-	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}); err == nil {
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildPasswordCredentialStore_UnknownBackend(t *testing.T) {
-	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "bogus"}); err == nil {
+	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "bogus"}, nil, ""); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }

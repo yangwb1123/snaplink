@@ -18,7 +18,7 @@ import (
 // per-tenant token-strategy bindings, and the usage-metering aggregator.
 func (b *appBuilder) wireTenant() error {
 	cfg, logger := b.cfg, b.logger
-	tenantStore, err := serverbuildstore.BuildTenantStore(cfg, logger)
+	tenantStore, err := serverbuildstore.BuildTenantStore(cfg, logger, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("tenant store: %w", err)
 	}
@@ -144,7 +144,7 @@ func (b *appBuilder) wireDPoP() error {
 func (b *appBuilder) wireOAuthGrantStores() error {
 	cfg := b.cfg
 	if cfg.OAuth.AuthCode.Enabled {
-		store, err := serverbuildstore.BuildAuthCodeStore(cfg.OAuth)
+		store, err := serverbuildstore.BuildAuthCodeStore(cfg.OAuth, b.redis)
 		if err != nil {
 			return fmt.Errorf("oauth.auth_code: %w", err)
 		}
@@ -196,7 +196,7 @@ func (b *appBuilder) wireRefreshToken() error {
 	if !cfg.OAuth.RefreshToken.Enabled {
 		return nil
 	}
-	store, err := serverbuildstore.BuildRefreshTokenStore(cfg.OAuth)
+	store, err := serverbuildstore.BuildRefreshTokenStore(cfg.OAuth, b.redis)
 	if err != nil {
 		return fmt.Errorf("oauth.refresh_token: %w", err)
 	}
@@ -223,7 +223,7 @@ func (b *appBuilder) wireRefreshToken() error {
 func (b *appBuilder) wireDeviceCodePAR() error {
 	cfg := b.cfg
 	if cfg.OAuth.DeviceCode.Enabled {
-		store, err := serverbuildstore.BuildDeviceCodeStore(cfg.OAuth)
+		store, err := serverbuildstore.BuildDeviceCodeStore(cfg.OAuth, b.redis)
 		if err != nil {
 			return fmt.Errorf("oauth.device_code: %w", err)
 		}
@@ -240,7 +240,7 @@ func (b *appBuilder) wireDeviceCodePAR() error {
 		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-device-codes", store)
 	}
 	if cfg.OAuth.PAR.Enabled {
-		store, err := serverbuildstore.BuildPARStore(cfg.OAuth)
+		store, err := serverbuildstore.BuildPARStore(cfg.OAuth, b.redis)
 		if err != nil {
 			return fmt.Errorf("par store: %w", err)
 		}
@@ -260,7 +260,7 @@ func (b *appBuilder) wireCIBA() error {
 	if !cfg.CIBA.Enabled {
 		return nil
 	}
-	store, transport, sqliteStore, err := serverbuildstore.BuildCIBA(cfg.CIBA, logger)
+	store, transport, sqliteStore, err := serverbuildstore.BuildCIBA(cfg.CIBA, logger, b.redis)
 	if err != nil {
 		return fmt.Errorf("ciba: %w", err)
 	}

@@ -2,12 +2,15 @@ package serverbuildstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/snaplink/sso/shared/spi"
+
+	postgresbackend "github.com/snaplink/sso/postgres"
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/connections"
@@ -52,11 +55,11 @@ func BuildTenantUsageAggregator(cfg config.TenantUsageMeteringConfig) (metering.
 	}
 }
 
-func BuildTenantStore(cfg *config.Config, logger spi.Logger) (tenant.Store, error) {
+func BuildTenantStore(cfg *config.Config, logger spi.Logger, pg *sql.DB, dialect postgresbackend.Dialect) (tenant.Store, error) {
 	if !cfg.Tenant.Enabled {
 		return nil, nil
 	}
-	store, err := buildTenantStoreBackend(cfg.Tenant, logger)
+	store, err := buildTenantStoreBackend(cfg.Tenant, logger, pg, dialect)
 	if err != nil {
 		return nil, err
 	}

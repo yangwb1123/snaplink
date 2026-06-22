@@ -220,12 +220,16 @@ func (b *appBuilder) wirePairwiseSubjects() error {
 	if err != nil {
 		return fmt.Errorf("pairwise_subjects salt: %w", err)
 	}
-	store, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(cfg.Server.PairwiseSubjects)
+	store, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(cfg.Server.PairwiseSubjects, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("pairwise_subjects store: %w", err)
 	}
-	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "pairwise", sqlitestores.PairwiseMaxVersion()); err != nil {
-		return fmt.Errorf("schema check pairwise: %w", err)
+	// SQLite-dialect schema gate; skip for postgres (its migrate ran at
+	// construction — a postgres canary gate is a follow-up).
+	if !strings.EqualFold(strings.TrimSpace(cfg.Server.PairwiseSubjects.Backend), "postgres") {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "pairwise", sqlitestores.PairwiseMaxVersion()); err != nil {
+			return fmt.Errorf("schema check pairwise: %w", err)
+		}
 	}
 	b.opts = append(b.opts,
 		sso.WithPairwiseSubjectStore(store),

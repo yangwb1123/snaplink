@@ -1,6 +1,8 @@
 package serverbuildauthn
 
 import (
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/shared/spi"
 
@@ -21,7 +23,7 @@ import (
 // Returns an error when an authenticator's config is invalid (e.g. a
 // missing weak-password extension file) — a misconfigured authenticator
 // should fail the boot loudly, not silently degrade.
-func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, rdb goredis.Cmdable) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
@@ -38,7 +40,7 @@ func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 	// enabled opens no extra backend. Reuses the jti-replay backend when the
 	// operator enabled it (cluster-shared sqlite) and otherwise defaults to a
 	// memory store so the shipped binary is replay-safe out of the box.
-	authReplayStore := newAuthReplayStore(cfg.Security.JTIReplay)
+	authReplayStore := newAuthReplayStore(cfg.Security.JTIReplay, rdb)
 
 	auths, err := appendPasswordAuthenticator(auths, cfg.Authenticators.Password, passwordStore, userProvider, logger)
 	if err != nil {

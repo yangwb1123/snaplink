@@ -1,20 +1,25 @@
 package serverbuildauthn
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/snaplink/sso/config"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/snaplink/sso/postgres"
+	redisbackend "github.com/snaplink/sso/redis"
 
 	"github.com/snaplink/sso/shared/security"
 )
 
-func BuildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (security.PairwiseSubjectStore, string, error) {
+func BuildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig, pg *sql.DB, dialect postgresbackend.Dialect) (security.PairwiseSubjectStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return security.NewMemoryPairwiseSubjectStore(), "memory (single-replica only)", nil
@@ -27,8 +32,17 @@ func BuildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig) (security.Pair
 			return nil, "", err
 		}
 		return store, "sqlite (cluster-shared)", nil
+	case "postgres":
+		if pg == nil {
+			return nil, "", errors.New("server.pairwise_subjects.backend=postgres but no postgres block configured (set postgres.dsn)")
+		}
+		store, err := postgresbackend.NewPairwiseSubjectStoreWithDB(pg, dialect)
+		if err != nil {
+			return nil, "", err
+		}
+		return store, "postgres (cluster-shared)", nil
 	default:
-		return nil, "", fmt.Errorf("unknown server.pairwise_subjects.backend %q", cfg.Backend)
+		return nil, "", fmt.Errorf("unknown server.pairwise_subjects.backend %q (supported: memory, sqlite, postgres)", cfg.Backend)
 	}
 }
 
@@ -100,7 +114,7 @@ func BuildSubjectClientIndex(cfg config.BCLIndexConfig) (security.SubjectClientI
 // the single-replica defense story; sqlite shares the seen-set
 // across the cluster so a replay routed to a different replica still
 // gets rejected.
-func BuildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
+func BuildJTIReplayStore(cfg config.JTIReplayConfig, rdb goredis.Cmdable) (security.JTIReplayStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemoryJTIReplayStore(), "memory (single-replica only)", nil
@@ -113,8 +127,15 @@ func BuildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 			return nil, "", err
 		}
 		return store, "sqlite (cluster-shared)", nil
+	case "redis":
+		if rdb == nil {
+			return nil, "", errors.New("security.jti_replay.backend=redis but no redis block configured (set redis.addrs)")
+		}
+		// SET NX EX first-sighting — master-pinned (do not route to replicas):
+		// async lag could let a replayed jti momentarily evade detection.
+		return redisbackend.NewJTIReplayStore(rdb), "redis (cluster-shared)", nil
 	default:
-		return nil, "", fmt.Errorf("unknown security.jti_replay.backend %q", cfg.Backend)
+		return nil, "", fmt.Errorf("unknown security.jti_replay.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
 }
 
@@ -129,9 +150,9 @@ func BuildJTIReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, s
 // safe on a single replica. Reuses the existing security.JTIReplayStore SPI —
 // a nonce / consumed (user, step) is just another "have I seen this before"
 // check. mode is for the boot log.
-func buildAuthenticatorReplayStore(cfg config.JTIReplayConfig) (security.JTIReplayStore, string, error) {
+func buildAuthenticatorReplayStore(cfg config.JTIReplayConfig, rdb goredis.Cmdable) (security.JTIReplayStore, string, error) {
 	if cfg.Enabled {
-		return BuildJTIReplayStore(cfg)
+		return BuildJTIReplayStore(cfg, rdb)
 	}
 	return defaultimpl.NewMemoryJTIReplayStore(), "memory (default; enable security.jti_replay for cluster-shared)", nil
 }

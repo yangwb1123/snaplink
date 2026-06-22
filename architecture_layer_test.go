@@ -60,6 +60,14 @@ func layerName(rel string) string {
 	switch seg {
 	case "shared", "platform", "domains", "protocols", "infrastructure", "interfaces":
 		return seg
+	case "redis", "postgres":
+		// Nested infrastructure modules: their module paths are
+		// github.com/snaplink/sso/{redis,postgres} (mapped via replace to
+		// ./infrastructure/{redis,postgres}), so a consumer's import strips to
+		// the bare segment. The modules' own dirs are skipped by the walk
+		// (skipDirs); this only classifies the import target so cmd's
+		// composition -> infrastructure edge resolves.
+		return "infrastructure"
 	case "cmd", "examples", "testkit", "config", "deploy", "test":
 		return "composition"
 	case "gen", "proto":
