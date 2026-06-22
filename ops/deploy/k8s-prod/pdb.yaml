@@ -1,0 +1,13 @@
+# PodDisruptionBudget — keeps a quorum of replicas serving through voluntary
+# disruptions (node drains, rolling node upgrades, cluster autoscaler). With the
+# HPA minReplicas:3, minAvailable:2 leaves headroom for one pod to be evicted at
+# a time without dropping below two serving replicas.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sso-server
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sso-server

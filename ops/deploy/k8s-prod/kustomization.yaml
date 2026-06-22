@@ -1,0 +1,53 @@
+# Production HA overlay: N stateless sso-server replicas behind shared Redis
+# Cluster (hot) + Postgres DB cluster (durable) + etcd (coordination), with an
+# HPA (now SAFE because state is shared), a PDB, zone spread, graceful drain,
+# and secret-injected backend credentials. See README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: snaplink-sso
+
+resources:
+  - ../k8s # the base (namespace + deployment + service); sibling dir, not nested
+  - hpa.yaml
+  - pdb.yaml
+
+# Pin to an immutable digest in real deployments (the base uses :latest for the
+# quickstart). Example:
+#   images:
+#     - name: snaplink/sso-server
+#       newName: ghcr.io/<org>/sso-server
+#       newTag: v1.0.0   # or pin by digest with `digest:`
+
+replicas:
+  - name: sso-server
+    count: 3 # the HPA scales from here; minReplicas must match (see hpa.yaml)
+
+# Replace the base's minimal config with the HA config (redis cluster + postgres
+# + etcd). behavior:replace swaps the whole ConfigMap; the hashed-name + rollout
+# mechanism still applies.
+configMapGenerator:
+  - name: sso-server-config
+    behavior: replace
+    files:
+      - config.yaml
+
+# Placeholder secret. In production DELETE this and supply the secret out-of-band
+# (sealed-secrets / external-secrets / Vault). The keys map to the env refs in
+# patch-deployment.yaml.
+secretGenerator:
+  - name: sso-server-secrets
+    literals:
+      - redis-password=CHANGE_ME
+      - postgres-dsn=postgres://sso@pgbouncer:6432/sso?sslmode=verify-full&default_query_exec_mode=simple_protocol
+
+patches:
+  - path: patch-deployment.yaml
+    target:
+      kind: Deployment
+      name: sso-server
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: snaplink-sso
+    includeSelectors: false
