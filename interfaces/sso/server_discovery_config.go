@@ -140,6 +140,22 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 // capability fields. The conditional + derived fields are layered on by the
 // apply* helpers in buildOIDCConfiguration, in the same order as the original
 // inline assembly so the output stays byte-identical.
+// baseAdvertisedGrants is the set of grant types ALWAYS advertised in
+// discovery, independent of optional store wiring. device_code and CIBA are
+// conditionally appended in applyGrantEndpoints only when their store is wired
+// (RFC 8414 §2: advertise only what is actually supported — /device/* and the
+// device token grant return 501 when WithDeviceCodeStore is omitted). This is
+// deliberately NARROWER than core.SupportedGrants, which stays the full
+// recognized set for unsupported_grant_type errors.
+func baseAdvertisedGrants() []string {
+	return []string{
+		GrantAuthorizationCode,
+		GrantRefreshToken,
+		GrantClientCredentials,
+		GrantTokenExchange,
+	}
+}
+
 func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
 	return oidc.ProviderMetadata{
 		Issuer:                        base,
@@ -151,7 +167,7 @@ func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
 		RevocationEndpoint:            base + PathRevoke,
 		IntrospectionEndpoint:         base + PathIntrospect,
 		ResponseTypesSupported:        responseTypesFor(s),
-		GrantTypesSupported:           append([]string(nil), SupportedGrants...),
+		GrantTypesSupported:           baseAdvertisedGrants(),
 		SubjectTypesSupported:         subjectTypesFor(s),
 		CodeChallengeMethodsSupported: codeChallengeMethodsFor(s),
 	}
@@ -265,23 +281,36 @@ func (s *Server) applyMFAIssuerSigning(cfg *oidc.ProviderMetadata, ctx HandlerCo
 // applyGrantEndpoints advertises the CIBA, PAR, and dynamic-registration
 // endpoints (each opt-in) plus the client-derived scopes_supported and
 // authorization_details_types_supported unions.
-func (s *Server) applyGrantEndpoints(cfg *oidc.ProviderMetadata, base string, clientSnap *clientDiscoverySnapshot) {
-	if s.cibaStore != nil {
-		// OIDC CIBA Core 1.0 §4: advertise the backchannel endpoint +
-		// delivery modes only when CIBA is wired (opt-in). Poll is always
-		// available; ping is added when a CIBAPingNotifier is wired
-		// (WithCIBAPingNotifier). Push delivery is not implemented. Poll
-		// mode resolves the user from login_hint/id_token_hint rather than
-		// a user_code, so the user_code parameter is unsupported.
-		cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth
-		modes := []string{"poll"}
-		if s.cibaPingNotifier != nil {
-			modes = append(modes, "ping")
-		}
-		cfg.BackchannelTokenDeliveryModesSupported = modes
-		cfg.BackchannelUserCodeParameterSupported = false
-		cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantCIBA)
+// applyCIBABackchannel advertises the OIDC CIBA Core 1.0 §4 backchannel
+// endpoint + delivery modes only when CIBA is wired (opt-in). Poll is always
+// available; ping is added when a CIBAPingNotifier is wired
+// (WithCIBAPingNotifier). Push delivery is not implemented. Poll mode resolves
+// the user from login_hint/id_token_hint rather than a user_code, so the
+// user_code parameter is unsupported.
+func (s *Server) applyCIBABackchannel(cfg *oidc.ProviderMetadata, base string) {
+	if s.cibaStore == nil {
+		return
 	}
+	cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth
+	modes := []string{"poll"}
+	if s.cibaPingNotifier != nil {
+		modes = append(modes, "ping")
+	}
+	cfg.BackchannelTokenDeliveryModesSupported = modes
+	cfg.BackchannelUserCodeParameterSupported = false
+	cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantCIBA)
+}
+
+func (s *Server) applyGrantEndpoints(cfg *oidc.ProviderMetadata, base string, clientSnap *clientDiscoverySnapshot) {
+	if s.deviceCodeStore != nil {
+		// RFC 8414 §2 + RFC 8628: advertise the device grant only when a
+		// device code store is wired. Without WithDeviceCodeStore the
+		// device token grant returns 501, so advertising it unconditionally
+		// would mislead a discovery client into attempting an unsupported
+		// flow. SupportedGrants still lists it for unsupported_grant_type.
+		cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantDeviceCode)
+	}
+	s.applyCIBABackchannel(cfg, base)
 	if s.parStore != nil {
 		// RFC 9126 §5: advertise the PAR endpoint so RPs that prefer
 		// the pushed-request flow can discover it. The server-wide

@@ -18,6 +18,7 @@ type (
 	AuthCode                    = oauthspi.AuthCode
 	AuthCodeStore               = oauthspi.AuthCodeStore
 	RefreshToken                = oauthspi.RefreshToken
+	RefreshAuthContext          = oauthspi.RefreshAuthContext
 	RefreshTokenStore           = oauthspi.RefreshTokenStore
 	RefreshTokenInspector       = oauthspi.RefreshTokenInspector
 	RefreshTokenSubjectIndex    = oauthspi.RefreshTokenSubjectIndex

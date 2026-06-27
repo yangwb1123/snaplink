@@ -227,7 +227,13 @@ func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResul
 	if s.refreshTokenStore != nil {
 		rt, err := s.issueRefreshToken(ctx.Request().Context(),
 			result.UserID, client.ID, result.Provider, req.Scope, result.Attributes, "", req.Resource,
-			req.AuthorizationDetails, session.ID, client.RefreshTokenTTL)
+			req.AuthorizationDetails, session.ID,
+			// RFC 9068 §2.2: persist the live login's amr/acr/auth_time so a
+			// later refresh rotation re-stamps the SAME authentication context
+			// (mirrors the access token's Subject above) instead of collapsing
+			// amr to the provider and dropping acr/auth_time.
+			oauth.RefreshAuthContext{AMR: handler.AmrForResult(result), ACR: result.AchievedACR, AuthTime: time.Now()},
+			client.RefreshTokenTTL)
 		if err != nil {
 			s.logger.Error("refresh token issue failed", "error", err, "client", client.ID, "user", result.UserID)
 		} else {

@@ -188,7 +188,13 @@ type IssueRefreshTokenParams struct {
 	Resources            []string
 	AuthorizationDetails json.RawMessage
 	SID                  string
-	ClientTTLOverride    time.Duration
+	// AMR / ACR / AuthTime are the original authentication-event claims (RFC
+	// 9068 §2.2) persisted so rotation can re-stamp them unchanged. Empty =
+	// pre-feature behavior (Provider fallback / claim omitted).
+	AMR               []string
+	ACR               string
+	AuthTime          time.Time
+	ClientTTLOverride time.Duration
 }
 
 // IssueRefreshToken generates and stores a refresh token.
@@ -227,6 +233,9 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 		Resources:            append([]string(nil), p.Resources...),
 		AuthorizationDetails: oauthvalidate.CloneRawJSON(p.AuthorizationDetails),
 		SID:                  p.SID,
+		Amr:                  append([]string(nil), p.AMR...),
+		Acr:                  p.ACR,
+		AuthTime:             p.AuthTime,
 	}
 	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)

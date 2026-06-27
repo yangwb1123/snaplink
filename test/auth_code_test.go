@@ -449,14 +449,16 @@ func TestAuthCode_ExchangeRejectsRedirectURIMismatch(t *testing.T) {
 	srv, _, _ := newCodeFlowServer(t)
 	code := requestCode(t, srv, codeRedirectURI)
 	// Exchange with a different redirect_uri than the one we issued the
-	// code against. The exchange MUST fail with invalid_redirect_uri per
-	// RFC 6749 §4.1.3.
+	// code against. A §4.1.3 redirect_uri mismatch invalidates the grant, so
+	// the token endpoint MUST return invalid_grant — RFC 6749 §5.2 defines no
+	// invalid_redirect_uri for /token (it is an authorization-endpoint code),
+	// and collapsing it into invalid_grant also removes a failure-mode oracle.
 	status, body := exchangeCode(t, srv, code, "https://different.example/cb", codeClient, codeSecret)
 	if status != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%v", status, body)
 	}
-	if body["error"] != "invalid_redirect_uri" {
-		t.Errorf("error = %v", body["error"])
+	if body["error"] != "invalid_grant" {
+		t.Errorf("error = %v, want invalid_grant", body["error"])
 	}
 }
 

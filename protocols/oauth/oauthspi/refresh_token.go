@@ -68,6 +68,32 @@ type RefreshToken struct {
 	// Empty = no session anchor (the rotation simply omits the
 	// sid claim on emitted tokens).
 	SID string
+
+	// Amr / Acr / AuthTime capture the ORIGINAL authentication event so a
+	// refreshed access token keeps the same amr/acr/auth_time as the first
+	// token issued (RFC 9068 §2.2; AGENTS.md §3 "Refresh: propagates original
+	// AMR without resetting AuthTime"). Rotation propagates all three
+	// UNCHANGED. Without them a rotation silently downgrades a step-up/MFA
+	// session: a resource server doing RFC 9470 step-up on amr/acr would
+	// reject or down-trust EVERY post-refresh request despite a live MFA
+	// authentication. Empty Amr falls back to Provider at rotation; empty Acr
+	// omits the acr claim; a zero AuthTime omits auth_time. Stores that
+	// predate these fields degrade to the v1 "lost on rotation" behavior.
+	Amr      []string
+	Acr      string
+	AuthTime time.Time
+}
+
+// RefreshAuthContext groups the original authentication-event claims threaded
+// into IssueRefreshToken so they can be persisted on the RefreshToken record
+// and propagated unchanged across rotation (RFC 9068 §2.2). Grouping them keeps
+// the already-long issue signature from gaining one positional parameter per
+// claim. A zero value (no AMR/ACR/AuthTime) reproduces the pre-feature
+// behavior exactly.
+type RefreshAuthContext struct {
+	AMR      []string
+	ACR      string
+	AuthTime time.Time
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

@@ -63,6 +63,7 @@ func (s *Server) issueRefreshToken(
 	resources []string,
 	authDetails []byte,
 	sid string,
+	authCtx oauth.RefreshAuthContext,
 	clientTTLOverride time.Duration,
 ) (string, error) {
 	return oauth.IssueRefreshToken(ctx, oauth.IssueRefreshTokenParams{
@@ -77,6 +78,9 @@ func (s *Server) issueRefreshToken(
 		Resources:            resources,
 		AuthorizationDetails: authDetails,
 		SID:                  sid,
+		AMR:                  authCtx.AMR,
+		ACR:                  authCtx.ACR,
+		AuthTime:             authCtx.AuthTime,
 		ClientTTLOverride:    clientTTLOverride,
 	})
 }

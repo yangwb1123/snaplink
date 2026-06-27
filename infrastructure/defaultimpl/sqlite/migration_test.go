@@ -13,9 +13,10 @@ import (
 )
 
 // TestMigration_RefreshTokensBackfillsLegacyColumns proves the
-// refresh_tokens Func migration upgrades a pre-family-tracker database:
-// an old table missing family_id/resources/authorization_details/sid
-// gets them added (preserving existing rows), and is stamped v1.
+// refresh_tokens migrations upgrade a pre-family-tracker database: an old
+// table missing family_id/resources/authorization_details/sid (v1) and the
+// later amr/acr/auth_time auth-context columns (v3) gets them all added,
+// preserving existing rows, and is stamped at the latest version.
 func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "rt.db"))
@@ -41,8 +42,10 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	// migration runs best-effort inside it.
 	_ = sqlite.NewRefreshTokenStoreWithDB(db)
 
-	// The 4 columns must now exist (a SELECT referencing them succeeds).
-	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid FROM refresh_tokens`); err != nil {
+	// The later columns must now exist (a SELECT referencing them succeeds) —
+	// including the v3 RFC 9068 auth-context columns (amr/acr/auth_time).
+	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid,
+		amr, acr, auth_time FROM refresh_tokens`); err != nil {
 		t.Errorf("legacy columns not backfilled: %v", err)
 	}
 	// Existing row preserved.
@@ -50,8 +53,8 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 2 {
-		t.Errorf("version = %d, want 2", v)
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 3 {
+		t.Errorf("version = %d, want 3", v)
 	}
 }
 

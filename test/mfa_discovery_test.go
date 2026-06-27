@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -37,6 +38,10 @@ func newDiscoveryHarness(t *testing.T, provider spi.MFAProvider) *httptest.Serve
 		sso.WithClientStore(clients),
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
+		// Wire a device-code store so the device grant is genuinely supported —
+		// discovery now advertises device_code only when its store is present
+		// (RFC 8414 §2), so the capability must be real for it to appear.
+		sso.WithDeviceCodeStore(defaultimpl.NewMemoryDeviceCodeStore(), 10*time.Minute, 5*time.Second, "https://example.test/device"),
 	}
 	if provider != nil {
 		opts = append(opts,

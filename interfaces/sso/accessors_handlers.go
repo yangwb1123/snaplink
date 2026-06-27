@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -322,8 +323,8 @@ func (s *Server) ApplyPairwiseSubject(ctx context.Context, client *Client, local
 }
 
 // IssueRefreshToken mints a refresh token, seeding a new rotation family.
-func (s *Server) IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, clientTTLOverride time.Duration) (string, error) {
-	return s.issueRefreshToken(ctx, userID, clientID, provider, scopes, attributes, familyID, resources, authDetails, sid, clientTTLOverride)
+func (s *Server) IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error) {
+	return s.issueRefreshToken(ctx, userID, clientID, provider, scopes, attributes, familyID, resources, authDetails, sid, authCtx, clientTTLOverride)
 }
 
 // IssueDeviceSecret mints a Native SSO device secret (OIDC Native SSO §3.1).

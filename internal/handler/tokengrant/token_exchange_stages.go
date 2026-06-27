@@ -360,6 +360,10 @@ func tokExIssueRefresh(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 		st.scopes, st.claims.Extra, "", st.resources,
 		oauth.CloneRawJSON(st.claims.AuthorizationDetails), // RFC 9396 — propagate the inbound binding
 		st.claims.SID,
+		// RFC 9068 §2.2 + AGENTS.md §3: propagate the inbound subject_token's
+		// amr/acr/auth_time so a rotated chain keeps the original auth context
+		// (mirrors the exchanged access token's Subject).
+		oauth.RefreshAuthContext{AMR: st.claims.AMR, ACR: st.claims.ACR, AuthTime: st.claims.AuthTime},
 		client.RefreshTokenTTL,
 	)
 	if rerr != nil {
@@ -403,6 +407,12 @@ func tokExIssueIDToken(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 		return true
 	}
 	st.resp[core.KeyIDToken] = enc
+	// issued_token_type reports the REQUESTED token type (id_token) — what the
+	// caller asked the exchange to issue — while the access token is ALSO
+	// returned alongside in access_token (RFC 8693 §2.2.1: requested_token_type
+	// names what issued_token_type reports, not the exclusive output). The
+	// requested id_token is delivered in the dedicated id_token member. This is
+	// a deliberate non-exclusive-output design (see TestTokenExchange_IDTokenOutput).
 	st.resp[core.KeyIssuedTokenType] = core.TokenTypeIDToken
 	d.RecordIDTokenIssued(ctx, client.ID, st.claims.Subject)
 	return false

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -21,7 +22,7 @@ type RefreshGrantDeps interface {
 	RefreshGrace() RefreshGraceStore
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
@@ -107,7 +108,11 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 	// families can detect any future reuse anywhere in the chain.
 	newRefresh, err := d.IssueRefreshToken(ctx.Request().Context(),
 		info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
-		info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
+		info.AuthorizationDetails, info.SID,
+		// RFC 9068 §2.2: a rotation propagates the ORIGINAL auth context unchanged
+		// (does NOT reset auth_time, keeps amr/acr) so the chain never down-trusts.
+		oauth.RefreshAuthContext{AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime},
+		client.RefreshTokenTTL)
 	if err != nil {
 		d.LogErrorCtx(ctx, "refresh token rotation failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
@@ -143,8 +148,15 @@ func refreshRotatedSubject(client *core.Client, info *oauth.RefreshToken, issued
 		ClientID:  client.ID,
 		// Refresh rotations don't reset auth_time per RFC 9068 — the underlying
 		// authentication event is the original login, not the refresh exchange.
-		// AMR likewise stays the original method.
-		AMR: []string{info.Provider},
+		// AMR/ACR/AuthTime are the ORIGINAL authentication event's, persisted on
+		// the refresh record at issue and propagated unchanged through every
+		// rotation. AmrOrProvider falls back to Provider only when the record
+		// predates amr capture (empty Amr), reproducing the old behavior; a
+		// resource server doing RFC 9470 step-up on amr/acr now sees the real
+		// MFA context instead of a single-method down-trust.
+		AMR:      handler.AmrOrProvider(info.Amr, info.Provider),
+		ACR:      info.Acr,
+		AuthTime: info.AuthTime,
 		// RFC 9396: the authorization_details grant captured at the original
 		// authorization survives the rotation — refreshed tokens MUST carry the
 		// same fine-grained authorization the user already consented to.

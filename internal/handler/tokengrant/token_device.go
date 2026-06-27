@@ -23,7 +23,7 @@ type DeviceGrantDeps interface {
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	IDTokenIssuerForClient(c *core.Client) (oidc.IDTokenIssuer, bool, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
@@ -157,7 +157,12 @@ func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core
 	// Device grant doesn't accept authorization_details today; pass nil so
 	// refresh rotations don't fabricate a binding the user never consented to.
 	rt, err := d.IssueRefreshToken(ctx.Request().Context(),
-		dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "", client.RefreshTokenTTL)
+		dc.UserID, client.ID, dc.Provider, dc.Scopes, dc.Attributes, "", dc.Resources, nil, "",
+		// RFC 9068 §2.2: preserve auth_time across rotation. AMR is left empty so
+		// rotation falls back to Provider (dc.Provider) — matching the access
+		// token's AMR=[dc.Provider]; the device flow carries no acr.
+		oauth.RefreshAuthContext{AuthTime: time.Now()},
+		client.RefreshTokenTTL)
 	if err != nil {
 		d.SrvLogger().Error("refresh token issue failed", "error", err)
 		return

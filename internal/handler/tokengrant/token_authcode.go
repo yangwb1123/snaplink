@@ -28,7 +28,7 @@ type AuthCodeGrantDeps interface {
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	IDTokenIssuerForClient(c *core.Client) (oidc.IDTokenIssuer, bool, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
 	IssueDeviceSecret(ctx context.Context, subject, sid, clientID string) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
 	DPoPTokenTypeOr(defaultType, jkt string) string
@@ -44,9 +44,9 @@ type AuthCodeGrantDeps interface {
 // exchange. Behavior is byte-identical to the prior root handler.
 //
 // Oracle-leak collapse (AGENTS.md §3): unknown / expired / consumed code,
-// client mismatch, and PKCE failure ALL return 400 invalid_grant so an attacker
-// cannot distinguish which check failed; only a redirect_uri mismatch returns
-// the distinct invalid_redirect_uri (it is not a credential oracle). The code is
+// client mismatch, redirect_uri mismatch, and PKCE failure ALL return 400
+// invalid_grant so an attacker cannot distinguish which check failed (RFC 6749
+// §5.2 defines no invalid_redirect_uri for the token endpoint). The code is
 // single-use — AuthCodeStore.Consume deletes it atomically.
 //
 // RFC 9068 §2.2: auth_time is stamped from AuthCode.AuthTime (the real
@@ -143,10 +143,13 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 // client-binding check, redirect_uri match, and PKCE. Returns ok=false (after
 // writing the wire response) when any check fails so the caller can return.
 //
-// Oracle-leak collapse: unknown/expired/consumed code, client mismatch, and
-// PKCE failure ALL return 400 invalid_grant. A redirect_uri mismatch keeps its
-// DISTINCT invalid_redirect_uri (not a credential oracle). PKCE is enforced
-// ONLY when info.CodeChallenge != ""; both the length-bounds violation and a
+// Oracle-leak collapse: unknown/expired/consumed code, client mismatch,
+// redirect_uri mismatch, and PKCE failure ALL return 400 invalid_grant.
+// redirect_uri mismatch collapses here too — RFC 6749 §5.2 does NOT define
+// invalid_redirect_uri for the token endpoint (it is an authorization-endpoint
+// code); a §4.1.3 redirect_uri mismatch invalidates the grant, so the failure
+// is indistinguishable from a code/client/PKCE problem. PKCE is enforced ONLY
+// when info.CodeChallenge != ""; both the length-bounds violation and a
 // VerifyPKCE failure collapse to invalid_grant.
 func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest) (*oauth.AuthCode, bool) {
 	info, err := d.AuthCodeStore().Consume(ctx.Request().Context(), req.Code)
@@ -159,7 +162,7 @@ func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core
 		return nil, false
 	}
 	if info.RedirectURI != "" && req.RedirectURI != info.RedirectURI {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRedirectURI))
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return nil, false
 	}
 	if info.CodeChallenge != "" {
@@ -183,7 +186,12 @@ func authCodeIssueRefresh(d AuthCodeGrantDeps, ctx core.HandlerContext, client *
 	}
 	rt, err := d.IssueRefreshToken(ctx.Request().Context(),
 		info.UserID, client.ID, info.Provider, scopes, info.Attributes, "", info.Resources,
-		info.AuthorizationDetails, info.SID, client.RefreshTokenTTL)
+		info.AuthorizationDetails, info.SID,
+		// RFC 9068 §2.2: persist the original /auth/login amr/acr/auth_time
+		// (raw AuthMethods so rotation re-resolves via AmrOrProvider exactly
+		// like the access token above) so a refresh chain keeps the MFA context.
+		oauth.RefreshAuthContext{AMR: info.AuthMethods, ACR: info.ACR, AuthTime: info.AuthTime},
+		client.RefreshTokenTTL)
 	if err != nil {
 		d.SrvLogger().Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 		return

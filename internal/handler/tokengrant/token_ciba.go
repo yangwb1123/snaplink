@@ -22,7 +22,7 @@ type CIBAGrantDeps interface {
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	IDTokenIssuerForClient(c *core.Client) (oidc.IDTokenIssuer, bool, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
@@ -81,7 +81,7 @@ func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Clie
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	}
-	cibaIssueRefresh(d, ctx, client, r, provider, resp)
+	cibaIssueRefresh(d, ctx, client, r, provider, now, resp)
 	cibaIssueIDToken(d, ctx, client, r, provider, issuedSub, now, token.AccessToken, resp)
 	d.RecordTokenIssued(ctx, client.ID, strategy, r.SubjectID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), r.SubjectID, client.ID)
@@ -142,12 +142,18 @@ func cibaPollGate(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client,
 // cibaIssueRefresh mints and records the refresh token when a refresh store is
 // configured, mutating resp. Refresh issuance is fail-open: an error is logged
 // and the token simply omitted.
-func cibaIssueRefresh(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, provider string, resp map[string]any) {
+func cibaIssueRefresh(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, provider string, now time.Time, resp map[string]any) {
 	if d.RefreshTokenStore() == nil {
 		return
 	}
 	rt, err := d.IssueRefreshToken(ctx.Request().Context(),
-		r.SubjectID, client.ID, provider, r.Scopes, nil, "", r.Resources, nil, "", client.RefreshTokenTTL)
+		r.SubjectID, client.ID, provider, r.Scopes, nil, "", r.Resources, nil, "",
+		// RFC 9068 §2.2: persist the CIBA approval context so rotation re-stamps
+		// it. AMR empty -> rotation falls back to Provider (=provider), matching
+		// the access token's AMR=[provider]; acr from the requested acr_values;
+		// auth_time is the out-of-band approval moment.
+		oauth.RefreshAuthContext{ACR: r.ACRValues, AuthTime: now},
+		client.RefreshTokenTTL)
 	if err != nil {
 		d.SrvLogger().Error("refresh token issue failed", "error", err)
 		return

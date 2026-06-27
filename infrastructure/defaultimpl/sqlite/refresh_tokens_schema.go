@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     family_id              TEXT    NOT NULL DEFAULT '',
     resources              TEXT    NOT NULL DEFAULT '[]',
     authorization_details  TEXT    NOT NULL DEFAULT '',
-    sid                    TEXT    NOT NULL DEFAULT ''
+    sid                    TEXT    NOT NULL DEFAULT '',
+    amr                    TEXT    NOT NULL DEFAULT '[]',
+    acr                    TEXT    NOT NULL DEFAULT '',
+    auth_time              INTEGER NOT NULL DEFAULT 0
 );`
 
 // refreshTokensIndexDDL creates indexes + the family ledger. Runs AFTER
@@ -76,6 +79,35 @@ var refreshTokenMigrations = []migrate.Migration{
     window_start INTEGER NOT NULL DEFAULT 0
 );`,
 	},
+	// v3 backfills the RFC 9068 authentication-context columns onto databases
+	// that already ran v1 (which can't be re-triggered). A Func — not plain SQL
+	// — so the adds stay idempotent (SQLite has no ADD COLUMN IF NOT EXISTS);
+	// fresh DBs whose baseline DDL already carries the columns skip every add.
+	{Version: 3, Name: "refresh_token_auth_context", Func: addRefreshTokenAuthContext},
+}
+
+// addRefreshTokenAuthContext adds amr/acr/auth_time (preserve original
+// authentication event across rotation — RFC 9068 §2.2) to a pre-existing
+// refresh_tokens table, each only when missing.
+func addRefreshTokenAuthContext(ctx context.Context, x migrate.Execer) error {
+	addColumns := []struct{ name, ddl string }{
+		{"amr", `ALTER TABLE refresh_tokens ADD COLUMN amr TEXT NOT NULL DEFAULT '[]'`},
+		{"acr", `ALTER TABLE refresh_tokens ADD COLUMN acr TEXT NOT NULL DEFAULT ''`},
+		{"auth_time", `ALTER TABLE refresh_tokens ADD COLUMN auth_time INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range addColumns {
+		has, err := refreshTokenColumnExists(ctx, x, c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := x.ExecContext(ctx, c.ddl); err != nil {
+			return fmt.Errorf("add column %s: %w", c.name, err)
+		}
+	}
+	return nil
 }
 
 func ensureRefreshTokenSchema(ctx context.Context, x migrate.Execer) error {
