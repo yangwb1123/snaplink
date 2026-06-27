@@ -291,9 +291,14 @@ func TestHandleRevokeAll(t *testing.T) {
 		_ = rs.Issue(ctxbg, "rt1", &RefreshToken{UserID: "u", ClientID: "rp", ExpiresAt: time.Now().Add(time.Hour)})
 		_ = rs.Issue(ctxbg, "rt2", &RefreshToken{UserID: "u", ClientID: "rp", ExpiresAt: time.Now().Add(time.Hour)})
 		_ = rs.Issue(ctxbg, "rt3", &RefreshToken{UserID: "other", ClientID: "rp", ExpiresAt: time.Now().Add(time.Hour)})
+		// Same subject, DIFFERENT client — must survive (proves per-client scoping
+		// keys on the client, not the subject alone).
+		_ = rs.Issue(ctxbg, "rt4", &RefreshToken{UserID: "u", ClientID: "other-client", ExpiresAt: time.Now().Add(time.Hour)})
 		d := newRevokeDeps(cs, rs)
+		// Real access tokens carry the client in the RFC 9068 client_id claim;
+		// aud holds RFC 8707 resource indicators, NOT the client.
 		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
-			return &core.TokenClaims{Subject: "u", Audience: []string{"rp"}}, "jwt", nil
+			return &core.TokenClaims{Subject: "u", ClientID: "rp", Audience: []string{"https://api.example.com"}}, "jwt", nil
 		}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)
 		ctx.Request().Header.Set("Authorization", "Bearer good")
@@ -302,12 +307,16 @@ func TestHandleRevokeAll(t *testing.T) {
 			t.Fatalf("status = %d, want 200", rec.Code)
 		}
 		body := decodeBody(t, rec)
+		// Must revoke rt1+rt2 (u+rp) — and NOT silently 0 just because aud holds a
+		// resource URI instead of the client_id (the round-9 HIGH bug).
 		if body["refresh_tokens_revoked"] != float64(2) {
-			t.Fatalf("revoked = %v, want 2", body["refresh_tokens_revoked"])
+			t.Fatalf("revoked = %v, want 2 (resource-scoped token must still revoke by client_id)", body["refresh_tokens_revoked"])
 		}
-		// the other user's token survives
 		if _, err := rs.Inspect(ctxbg, "rt3"); err != nil {
 			t.Fatal("other subject's token must not be revoked")
+		}
+		if _, err := rs.Inspect(ctxbg, "rt4"); err != nil {
+			t.Fatal("same subject's OTHER-client token must not be revoked (per-client scope)")
 		}
 	})
 

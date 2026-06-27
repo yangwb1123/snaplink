@@ -214,9 +214,14 @@ func authenticateRevokeAllBearer(d RevokeDeps, ctx core.HandlerContext) (lookupS
 		return "", "", false
 	}
 
-	if len(claims.Audience) > 0 {
-		clientID = claims.Audience[0]
-	}
+	// Scope the bulk revoke to the bearer's CLIENT via the RFC 9068 client_id
+	// claim, NOT aud[0]: this server's access tokens put RFC 8707 resource
+	// indicators in aud while the client lives in client_id, so keying on aud[0]
+	// would scope the delete to a resource URI that matches NO stored refresh
+	// token — a silent "logout everywhere" failure (200 + 0 revoked) on any
+	// resource-indicator deployment. An empty client_id leaves clientID="" = the
+	// documented kill-every-client path. Mirrors populateAccessIntrospectionBody.
+	clientID = claims.ClientID
 
 	// OIDC §8 pairwise: refresh tokens are stored by local sub.
 	// Translate pairwise -> local before the bulk delete so the
