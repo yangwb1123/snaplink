@@ -85,6 +85,20 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 			ACRValues:          req.ACRValues,
 		})
 	case GrantClientCredentials:
+		// RFC 6749 §4.4: the client_credentials grant MUST only be used by
+		// CONFIDENTIAL clients. A public client (no stored secret) passes the
+		// authentication ladder via the empty-secret match (CompareClientSecret
+		// ("","") == true), so without this gate anyone knowing a public
+		// client_id — public by design, embedded in SPA/mobile source — could
+		// mint a token bearing the client's full allowlist with no credential.
+		// Require a real proof of identity: a stored secret (already validated
+		// in authenticateTokenClient), a private_key_jwt assertion, or an mTLS
+		// client certificate. Collapses to invalid_client (oracle-safe, matching
+		// the rest of the client-auth ladder).
+		if client.Secret == "" && req.ClientAssertion == "" && mtlsX5T == "" {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return
+		}
 		tokengrant.HandleClientCredentialsGrant(s, ctx, client, scopes, req.Resource, dpopJKT, mtlsX5T)
 	default:
 		ctx.JSON(http.StatusBadRequest, map[string]any{

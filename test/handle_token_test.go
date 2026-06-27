@@ -162,6 +162,42 @@ func TestToken_ClientCredentials_HappyPath(t *testing.T) {
 	}
 }
 
+// TestToken_ClientCredentials_PublicClientRejected guards RFC 6749 §4.4: the
+// client_credentials grant MUST only be used by confidential clients. A public
+// client (no stored secret, token_endpoint_auth_method=none) passes the auth
+// ladder via the empty-secret match, so without the confidential gate anyone
+// knowing the public client_id (public by design) could mint a token bearing
+// its full allowlist with no credential. Must collapse to invalid_client.
+func TestToken_ClientCredentials_PublicClientRejected(t *testing.T) {
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: "public-spa", Secret: "", Name: "Public SPA",
+		AllowedScopes: []string{"payments:write", "accounts:admin"},
+		TokenStrategy: "jwt", Active: true,
+	})
+	srv := sso.NewServer(
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithClientStore(clients),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	code, body := postToken(t, httpSrv, map[string]any{
+		"grant_type": "client_credentials", "client_id": "public-spa",
+	})
+	if code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%v, want 401 (public client_credentials must be rejected)", code, body)
+	}
+	if body["error"] != "invalid_client" {
+		t.Errorf("error = %v, want invalid_client", body["error"])
+	}
+	if body["access_token"] != nil {
+		t.Errorf("a token was minted for a public client_credentials request: %v", body)
+	}
+}
+
 func TestToken_AuthorizationCode_NotImplementedWithoutStore(t *testing.T) {
 	// The token harness wires a client but no oauth.AuthCodeStore; the
 	// authorization_code branch should return 501 with the dedicated
