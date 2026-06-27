@@ -54,6 +54,14 @@ func NewPhoneAuthenticator(store CodeStore, sender SMSSender, opts ...PhoneOptio
 
 func (p *PhoneAuthenticator) Name() string { return MethodPhone }
 
+// LockoutIdentity keys per-account lockout on the phone number this
+// authenticator actually verifies (core.LockoutKeyer) — NOT the generic field
+// precedence, which an attacker could defeat by injecting a higher-precedence
+// `username` this authenticator ignores. Matches Authenticate's raw read.
+func (p *PhoneAuthenticator) LockoutIdentity(credential map[string]string) string {
+	return credential["phone"]
+}
+
 // SendCode generates and dispatches a verification code for the given phone number.
 func (p *PhoneAuthenticator) SendCode(ctx context.Context, phone string) error {
 	if phone == "" {

@@ -51,6 +51,14 @@ func NewEmailAuthenticator(store CodeStore, sender EmailSender, opts ...EmailOpt
 
 func (e *EmailAuthenticator) Name() string { return MethodEmail }
 
+// LockoutIdentity keys per-account lockout on the email this authenticator
+// actually verifies (core.LockoutKeyer), NORMALIZED identically to Authenticate
+// (lower + trim) so case/whitespace variants of the same address share one
+// lockout key — NOT the generic field precedence over the raw credential map.
+func (e *EmailAuthenticator) LockoutIdentity(credential map[string]string) string {
+	return strings.ToLower(strings.TrimSpace(credential["email"]))
+}
+
 func (e *EmailAuthenticator) SendCode(ctx context.Context, email string) error {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || !strings.Contains(email, "@") {

@@ -79,6 +79,7 @@ var DefaultGeoIPExtractor = geo.DefaultIPExtractor
 // --- Types ---
 type ActorClaim = core.ActorClaim
 type Authenticator = core.Authenticator
+type LockoutKeyer = core.LockoutKeyer
 type AuthRequest = core.AuthRequest
 type AuthResult = core.AuthResult
 type CredentialHealth = core.CredentialHealth

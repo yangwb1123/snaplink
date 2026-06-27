@@ -219,7 +219,7 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 		ctx.Redirect(http.StatusFound, loginURL)
 		return nil, true
 	}
-	lockKey := security.LockoutKey(req.ClientID, req.Credential)
+	lockKey := s.lockoutKey(auth, req.ClientID, req.Credential)
 	if s.accountLockout != nil && lockKey != "" {
 		if locked, until, _ := s.accountLockout.IsLocked(ctx.Request().Context(), lockKey); locked {
 			s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
@@ -239,18 +239,10 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 		RequestedClaims: oauth.CloneRawJSON(req.Claims),
 	})
 	if err != nil {
-		s.logErrorCtx(ctx, "authentication failed", "provider", req.Provider, "error", err)
-		// Attribute the failure to per-account lockout BEFORE the generic
-		// login_failure audit so the auditor records the lockout state alongside.
-		if s.accountLockout != nil && lockKey != "" {
-			if locked, until, _ := s.accountLockout.RegisterFailure(ctx.Request().Context(), lockKey); locked {
-				s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
-				ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
-				return nil, true
-			}
-		}
-		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidCredentials)
-		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidCredentials))
+		s.handleAuthFailure(ctx, req, lockKey, err)
+		return nil, true
+	}
+	if s.rejectDeactivatedUser(ctx, req, result.UserID) {
 		return nil, true
 	}
 	// A single legit login resets the brute-force budget (before risk evaluation).
@@ -258,6 +250,62 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 		_ = s.accountLockout.RegisterSuccess(ctx.Request().Context(), lockKey)
 	}
 	return result, false
+}
+
+// handleAuthFailure writes the authentication-failure response: it attributes the
+// failure to per-account lockout (and emits account_locked when that trips)
+// BEFORE the generic login_failure audit, then collapses to invalid_credentials.
+func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockKey string, err error) {
+	s.logErrorCtx(ctx, "authentication failed", "provider", req.Provider, "error", err)
+	if s.accountLockout != nil && lockKey != "" {
+		if locked, until, _ := s.accountLockout.RegisterFailure(ctx.Request().Context(), lockKey); locked {
+			s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
+			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+			return
+		}
+	}
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidCredentials)
+	ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidCredentials))
+}
+
+// rejectDeactivatedUser enforces SCIM deprovisioning (RFC 7643 active=false):
+// even with a correct credential, a deactivated account MUST NOT obtain tokens.
+// Called AFTER credential verification, BEFORE any token/session side effect, so
+// an IdP connector that PATCHed active=false actually revokes access. Collapses
+// to account_locked (an unavailable account, not a credential oracle: the
+// credential already verified). No UserProvider = no SCIM state = no-op; a
+// not-found user (federated/first login) is treated active. Returns true (with a
+// response written) when the login must be rejected.
+func (s *Server) rejectDeactivatedUser(ctx HandlerContext, req *login.Request, userID string) bool {
+	if s.userProvider == nil {
+		return false
+	}
+	u, uerr := s.userProvider.GetByID(ctx.Request().Context(), userID)
+	if uerr != nil || u.IsActive() {
+		return false
+	}
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAccountLocked)
+	ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+	return true
+}
+
+// lockoutKey derives the per-account brute-force lockout key. An authenticator
+// that implements LockoutKeyer reports its OWN canonical, normalized identity
+// field — authoritative: a credential it declares unkeyable ("") skips the gate
+// rather than falling back to the spoofable field precedence (which an attacker
+// could defeat by injecting a higher-precedence field the authenticator ignores,
+// or by varying case/whitespace). Authenticators without it use the generic
+// security.LockoutKey precedence (correct when their identity field is the first
+// present, e.g. password's username).
+func (s *Server) lockoutKey(auth Authenticator, clientID string, cred map[string]string) string {
+	if lk, ok := auth.(LockoutKeyer); ok {
+		id := lk.LockoutIdentity(cred)
+		if id == "" {
+			return ""
+		}
+		return clientID + ":" + id
+	}
+	return security.LockoutKey(clientID, cred)
 }
 
 // enforceLoginACR applies OIDC §3.1.2.6 / §5.5.1.1 ACR enforcement: the RP may

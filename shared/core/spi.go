@@ -23,6 +23,20 @@ type Authenticator interface {
 	LoginURL(state string) string
 }
 
+// LockoutKeyer is an OPTIONAL Authenticator extension reporting the canonical,
+// NORMALIZED identity this authenticator actually authenticates on, for
+// per-account brute-force lockout keying. Authenticators whose real identity
+// field is NOT the first present in security.LockoutKey's field precedence — or
+// whose field needs normalization the precedence skips — MUST implement it.
+// Otherwise an attacker can inject a higher-precedence field the authenticator
+// ignores (e.g. a varying `username` on a phone/email OTP login), or vary the
+// case/whitespace of the real field, to spread brute-force attempts across
+// distinct lockout keys and defeat the per-account lockout entirely. Return ""
+// to declare a credential lockout-unkeyable for this authenticator.
+type LockoutKeyer interface {
+	LockoutIdentity(credential map[string]string) string
+}
+
 // UserProvider manages user data storage and retrieval. List + Delete are
 // the admin-only methods; reads + CreateOrUpdate are the runtime hot path.
 type UserProvider interface {
