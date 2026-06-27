@@ -69,6 +69,19 @@ func mintClientCredentials(d RegisterDeps, public bool) (secret, regToken string
 // buildRegisteredClient assembles the persisted core.Client for the
 // /register success path from the validated request plus the freshly minted
 // id/secret/registration_access_token.
+// registrationTenant decides the new client's tenant. Under OPEN registration
+// the body tenant_id is UNTRUSTED — an anonymous registrant must not self-assign
+// into another tenant — so it is dropped (empty = default tenant). When the
+// endpoint is gated by an InitialAccessToken the operator has vouched for the
+// caller, so the requested tenant is honored. A 7592 PUT never changes the
+// tenant (see buildUpdatedClient).
+func registrationTenant(req *DCRRequest, policy *DCRPolicy) string {
+	if policy != nil && policy.AllowOpenRegistration {
+		return ""
+	}
+	return req.TenantID
+}
+
 func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regToken string, public bool) *core.Client {
 	tokenStrategy := req.TokenStrategy
 	if tokenStrategy == "" {
@@ -83,7 +96,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
 		TokenStrategy:           tokenStrategy,
 		Active:                  policy.DefaultActive,
-		TenantID:                req.TenantID,
+		TenantID:                registrationTenant(req, policy),
 		RequirePKCE:             req.RequirePKCE || public, // public clients always PKCE
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
@@ -166,8 +179,15 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string)
 		AllowedScopes:           SplitScope(req.Scope),
 		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
 		TokenStrategy:           tokenStrategy,
-		TenantID:                req.TenantID,
-		RequirePKCE:             req.RequirePKCE || req.TokenEndpointAuthMethod == "none",
+		// Tenant is immutable across a 7592 update: the secret (hence the client
+		// identity + tenant binding) is preserved, so a PUT MUST NOT let the
+		// holder re-home the client into another tenant.
+		TenantID: client.TenantID,
+		// Derive public-ness from the STORED credential (the secret is preserved
+		// above), NOT req.TokenEndpointAuthMethod — otherwise a PUT omitting or
+		// changing that field could clear RequirePKCE on a still-public client,
+		// reaching the public-client-without-PKCE state the create path forbids.
+		RequirePKCE:      req.RequirePKCE || client.Secret == "",
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
 
