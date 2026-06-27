@@ -302,7 +302,15 @@ func (s *Server) deriveMeshIdentity(ctx context.Context, claims *core.TokenClaim
 	if s.permissions == nil || claims.Subject == "" {
 		return
 	}
-	roles, rerr := s.permissions.Roles(ctx, claims.Subject, claims.ClientID)
+	// OIDC §8 pairwise: permissions are keyed by the LOCAL subject, but the
+	// token's sub may be the per-sector pseudonym. Resolve before the roles
+	// lookup (mirrors /userinfo) or a pairwise client gets EMPTY roles. res.Subject
+	// stays the pairwise sub the client presented (privacy unchanged).
+	lookupSub := claims.Subject
+	if local, lerr := s.resolveLocalSubject(ctx, claims.Subject); lerr == nil && local != "" {
+		lookupSub = local
+	}
+	roles, rerr := s.permissions.Roles(ctx, lookupSub, claims.ClientID)
 	if rerr != nil || len(roles) == 0 {
 		return
 	}
