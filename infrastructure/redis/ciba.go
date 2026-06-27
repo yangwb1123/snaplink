@@ -56,6 +56,20 @@ func (s *CIBAStore) Issue(ctx context.Context, req *oauth.CIBARequest) (string, 
 	rec := *req
 	rec.AuthReqID = id
 	rec.Status = oauth.CIBAPending
+	// Normalize empty-non-nil slices to nil so json.Marshal emits `null`, not
+	// `[]`. SetStatus / UpdateLastPoll re-encode this record via lua-cjson, and
+	// REAL Redis cjson rewrites an empty JSON array `[]` to an empty object `{}`
+	// — which then fails json.Unmarshal back into []string on the next Get,
+	// permanently killing the request (the poll maps the error to expired_token)
+	// even after a valid out-of-band approval. `null` round-trips safely. This
+	// is the load-bearing guard: miniredis's cjson encodes empty tables as `[]`,
+	// so unit tests CANNOT observe the real-Redis corruption — keep it here.
+	if len(rec.Resources) == 0 {
+		rec.Resources = nil
+	}
+	if len(rec.Scopes) == 0 {
+		rec.Scopes = nil
+	}
 	blob, err := json.Marshal(&rec)
 	if err != nil {
 		return "", fmt.Errorf("redis: marshal ciba_request: %w", err)

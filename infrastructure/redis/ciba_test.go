@@ -74,6 +74,36 @@ func TestCIBAStore_UpdateLastPollPreservesConcurrentApproval(t *testing.T) {
 	}
 }
 
+// TestCIBAStore_IssueNormalizesEmptySlices guards the cjson-fidelity fix: a
+// JSON client posting "resource":[] yields an empty-non-nil []string that
+// json.Marshal would persist as "Resources":[]. The SetStatus/UpdateLastPoll
+// Lua re-encode runs that through REAL Redis lua-cjson, which rewrites [] -> {}
+// (object) and breaks the next Get's json.Unmarshal into []string — killing the
+// request permanently. Issue must normalize empty slices to nil so the stored
+// JSON is `null` (cjson-safe). Asserted on the RAW stored blob because miniredis
+// encodes empty tables as [] (the OPPOSITE of real Redis), so a round-trip test
+// would false-green; the stored-shape assertion catches a normalization regress.
+func TestCIBAStore_IssueNormalizesEmptySlices(t *testing.T) {
+	_, rdb := newTestClient(t)
+	ctx := context.Background()
+	s := NewCIBAStore(rdb)
+
+	req := newCIBARequest(time.Minute)
+	req.Resources = []string{} // empty-non-nil, as the JSON bind path produces
+	req.Scopes = []string{}
+	id, err := s.Issue(ctx, req)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	blob, err := rdb.Get(ctx, cibaKey(id)).Result()
+	if err != nil {
+		t.Fatalf("raw Get: %v", err)
+	}
+	if strings.Contains(blob, `"Resources":[]`) || strings.Contains(blob, `"Scopes":[]`) {
+		t.Errorf("empty slice persisted as []; real-Redis cjson re-encode will corrupt it to {}: %s", blob)
+	}
+}
+
 func TestCIBAStore_IssuePendingPoll(t *testing.T) {
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
