@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,15 @@ func signDPoPProof(t *testing.T, priv ed25519.PrivateKey, jwkX, method, url stri
 	signingInput := base64.RawURLEncoding.EncodeToString(hraw) + "." + base64.RawURLEncoding.EncodeToString(praw)
 	sig := ed25519.Sign(priv, []byte(signingInput))
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// dpopAth is a signDPoPProof option that sets the RFC 9449 ath claim binding the
+// proof to a specific access token — REQUIRED at a protected resource.
+func dpopAth(accessToken string) func(map[string]any) {
+	return func(p map[string]any) {
+		sum := sha256.Sum256([]byte(accessToken))
+		p["ath"] = base64.RawURLEncoding.EncodeToString(sum[:])
+	}
 }
 
 func randomHex(n int) string {

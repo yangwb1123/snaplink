@@ -67,7 +67,7 @@ func TestDPoPProofClockSkewConfigurable(t *testing.T) {
 	if _, err := verifyDPoPProof(
 		context.Background(), proof, method, url,
 		nil, false, nil,
-		def.resolvedDPoPProofMaxAge(), def.resolvedDPoPProofClockSkew(),
+		def.resolvedDPoPProofMaxAge(), def.resolvedDPoPProofClockSkew(), "",
 	); err == nil {
 		t.Fatalf("default 60s skew: 90s-future iat accepted, want reject")
 	}
@@ -78,7 +78,7 @@ func TestDPoPProofClockSkewConfigurable(t *testing.T) {
 	if _, err := verifyDPoPProof(
 		context.Background(), proof, method, url,
 		nil, false, nil,
-		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(),
+		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(), "",
 	); err != nil {
 		t.Fatalf("5m skew: 90s-future iat rejected: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestDPoPProofClockSkewConfigurable(t *testing.T) {
 	if _, err := verifyDPoPProof(
 		context.Background(), beyond, method, url,
 		nil, false, nil,
-		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(),
+		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(), "",
 	); err == nil {
 		t.Fatalf("5m skew: 10m-future iat accepted, want reject")
 	}
@@ -112,7 +112,7 @@ func TestDPoPProofMaxAgeConfigurable(t *testing.T) {
 	if _, err := verifyDPoPProof(
 		context.Background(), proof, method, url,
 		nil, false, nil,
-		def.resolvedDPoPProofMaxAge(), def.resolvedDPoPProofClockSkew(),
+		def.resolvedDPoPProofMaxAge(), def.resolvedDPoPProofClockSkew(), "",
 	); err == nil {
 		t.Fatalf("default 60s max-age: 90s-stale iat accepted, want reject")
 	}
@@ -123,7 +123,7 @@ func TestDPoPProofMaxAgeConfigurable(t *testing.T) {
 	if _, err := verifyDPoPProof(
 		context.Background(), proof, method, url,
 		nil, false, nil,
-		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(),
+		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(), "",
 	); err != nil {
 		t.Fatalf("5m max-age: 90s-stale iat rejected: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestDPoPProofMaxAgeConfigurable(t *testing.T) {
 	if _, err := verifyDPoPProof(
 		context.Background(), beyond, method, url,
 		nil, false, nil,
-		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(),
+		loose.resolvedDPoPProofMaxAge(), loose.resolvedDPoPProofClockSkew(), "",
 	); err == nil {
 		t.Fatalf("5m max-age: 10m-stale iat accepted, want reject")
 	}

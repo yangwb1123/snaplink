@@ -213,7 +213,7 @@ func (s *Server) captureSenderConstraint(ctx HandlerContext) (dpopJKT, mtlsX5T s
 			s.jtiReplayFailClosed,
 			s.dpopNonceProvider,
 			s.resolvedDPoPProofMaxAge(),
-			s.resolvedDPoPProofClockSkew(),
+			s.resolvedDPoPProofClockSkew(), "", // issuance: no access token yet, no ath
 		)
 		if err != nil {
 			// RFC 9449 §8 — nonce required: stamp a fresh nonce on

@@ -2,9 +2,13 @@ package sso
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	neturl "net/url"
 	"strconv"
@@ -399,4 +403,76 @@ func (s *Server) writeMeshAuthzResponse(hctx HandlerContext, res MeshAuthorizeRe
 	}
 	// Empty body — Envoy reads the 2xx status + the response headers.
 	hctx.ResponseWriter().WriteHeader(http.StatusOK)
+}
+
+// --- Resource-side DPoP (RFC 9449) — used by MeshAuthorize + /userinfo ---
+
+// checkDPoPAth enforces RFC 9449 §4.3 + §7.1: at a protected resource the proof
+// MUST carry ath = base64url(SHA-256(access_token)) and the RS MUST verify it
+// equals the hash of the PRESENTED token, binding the proof to the specific
+// token so a captured proof can't be replayed with a DIFFERENT token of the same
+// key. accessToken=="" is the /token issuance path (no token yet) — ath is
+// neither present nor checked. Always SHA-256 per spec; constant-time compare.
+func checkDPoPAth(proofAth, accessToken string) error {
+	if accessToken == "" {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(accessToken))
+	want := base64.RawURLEncoding.EncodeToString(sum[:])
+	if subtle.ConstantTimeCompare([]byte(proofAth), []byte(want)) != 1 {
+		return errors.New("dpop: ath does not bind the presented access token")
+	}
+	return nil
+}
+
+// dpopSchemeToken extracts the raw access-token string from the Authorization
+// header, accepting the RFC 9449 "DPoP" scheme (and "Bearer" defensively); the
+// value is hashed into the DPoP ath binding. Empty when no recognized scheme.
+func dpopSchemeToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	for _, scheme := range []string{"DPoP ", "Bearer "} {
+		if len(h) > len(scheme) && strings.EqualFold(h[:len(scheme)], scheme) {
+			return h[len(scheme):]
+		}
+	}
+	return ""
+}
+
+// verifyDPoPBearer is the resource-side DPoP gate: for a cnf.jkt-bound access
+// token it requires a valid DPoP proof header whose key thumbprint matches the
+// token's cnf.jkt AND whose ath binds the presented token. A non-DPoP token
+// passes through (legacy bearer). All failures collapse to a DPoP-shaped error.
+func (s *Server) verifyDPoPBearer(ctx HandlerContext, claims *TokenClaims) error {
+	if claims == nil {
+		return errors.New("dpop: nil claims")
+	}
+	if claims.ConfirmationJKT == "" {
+		return nil // not DPoP-bound — legacy bearer flow continues
+	}
+	proof := ctx.Request().Header.Get(HeaderDPoP)
+	if proof == "" {
+		return errors.New("dpop: token requires DPoP proof header")
+	}
+	// The RAW presented access token (DPoP scheme: "Authorization: DPoP <tok>")
+	// is hashed into ath inside verifyDPoPProof. Extracting it from the same
+	// header that produced `claims` guarantees the proof is bound to THIS token.
+	binding, err := verifyDPoPProof(
+		ctx.Request().Context(),
+		proof,
+		ctx.Request().Method,
+		requestURLForDPoP(ctx.Request()),
+		s.jtiReplayStore,
+		s.jtiReplayFailClosed,
+		s.dpopNonceProvider,
+		s.resolvedDPoPProofMaxAge(),
+		s.resolvedDPoPProofClockSkew(),
+		dpopSchemeToken(ctx.Request()),
+	)
+	if err != nil {
+		return fmt.Errorf("dpop: proof verification: %w", err)
+	}
+	if binding.JKT != claims.ConfirmationJKT {
+		return errors.New("dpop: proof JKT does not match token cnf.jkt")
+	}
+	return nil
 }

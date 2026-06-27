@@ -25,6 +25,7 @@ func verifyDPoPProof(
 	nonceProvider DPoPNonceProvider,
 	maxAge time.Duration,
 	clockSkew time.Duration,
+	accessToken string,
 ) (*DPoPBinding, error) {
 	// Gate ORDER is load-bearing (DENY ladder): header+jwk parse → JWS
 	// verify → payload bind (htm/htu/iat) → nonce → replay → thumbprint.
@@ -50,6 +51,9 @@ func verifyDPoPProof(
 	if err := enforceDPoPReplay(ctx, replay, replayFailClosed, p.JTI, maxAge); err != nil {
 		return nil, err
 	}
+	if err := checkDPoPAth(p.Ath, accessToken); err != nil {
+		return nil, err
+	}
 
 	jkt, err := jwkThumbprintRFC7638(proofJWK)
 	if err != nil {
@@ -58,6 +62,13 @@ func verifyDPoPProof(
 	return &DPoPBinding{JKT: jkt}, nil
 }
 
+// checkDPoPAth enforces RFC 9449 §4.3 + §7.1: at a protected resource the proof
+// MUST carry ath = base64url(SHA-256(access_token)) and the RS MUST verify it
+// equals the hash of the PRESENTED token, binding the proof to the specific
+// token so a captured proof can't be replayed with a DIFFERENT token of the same
+// key. accessToken=="" is the /token issuance path (no token exists yet) — ath
+// is neither present nor checked. Always SHA-256 per spec (independent of the
+// proof's signing alg); constant-time compare.
 // parseDPoPProofHeader decodes the first JWS segment, enforces the DPoP
 // proof `typ`, and parses the embedded ephemeral `jwk` into a core.JWK.
 //
@@ -98,6 +109,11 @@ type dpopProofPayload struct {
 	IAT   int64  `json:"iat"`
 	JTI   string `json:"jti"`
 	Nonce string `json:"nonce,omitempty"`
+	// Ath = base64url(SHA-256(access_token)) — RFC 9449 §4.3. REQUIRED when the
+	// proof is presented at a protected resource alongside an access token, and
+	// verified there (§7.1) so a proof is bound to the SPECIFIC token, not just
+	// the key. Absent/unused on the /token issuance path (no token exists yet).
+	Ath string `json:"ath,omitempty"`
 }
 
 // parseAndCheckDPoPPayload decodes the second JWS segment and binds the
@@ -298,38 +314,6 @@ func normalizeDPoPHTU(raw string) string {
 // existing bearer-token error shape; RFC 9449 §7.1 also allows
 // invalid_dpop_proof — collapsing to invalid_token keeps the
 // wire surface stable for legacy bearer clients).
-func (s *Server) verifyDPoPBearer(ctx HandlerContext, claims *TokenClaims) error {
-	if claims == nil {
-		return errors.New("dpop: nil claims")
-	}
-	if claims.ConfirmationJKT == "" {
-		// Token isn't DPoP-bound — legacy bearer flow continues.
-		return nil
-	}
-	proof := ctx.Request().Header.Get(HeaderDPoP)
-	if proof == "" {
-		return errors.New("dpop: token requires DPoP proof header")
-	}
-	binding, err := verifyDPoPProof(
-		ctx.Request().Context(),
-		proof,
-		ctx.Request().Method,
-		requestURLForDPoP(ctx.Request()),
-		s.jtiReplayStore,
-		s.jtiReplayFailClosed,
-		s.dpopNonceProvider,
-		s.resolvedDPoPProofMaxAge(),
-		s.resolvedDPoPProofClockSkew(),
-	)
-	if err != nil {
-		return fmt.Errorf("dpop: proof verification: %w", err)
-	}
-	if binding.JKT != claims.ConfirmationJKT {
-		return errors.New("dpop: proof JKT does not match token cnf.jkt")
-	}
-	return nil
-}
-
 // dpopTokenTypeOr returns "DPoP" when the issued token carries a
 // DPoP key binding, else the issuer's default token_type (typically
 // "Bearer"). RFC 9449 §4 + RFC 6750 §6.1.1 — sender-constrained

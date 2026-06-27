@@ -338,7 +338,7 @@ func TestMeshAuthorize_DPoPProof_HtmHtuMismatch_Denies(t *testing.T) {
 	// the same derived subject. Proves the deny above is the binding, not an
 	// unrelated rejection.
 	hGood := fwd(access)
-	hGood.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL))
+	hGood.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL, dpopAth(access)))
 	resGood := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
 		Method: http.MethodGet,
 		URL:    meshURL,
@@ -354,6 +354,23 @@ func TestMeshAuthorize_DPoPProof_HtmHtuMismatch_Denies(t *testing.T) {
 	}
 	if resGood.ClientID != meshClient {
 		t.Errorf("ClientID = %q want %q", resGood.ClientID, meshClient)
+	}
+
+	// RFC 9449 §7.1 ath binding: a proof correctly bound to GET meshURL but
+	// MISSING ath, or bound to a DIFFERENT token of the same key, MUST be DENIED
+	// — the proof must bind the SPECIFIC presented token, not merely the key.
+	for name, proof := range map[string]string{
+		"no ath":    signDPoPProof(t, priv, x, http.MethodGet, meshURL),
+		"wrong ath": signDPoPProof(t, priv, x, http.MethodGet, meshURL, dpopAth("a-different-token")),
+	} {
+		h := fwd(access)
+		h.Set("DPoP", proof)
+		res := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
+			Method: http.MethodGet, URL: meshURL, Header: h,
+		})
+		if res.Allowed {
+			t.Errorf("%s: proof allowed — ath token-binding not enforced", name)
+		}
 	}
 }
 
@@ -583,7 +600,7 @@ func TestMeshAuthorize_DPoPNonceRequired_SurfacesFreshNonce(t *testing.T) {
 		t.Fatalf("issue control nonce: %v", err)
 	}
 	hOK := fwd(access)
-	hOK.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL, func(p map[string]any) {
+	hOK.Set("DPoP", signDPoPProof(t, priv, x, http.MethodGet, meshURL, dpopAth(access), func(p map[string]any) {
 		p["nonce"] = nonce
 	}))
 	resOK := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
