@@ -331,6 +331,22 @@ func WithRefreshRotationGrace(window time.Duration) Option {
 	}
 }
 
+// WithRefreshRotationGraceStore is WithRefreshRotationGrace backed by a
+// caller-supplied store (e.g. the Redis cluster) so the grace decision is
+// SHARED across replicas. The in-process default (WithRefreshRotationGrace)
+// remembers the successor only in the rotating replica's memory, so on a
+// no-affinity load balancer a double-submit landing on a different replica finds
+// no entry and trips a false family-reuse kill — logging the user out
+// everywhere. Pass a cluster-shared store (its TTL is the grace window) to close
+// that hole. nil store leaves the grace window unset (strict single-use).
+func WithRefreshRotationGraceStore(store tokengrant.RefreshGraceStore) Option {
+	return func(s *Server) {
+		if store != nil {
+			s.refreshGrace = store
+		}
+	}
+}
+
 // WithDeviceSecretStore enables OpenID Connect Native SSO 1.0. When wired, a
 // /token request that includes the device_sso scope receives a device_secret
 // in the response and a ds_hash claim in the id_token; a second native app may

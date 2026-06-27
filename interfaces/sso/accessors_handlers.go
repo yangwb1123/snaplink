@@ -293,8 +293,8 @@ func (s *Server) RecordCIBADecision(ctx HandlerContext, clientID, subjectID stri
 	s.recordCIBADecision(ctx, clientID, subjectID, approved)
 }
 
-// RefreshGrace exposes the refresh double-submit grace cache (nil when unwired).
-func (s *Server) RefreshGrace() *tokengrant.RefreshGraceCache { return s.refreshGrace }
+// RefreshGrace exposes the refresh double-submit grace store (nil when unwired).
+func (s *Server) RefreshGrace() tokengrant.RefreshGraceStore { return s.refreshGrace }
 
 // RecordRefreshTokenReuse emits the family-reuse audit event (token replayed
 // after rotation → family killed).

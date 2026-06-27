@@ -171,6 +171,15 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		if seed.Users == nil {
 			return fmt.Errorf("seed_admin_user: user provider required")
 		}
+		// Idempotent across replicas and restarts: if the admin user already
+		// exists (a prior boot or a peer replica created it, or this pod's
+		// ephemeral bootstrap tracker reset to 0 and re-ran the step), do NOT
+		// regenerate the password or CreateOrUpdate over the row — that would
+		// silently revert operator-set profile fields/attributes and spam a new
+		// password banner on every rollout. Mirrors stepSeedAdminClient's guard.
+		if _, err := seed.Users.GetByID(ctx, seed.AdminUserID); err == nil {
+			return nil
+		}
 		password, err := generatePassword(24)
 		if err != nil {
 			return fmt.Errorf("seed_admin_user: rand: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
@@ -34,7 +35,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	}
 	b.passwordStore = passwordStore
 
-	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticators(cfg, logger, passwordStore, b.userProvider, b.redis)
+	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticatorsDurable(cfg, logger, passwordStore, b.userProvider, b.redis, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("authenticators: %w", err)
 	}
@@ -77,7 +78,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 // reset-token store plus the default identifier/delivery resolvers.
 func (b *appBuilder) wirePasswordReset() error {
 	cfg, logger := b.cfg, b.logger
-	passwordResetStore, err := serverbuildstore.BuildPasswordResetStore(cfg.SelfService.PasswordReset)
+	passwordResetStore, err := serverbuildstore.BuildPasswordResetStore(cfg.SelfService.PasswordReset, b.redis)
 	if err != nil {
 		return fmt.Errorf("self_service password_reset store: %w", err)
 	}
@@ -182,14 +183,21 @@ func (b *appBuilder) wireWebAuthnMFA() error {
 	// webauthn can wrap the same helper instance, sharing UserStore +
 	// SessionStore + RP config across primary auth and step-up). Same
 	// /readyz wiring as the other SQLite-substrate components.
-	webauthnHelper, webauthnUsers, webauthnSessions, err := serverwebauthn.BuildWebAuthnHelper(cfg.WebAuthn, logger)
+	webauthnHelper, webauthnUsers, webauthnSessions, err := serverwebauthn.BuildWebAuthnHelperDurable(cfg.WebAuthn, logger, b.pgDB, string(b.pgDialect), b.redis)
 	if err != nil {
 		return fmt.Errorf("webauthn: %w", err)
 	}
 	b.webauthnHelper = webauthnHelper
 	b.webauthnUsers = webauthnUsers
-	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, webauthnUsers, "webauthn_users", webauthnsqlite.UsersMaxVersion()); err != nil {
-		return fmt.Errorf("schema check webauthn_users: %w", err)
+	// CheckSQLiteSchema probes sqlite_master, so skip it for the postgres-backed
+	// user store (which exposes DB() and runs its own advisory-locked migration
+	// at construction) — otherwise the sqlite_master query returns 42P01 on
+	// Postgres and aborts boot. Mirrors the identity (build_app_core.go) and
+	// pairwise (build_app_oidc.go) postgres guards.
+	if !strings.EqualFold(strings.TrimSpace(cfg.WebAuthn.Storage.Users.Backend), "postgres") {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, webauthnUsers, "webauthn_users", webauthnsqlite.UsersMaxVersion()); err != nil {
+			return fmt.Errorf("schema check webauthn_users: %w", err)
+		}
 	}
 	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, webauthnSessions, "webauthn_sessions", webauthnsqlite.SessionsMaxVersion()); err != nil {
 		return fmt.Errorf("schema check webauthn_sessions: %w", err)

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -16,6 +18,7 @@ import (
 	"github.com/snaplink/sso/config"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	redisbackend "github.com/snaplink/sso/redis"
 
 	"github.com/snaplink/sso/domains/federation"
 
@@ -111,7 +114,7 @@ func CaepSubjectMode(raw string) (caep.SubjectMapMode, error) {
 // the RefreshTokenSubjectIndex (when the refresh store supports it) + the
 // SessionManager. A receiver that could revoke NOTHING (no session manager
 // AND no subject-index refresh store) is rejected.
-func BuildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.SessionManager, refreshStore oauth.RefreshTokenStore, clientStore sso.ClientStore, userProvider sso.UserProvider, recorder *audit.Recorder, metricsReg *metrics.Metrics, logger spi.Logger) (sso.Option, error) {
+func BuildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.SessionManager, refreshStore oauth.RefreshTokenStore, clientStore sso.ClientStore, userProvider sso.UserProvider, recorder *audit.Recorder, metricsReg *metrics.Metrics, rdb goredis.Cmdable, logger spi.Logger) (sso.Option, error) {
 	if cfg.Audience == "" {
 		return nil, errors.New("caep.receiver.audience required when caep.receiver.enabled")
 	}
@@ -142,7 +145,14 @@ func BuildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.Sessi
 	// this for a cluster-shared store so a replayed SET routed to a
 	// different replica is still rejected. The receiver itself fails CLOSED
 	// on any MarkSeen error regardless of backend.
-	jti := defaultimpl.NewMemoryJTIReplayStore()
+	// Cluster-shared replay store when a Redis cluster is wired, so a replayed
+	// SET routed to a different replica is still rejected (the receiver fails
+	// CLOSED on any MarkSeen error). SetNX is master-pinned, so replica lag
+	// can't let a replay slip. Falls back to per-pod memory single-replica.
+	var jti security.JTIReplayStore = defaultimpl.NewMemoryJTIReplayStore()
+	if rdb != nil {
+		jti = redisbackend.NewJTIReplayStore(rdb)
+	}
 
 	rcv, err := caep.NewReceiver(cfg.Audience, jti, revoker, userProvider, transmitters, caepReceiverOptions(cfg, recorder, metricsReg, logger)...)
 	if err != nil {

@@ -198,6 +198,29 @@ func (s *DeviceCodeStore) Delete(ctx context.Context, deviceCode string) error {
 	return nil
 }
 
+// ConsumeIfApproved atomically deletes + returns the row IFF approved, via a
+// single DELETE ... WHERE approved = 1 RETURNING. The DELETE is the atomic claim
+// (SQLite serializes writers), so concurrent token-exchange polls yield exactly
+// one winner; no matching row -> ErrDeviceCodeNotFound.
+func (s *DeviceCodeStore) ConsumeIfApproved(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
+	row := s.db.QueryRowContext(ctx, `
+        DELETE FROM device_codes WHERE device_code = ? AND approved = 1
+        RETURNING device_code, user_code, client_id, scopes, nonce,
+                  user_id, provider, attributes, approved, denied,
+                  last_poll, interval_ns, expires_at`, deviceCode)
+	out, err := scanDeviceCode(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, oauth.ErrDeviceCodeNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: consume_if_approved device_code: %w", err)
+	}
+	if out.IsExpired() {
+		return nil, oauth.ErrDeviceCodeNotFound
+	}
+	return out, nil
+}
+
 // deviceCodeSelectByCol returns a select-by-{column} statement.
 // Column name is a code constant, never user input — no SQLi risk.
 func deviceCodeSelectByCol(col string) string {

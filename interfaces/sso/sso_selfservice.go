@@ -6,10 +6,20 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/metering"
-	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/shared/spi"
 )
+
+// ConsentChallengeStore is the pluggable backend for the consent-gate's
+// single-use challenge nonce (Issue on the consent-required /auth/login,
+// Consume on the approve re-POST). The default in-process consent.ChallengeStore
+// is single-replica; a cluster-shared impl (redis) with the SAME method set
+// keeps the issue/approve round-trip working behind a no-affinity load balancer.
+// Signatures match consent.ChallengeStore, which satisfies this structurally.
+type ConsentChallengeStore interface {
+	Issue(userID, clientID string, scopes []string) string
+	Consume(id, userID, clientID string, scopes []string) bool
+}
 
 // selfServiceState holds consent, signup, password-reset, email-change, MFA enrollment, data export/erasure, invitations, usage, JWKS body cache, and SPA-FS fields.
 type selfServiceState struct {
@@ -98,10 +108,12 @@ type selfServiceState struct {
 	// risk flags) the operator stores alongside presentation data.
 	selfEditableAttrs map[string]struct{}
 
-	// consentChallenges holds server-issued single-use consent challenge tokens.
-	// Each entry is bound to (UserID, ClientID, Scopes) and expires after
-	// consent.ChallengeTTL. Thread-safe via consent.ChallengeStore.
-	consentChallenges *consent.ChallengeStore
+	// consentChallenges holds server-issued single-use consent challenge tokens
+	// bound to (UserID, ClientID, Scopes), expiring after consent.ChallengeTTL.
+	// Default is the in-process consent.ChallengeStore (single-replica);
+	// WithConsentChallengeStore swaps in a cluster-shared backend (redis) so the
+	// issue/approve round-trip survives a no-affinity load balancer.
+	consentChallenges ConsentChallengeStore
 
 	// usageAggregator backs GET /api/v1/admin/tenants/:id/usage
 	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —

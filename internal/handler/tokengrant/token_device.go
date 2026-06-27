@@ -55,7 +55,24 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 		return
 	}
 
-	// Approved → mint tokens, then delete the device code (single-use).
+	// Atomically CLAIM the approved code BEFORE minting: of N concurrent polls
+	// exactly one wins the delete-and-return; the losers (and an already-consumed
+	// or expired code) get ErrDeviceCodeNotFound -> expired_token. This is what
+	// makes the device_code single-use under concurrency — the prior
+	// mint-then-Delete let two simultaneous polls each mint a full token set.
+	dc, err := store.ConsumeIfApproved(ctx.Request().Context(), deviceCode)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
+		return
+	}
+
+	// Won the claim (already consumed atomically above) → mint + respond.
+	deviceMintAndRespond(d, ctx, client, dc)
+}
+
+// deviceMintAndRespond issues the access/refresh/id tokens for an
+// already-claimed (atomically consumed) approved device code and writes the 200.
+func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
@@ -86,7 +103,6 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 	deviceIssueIDToken(d, ctx, client, dc, issuedSub, token.AccessToken, resp)
 	d.RecordTokenIssued(ctx, client.ID, strategy, dc.UserID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), dc.UserID, client.ID)
-	_ = store.Delete(ctx.Request().Context(), deviceCode)
 	ctx.JSON(http.StatusOK, resp)
 }
 

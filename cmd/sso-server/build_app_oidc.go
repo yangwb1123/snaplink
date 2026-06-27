@@ -64,7 +64,7 @@ func (b *appBuilder) wireDCRBackchannel() error {
 		}
 	}
 	if cfg.BackchannelLogout.Enabled {
-		idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(cfg.BackchannelLogout.Index)
+		idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(cfg.BackchannelLogout.Index, b.redis)
 		if err != nil {
 			return fmt.Errorf("subject_client_index: %w", err)
 		}

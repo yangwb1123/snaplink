@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
+	redisbackend "github.com/snaplink/sso/redis"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -208,13 +210,27 @@ func (b *appBuilder) wireRefreshToken() error {
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-refresh-tokens", store)
 	b.refreshTokenStore = store
 	b.refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
-	// Opt-in refresh-rotation grace window: a concurrent double-submit of
-	// the just-rotated token is idempotent within the window instead of
-	// killing the family (multi-tab SPA / mobile cold-start races). 0 =
+	// Opt-in refresh-rotation grace window: a concurrent double-submit of the
+	// just-rotated token is idempotent within the window instead of killing the
+	// family (multi-tab SPA / mobile cold-start races). The backend MUST be
+	// cluster-shared (redis) on a multi-replica deployment — the memory backend
+	// remembers the successor in one replica only, so a double-submit landing on
+	// a different replica trips a false family-reuse kill (logout storm). 0 =
 	// strict single-use (byte-identical).
-	if cfg.OAuth.RefreshToken.RotationGraceWindow > 0 {
-		b.opts = append(b.opts, sso.WithRefreshRotationGrace(cfg.OAuth.RefreshToken.RotationGraceWindow))
-		b.logger.Info("refresh rotation grace enabled", "window", cfg.OAuth.RefreshToken.RotationGraceWindow)
+	if w := cfg.OAuth.RefreshToken.RotationGraceWindow; w > 0 {
+		switch strings.ToLower(strings.TrimSpace(cfg.OAuth.RefreshToken.RotationGraceBackend)) {
+		case "", "memory":
+			b.opts = append(b.opts, sso.WithRefreshRotationGrace(w))
+			b.logger.Info("refresh rotation grace enabled (memory; single-replica only)", "window", w)
+		case "redis":
+			if b.redis == nil {
+				return errors.New("oauth.refresh_token.rotation_grace_backend=redis but no redis block configured (set redis.addrs)")
+			}
+			b.opts = append(b.opts, sso.WithRefreshRotationGraceStore(redisbackend.NewRefreshGraceStore(b.redis, w)))
+			b.logger.Info("refresh rotation grace enabled (redis; cluster-shared)", "window", w)
+		default:
+			return fmt.Errorf("unknown oauth.refresh_token.rotation_grace_backend %q (supported: memory, redis)", cfg.OAuth.RefreshToken.RotationGraceBackend)
+		}
 	}
 	return nil
 }

@@ -147,6 +147,24 @@ func (m *MemoryDeviceCodeStore) Delete(_ context.Context, deviceCode string) err
 	return nil
 }
 
+// ConsumeIfApproved atomically (under the store mutex) returns + deletes the
+// code iff it is approved; a pending/denied/unknown/expired code returns
+// ErrDeviceCodeNotFound WITHOUT consuming. So of N concurrent callers exactly
+// one wins, which is the single-use claim the token exchange makes before
+// minting (avoids two token sets from one approved code).
+func (m *MemoryDeviceCodeStore) ConsumeIfApproved(_ context.Context, deviceCode string) (*oauth.DeviceCode, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.byDeviceCode[deviceCode]
+	if !ok || entry.IsExpired() || !entry.Approved {
+		return nil, oauth.ErrDeviceCodeNotFound
+	}
+	cp := copyDeviceCode(entry)
+	delete(m.byDeviceCode, deviceCode)
+	delete(m.byUserCode, entry.UserCode)
+	return cp, nil
+}
+
 // GenerateDeviceCode mints a 32-byte base64url device_code suitable
 // for backchannel polling. Long + opaque — the device prints it to
 // logs in some operator setups.

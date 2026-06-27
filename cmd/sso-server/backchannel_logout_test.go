@@ -34,7 +34,7 @@ func TestBuildApp_BackchannelLogoutFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_MemoryDefault(t *testing.T) {
-	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{})
+	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestBuildSubjectClientIndex_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -59,7 +59,7 @@ func TestBuildSubjectClientIndex_SQLiteOpensFile(t *testing.T) {
 	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{
 		Backend: "sqlite",
 		SQLite:  config.BCLIndexSQLiteConfig{DSN: dsn},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestBuildSubjectClientIndex_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_UnknownBackendErrors(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "etcd"})
+	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "etcd"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

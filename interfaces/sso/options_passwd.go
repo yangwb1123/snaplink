@@ -223,6 +223,20 @@ func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
 }
 
+// WithConsentChallengeStore overrides the in-process consent-gate challenge store
+// with a cluster-shared backend (e.g. redis). Without it, the single-use consent
+// nonce lives in the issuing replica's memory, so on a no-affinity load balancer
+// the approve re-POST lands on a different replica, Consume misses, and the gate
+// re-issues forever — an infinite consent loop that blocks first-time
+// third-party authorization. nil store leaves the in-process default.
+func WithConsentChallengeStore(store ConsentChallengeStore) Option {
+	return func(s *Server) {
+		if store != nil {
+			s.consentChallenges = store
+		}
+	}
+}
+
 // WithScopeDescriptions registers operator-defined human descriptions for OAuth
 // scopes (scope -> description). They are surfaced in the consent_required
 // response (alongside the client's display name) so a consent UI can show

@@ -2,6 +2,7 @@ package serverwebauthn
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/metadata"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
@@ -17,12 +19,26 @@ import (
 	"github.com/snaplink/sso/shared/spi"
 
 	"github.com/snaplink/sso/config"
+	webauthnpg "github.com/snaplink/sso/domains/authenticators/webauthnpostgres"
+	webauthnredis "github.com/snaplink/sso/domains/authenticators/webauthnredis"
 	webauthnsqlite "github.com/snaplink/sso/domains/authenticators/webauthnsqlite"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/platform/metrics"
 )
 
+// BuildWebAuthnHelper is the no-cluster-backend entry point (memory/sqlite
+// only). It forwards to BuildWebAuthnHelperDurable with nil pool/client so
+// existing call sites stay unchanged.
 func BuildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
+	return BuildWebAuthnHelperDurable(cfg, logger, nil, "", nil)
+}
+
+// BuildWebAuthnHelperDurable is BuildWebAuthnHelper plus the shared Postgres pool
+// (+ dialect) for the durable passkey-credential store and the shared Redis
+// client for the cluster-shared ceremony-session store. Either may be nil — the
+// postgres/redis backends then fail loud at boot rather than silently using
+// per-pod state.
+func BuildWebAuthnHelperDurable(cfg config.WebAuthnConfig, logger spi.Logger, pg *sql.DB, dialect string, rdb goredis.Cmdable) (*webauthn.Helper, webauthn.UserStore, webauthn.SessionStore, error) {
 	if !cfg.Enabled {
 		return nil, nil, nil, nil
 	}
@@ -32,11 +48,11 @@ func BuildWebAuthnHelper(cfg config.WebAuthnConfig, logger spi.Logger) (*webauth
 	if len(cfg.RPOrigins) == 0 {
 		return nil, nil, nil, errors.New("webauthn.rp_origins must list at least one origin")
 	}
-	users, userDesc, err := buildWebAuthnUserStore(cfg.Storage.Users)
+	users, userDesc, err := buildWebAuthnUserStore(cfg.Storage.Users, pg, dialect)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn users: %w", err)
 	}
-	sessions, sessionDesc, err := buildWebAuthnSessionStore(cfg.Storage.Sessions)
+	sessions, sessionDesc, err := buildWebAuthnSessionStore(cfg.Storage.Sessions, rdb)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn sessions: %w", err)
 	}
@@ -197,7 +213,7 @@ func attestationPolicyLabel(p *webauthn.AttestationPolicy) string {
 	return string(p.Mode)
 }
 
-func buildWebAuthnUserStore(cfg config.WebAuthnBackendConfig) (webauthn.UserStore, string, error) {
+func buildWebAuthnUserStore(cfg config.WebAuthnBackendConfig, pg *sql.DB, dialect string) (webauthn.UserStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return webauthn.NewMemoryUserStore(), "memory (single-replica only)", nil
@@ -210,15 +226,37 @@ func buildWebAuthnUserStore(cfg config.WebAuthnBackendConfig) (webauthn.UserStor
 			return nil, "", err
 		}
 		return store, "sqlite (cluster-shared)", nil
+	case "postgres":
+		// Passkey credentials are durable identity data -> the db-cluster, so a
+		// credential enrolled on one replica verifies at login on every replica
+		// and the per-credential sign counter is shared (the anti-clone guarantee
+		// is otherwise void cluster-wide). Mirrors the TOTP-enrollment backend.
+		if pg == nil {
+			return nil, "", errors.New("webauthn.storage.users.backend=postgres but no postgres block configured (set postgres.dsn)")
+		}
+		store, err := webauthnpg.NewUserStore(pg, dialect)
+		if err != nil {
+			return nil, "", err
+		}
+		return store, "postgres (cluster-shared)", nil
 	default:
 		return nil, "", fmt.Errorf("unknown webauthn.storage.users.backend %q", cfg.Backend)
 	}
 }
 
-func buildWebAuthnSessionStore(cfg config.WebAuthnBackendConfig) (webauthn.SessionStore, string, error) {
+func buildWebAuthnSessionStore(cfg config.WebAuthnBackendConfig, rdb goredis.Cmdable) (webauthn.SessionStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return webauthn.NewMemorySessionStore(), "memory (single-replica only)", nil
+	case "redis":
+		// The ceremony challenge is hot/ephemeral state split across Begin* and
+		// Finish*, which can land on different replicas — it MUST be cluster-shared
+		// or Finish misses on a no-affinity LB and every passkey ceremony fails.
+		// SET+TTL / GETDEL single-use, single-key (CROSSSLOT-safe).
+		if rdb == nil {
+			return nil, "", errors.New("webauthn.storage.sessions.backend=redis but no redis block configured (set redis.addrs)")
+		}
+		return webauthnredis.NewSessionStore(rdb), "redis (cluster-shared)", nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, "", errors.New("webauthn.storage.sessions.sqlite.dsn required when backend=sqlite")

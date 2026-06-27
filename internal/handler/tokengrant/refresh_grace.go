@@ -78,3 +78,18 @@ func (c *RefreshGraceCache) pruneLocked(now time.Time) {
 		}
 	}
 }
+
+// RefreshGraceStore is the pluggable backend for the double-submit grace window.
+// *RefreshGraceCache is the in-process (single-replica) impl; a Redis-backed
+// impl with the SAME method set makes the decision CLUSTER-SHARED, so a
+// double-submit landing on a different replica than the rotation still replays
+// the successor instead of tripping a false family-reuse kill (the logout storm
+// on every multi-replica deployment). Lookup MUST return false on ANY
+// uncertainty (miss / expiry / backend error) so the caller fails closed to
+// family-reuse detection — BCP 4.13 is never weakened.
+type RefreshGraceStore interface {
+	Remember(token string, resp map[string]any, now time.Time)
+	Lookup(token string, now time.Time) (map[string]any, bool)
+}
+
+var _ RefreshGraceStore = (*RefreshGraceCache)(nil)

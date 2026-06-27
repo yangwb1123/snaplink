@@ -2,7 +2,10 @@ package serverbuildauthn
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
+	postgresbackend "github.com/snaplink/sso/postgres"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -223,7 +227,7 @@ func appendCertificateAuthenticator(auths []sso.Authenticator, a *config.Certifi
 // store (also the self-service /me/mfa list + enrollment writer). Returns the
 // updated auths slice plus the built *TOTPAuthenticator and MFAEnrollmentStore
 // (both nil when TOTP is off) for the caller to surface.
-func appendTOTPAuthenticator(auths []sso.Authenticator, a *config.TOTPConfig, replay authReplayStoreFn, logger spi.Logger) ([]sso.Authenticator, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+func appendTOTPAuthenticator(auths []sso.Authenticator, a *config.TOTPConfig, replay authReplayStoreFn, pg *sql.DB, dialect postgresbackend.Dialect, logger spi.Logger) ([]sso.Authenticator, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	if a == nil || !a.Enabled {
 		return auths, nil, nil, nil
 	}
@@ -248,24 +252,59 @@ func appendTOTPAuthenticator(auths []sso.Authenticator, a *config.TOTPConfig, re
 		authenticators.WithTOTPConsumedStore(consumedStore),
 		authenticators.WithTOTPLogger(logger))
 	logger.Info("totp one-time-use enforcement enabled", "consumed_store", replayMode)
-	var totpAuth *authenticators.TOTPAuthenticator
-	var totpEnrollStore sso.MFAEnrollmentStore
-	if a.SQLiteDSN != "" {
-		sqliteStore, err := sqlitestores.NewTOTPEnrollmentStore(a.SQLiteDSN)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("totp.sqlite: %w", err)
-		}
-		totpAuth = authenticators.NewTOTPAuthenticator(sqliteStore, totpOpts...)
-		totpEnrollStore = sqliteStore
-		logger.Info("totp authenticator enabled (sqlite store)")
-	} else {
-		enrollStore := defaultimpl.NewMemoryTOTPEnrollmentStore()
-		totpAuth = authenticators.NewTOTPAuthenticator(enrollStore, totpOpts...)
-		totpEnrollStore = enrollStore
-		logger.Info("totp authenticator enabled (memory store; set authenticators.totp.sqlite_dsn for production)")
+	totpAuth, totpEnrollStore, err := buildTOTPEnrollmentStore(a, pg, dialect, totpOpts, logger)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	auths = append(auths, totpAuth)
 	return auths, totpAuth, totpEnrollStore, nil
+}
+
+// buildTOTPEnrollmentStore resolves the unified TOTP enrollment store +
+// authenticator for the configured backend. The store plays three roles off one
+// instance: the authenticator's secret source, the /me/mfa list, and the TOTP
+// enrollment writer. Empty backend infers sqlite (when a dsn is set) else
+// memory; postgres reaches the shared db-cluster so a factor enrolled on one
+// replica is usable at login on every replica (the secret MUST be cluster-shared
+// in HA). Fails loud when a cluster-shared backend is requested without its
+// pool — mirrors BuildPairwiseSubjectStore.
+func buildTOTPEnrollmentStore(a *config.TOTPConfig, pg *sql.DB, dialect postgresbackend.Dialect, totpOpts []authenticators.TOTPOption, logger spi.Logger) (*authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+	backend := strings.ToLower(strings.TrimSpace(a.Backend))
+	if backend == "" {
+		if a.SQLiteDSN != "" {
+			backend = "sqlite"
+		} else {
+			backend = "memory"
+		}
+	}
+	switch backend {
+	case "postgres":
+		if pg == nil {
+			return nil, nil, errors.New("authenticators.totp.backend=postgres but no postgres block configured (set postgres.dsn)")
+		}
+		pgStore, err := postgresbackend.NewTOTPEnrollmentStoreWithDB(pg, dialect)
+		if err != nil {
+			return nil, nil, fmt.Errorf("totp.postgres: %w", err)
+		}
+		logger.Info("totp authenticator enabled (postgres store; cluster-shared)")
+		return authenticators.NewTOTPAuthenticator(pgStore, totpOpts...), pgStore, nil
+	case "sqlite":
+		if a.SQLiteDSN == "" {
+			return nil, nil, errors.New("authenticators.totp.backend=sqlite requires authenticators.totp.sqlite_dsn")
+		}
+		sqliteStore, err := sqlitestores.NewTOTPEnrollmentStore(a.SQLiteDSN)
+		if err != nil {
+			return nil, nil, fmt.Errorf("totp.sqlite: %w", err)
+		}
+		logger.Info("totp authenticator enabled (sqlite store)")
+		return authenticators.NewTOTPAuthenticator(sqliteStore, totpOpts...), sqliteStore, nil
+	case "memory":
+		enrollStore := defaultimpl.NewMemoryTOTPEnrollmentStore()
+		logger.Info("totp authenticator enabled (memory store; set authenticators.totp.backend=postgres for multi-replica)")
+		return authenticators.NewTOTPAuthenticator(enrollStore, totpOpts...), enrollStore, nil
+	default:
+		return nil, nil, fmt.Errorf("unknown authenticators.totp.backend %q (supported: memory, sqlite, postgres)", a.Backend)
+	}
 }
 
 func appendOIDCFederationAuthenticators(auths []sso.Authenticator, feds []*config.OIDCFederationAuthConfig, logger spi.Logger) []sso.Authenticator {

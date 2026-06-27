@@ -198,7 +198,7 @@ func TestBuildCAEPReceiverOption_RequiresAudience(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "audience") {
 		t.Fatalf("err = %v; want audience required", err)
@@ -212,7 +212,7 @@ func TestBuildCAEPReceiverOption_RequiresTransmitter(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "transmitters") {
 		t.Fatalf("err = %v; want transmitters required", err)
@@ -229,7 +229,7 @@ func TestBuildCAEPReceiverOption_TransmitterRequiresIssuer(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "issuer") {
 		t.Fatalf("err = %v; want issuer required", err)
@@ -246,7 +246,7 @@ func TestBuildCAEPReceiverOption_TransmitterRequiresJWKSFile(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "jwks_file") {
 		t.Fatalf("err = %v; want jwks_file required", err)
@@ -270,7 +270,7 @@ func TestBuildCAEPReceiverOption_IssSubRequiresProvider(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "provider") {
 		t.Fatalf("err = %v; want provider required for iss_sub", err)
@@ -291,7 +291,7 @@ func TestBuildCAEPReceiverOption_BadSubjectMode(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "subject_mode") {
 		t.Fatalf("err = %v; want subject_mode error", err)
@@ -315,7 +315,7 @@ func TestBuildCAEPReceiverOption_HappyPath(t *testing.T) {
 		defaultimpl.NewMemoryRefreshTokenStore(),
 		defaultimpl.NewMemoryClientStore(),
 		defaultimpl.NewMemoryUserProvider(),
-		nil, nil, quietLogger(),
+		nil, nil, nil, quietLogger(),
 	)
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -330,7 +330,7 @@ func TestBuildCAEPReceiverOption_HappyPath(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBuildPasswordResetStore_DisabledReturnsNil(t *testing.T) {
-	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{})
+	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{}, nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -340,7 +340,7 @@ func TestBuildPasswordResetStore_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildPasswordResetStore_Memory(t *testing.T) {
-	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "memory"})
+	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "memory"}, nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -350,7 +350,7 @@ func TestBuildPasswordResetStore_Memory(t *testing.T) {
 }
 
 func TestBuildPasswordResetStore_SQLiteRequiresDSN(t *testing.T) {
-	_, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "sqlite"})
+	_, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "sqlite"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "dsn") {
 		t.Fatalf("err = %v; want dsn required", err)
 	}
@@ -361,7 +361,7 @@ func TestBuildPasswordResetStore_SQLiteHappyPath(t *testing.T) {
 	store, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{
 		Backend: "sqlite",
 		SQLite:  config.IdentitySQLiteConfig{DSN: dsn},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -371,7 +371,7 @@ func TestBuildPasswordResetStore_SQLiteHappyPath(t *testing.T) {
 }
 
 func TestBuildPasswordResetStore_UnknownBackendErrors(t *testing.T) {
-	_, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "redis"})
+	_, err := serverbuildstore.BuildPasswordResetStore(config.PasswordResetConfig{Backend: "mongodb"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

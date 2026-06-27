@@ -44,7 +44,7 @@ type protocolState struct {
 	authCodeTTL                    time.Duration
 	refreshTokenStore              oauth.RefreshTokenStore
 	refreshTokenTTL                time.Duration
-	refreshGrace                   *tokengrant.RefreshGraceCache
+	refreshGrace                   tokengrant.RefreshGraceStore
 	idTokenIssuer                  oidc.IDTokenIssuer
 	deviceCodeStore                oauth.DeviceCodeStore
 	deviceCodeTTL                  time.Duration

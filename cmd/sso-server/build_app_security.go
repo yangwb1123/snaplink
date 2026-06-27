@@ -94,7 +94,7 @@ func (b *appBuilder) wireCAEPReceiverMesh() error {
 		// and revokes the mapped subject's local access via the SAME seams
 		// /token/revoke-all uses. Fail-closed validation; unmapped subject ⇒ ack
 		// + no-op (no wrongful revocation).
-		rcvOpt, err := serverbuildplatform.BuildCAEPReceiverOption(cfg.CAEP.Receiver, b.sessionMgr, b.refreshTokenStore, b.clientStore, b.userProvider, b.recorder, b.metricsRegistry, logger)
+		rcvOpt, err := serverbuildplatform.BuildCAEPReceiverOption(cfg.CAEP.Receiver, b.sessionMgr, b.refreshTokenStore, b.clientStore, b.userProvider, b.recorder, b.metricsRegistry, b.redis, logger)
 		if err != nil {
 			return fmt.Errorf("caep receiver: %w", err)
 		}
@@ -136,7 +136,7 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 		logger.Info("security: mTLS bound tokens enabled", "extractor", mode)
 	}
 	if al := cfg.Security.AccountLockout; al.Enabled {
-		lockout, mode, err := serverbuildauthn.BuildAccountLockout(al)
+		lockout, mode, err := serverbuildauthn.BuildAccountLockout(al, b.redis)
 		if err != nil {
 			return fmt.Errorf("account lockout: %w", err)
 		}

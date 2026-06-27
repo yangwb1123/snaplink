@@ -161,12 +161,20 @@ func BuildDeviceSecretStore(cfg config.NativeSSOConfig, pg *sql.DB, dialect post
 
 // BuildPasswordResetStore selects the forgot-password reset-token backend.
 // Empty backend = the flow stays disabled (byte-identical).
-func BuildPasswordResetStore(cfg config.PasswordResetConfig) (sso.PasswordResetStore, error) {
+func BuildPasswordResetStore(cfg config.PasswordResetConfig, rdb goredis.Cmdable) (sso.PasswordResetStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "":
 		return nil, nil
 	case "memory":
 		return defaultimpl.NewMemoryPasswordResetStore(), nil
+	case "redis":
+		// Reset tokens are hot/ephemeral and the flow is two requests (issue,
+		// then emailed redeem) that can land on different replicas, so the token
+		// store MUST be cluster-shared. SET+TTL / GETDEL single-use, cluster-safe.
+		if rdb == nil {
+			return nil, errors.New("self_service.password_reset.backend=redis but no redis block configured (set redis.addrs)")
+		}
+		return redisbackend.NewPasswordResetStore(rdb), nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("self_service.password_reset.sqlite.dsn required when backend=sqlite")

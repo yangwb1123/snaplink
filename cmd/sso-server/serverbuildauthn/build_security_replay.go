@@ -51,7 +51,7 @@ func BuildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig, pg *sql.DB, di
 // attacker rotating across replicas can't stay under each replica's
 // local threshold. Policy overrides (MaxFailures / LockoutDuration
 // / FailureWindow) are applied identically to both backends.
-func BuildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLockout, string, error) {
+func BuildAccountLockout(cfg config.AccountLockoutConfig, rdb goredis.Cmdable) (security.AccountLockout, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		l := security.NewMemoryAccountLockout()
@@ -65,6 +65,8 @@ func BuildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLocko
 			l.FailureWindow = cfg.FailureWindow
 		}
 		return l, "memory (single-replica only)", nil
+	case "redis":
+		return buildRedisLockout(cfg, rdb)
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, "", errors.New("security.account_lockout.sqlite.dsn required when backend=sqlite")
@@ -88,14 +90,42 @@ func BuildAccountLockout(cfg config.AccountLockoutConfig) (security.AccountLocko
 	}
 }
 
+// buildRedisLockout constructs the Redis-backed lockout (atomic INCR+threshold
+// Lua over hash-tagged per-subject keys, so the failure counter is
+// cluster-shared) and applies the same policy overrides as the other backends.
+func buildRedisLockout(cfg config.AccountLockoutConfig, rdb goredis.Cmdable) (security.AccountLockout, string, error) {
+	if rdb == nil {
+		return nil, "", errors.New("security.account_lockout.backend=redis but no redis block configured (set redis.addrs)")
+	}
+	l := redisbackend.NewAccountLockout(rdb)
+	if cfg.MaxFailures > 0 {
+		l.MaxFailures = cfg.MaxFailures
+	}
+	if cfg.LockoutDuration > 0 {
+		l.LockoutDuration = cfg.LockoutDuration
+	}
+	if cfg.FailureWindow > 0 {
+		l.FailureWindow = cfg.FailureWindow
+	}
+	return l, "redis (cluster-shared)", nil
+}
+
 // BuildSubjectClientIndex picks the security.SubjectClientIndex backend that
 // drives OIDC BCL multi-RP fan-out. memory keeps the single-replica
 // story; sqlite shares the index so a logout reaching any replica
 // fans out to every client a subject has touched cluster-wide.
-func BuildSubjectClientIndex(cfg config.BCLIndexConfig) (security.SubjectClientIndex, string, error) {
+func BuildSubjectClientIndex(cfg config.BCLIndexConfig, rdb goredis.Cmdable) (security.SubjectClientIndex, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
 		return defaultimpl.NewMemorySubjectClientIndex(), "memory (single-replica only)", nil
+	case "redis":
+		// One SET per subject (SADD/SMEMBERS/SREM, single-key), so the active-
+		// client index is cluster-shared and a logout reaching any replica fans
+		// out to every RP the subject touched.
+		if rdb == nil {
+			return nil, "", errors.New("backchannel_logout.index.backend=redis but no redis block configured (set redis.addrs)")
+		}
+		return redisbackend.NewSubjectClientIndex(rdb), "redis (cluster-shared)", nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, "", errors.New("backchannel_logout.index.sqlite.dsn required when backend=sqlite")

@@ -95,6 +95,13 @@ type OAuthStoreConfig struct {
 	// multi-tab SPAs / mobile cold-start races. 0 = disabled (strict single-use).
 	// Only meaningful for the refresh_token store.
 	RotationGraceWindow time.Duration `yaml:"rotation_grace_window"`
+	// RotationGraceBackend selects where the grace successor is remembered:
+	// "" | "memory" (in-process, single-replica ONLY) | "redis" (cluster-shared,
+	// requires a redis block). On a multi-replica deployment with a no-affinity
+	// load balancer, "memory" causes a false family-reuse kill (logout storm)
+	// when a double-submit lands on a different replica than the rotation — use
+	// "redis" so the grace decision is shared. Ignored when grace_window = 0.
+	RotationGraceBackend string `yaml:"rotation_grace_backend"`
 }
 
 // OAuthDeviceCodeConfig adds device-code-specific tunables on top of

@@ -78,6 +78,15 @@ type DeviceCodeStore interface {
 	// Delete removes a code (after successful token exchange OR
 	// when garbage-collecting an expired entry).
 	Delete(ctx context.Context, deviceCode string) error
+
+	// ConsumeIfApproved ATOMICALLY deletes and returns the code IFF it is
+	// currently approved, so of N concurrent token-exchange polls of one
+	// approved device_code exactly ONE wins (gets the record); the rest get
+	// ErrDeviceCodeNotFound. A pending/denied/unknown/expired code returns
+	// ErrDeviceCodeNotFound WITHOUT consuming. The token endpoint calls this as
+	// the single-use claim before minting, so one approved code can never mint
+	// two token sets (RFC 8628 single-use, race-safe across replicas).
+	ConsumeIfApproved(ctx context.Context, deviceCode string) (*DeviceCode, error)
 }
 
 // ErrDeviceCodeNotFound is returned by store lookups when the code

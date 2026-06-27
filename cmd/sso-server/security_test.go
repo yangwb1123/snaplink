@@ -247,7 +247,7 @@ func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
 	l, mode, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{
 		MaxFailures:     7,
 		LockoutDuration: 30 * security.NewMemoryAccountLockout().LockoutDuration,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
 }
 
 func TestBuildAccountLockout_SQLiteNeedsDSN(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "sqlite"})
+	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -278,7 +278,7 @@ func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
 		Backend:     "sqlite",
 		SQLite:      config.AccountLockoutSQLiteConfig{DSN: dsn},
 		MaxFailures: 4,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildAccountLockout_UnknownBackendErrors(t *testing.T) {
-	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "redis"})
+	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "mongodb"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

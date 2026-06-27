@@ -63,21 +63,23 @@ func TestBuildWebAuthnHelper_DefaultsMemoryBackends(t *testing.T) {
 }
 
 func TestBuildWebAuthnUserStore_SQLiteRequiresDSN(t *testing.T) {
-	_, _, err := buildWebAuthnUserStore(config.WebAuthnBackendConfig{Backend: "sqlite"})
+	_, _, err := buildWebAuthnUserStore(config.WebAuthnBackendConfig{Backend: "sqlite"}, nil, "")
 	if err == nil {
 		t.Fatal("sqlite backend without dsn must error")
 	}
 }
 
 func TestBuildWebAuthnSessionStore_SQLiteRequiresDSN(t *testing.T) {
-	_, _, err := buildWebAuthnSessionStore(config.WebAuthnBackendConfig{Backend: "sqlite"})
+	_, _, err := buildWebAuthnSessionStore(config.WebAuthnBackendConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("sqlite backend without dsn must error")
 	}
 }
 
 func TestBuildWebAuthnUserStore_UnknownBackend(t *testing.T) {
-	_, _, err := buildWebAuthnUserStore(config.WebAuthnBackendConfig{Backend: "redis"})
+	// redis is valid for the session store but NOT the user store (durable);
+	// mongodb is unknown to both.
+	_, _, err := buildWebAuthnUserStore(config.WebAuthnBackendConfig{Backend: "mongodb"}, nil, "")
 	if err == nil {
 		t.Fatal("unknown backend must error")
 	}

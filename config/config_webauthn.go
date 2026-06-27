@@ -169,7 +169,12 @@ type WebAuthnStorageConfig struct {
 // WebAuthnBackendConfig is the memory|sqlite selector + DSN for a
 // single WebAuthn store.
 type WebAuthnBackendConfig struct {
-	Backend string                      `yaml:"backend"` // memory | sqlite
+	// Backend: memory | sqlite | postgres (users only — durable passkey
+	// credentials on the shared db-cluster) | redis (sessions only — the
+	// hot ceremony-challenge store on the shared cluster). On a multi-replica
+	// deployment users MUST be postgres and sessions MUST be redis, else
+	// per-pod state breaks passkey login/registration under a no-affinity LB.
+	Backend string                      `yaml:"backend"`
 	SQLite  WebAuthnBackendSQLiteConfig `yaml:"sqlite"`
 }
 

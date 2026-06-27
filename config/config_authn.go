@@ -208,11 +208,16 @@ type CertificateConfig struct {
 type TOTPConfig struct {
 	Enabled   bool `yaml:"enabled"`
 	SkewSteps int  `yaml:"skew_steps"`
+	// Backend selects the enrollment-secret store: "" (infer: sqlite_dsn set ->
+	// sqlite, else memory) | "memory" | "sqlite" | "postgres". The secret MUST
+	// be shared across replicas in a multi-replica deployment — "memory" is
+	// per-pod (a factor enrolled on one replica is invisible at login on
+	// another, breaking MFA for ~(N-1)/N of logins). Use "postgres" (the shared
+	// db-cluster, cluster-shared) or "sqlite" (shared volume) for HA.
+	Backend string `yaml:"backend,omitempty"`
 	// SQLiteDSN enables durable TOTP secret + factor storage backing both
-	// login verification and self-service enrollment (/me/mfa/totp). When set,
-	// the unified SQLite store is used instead of the in-memory store —
-	// required for secrets to survive restarts and for multi-replica
-	// deployments. The secret is MUST-encrypt material: use an encrypted DSN
-	// or full-disk encryption.
+	// login verification and self-service enrollment (/me/mfa/totp). Used when
+	// backend=sqlite (or backend is empty and this is set). The secret is
+	// MUST-encrypt material: use an encrypted DSN or full-disk encryption.
 	SQLiteDSN string `yaml:"sqlite_dsn,omitempty"`
 }

@@ -18,7 +18,7 @@ import (
 // which already lives in this package).
 type RefreshGrantDeps interface {
 	RefreshTokenStore() oauth.RefreshTokenStore
-	RefreshGrace() *RefreshGraceCache
+	RefreshGrace() RefreshGraceStore
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
 	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, clientTTLOverride time.Duration) (string, error)

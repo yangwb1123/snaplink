@@ -35,6 +35,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	if err := b.wirePostgres(); err != nil {
 		return nil, err
 	}
+	// Loud warning if a cluster is declared but core stores still resolve to
+	// per-pod memory — the misconfig that boots clean + green /readyz while
+	// breaking correctness behind a multi-replica load balancer.
+	b.warnHACoherence()
 	if err := b.wireFoundation(); err != nil {
 		return nil, err
 	}
@@ -57,6 +61,58 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 		return nil, err
 	}
 	return b.finalize()
+}
+
+// warnHACoherence emits a LOUD warning when a Redis/Postgres cluster is declared
+// but a core security/correctness store still resolves to per-pod memory. Such a
+// config boots clean and reports /readyz GREEN (the cluster ping passes) while
+// silently serving from state no peer replica can see: behind a round-robin LB
+// an auth code minted on one replica is unknown on another (~2/3 of /token
+// exchanges fail invalid_grant), and refresh-reuse / replay / session defenses
+// become per-pod. It does NOT fail boot (single-replica + hybrid are valid), but
+// names exactly which store to move onto the cluster.
+func (b *appBuilder) warnHACoherence() {
+	redisHA := b.cfg.Redis.Configured()
+	pgHA := b.cfg.Postgres.Configured()
+	if !redisHA && !pgHA {
+		return
+	}
+	perPod := func(backend string) bool {
+		s := strings.ToLower(strings.TrimSpace(backend))
+		return s == "" || s == "memory"
+	}
+	var stuck []string
+	// Hot cross-replica stores: needed whenever EITHER cluster is declared (a
+	// postgres-only multi-replica deploy still must not run oauth/jti on memory).
+	if redisHA || pgHA {
+		if perPod(b.cfg.OAuth.Backend) {
+			stuck = append(stuck, "oauth.backend (auth_code/refresh/device/par): token exchange FAILS across replicas")
+		}
+		sess := b.cfg.Identity.SessionBackend
+		if sess == "" {
+			sess = b.cfg.Identity.Backend
+		}
+		if perPod(sess) {
+			stuck = append(stuck, "identity.session_backend: sessions are per-pod")
+		}
+		if perPod(b.cfg.Security.JTIReplay.Backend) {
+			stuck = append(stuck, "security.jti_replay.backend: replay defense is per-pod")
+		}
+		if b.cfg.CIBA.Enabled && perPod(b.cfg.CIBA.Backend) {
+			stuck = append(stuck, "ciba.backend: CIBA poll/ping FAILS across replicas")
+		}
+	}
+	if pgHA && perPod(b.cfg.Identity.Backend) {
+		stuck = append(stuck, "identity.backend (clients/users): durable records are per-pod, lost on restart")
+	}
+	if len(stuck) == 0 {
+		return
+	}
+	// Error level (not Info) so this is impossible to miss: the Info-level
+	// "single-replica only" per-store logs already exist and were demonstrably
+	// too quiet. Boot continues — single-replica/hybrid are valid.
+	b.logger.Error("HA INCOHERENCE: a redis/postgres cluster is configured but core stores still default to per-pod memory — behind a multi-replica load balancer this breaks correctness; select the per-store backends (see ops/deploy/k8s-prod/config.yaml)",
+		"per_pod_stores", stuck)
 }
 
 // wireFoundation runs the kernel sub-builders (identity/signing, audit,
