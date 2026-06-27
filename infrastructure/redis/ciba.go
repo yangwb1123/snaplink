@@ -161,26 +161,32 @@ func (s *CIBAStore) SetStatus(ctx context.Context, authReqID string, status oaut
 	}
 }
 
+// updateLastPollScript atomically sets ONLY the LastPoll field of the canonical
+// record in one server-side op (mirrors setStatusScript's cjson round-trip).
+// Returns 0 if the key is absent (expired/unknown -> no-op), 1 on update.
+var updateLastPollScript = goredis.NewScript(`
+local blob = redis.call('GET', KEYS[1])
+if not blob then
+  return 0
+end
+local rec = cjson.decode(blob)
+rec['LastPoll'] = ARGV[1]
+redis.call('SET', KEYS[1], cjson.encode(rec), 'KEEPTTL')
+return 1
+`)
+
 // UpdateLastPoll records the most recent poll for slow_down enforcement,
-// preserving the record's remaining TTL. Read-modify-write without a lock
-// is safe here: a poll-mode client polls in its own serial loop, so there
-// is no contending writer for the last_poll field (a lost update would at
-// worst drop one slow_down timestamp). Missing / expired → no-op (the
-// poll path's Get already surfaced not-found to the caller).
+// preserving the record's remaining TTL. It MUST be atomic: the device-approval
+// callback flips Status on the SAME record via the atomic setStatusScript, and a
+// non-atomic Get->mutate->Set here would clobber a concurrent SetStatus(approved)
+// back to pending — silently losing the auth decision so the grant never
+// completes (the out-of-band approval already returned success while the client
+// keeps getting authorization_pending until expiry). So mutate only LastPoll
+// server-side in one indivisible Lua op. Missing / expired -> no-op success. The
+// time string round-trips Go's RFC3339Nano time.Time encoding through cjson,
+// exactly as setStatusScript already round-trips the whole record.
 func (s *CIBAStore) UpdateLastPoll(ctx context.Context, authReqID string, t time.Time) error {
-	req, err := s.Get(ctx, authReqID)
-	if errors.Is(err, oauth.ErrCIBARequestNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	req.LastPoll = t
-	blob, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("redis: marshal ciba_request: %w", err)
-	}
-	if err := s.rdb.Set(ctx, cibaKey(authReqID), blob, goredis.KeepTTL).Err(); err != nil {
+	if err := updateLastPollScript.Run(ctx, s.rdb, []string{cibaKey(authReqID)}, t.Format(time.RFC3339Nano)).Err(); err != nil {
 		return fmt.Errorf("redis: update ciba_request last_poll: %w", err)
 	}
 	return nil

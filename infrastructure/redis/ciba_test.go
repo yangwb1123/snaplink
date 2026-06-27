@@ -30,6 +30,50 @@ func newCIBARequest(ttl time.Duration) *oauth.CIBARequest {
 	}
 }
 
+// TestCIBAStore_UpdateLastPollPreservesConcurrentApproval is the regression
+// guard for the silent-approval-loss bug: the device callback's SetStatus
+// (atomic) and the client poll loop's UpdateLastPoll race on the SAME record.
+// A non-atomic Get->mutate->Set in UpdateLastPoll can read the still-pending
+// record, then write it back AFTER SetStatus flipped it to approved — reverting
+// the approval so the grant never completes. The atomic single-key Lua mutates
+// ONLY LastPoll and must therefore never clobber Status. Sequential ordering
+// would NOT catch the bug (the old RMW's Get sees the approved status), so the
+// writers run concurrently.
+func TestCIBAStore_UpdateLastPollPreservesConcurrentApproval(t *testing.T) {
+	_, rdb := newTestClient(t)
+	ctx := context.Background()
+	s := NewCIBAStore(rdb)
+
+	id, err := s.Issue(ctx, newCIBARequest(time.Minute))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	pollDone := make(chan struct{})
+	go func() {
+		defer close(pollDone)
+		for i := 0; i < 500; i++ {
+			_ = s.UpdateLastPoll(ctx, id, time.Now())
+		}
+	}()
+	// Approve mid-stream while the poll loop is hammering UpdateLastPoll.
+	if err := s.SetStatus(ctx, id, oauth.CIBAApproved); err != nil {
+		t.Fatalf("SetStatus(approved): %v", err)
+	}
+	<-pollDone
+
+	got, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != oauth.CIBAApproved {
+		t.Fatalf("approval clobbered: status = %q, want approved", got.Status)
+	}
+	if got.LastPoll.IsZero() {
+		t.Errorf("LastPoll was never recorded")
+	}
+}
+
 func TestCIBAStore_IssuePendingPoll(t *testing.T) {
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
