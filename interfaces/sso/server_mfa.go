@@ -278,13 +278,16 @@ func (s *Server) verifyMFAFactor(ctx HandlerContext, req mfaCompleteRequest) (*s
 	return challenge, true
 }
 
-// mfaLockoutKey namespaces the per-subject MFA brute-force counter so it never
-// collides with the password-leg lockout. Empty subject -> unkeyable (skip).
+// mfaLockoutKey namespaces the per-subject MFA brute-force counter so it can
+// NEVER collide with the password-leg lockout key (which is clientID + ":" +
+// identity). The space in the prefix guarantees disjointness: an RFC 6749
+// client_id cannot contain a space (charset %x21 / %x23-5B / %x5D-7E), so no
+// password key can ever equal "mfa lockout:<x>". Empty subject -> unkeyable.
 func mfaLockoutKey(subjectID string) string {
 	if subjectID == "" {
 		return ""
 	}
-	return "mfa:" + subjectID
+	return "mfa lockout:" + subjectID
 }
 
 // resumeLoginAfterMFA decodes the frozen pre-step-up state, folds the verified

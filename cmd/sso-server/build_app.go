@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -96,6 +97,10 @@ type appBuilder struct {
 	// inheritable state a re-registered account would otherwise pick up.
 	consentStore   sso.ConsentStore
 	mfaEnrollStore sso.MFAEnrollmentStore
+	// accountEraser is the self-service /me/account/erase eraser, retained so
+	// finalize can late-bind Consent + MFAEnrollments AFTER their stores wire
+	// (it's constructed in wireDomains, before those stores exist).
+	accountEraser *compliance.Eraser
 
 	// Region.
 	regionResolver region.Resolver
@@ -139,6 +144,15 @@ func (b *appBuilder) finalize() (*app, error) {
 	}
 	if err := b.wireFinalOptions(); err != nil {
 		return nil, err
+	}
+	// Late-bind the self-service eraser's consent + MFA stores: they wire in
+	// wireFinalOptions, AFTER wireDomains constructed the eraser (build order), so
+	// the eraser captured them nil. The SDK holds it by pointer and reads these at
+	// erase time, so setting them now makes self-erasure clear consent + MFA
+	// enrollments too — matching the admin erase path.
+	if b.accountEraser != nil {
+		b.accountEraser.Consent = b.consentStore
+		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
 	}
 	srv = sso.NewServer(b.opts...)
 

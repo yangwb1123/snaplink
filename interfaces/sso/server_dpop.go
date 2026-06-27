@@ -62,13 +62,6 @@ func verifyDPoPProof(
 	return &DPoPBinding{JKT: jkt}, nil
 }
 
-// checkDPoPAth enforces RFC 9449 §4.3 + §7.1: at a protected resource the proof
-// MUST carry ath = base64url(SHA-256(access_token)) and the RS MUST verify it
-// equals the hash of the PRESENTED token, binding the proof to the specific
-// token so a captured proof can't be replayed with a DIFFERENT token of the same
-// key. accessToken=="" is the /token issuance path (no token exists yet) — ath
-// is neither present nor checked. Always SHA-256 per spec (independent of the
-// proof's signing alg); constant-time compare.
 // parseDPoPProofHeader decodes the first JWS segment, enforces the DPoP
 // proof `typ`, and parses the embedded ephemeral `jwk` into a core.JWK.
 //

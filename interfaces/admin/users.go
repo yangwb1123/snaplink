@@ -216,14 +216,18 @@ func HandleAdminClearAccountLockout(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	// Build the same key the login path uses (security.LockoutKey →
-	// "<client_id>:<identifier>"). The field name is immaterial — the key format
-	// is identical regardless of which credential field locked the account.
-	key := security.LockoutKey(req.ClientID, map[string]string{"username": req.Identifier})
-	if err := d.AccountLockout().RegisterSuccess(ctx.Request().Context(), key); err != nil {
-		d.Logger().Error("admin clear lockout failed", "client_id", req.ClientID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
+	// Clear BOTH the raw key and the email-normalized (lower+trim) key. The email
+	// authenticator keys its lockout on the NORMALIZED address (core.LockoutKeyer),
+	// so a helpdesk supplying the on-file mixed-case address must still hit the
+	// live lock; username/phone locks use the raw identifier. The redundant clear
+	// is an idempotent no-op when the two keys coincide (already-lowercase input).
+	for _, id := range []string{req.Identifier, strings.ToLower(strings.TrimSpace(req.Identifier))} {
+		key := security.LockoutKey(req.ClientID, map[string]string{"username": id})
+		if err := d.AccountLockout().RegisterSuccess(ctx.Request().Context(), key); err != nil {
+			d.Logger().Error("admin clear lockout failed", "client_id", req.ClientID, "error", err)
+			ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+			return
+		}
 	}
 	recordAdminUserAction(d, ctx, audit.EventAdminAccountUnlocked, req.Identifier, core.KeyClientID, req.ClientID)
 	ctx.JSON(http.StatusNoContent, nil)

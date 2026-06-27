@@ -169,7 +169,10 @@ func (b *appBuilder) wireOAuthGrantStores() error {
 		if idx, ok := b.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
 			refreshIdx = idx
 		}
-		b.opts = append(b.opts, selfServiceAccountEraseOption(b.userProvider, b.sessionMgr, refreshIdx, b.clientStore, b.consentStore, b.mfaEnrollStore))
+		// Consent + MFAEnrollments are late-bound in finalize (their stores wire
+		// after this runs); retain the eraser pointer so that binding lands.
+		b.accountEraser = newSelfServiceEraser(b.userProvider, b.sessionMgr, refreshIdx, b.clientStore)
+		b.opts = append(b.opts, sso.WithSelfServiceAccountErasure(b.accountEraser))
 		b.logger.Info("self-service account erasure enabled (/me/account/erase)")
 	}
 	if err := b.wireDeviceCodePAR(); err != nil {

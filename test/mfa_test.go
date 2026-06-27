@@ -609,7 +609,7 @@ func TestMFA_SecondFactorLockout(t *testing.T) {
 	if status != http.StatusBadRequest || mbody["error"] != sso.ErrMFAInvalid {
 		t.Errorf("locked subject + correct code: status=%d body=%v, want 400 mfa_invalid (brute-force not throttled)", status, mbody)
 	}
-	if lock.failures["mfa:alice"] < 3 {
-		t.Errorf("MFA failures not registered on the namespaced key: mfa:alice=%d", lock.failures["mfa:alice"])
+	if lock.failures["mfa lockout:alice"] < 3 {
+		t.Errorf("MFA failures not registered on the namespaced key: %d", lock.failures["mfa lockout:alice"])
 	}
 }

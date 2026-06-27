@@ -24,11 +24,13 @@ func selfServiceDataExportOption(users core.UserProvider, sessions core.SessionM
 // selfServiceAccountEraseOption wires POST /me/account/erase (GDPR Art. 17
 // self-service) with a COMPLETE eraser (incl. refresh-token revocation across
 // clients) so a self-deletion also cuts off the user's tokens.
-func selfServiceAccountEraseOption(users core.UserProvider, sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore, consent core.ConsentStore, mfa core.MFAEnrollmentStore) sso.Option {
-	return sso.WithSelfServiceAccountErasure(&compliance.Eraser{
+// newSelfServiceEraser builds the /me/account/erase eraser. Consent +
+// MFAEnrollments are NOT set here — those stores wire later (build ordering), so
+// the caller retains this pointer and finalize late-binds them before serving.
+func newSelfServiceEraser(users core.UserProvider, sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore) *compliance.Eraser {
+	return &compliance.Eraser{
 		Users: users, Sessions: sessions, Refresh: refresh, Clients: clients,
-		Consent: consent, MFAEnrollments: mfa,
-	})
+	}
 }
 
 // Compliance route prefixes. Mounted on the SSO router (so they share its
