@@ -83,7 +83,7 @@ func validTOTPCode(t *testing.T, secret []byte) string {
 //
 // Returns the running httptest server, the audit sink for assertions,
 // and the shared TOTP secret so callers can mint valid codes.
-func buildMFAHarness(t *testing.T) (*httptest.Server, *audit.MemorySink, []byte) {
+func buildMFAHarness(t *testing.T, extra ...sso.Option) (*httptest.Server, *audit.MemorySink, []byte) {
 	t.Helper()
 
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("mfa-test"))
@@ -120,7 +120,7 @@ func buildMFAHarness(t *testing.T) (*httptest.Server, *audit.MemorySink, []byte)
 
 	scorer := newStubScorer(spi.DecisionRequireMFA)
 
-	srv := sso.NewServer(
+	opts := []sso.Option{
 		sso.WithIssuer("mfa-test"),
 		sso.WithUserProvider(users),
 		sso.WithClientStore(clients),
@@ -133,7 +133,8 @@ func buildMFAHarness(t *testing.T) (*httptest.Server, *audit.MemorySink, []byte)
 		sso.WithRiskScorer(scorer),
 		sso.WithMFAProvider(mfaProvider),
 		sso.WithMFAChallengeStore(mfaChallengeStore, 0),
-	)
+	}
+	srv := sso.NewServer(append(opts, extra...)...)
 	httpSrv := httptest.NewServer(srv.Handler())
 	t.Cleanup(httpSrv.Close)
 	return httpSrv, sink, secret
@@ -545,4 +546,70 @@ func eventNames(events []*audit.Event) []audit.EventType {
 		out[i] = e.Type
 	}
 	return out
+}
+
+// countingLockout is a minimal security.AccountLockout for tests: it locks a key
+// once its failure count reaches threshold. Single-threaded test use (no mutex).
+type countingLockout struct {
+	failures  map[string]int
+	threshold int
+}
+
+func (c *countingLockout) IsLocked(_ context.Context, key string) (bool, time.Time, error) {
+	if c.failures[key] >= c.threshold {
+		return true, time.Now().Add(time.Hour), nil
+	}
+	return false, time.Time{}, nil
+}
+
+func (c *countingLockout) RegisterFailure(_ context.Context, key string) (bool, time.Time, error) {
+	c.failures[key]++
+	if c.failures[key] >= c.threshold {
+		return true, time.Now().Add(time.Hour), nil
+	}
+	return false, time.Time{}, nil
+}
+
+func (c *countingLockout) RegisterSuccess(_ context.Context, key string) error {
+	delete(c.failures, key)
+	return nil
+}
+
+// TestMFA_SecondFactorLockout guards that the MFA second factor is throttled:
+// without it, an attacker who knows the password could brute-force a 6-digit OTP
+// by minting a fresh single-use challenge per guess. After the threshold of
+// wrong codes the subject is locked, and even a CORRECT code is rejected.
+func TestMFA_SecondFactorLockout(t *testing.T) {
+	lock := &countingLockout{failures: map[string]int{}, threshold: 3}
+	srv, _, secret := buildMFAHarness(t, sso.WithAccountLockout(lock))
+
+	valid := validTOTPCode(t, secret)
+	wrong := "000000"
+	if wrong == valid {
+		wrong = "111111"
+	}
+
+	// Each guess needs a fresh challenge (single-use), so re-login each time.
+	for i := 0; i < 3; i++ {
+		_, body := loginMFA(t, srv)
+		chal, _ := body["mfa_challenge_id"].(string)
+		if chal == "" {
+			t.Fatalf("attempt %d: no challenge: %v", i, body)
+		}
+		status, mbody := completeMFA(t, srv, chal, authenticators.MethodTOTP, wrong)
+		if status != http.StatusBadRequest || mbody["error"] != sso.ErrMFAInvalid {
+			t.Fatalf("attempt %d: status=%d body=%v, want 400 mfa_invalid", i, status, mbody)
+		}
+	}
+
+	// Locked now (3 failures on mfa:alice). A CORRECT code MUST still be rejected.
+	_, body := loginMFA(t, srv)
+	chal, _ := body["mfa_challenge_id"].(string)
+	status, mbody := completeMFA(t, srv, chal, authenticators.MethodTOTP, validTOTPCode(t, secret))
+	if status != http.StatusBadRequest || mbody["error"] != sso.ErrMFAInvalid {
+		t.Errorf("locked subject + correct code: status=%d body=%v, want 400 mfa_invalid (brute-force not throttled)", status, mbody)
+	}
+	if lock.failures["mfa:alice"] < 3 {
+		t.Errorf("MFA failures not registered on the namespaced key: mfa:alice=%d", lock.failures["mfa:alice"])
+	}
 }

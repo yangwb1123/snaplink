@@ -242,19 +242,49 @@ func (s *Server) verifyMFAFactor(ctx HandlerContext, req mfaCompleteRequest) (*s
 		return nil, false
 	}
 
+	// Per-subject MFA brute-force lockout. The first leg (password) already
+	// verified, so without throttling the SECOND factor an attacker who knows the
+	// password could brute-force a 6-digit OTP unthrottled by minting a fresh
+	// single-use challenge per guess. Keyed in a namespace DISTINCT from the
+	// password lockout so the two don't cross-trip. A locked subject collapses to
+	// the SAME mfa_invalid (no lockout oracle; detail only in the audit).
+	mfaKey := mfaLockoutKey(challenge.SubjectID)
+	if s.accountLockout != nil && mfaKey != "" {
+		if locked, _, _ := s.accountLockout.IsLocked(ctx.Request().Context(), mfaKey); locked {
+			s.recordMFAFailure(ctx, challenge.SubjectID, req.ChallengeID, req.Method, "mfa_locked")
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+			return nil, false
+		}
+	}
+
 	// Flat -> Params normalization. The dispatch into spi.MFAProvider is opaque —
 	// only the "totp" / "webauthn" contract is known here; richer providers get
 	// whatever Params the caller supplies plus the flat code/assertion convenience.
 	params := collectMFAParams(req.Params, req.Code, req.Assertion)
 
 	if err := s.mfaProvider.Verify(ctx.Request().Context(), challenge.SubjectID, req.Method, params); err != nil {
+		if s.accountLockout != nil && mfaKey != "" {
+			_, _, _ = s.accountLockout.RegisterFailure(ctx.Request().Context(), mfaKey)
+		}
 		s.recordMFAFailure(ctx, challenge.SubjectID, req.ChallengeID, req.Method, err.Error())
 		s.recordMFACompletion(req.Method, "failure")
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
 		return nil, false
 	}
+	if s.accountLockout != nil && mfaKey != "" {
+		_ = s.accountLockout.RegisterSuccess(ctx.Request().Context(), mfaKey)
+	}
 	s.recordMFACompletion(req.Method, "success")
 	return challenge, true
+}
+
+// mfaLockoutKey namespaces the per-subject MFA brute-force counter so it never
+// collides with the password-leg lockout. Empty subject -> unkeyable (skip).
+func mfaLockoutKey(subjectID string) string {
+	if subjectID == "" {
+		return ""
+	}
+	return "mfa:" + subjectID
 }
 
 // resumeLoginAfterMFA decodes the frozen pre-step-up state, folds the verified
