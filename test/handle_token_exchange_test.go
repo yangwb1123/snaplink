@@ -159,6 +159,84 @@ func TestTokenExchange_ScopeExpansionRejected(t *testing.T) {
 	}
 }
 
+// TestTokenExchange_EmptyScopeDoesNotWidenToAllowlist guards RFC 8693 §2.1: the
+// exchanged token MUST NOT exceed the subject. A genuinely scope-less subject
+// token exchanged by a DIFFERENT client that has an allowlist must yield a
+// scope-less token — it must NOT default to that client's full AllowedScopes
+// (the GrantedScopes rule-4 default), which would escalate the scope-less
+// subject to e.g. accounts:admin bound to the subject's identity.
+//
+// Two clients are required because logging in via the allowlisted client would
+// itself default the subject token's scope to the allowlist at login time.
+func TestTokenExchange_EmptyScopeDoesNotWidenToAllowlist(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: txUserID})
+	clients := defaultimpl.NewMemoryClientStore()
+	// subjClient has NO allowlist -> a no-scope login mints a scope-less token.
+	clients.AddSeed(&sso.Client{
+		ID: "tx-subj", Secret: "subj-secret", Active: true,
+		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt",
+	})
+	// downClient HAS an allowlist and performs the exchange.
+	clients.AddSeed(&sso.Client{
+		ID: "tx-down", Secret: "down-secret", Active: true,
+		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt",
+		AllowedScopes: []string{"payments:write", "accounts:admin"},
+	})
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
+			return &sso.AuthResult{UserID: txUserID, Provider: "password"}, nil
+		},
+	))
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// Scope-less subject token minted by the allowlist-free client.
+	loginBody, _ := json.Marshal(map[string]any{
+		"provider": "password", "client_id": "tx-subj",
+		"credential": map[string]string{"username": "x", "password": "y"},
+	})
+	resp, err := http.Post(httpSrv.URL+"/auth/login", "application/json", strings.NewReader(string(loginBody)))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	var lo map[string]any
+	_ = json.Unmarshal(raw, &lo)
+	subject, _ := lo["access_token"].(string)
+	if subject == "" {
+		t.Fatalf("no subject token: %s", raw)
+	}
+	if sc, _ := lo["scope"].(string); sc != "" {
+		t.Fatalf("precondition: subject token must be scope-less, got scope=%q", sc)
+	}
+
+	status, body := postExchange(t, httpSrv, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {"tx-down"},
+		"client_secret":      {"down-secret"},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		// NO scope param.
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%v", status, body)
+	}
+	if got, _ := body["scope"].(string); got != "" {
+		t.Errorf("exchanged scope = %q, want empty (a scope-less subject must NOT widen to the client allowlist)", got)
+	}
+}
+
 func TestTokenExchange_ResourceAllowlistEnforced(t *testing.T) {
 	srv := newTokenExchangeHarness(t, []string{txAPI})
 	subject := txLogin(t, srv, nil)

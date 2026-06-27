@@ -230,6 +230,24 @@ func tokExResolveTargetsAndScopes(d TokenExchangeDeps, ctx core.HandlerContext, 
 		return true
 	}
 
+	if tokExResolveScope(ctx, client, req, st) {
+		return true
+	}
+
+	strategy, ti, err := d.IssuerForClient(client)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
+		return true
+	}
+	st.strategy = strategy
+	st.ti = ti
+	return false
+}
+
+// tokExResolveScope narrows the exchanged scope to the subject and bounds it by
+// the downstream client's allowlist. Returns true when it has written an error
+// response (invalid_scope) and the caller must stop.
+func tokExResolveScope(ctx core.HandlerContext, client *core.Client, req TokenExchangeRequest, st *tokExState) bool {
 	// Scope narrowing per RFC 8693 §2.1: when `scope` is supplied it MUST be a
 	// subset of the subject_token's scopes; expansion is forbidden. Empty scope =
 	// keep the subject's scopes.
@@ -242,25 +260,26 @@ func tokExResolveTargetsAndScopes(d TokenExchangeDeps, ctx core.HandlerContext, 
 		}
 		scopes = requested
 	}
-	// Additionally bound the exchanged scope to the DOWNSTREAM client's
-	// AllowedScopes (RFC 6749 §3.3) — intersection semantics: the result must be
-	// subset of subject_token scopes (above) AND subset of the requesting
-	// client's allowlist. Empty allowlist = unrestricted (byte-identical to
-	// before).
+	// RFC 8693 §2.1: the exchanged token MUST NOT exceed the subject. When the
+	// resolved scope is EMPTY (a scope-less subject — id_token, SPIFFE JWT-SVID,
+	// or any access token with no scopes — and no narrowing `scope` param), the
+	// result MUST be empty. It must NOT fall through to GrantedScopes' rule-4
+	// "nothing requested -> default to the client's full AllowedScopes", which
+	// would ESCALATE a scope-less subject to the downstream client's entire
+	// entitlement (e.g. accounts:admin) bound to the subject's identity.
+	if len(scopes) == 0 {
+		st.scopes = nil
+		return false
+	}
+	// Non-empty: bound the exchanged scope to the DOWNSTREAM client's
+	// AllowedScopes (RFC 6749 §3.3) — subset of the subject_token scopes (above)
+	// AND of the client's allowlist. Empty allowlist = unrestricted.
 	boundScopes, exScopeErr := oauth.GrantedScopes(scopes, client)
 	if exScopeErr != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
 		return true
 	}
 	st.scopes = boundScopes
-
-	strategy, ti, err := d.IssuerForClient(client)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
-		return true
-	}
-	st.strategy = strategy
-	st.ti = ti
 	return false
 }
 
