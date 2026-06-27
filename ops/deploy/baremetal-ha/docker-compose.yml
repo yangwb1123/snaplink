@@ -1,0 +1,188 @@
+# Full bare-metal HA topology on a single host, for validation / CI / demo.
+# The same config files (haproxy.cfg, patroni.yml, redis-cluster.conf,
+# keepalived/*, sso/config.yaml) drop directly onto real VMs - see RUNBOOK.md
+# for the container->VM mapping. keepalived/VRRP is NOT run here (single-host
+# bridge has no L2 multicast); the VIP failover is a VM-only drill.
+name: ssoha
+
+networks:
+  ssoha:
+    driver: bridge
+
+# ----------------------------------------------------------------------------
+x-etcd: &etcd-base
+  image: quay.io/coreos/etcd:${ETCD_TAG}
+  restart: unless-stopped
+  networks: [ssoha]
+  healthcheck:
+    test: ["CMD", "etcdctl", "endpoint", "health"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+
+services:
+  # --- Coordination: 3-node etcd (Patroni DCS + sso cluster.Bus + signing keys) ---
+  etcd1:
+    <<: *etcd-base
+    command: >
+      etcd --name etcd1 --data-dir /etcd-data
+      --initial-advertise-peer-urls http://etcd1:2380 --listen-peer-urls http://0.0.0.0:2380
+      --advertise-client-urls http://etcd1:2379 --listen-client-urls http://0.0.0.0:2379
+      --initial-cluster etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      --initial-cluster-state new --initial-cluster-token ssoha-etcd
+  etcd2:
+    <<: *etcd-base
+    command: >
+      etcd --name etcd2 --data-dir /etcd-data
+      --initial-advertise-peer-urls http://etcd2:2380 --listen-peer-urls http://0.0.0.0:2380
+      --advertise-client-urls http://etcd2:2379 --listen-client-urls http://0.0.0.0:2379
+      --initial-cluster etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      --initial-cluster-state new --initial-cluster-token ssoha-etcd
+  etcd3:
+    <<: *etcd-base
+    command: >
+      etcd --name etcd3 --data-dir /etcd-data
+      --initial-advertise-peer-urls http://etcd3:2380 --listen-peer-urls http://0.0.0.0:2380
+      --advertise-client-urls http://etcd3:2379 --listen-client-urls http://0.0.0.0:2379
+      --initial-cluster etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      --initial-cluster-state new --initial-cluster-token ssoha-etcd
+
+  # --- Durable tier: Postgres HA via Patroni (sync replication, etcd DCS) ---
+  pg1: &pg
+    image: ghcr.io/zalando/spilo-16:${SPILO_TAG}
+    restart: unless-stopped
+    networks: [ssoha]
+    environment:
+      PATRONI_NAME: pg1
+      PATRONI_SCOPE: sso
+      PATRONI_ETCD3_HOSTS: "etcd1:2379,etcd2:2379,etcd3:2379"
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg1:5432
+      PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      PATRONI_REPLICATION_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      SYNCHRONOUS_MODE: "true"
+    volumes:
+      - ./patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+    depends_on:
+      etcd1: { condition: service_healthy }
+      etcd2: { condition: service_healthy }
+      etcd3: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8008/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  pg2:
+    <<: *pg
+    environment:
+      PATRONI_NAME: pg2
+      PATRONI_SCOPE: sso
+      PATRONI_ETCD3_HOSTS: "etcd1:2379,etcd2:2379,etcd3:2379"
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg2:5432
+      PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      PATRONI_REPLICATION_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      SYNCHRONOUS_MODE: "true"
+  pg3:
+    <<: *pg
+    environment:
+      PATRONI_NAME: pg3
+      PATRONI_SCOPE: sso
+      PATRONI_ETCD3_HOSTS: "etcd1:2379,etcd2:2379,etcd3:2379"
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg3:5432
+      PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      PATRONI_REPLICATION_PASSWORD: ${POSTGRES_SUPER_PASSWORD}
+      SYNCHRONOUS_MODE: "true"
+
+  # --- Hot tier: Redis Cluster (3 master + 3 replica; cluster-aware client) ---
+  redis-1a: &redis
+    image: redis:${REDIS_TAG}
+    restart: unless-stopped
+    networks: [ssoha]
+    command: ["redis-server", "/usr/local/etc/redis/redis-cluster.conf", "--requirepass", "${SSO_REDIS_PASSWORD}", "--masterauth", "${SSO_REDIS_PASSWORD}"]
+    environment:
+      SSO_REDIS_PASSWORD: ${SSO_REDIS_PASSWORD}
+    volumes:
+      - ./redis/redis-cluster.conf:/usr/local/etc/redis/redis-cluster.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$SSO_REDIS_PASSWORD ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis-2a: { <<: *redis }
+  redis-3a: { <<: *redis }
+  redis-1b: { <<: *redis }
+  redis-2b: { <<: *redis }
+  redis-3b: { <<: *redis }
+  redis-init:
+    image: redis:${REDIS_TAG}
+    networks: [ssoha]
+    restart: "no"
+    environment:
+      SSO_REDIS_PASSWORD: ${SSO_REDIS_PASSWORD}
+    entrypoint: ["sh", "/create/cluster-create.sh"]
+    volumes:
+      - ./redis/cluster-create.sh:/create/cluster-create.sh:ro
+    depends_on:
+      redis-1a: { condition: service_healthy }
+      redis-2a: { condition: service_healthy }
+      redis-3a: { condition: service_healthy }
+      redis-1b: { condition: service_healthy }
+      redis-2b: { condition: service_healthy }
+      redis-3b: { condition: service_healthy }
+
+  # --- App tier: stateless sso-server replicas (built from the repo Dockerfile) ---
+  sso1: &sso
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    image: snaplink/sso-server:local
+    restart: unless-stopped
+    networks: [ssoha]
+    command: ["sso-server", "--config", "/etc/sso/config.yaml"]
+    environment:
+      SSO_VIP: ${SSO_VIP}
+      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      SSO_REDIS__PASSWORD: ${SSO_REDIS_PASSWORD}
+    volumes:
+      - ./sso/config.yaml:/etc/sso/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      redis-init: { condition: service_completed_successfully }
+      pg1: { condition: service_healthy }
+  sso2:
+    <<: *sso
+    environment:
+      SSO_VIP: ${SSO_VIP}
+      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      SSO_REDIS__PASSWORD: ${SSO_REDIS_PASSWORD}
+  sso3:
+    <<: *sso
+    environment:
+      SSO_VIP: ${SSO_VIP}
+      SSO_DB_PASSWORD: ${SSO_DB_PASSWORD}
+      SSO_REDIS__PASSWORD: ${SSO_REDIS_PASSWORD}
+
+  # --- Edge: 2x HAProxy (keepalived VIP failover is a VM-only drill) ---
+  haproxy-a: &haproxy
+    image: haproxy:${HAPROXY_TAG}
+    restart: unless-stopped
+    networks: [ssoha]
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports: ["8080:80", "8404:8404", "5432:5432", "5433:5433"]
+    depends_on:
+      sso1: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  haproxy-b:
+    <<: *haproxy
+    ports: ["8081:80", "8405:8404"]

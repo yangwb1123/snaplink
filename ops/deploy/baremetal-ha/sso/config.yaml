@@ -1,0 +1,99 @@
+# sso-server config for the bare-metal HA topology. Realizes the whole
+# deployment through existing config keys only - no application code change.
+# Secrets (redis/db/etcd passwords) arrive via env overrides
+# (SSO_REDIS__PASSWORD, SSO_DB_PASSWORD interpolated into the DSN), never here.
+#
+# CRITICAL HA RULE: declaring the redis/postgres/etcd BLOCKS is not enough — every
+# stateful concern must also SELECT a shared backend below. An unset backend
+# defaults to per-pod MEMORY, which boots clean with a green /readyz while
+# serving from state no other replica can see: behind the round-robin edge an
+# auth code minted on sso1 is unknown when /token lands on sso2 (~2/3 of logins
+# fail invalid_grant), and refresh-family-reuse / jti-replay / lockout defenses
+# silently become per-pod. So the hot path is on redis, the durable
+# system-of-record on postgres, coordination on etcd.
+server:
+  addr: ":8080"
+  # Trust the first proxy hop ONLY behind the HAProxy edge that strips and
+  # re-sets X-Forwarded-*. Without a trusted edge, client-supplied XFF could
+  # spoof geo / ratelimit IP keying / base-URL (AGENTS.md section 3).
+  trusted_proxies: ["10.0.0.0/8", "172.16.0.0/12"]
+
+# ---- HOT / EPHEMERAL tier: one shared Redis Cluster, fanned out to every hot store ----
+redis:
+  mode: cluster
+  addrs:
+    - redis-1a:6379
+    - redis-2a:6379
+    - redis-3a:6379
+    - redis-1b:6379
+    - redis-2b:6379
+    - redis-3b:6379
+  # route_by_latency / route_randomly / read_only intentionally omitted:
+  # single-use and replay reads (auth code, refresh, jti) stay master-pinned so
+  # replica lag cannot let a replay momentarily evade detection.
+  pool_size: 50
+  min_idle_conns: 5
+  tls:
+    enabled: false   # set true + ca_file in production; see RUNBOOK hardening
+
+# Hot/ephemeral stores -> the Redis Cluster (cluster-shared, not per-pod memory).
+oauth: { backend: redis }              # auth_code / refresh / device_code / par
+ciba: { backend: redis }
+mfa:
+  challenge: { backend: redis }
+security:
+  jti_replay: { backend: redis }
+  rate_limit:
+    backend: redis                     # shared buckets (per-pod memory = N x the limit)
+    default_per_sec: 50
+    default_burst: 100
+  # account_lockout is opt-in; when enabled it MUST be redis in HA so the
+  # failed-login counter is shared (per-pod = attacker gets max_failures x N).
+  account_lockout: { backend: redis }
+
+# ---- DURABLE tier: Postgres HA (Patroni leader via the VIP:5432) ----
+postgres:
+  # host points at the VIP:5432 (HAProxy -> current Patroni leader); the extra
+  # hosts + target_session_attrs=read-write are a fallback that lets pgx find the
+  # writable primary directly if HAProxy is mid-failover.
+  dsn: "host=${SSO_VIP},pg1,pg2,pg3 port=5432 user=sso password=${SSO_DB_PASSWORD} dbname=sso sslmode=prefer target_session_attrs=read-write"
+  dialect: postgres
+  max_open_conns: 20
+  max_idle_conns: 5
+
+identity:
+  backend: postgres                    # clients + users (durable system-of-record)
+  session_backend: redis               # sessions are HOT — keep them on the cluster
+permissions: { enabled: true, backend: postgres }
+tenant: { enabled: true, backend: postgres }
+audit: { enabled: true, backend: postgres, hash_chain: true }
+self_service:
+  consent: { backend: postgres }
+  password: { backend: postgres }
+  # password_reset is opt-in; when enabled it MUST be cluster-shared (the
+  # issue/redeem flow is two requests that can land on different replicas).
+  password_reset: { backend: redis }
+native_sso: { backend: postgres }      # device_secrets
+
+# ---- COORDINATION tier: etcd ----
+cluster:
+  bus:
+    backend: etcd
+    etcd_endpoints: [etcd1:2379, etcd2:2379, etcd3:2379]
+    etcd_prefix: /sso/bus
+  cross_replica_revocation: true       # FAILS BOOT without a live bus (intentional)
+
+keys:
+  signing_key_registry:
+    backend: etcd                      # leaderless JWKS aggregation across replicas
+    etcd_endpoints: [etcd1:2379, etcd2:2379, etcd3:2379]
+    etcd_prefix: /sso/signing-keys
+
+# ---- Other opt-in concerns: set the cluster-shared backend WHEN you enable them.
+# Each defaults to per-pod memory if unset, which breaks under a multi-replica LB:
+#   authenticators.totp.backend: postgres        # TOTP enrollment secret (durable)
+#   backchannel_logout.index.backend: redis      # BCL subject->client fan-out index
+#   oauth.refresh_token.rotation_grace_backend: redis  # double-submit grace (avoids logout storm)
+#   server.pairwise_subjects.backend: postgres   # if pairwise subjects are enabled
+#   webauthn.storage.users.backend: postgres     # passkey credentials (durable)
+#   webauthn.storage.sessions.backend: redis     # passkey ceremony challenge (hot)

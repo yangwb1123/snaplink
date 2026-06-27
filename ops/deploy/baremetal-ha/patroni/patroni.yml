@@ -1,0 +1,48 @@
+# Patroni cluster config (template). The Spilo image injects the per-node
+# name + connect addresses via PATRONI_* env (see docker-compose.yml); this file
+# carries the cluster-wide policy: etcd DCS, synchronous replication, and the
+# Postgres parameters. A committed write must never be lost on a leader change,
+# so synchronous_mode is on with at least one synchronous standby.
+scope: sso
+namespace: /sso/patroni/
+
+restapi:
+  listen: 0.0.0.0:8008
+
+etcd3:
+  hosts: etcd1:2379,etcd2:2379,etcd3:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        max_connections: 200
+        wal_level: replica
+        hot_standby: "on"
+        synchronous_commit: "on"
+        wal_log_hints: "on"
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - host replication replicator 0.0.0.0/0 md5
+    - host all all 0.0.0.0/0 md5
+
+postgresql:
+  listen: 0.0.0.0:5432
+  authentication:
+    superuser:
+      username: postgres
+    replication:
+      username: replicator
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false

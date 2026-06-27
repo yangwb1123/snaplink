@@ -81,3 +81,13 @@ keys:
   signing_key_registry:
     backend: etcd # leaderless JWKS aggregation across replicas
     etcd_endpoints: [etcd-0:2379, etcd-1:2379, etcd-2:2379]
+
+# ---- Other opt-in concerns: select a cluster-shared backend WHEN enabled (each
+# defaults to per-pod memory if unset, which breaks under a multi-replica LB):
+#   security.account_lockout.backend: redis           # shared failed-login counter
+#   self_service.password_reset.backend: redis        # issue/redeem split across replicas
+#   authenticators.totp.backend: postgres             # TOTP enrollment secret (durable)
+#   backchannel_logout.index.backend: redis           # BCL subject->client fan-out index
+#   oauth.refresh_token.rotation_grace_backend: redis # double-submit grace (avoids logout storm)
+#   webauthn.storage.users.backend: postgres          # passkey credentials (durable)
+#   webauthn.storage.sessions.backend: redis          # passkey ceremony challenge (hot)
