@@ -14,18 +14,30 @@ func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode
 // generateUserCodeBytes delegates to oauth.GenerateUserCode.
 func generateUserCodeBytes() (string, error) { return oauth.GenerateUserCode() }
 
+// deviceCodePrereqs verifies the device-code subsystem is wired (a device-code
+// store + the client store). Returns false after writing the wire error when
+// either is missing.
+func (s *Server) deviceCodePrereqs(ctx HandlerContext) bool {
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		return false
+	}
+	if err := s.requireDeps(DepClientStore); err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		return false
+	}
+	return true
+}
+
 // handleDeviceCode is the device-initiated endpoint of RFC 8628.
 // The device POSTs its client_id (+ optional scope), the server
 // returns device_code + user_code + verification_uri + interval +
 // expires_in. The device then displays user_code + verification_uri
 // to the user and starts polling /token.
 func (s *Server) handleDeviceCode(ctx HandlerContext) {
-	if s.deviceCodeStore == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
-		return
-	}
-	if err := s.requireDeps(DepClientStore); err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+	// RFC 8628 device_code/user_code credentials — non-cacheable on every path.
+	tokenNoStoreHeaders(ctx)
+	if !s.deviceCodePrereqs(ctx) {
 		return
 	}
 

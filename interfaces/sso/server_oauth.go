@@ -118,6 +118,9 @@ func (s *Server) providersForClient(ctx HandlerContext, clientID string) []strin
 
 // handleCallback handles the OAuth callback. This remains in root as it's a Server HTTP handler.
 func (s *Server) handleCallback(ctx HandlerContext) {
+	// The callback success response returns a session_id credential; mark it
+	// non-cacheable (a GET is otherwise cacheable by intermediaries).
+	tokenNoStoreHeaders(ctx)
 	code := ctx.Query("code")
 	state := ctx.Query("state")
 	provider := ctx.Query("provider")
