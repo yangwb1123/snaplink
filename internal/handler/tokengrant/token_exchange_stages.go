@@ -327,7 +327,12 @@ func tokExResolveSubjectAndIssue(d TokenExchangeDeps, ctx core.HandlerContext, c
 	}
 	st.token = token
 	d.RecordTokenIssued(ctx, client.ID, st.strategy, st.claims.Subject)
-	d.RecordSubjectClientAccess(ctx.Request().Context(), st.claims.Subject, client.ID)
+	// Index by the LOCAL id, not the (possibly pairwise) inbound subject_token
+	// sub. The subject_client_index is local-keyed at every other write site and
+	// at every back-channel/front-channel logout read site, so recording a
+	// pairwise-origin client under its foreign pseudonym here would silently omit
+	// the exchanged RP from the logout fan-out (its session never torn down).
+	d.RecordSubjectClientAccess(ctx.Request().Context(), localSub, client.ID)
 	return false
 }
 
