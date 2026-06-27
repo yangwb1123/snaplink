@@ -194,27 +194,24 @@ func (s *AuditSink) RecordBatch(ctx context.Context, events []*audit.Event) erro
 	if len(events) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
+	// Append-only inserts: default isolation is correct (no read-modify-write,
+	// so no lost-update risk), but the batch still needs the 40001 retry on a
+	// CockroachDB cluster under contention. Re-running is idempotent — each
+	// event's ID/Timestamp is stamped once and reused unchanged on a retry.
+	return runTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+		for _, e := range events {
+			if e.ID == "" {
+				e.ID = newAuditEventID()
+			}
+			if e.Timestamp.IsZero() {
+				e.Timestamp = time.Now()
+			}
+			if err := insertAuditEvent(ctx, tx, e); err != nil {
+				return err
+			}
 		}
-	}()
-	for _, e := range events {
-		if e.ID == "" {
-			e.ID = newAuditEventID()
-		}
-		if e.Timestamp.IsZero() {
-			e.Timestamp = time.Now()
-		}
-		if err = insertAuditEvent(ctx, tx, e); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 // Prune deletes events older than olderThan, returning rows removed. Same

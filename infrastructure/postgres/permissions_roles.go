@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -65,39 +66,32 @@ func (p *PermissionProvider) UpdateRole(ctx context.Context, clientID string, ro
 // stays identical to the SQLite peer). Wrapped in a transaction so concurrent
 // readers never see a partial state.
 func (p *PermissionProvider) RemoveRole(ctx context.Context, clientID, roleCode string) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("postgres: begin remove role: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	res, err := tx.ExecContext(ctx, `
+	// SERIALIZABLE + 40001 retry (runTx): the delete-then-strip below reads and
+	// rewrites every affected assignment row, a read-modify-write that would
+	// race a concurrent grant under plain Postgres READ COMMITTED and 500 under
+	// CockroachDB without the retry.
+	return runTx(ctx, p.db, serializable, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
         DELETE FROM permissions_roles WHERE client_id = $1 AND role_code = $2`,
-		clientID, roleCode,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres: delete role: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("postgres: delete role rowsaffected: %w", err)
-	}
-	if n == 0 {
-		return permissions.ErrRoleNotFound
-	}
+			clientID, roleCode,
+		)
+		if err != nil {
+			return fmt.Errorf("postgres: delete role: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("postgres: delete role rowsaffected: %w", err)
+		}
+		if n == 0 {
+			return permissions.ErrRoleNotFound
+		}
 
-	updates, err := collectRoleStrips(ctx, tx, clientID, roleCode)
-	if err != nil {
-		return err
-	}
-	if err := applyRoleStrips(ctx, tx, clientID, updates); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("postgres: commit remove role: %w", err)
-	}
-	return nil
+		updates, err := collectRoleStrips(ctx, tx, clientID, roleCode)
+		if err != nil {
+			return err
+		}
+		return applyRoleStrips(ctx, tx, clientID, updates)
+	})
 }
 
 // ListAllRoles returns every role under clientID.

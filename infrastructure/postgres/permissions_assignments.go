@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/snaplink/sso/domains/permissions"
 )
@@ -41,94 +42,89 @@ func (p *PermissionProvider) UnassignRoles(ctx context.Context, userID, clientID
 	if len(roles) == 0 {
 		return nil
 	}
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("postgres: begin unassign: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var current string
-	row := tx.QueryRowContext(ctx, `
+	// SERIALIZABLE + 40001 retry: the load-filter-store below is a
+	// read-modify-write that would lose a concurrent grant under plain
+	// Postgres READ COMMITTED and 500 under CockroachDB. See runTx.
+	return runTx(ctx, p.db, serializable, func(tx *sql.Tx) error {
+		var current string
+		row := tx.QueryRowContext(ctx, `
         SELECT roles_json FROM permissions_assignments
         WHERE user_id = $1 AND client_id = $2`,
-		userID, clientID,
-	)
-	if err := row.Scan(&current); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+			userID, clientID,
+		)
+		if err := row.Scan(&current); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return fmt.Errorf("postgres: load assignment: %w", err)
 		}
-		return fmt.Errorf("postgres: load assignment: %w", err)
-	}
-	var have []string
-	if current != "" {
-		if err := json.Unmarshal([]byte(current), &have); err != nil {
-			return fmt.Errorf("postgres: unmarshal assignment: %w", err)
+		var have []string
+		if current != "" {
+			if err := json.Unmarshal([]byte(current), &have); err != nil {
+				return fmt.Errorf("postgres: unmarshal assignment: %w", err)
+			}
 		}
-	}
-	filtered := stripRoleCodes(have, roles)
-	if len(filtered) == len(have) {
-		// No change — skip the write to avoid the transaction commit overhead.
-		return tx.Commit()
-	}
-	raw, err := json.Marshal(filtered)
-	if err != nil {
-		return fmt.Errorf("postgres: marshal filtered assignment: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
+		filtered := stripRoleCodes(have, roles)
+		if len(filtered) == len(have) {
+			return nil // no change
+		}
+		raw, err := json.Marshal(filtered)
+		if err != nil {
+			return fmt.Errorf("postgres: marshal filtered assignment: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
         UPDATE permissions_assignments SET roles_json = $1
         WHERE user_id = $2 AND client_id = $3`,
-		string(raw), userID, clientID,
-	); err != nil {
-		return fmt.Errorf("postgres: store filtered assignment: %w", err)
-	}
-	return tx.Commit()
+			string(raw), userID, clientID,
+		); err != nil {
+			return fmt.Errorf("postgres: store filtered assignment: %w", err)
+		}
+		return nil
+	})
 }
 
 // AddRoleToUser grants roleCode to userID under clientID without disturbing the
 // user's other roles. Idempotent: re-adding an already-held role is a no-op.
 // Implements [permissions.GroupMembershipWriter] (SCIM Group add-member). The
-// load-append-store runs inside one transaction so a concurrent membership
-// write can't lose this grant.
+// load-append-store runs at SERIALIZABLE with a 40001 retry (runTx) so a
+// concurrent membership write can't lose this grant: under plain Postgres
+// READ COMMITTED the bare SELECT-then-upsert would let two grants overwrite each
+// other, and under CockroachDB an un-retried serialization abort would 500.
 func (p *PermissionProvider) AddRoleToUser(ctx context.Context, userID, clientID, roleCode string) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("postgres: begin add role to user: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	var current string
-	row := tx.QueryRowContext(ctx, `
+	return runTx(ctx, p.db, serializable, func(tx *sql.Tx) error {
+		var current string
+		row := tx.QueryRowContext(ctx, `
         SELECT roles_json FROM permissions_assignments
         WHERE user_id = $1 AND client_id = $2`,
-		userID, clientID,
-	)
-	if err := row.Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("postgres: load assignment: %w", err)
-	}
-	var have []string
-	if current != "" {
-		if err := json.Unmarshal([]byte(current), &have); err != nil {
-			return fmt.Errorf("postgres: unmarshal assignment: %w", err)
+			userID, clientID,
+		)
+		if err := row.Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("postgres: load assignment: %w", err)
 		}
-	}
-	for _, r := range have {
-		if r == roleCode {
-			// Already a member — no write, just close the txn cleanly.
-			return tx.Commit()
+		var have []string
+		if current != "" {
+			if err := json.Unmarshal([]byte(current), &have); err != nil {
+				return fmt.Errorf("postgres: unmarshal assignment: %w", err)
+			}
 		}
-	}
-	have = append(have, roleCode)
-	raw, err := json.Marshal(have)
-	if err != nil {
-		return fmt.Errorf("postgres: marshal assignment: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
+		if slices.Contains(have, roleCode) {
+			return nil // already a member
+		}
+		have = append(have, roleCode)
+		raw, err := json.Marshal(have)
+		if err != nil {
+			return fmt.Errorf("postgres: marshal assignment: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
         INSERT INTO permissions_assignments (user_id, client_id, roles_json)
         VALUES ($1, $2, $3)
         ON CONFLICT (user_id, client_id) DO UPDATE SET roles_json = EXCLUDED.roles_json`,
-		userID, clientID, string(raw),
-	); err != nil {
-		return fmt.Errorf("postgres: store assignment: %w", err)
-	}
-	return tx.Commit()
+			userID, clientID, string(raw),
+		); err != nil {
+			return fmt.Errorf("postgres: store assignment: %w", err)
+		}
+		return nil
+	})
 }
 
 // RemoveRoleFromUser revokes roleCode from userID under clientID, leaving the
