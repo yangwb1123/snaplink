@@ -229,7 +229,19 @@ func (s *SessionManager) collect(ctx context.Context, indexKey string, ids []str
 	out := make([]*sso.Session, 0, len(ids))
 	for _, id := range ids {
 		sess, err := s.load(ctx, id)
-		if err != nil || sess.Revoked || sess.IsExpired() {
+		if err != nil {
+			// Prune ONLY on a definitive "gone" signal. A transient transport or
+			// decode error (e.g. a partially-written hash mid-Create) must NOT
+			// remove a possibly-live session from the index — that would
+			// permanently hide it from ListByUser/ListAll, so it could never be
+			// surfaced or Destroyed via the admin path even though its key still
+			// exists. Degrade to a momentarily-incomplete list instead.
+			if errors.Is(err, sso.ErrSessionNotFound) {
+				_ = s.rdb.SRem(ctx, indexKey, id).Err()
+			}
+			continue
+		}
+		if sess.Revoked || sess.IsExpired() {
 			_ = s.rdb.SRem(ctx, indexKey, id).Err()
 			continue
 		}

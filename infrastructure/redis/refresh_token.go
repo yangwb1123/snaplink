@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -295,14 +296,29 @@ func (s *RefreshTokenStore) DeleteAllForSubject(ctx context.Context, userID, cli
 	return deleted, nil
 }
 
-// subjectIndexKeysForUser finds every subject index key for a user across
-// all clients via a bounded SCAN over the namespaced prefix.
+// subjectIndexKeysForUser finds every subject index key for a user across all
+// clients via a bounded SCAN over the namespaced prefix.
+//
+// On Redis Cluster the per-(user,client) subject keys are spread across masters
+// (they carry no hash-tag), and SCAN is keyless — go-redis routes a plain SCAN
+// to ONE random master, so a cross-client revoke-all / erasure (empty clientID)
+// would silently miss every token whose subject key lives on another shard. So
+// on a *ClusterClient run the SCAN on EVERY master and union the results; a
+// single-node client keeps the original single-node SCAN.
 func (s *RefreshTokenStore) subjectIndexKeysForUser(ctx context.Context, userID string) ([]string, error) {
 	pattern := rtSubjectKeyPrefix + userID + "\x00*"
+	if cc, ok := s.rdb.(*goredis.ClusterClient); ok {
+		return scanKeysAllMasters(ctx, cc, pattern)
+	}
+	return scanKeys(ctx, s.rdb, pattern)
+}
+
+// scanKeys runs a bounded cursor SCAN for pattern against a single node.
+func scanKeys(ctx context.Context, c goredis.Cmdable, pattern string) ([]string, error) {
 	var keys []string
 	var cursor uint64
 	for {
-		batch, next, err := s.rdb.Scan(ctx, cursor, pattern, 256).Result()
+		batch, next, err := c.Scan(ctx, cursor, pattern, 256).Result()
 		if err != nil {
 			return nil, fmt.Errorf("redis: scan subject index: %w", err)
 		}
@@ -311,6 +327,29 @@ func (s *RefreshTokenStore) subjectIndexKeysForUser(ctx context.Context, userID 
 		if cursor == 0 {
 			break
 		}
+	}
+	return keys, nil
+}
+
+// scanKeysAllMasters fans the SCAN across every cluster master (ForEachMaster is
+// concurrent, hence the mutex) and unions the per-shard results.
+func scanKeysAllMasters(ctx context.Context, cc *goredis.ClusterClient, pattern string) ([]string, error) {
+	var (
+		mu   sync.Mutex
+		keys []string
+	)
+	err := cc.ForEachMaster(ctx, func(ctx context.Context, node *goredis.Client) error {
+		k, serr := scanKeys(ctx, node, pattern)
+		if serr != nil {
+			return serr
+		}
+		mu.Lock()
+		keys = append(keys, k...)
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("redis: scan subject index across masters: %w", err)
 	}
 	return keys, nil
 }
