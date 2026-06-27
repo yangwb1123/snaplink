@@ -222,25 +222,6 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 	}
 }
 
-// registerAdoptedKids records that replicaID currently announces exactly the given kids.
-func (s *Server) registerAdoptedKids(replicaID string, kids []string) {
-	if len(kids) == 0 {
-		return
-	}
-	s.adoptedPeerMu.Lock()
-	defer s.adoptedPeerMu.Unlock()
-	if s.adoptedPeerKids == nil {
-		s.adoptedPeerKids = make(map[string][]string)
-	}
-	if s.adoptedKidRefs == nil {
-		s.adoptedKidRefs = make(map[string]int)
-	}
-	s.adoptedPeerKids[replicaID] = kids
-	for _, kid := range kids {
-		s.adoptedKidRefs[kid]++
-	}
-}
-
 // reconcileAdopted updates replicaID's adopted keyset to EXACTLY the announced
 // keys by SET DIFFERENCE, so a key the peer still announces is NEVER transiently
 // removed from the verify set mid-update (the prior drop-all-then-readd left a
