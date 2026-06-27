@@ -188,6 +188,15 @@ func fakeUnaryHandler(reached *bool, gotCtx *context.Context) grpc.UnaryHandler 
 	}
 }
 
+// fakeServerStream is a minimal grpc.ServerStream that only carries a context,
+// enough to drive the StreamServerInterceptor in tests.
+type fakeServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s fakeServerStream) Context() context.Context { return s.ctx }
+
 func adminInfo(method string) *grpc.UnaryServerInfo {
 	return &grpc.UnaryServerInfo{FullMethod: method}
 }
@@ -205,11 +214,53 @@ func TestAdminGRPC_NonAdminMethodPassesThrough(t *testing.T) {
 
 	reached := false
 	gotCtx := context.Background()
-	if _, err := intercept(context.Background(), nil, adminInfo("/snaplink.audit.v1.AuditWriter/Record"), fakeUnaryHandler(&reached, &gotCtx)); err != nil {
+	// authz Authorizer is the mesh ext-authz data plane — it is NOT gated on
+	// either transport (no HTTP IsProtectedPath entry), so it must pass through.
+	if _, err := intercept(context.Background(), nil, adminInfo("/snaplink.authz.v1.Authorizer/Check"), fakeUnaryHandler(&reached, &gotCtx)); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if !reached {
 		t.Error("expected handler to be reached")
+	}
+}
+
+// TestAdminGRPC_AuditNetpolicyGated is the regression guard for the gRPC-weaker-
+// than-HTTP authz gap: audit.v1.AuditWriter and netpolicy.v1.PolicyService
+// mutations were reachable UNAUTHENTICATED over gRPC while the identical HTTP
+// paths (/api/v1/audit, /api/v1/netpolicy/*) require an admin bearer. They MUST
+// now be gated on gRPC too (unary AND stream).
+func TestAdminGRPC_AuditNetpolicyGated(t *testing.T) {
+	mw := sso.NewAdminMiddleware(stubValidator{good: "good", claims: &sso.TokenClaims{Subject: "u"}}, adminProvider(t))
+	unary := mw.UnaryServerInterceptor()
+	stream := mw.StreamServerInterceptor()
+
+	for _, m := range []string{
+		"/snaplink.audit.v1.AuditWriter/Record",
+		"/snaplink.netpolicy.v1.PolicyService/Delete",
+		"/snaplink.netpolicy.v1.PolicyService/Classify",
+	} {
+		reached := false
+		gotCtx := context.Background()
+		_, err := unary(context.Background(), nil, adminInfo(m), fakeUnaryHandler(&reached, &gotCtx))
+		if status.Code(err) != codes.Unauthenticated {
+			t.Errorf("%s: expected Unauthenticated with no token, got %v", m, err)
+		}
+		if reached {
+			t.Errorf("%s: handler reached without auth", m)
+		}
+	}
+
+	// Streaming: audit.v1.AuditWriter/StreamEvents (bulk event forgery) must be
+	// gated by the stream interceptor.
+	streamReached := false
+	err := stream(nil, fakeServerStream{ctx: context.Background()},
+		&grpc.StreamServerInfo{FullMethod: "/snaplink.audit.v1.AuditWriter/StreamEvents"},
+		func(any, grpc.ServerStream) error { streamReached = true; return nil })
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("StreamEvents: expected Unauthenticated, got %v", err)
+	}
+	if streamReached {
+		t.Error("StreamEvents handler reached without auth")
 	}
 }
 

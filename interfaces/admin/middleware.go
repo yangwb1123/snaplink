@@ -130,41 +130,92 @@ func defaultMethodScopes() map[string]string {
 	return map[string]string{}
 }
 
-// UnaryServerInterceptor returns a grpc.UnaryServerInterceptor that gates
-// every admin RPC. Non-admin RPCs (audit/authz/discovery/netpolicy) pass
-// through untouched — the interceptor only triggers on methods under
-// "/snaplink.admin.v1.".
+// isGatedGRPCMethod reports whether a fully-qualified gRPC method requires admin
+// authentication. It MIRRORS the HTTP IsProtectedPath set: the admin CRUD
+// services, the audit writer, and the netpolicy management service. The gRPC
+// netpolicy Classify is included because it is an external management/diagnostic
+// API (the same one HTTP gates at /api/v1/netpolicy/classify) — the mesh data
+// plane uses the IN-PROCESS classifier and the authz Check RPC, never this
+// service. The authz Authorizer (ext-authz data plane + subject permission
+// queries) and the discovery service registry are intentionally open on BOTH
+// transports and are therefore not gated. Gating by service prefix is fail-safe:
+// any future method added under a gated service is gated by default.
+func isGatedGRPCMethod(fullMethod string) bool {
+	return strings.HasPrefix(fullMethod, "/snaplink.admin.v1.") ||
+		strings.HasPrefix(fullMethod, "/snaplink.audit.v1.") ||
+		strings.HasPrefix(fullMethod, "/snaplink.netpolicy.v1.")
+}
+
+// authorizeGRPC runs the bearer + admin-scope gate for a gated gRPC method and
+// returns an actor-augmented context. Mirrors HTTPMiddleware's body so the two
+// transports enforce identical authentication + scope.
+func (a *Middleware) authorizeGRPC(ctx context.Context, fullMethod string) (context.Context, error) {
+	if a.validator == nil || a.authorizer == nil {
+		return nil, status.Error(codes.FailedPrecondition, "admin auth not configured")
+	}
+	token := bearerFromMetadata(ctx)
+	if token == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing bearer token")
+	}
+	claims, err := a.validator.ValidateToken(ctx, token)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
+	}
+	clientID := ""
+	if len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+	ok, err := a.authorizer.HasAdminScope(ctx, claims.Subject, clientID, a.scopeForGRPC(fullMethod))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "scope check: %v", err)
+	}
+	if !ok {
+		return nil, status.Error(codes.PermissionDenied, "admin scope required")
+	}
+	return withActor(ctx, claims.Subject, clientID), nil
+}
+
+// UnaryServerInterceptor returns a grpc.UnaryServerInterceptor that gates every
+// admin/audit/netpolicy RPC (mirroring the HTTP edge). Other RPCs (authz,
+// discovery) pass through untouched.
 func (a *Middleware) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if !strings.HasPrefix(info.FullMethod, "/snaplink.admin.v1.") {
+		if !isGatedGRPCMethod(info.FullMethod) {
 			return handler(ctx, req)
 		}
-		if a.validator == nil || a.authorizer == nil {
-			return nil, status.Error(codes.FailedPrecondition, "admin auth not configured")
-		}
-		token := bearerFromMetadata(ctx)
-		if token == "" {
-			return nil, status.Error(codes.Unauthenticated, "missing bearer token")
-		}
-		claims, err := a.validator.ValidateToken(ctx, token)
+		ctx, err := a.authorizeGRPC(ctx, info.FullMethod)
 		if err != nil {
-			return nil, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
+			return nil, err
 		}
-		clientID := ""
-		if len(claims.Audience) > 0 {
-			clientID = claims.Audience[0]
-		}
-		ok, err := a.authorizer.HasAdminScope(ctx, claims.Subject, clientID, a.scopeForGRPC(info.FullMethod))
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "scope check: %v", err)
-		}
-		if !ok {
-			return nil, status.Error(codes.PermissionDenied, "admin scope required")
-		}
-		ctx = withActor(ctx, claims.Subject, clientID)
 		return handler(ctx, req)
 	}
 }
+
+// StreamServerInterceptor gates streaming RPCs with the same policy as the unary
+// interceptor — notably audit.v1.AuditWriter/StreamEvents (bulk event ingestion,
+// i.e. event forgery if open) and netpolicy.v1.PolicyService/Watch, which the
+// unary interceptor cannot cover.
+func (a *Middleware) StreamServerInterceptor() grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if !isGatedGRPCMethod(info.FullMethod) {
+			return handler(srv, ss)
+		}
+		ctx, err := a.authorizeGRPC(ss.Context(), info.FullMethod)
+		if err != nil {
+			return err
+		}
+		return handler(srv, &actorServerStream{ServerStream: ss, ctx: ctx})
+	}
+}
+
+// actorServerStream overrides Context() so a gated streaming handler observes
+// the actor-augmented context produced by authorizeGRPC.
+type actorServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *actorServerStream) Context() context.Context { return s.ctx }
 
 // HTTPMiddleware wraps an http.Handler and gates every request whose path
 // is under /api/v1/admin/. Other paths pass through.

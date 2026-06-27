@@ -122,7 +122,10 @@ func startGRPCServer(a *app, grpcListen string, logger spi.Logger, errCh chan<- 
 func newGRPCServer(a *app) *grpc.Server {
 	var opts []grpc.ServerOption
 	if a.adminMW != nil {
-		opts = append(opts, grpc.UnaryInterceptor(a.adminMW.UnaryServerInterceptor()))
+		opts = append(opts,
+			grpc.UnaryInterceptor(a.adminMW.UnaryServerInterceptor()),
+			grpc.StreamInterceptor(a.adminMW.StreamServerInterceptor()),
+		)
 	}
 	s := grpc.NewServer(opts...)
 	auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
