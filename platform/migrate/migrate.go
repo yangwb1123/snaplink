@@ -261,7 +261,12 @@ func Status(ctx context.Context, db *sql.DB) ([]NamespaceStatus, error) {
 		`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ? ORDER BY name`,
 		prefix+"%")
 	if err != nil {
-		return nil, fmt.Errorf("migrate: list version tables: %w", err)
+		// sqlite_master exists on EVERY SQLite database, so a failure here means
+		// the handle is not a SQLite DB — e.g. a Postgres-backed store (which
+		// runs its own migrations, not this engine) wired into the same
+		// /storage-health reporter. Report no migrate-tracked schema rather than
+		// a spurious error; connectivity is covered by the separate Ping probe.
+		return nil, nil
 	}
 	var tables []string
 	for rows.Next() {

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/snaplink/sso/platform/migrate"
 )
 
 // deviceCodeSchema captures the RFC 8628 device flow state machine.
@@ -38,6 +40,15 @@ CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at
     ON device_codes(expires_at);
 `
 
+// deviceCodeMigrations is the versioned schema history. v1 is the baseline
+// (byte-for-byte the original ensureSchema schema, so a DB already stamped v1 is
+// a no-op). v2 adds the RFC 8707 resources column — the audience restriction the
+// minted device-grant token must carry, previously dropped on this backend.
+var deviceCodeMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline", SQL: deviceCodeSchema},
+	{Version: 2, Name: "add_resources", SQL: `ALTER TABLE device_codes ADD COLUMN resources TEXT NOT NULL DEFAULT '[]';`},
+}
+
 // oauth.DeviceCodeStore is the SQLite-backed [oauth.DeviceCodeStore].
 type DeviceCodeStore struct {
 	db *sql.DB
@@ -53,7 +64,7 @@ func NewDeviceCodeStore(dsn string) (*DeviceCodeStore, error) {
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
-	if err := ensureSchema(db, "device_codes", deviceCodeSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "device_codes", deviceCodeMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate device_codes: %w", err)
 	}
@@ -99,16 +110,20 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal attributes: %w", err)
 	}
+	resources, err := json.Marshal(dc.Resources)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal resources: %w", err)
+	}
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO device_codes (device_code, user_code, client_id, scopes,
             nonce, user_id, provider, attributes, approved, denied,
-            last_poll, interval_ns, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            last_poll, interval_ns, expires_at, resources)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		dc.DeviceCode, dc.UserCode, dc.ClientID, string(scopes),
 		dc.Nonce, dc.UserID, dc.Provider, string(attrs),
 		boolToInt(dc.Approved), boolToInt(dc.Denied),
 		dc.LastPoll.UnixNano(), int64(dc.Interval),
-		dc.ExpiresAt.UnixNano(),
+		dc.ExpiresAt.UnixNano(), string(resources),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert device_code: %w", err)
@@ -207,7 +222,7 @@ func (s *DeviceCodeStore) ConsumeIfApproved(ctx context.Context, deviceCode stri
         DELETE FROM device_codes WHERE device_code = ? AND approved = 1
         RETURNING device_code, user_code, client_id, scopes, nonce,
                   user_id, provider, attributes, approved, denied,
-                  last_poll, interval_ns, expires_at`, deviceCode)
+                  last_poll, interval_ns, expires_at, resources`, deviceCode)
 	out, err := scanDeviceCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrDeviceCodeNotFound
@@ -227,7 +242,7 @@ func deviceCodeSelectByCol(col string) string {
 	return `
         SELECT device_code, user_code, client_id, scopes, nonce,
                user_id, provider, attributes, approved, denied,
-               last_poll, interval_ns, expires_at
+               last_poll, interval_ns, expires_at, resources
         FROM device_codes WHERE ` + col + ` = ?`
 }
 
@@ -235,6 +250,7 @@ func scanDeviceCode(s scanner) (*oauth.DeviceCode, error) {
 	var (
 		out                                         oauth.DeviceCode
 		nonce, provider, scopesJSON, attrsJSON      string
+		resourcesJSON                               string
 		approvedInt, deniedInt                      int64
 		lastPollUnixNs, intervalNs, expiresAtUnixNs int64
 	)
@@ -242,7 +258,7 @@ func scanDeviceCode(s scanner) (*oauth.DeviceCode, error) {
 		&out.DeviceCode, &out.UserCode, &out.ClientID, &scopesJSON, &nonce,
 		&out.UserID, &provider, &attrsJSON,
 		&approvedInt, &deniedInt,
-		&lastPollUnixNs, &intervalNs, &expiresAtUnixNs,
+		&lastPollUnixNs, &intervalNs, &expiresAtUnixNs, &resourcesJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -261,6 +277,11 @@ func scanDeviceCode(s scanner) (*oauth.DeviceCode, error) {
 	if attrsJSON != "" && attrsJSON != "{}" {
 		if err := json.Unmarshal([]byte(attrsJSON), &out.Attributes); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal attributes: %w", err)
+		}
+	}
+	if resourcesJSON != "" && resourcesJSON != "[]" {
+		if err := json.Unmarshal([]byte(resourcesJSON), &out.Resources); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal resources: %w", err)
 		}
 	}
 	return &out, nil

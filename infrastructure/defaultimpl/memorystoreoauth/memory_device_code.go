@@ -55,7 +55,10 @@ func (m *MemoryDeviceCodeStore) Issue(_ context.Context, dc *oauth.DeviceCode) e
 		Denied:     dc.Denied,
 		LastPoll:   dc.LastPoll,
 		Interval:   dc.Interval,
-		ExpiresAt:  dc.ExpiresAt,
+		// Resources carry the RFC 8707 audience restriction — must persist
+		// through Approve/Consume or the minted token's audience is widened.
+		Resources: append([]string(nil), dc.Resources...),
+		ExpiresAt: dc.ExpiresAt,
 	}
 	m.byDeviceCode[dc.DeviceCode] = entry
 	m.byUserCode[dc.UserCode] = entry

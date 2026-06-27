@@ -39,7 +39,7 @@ func CIBARequestsMaxVersion() int { return migrate.MaxVersion(cibaMigrations) }
 
 // DeviceCodesMaxVersion returns the highest migration version declared
 // for the device_codes store.
-func DeviceCodesMaxVersion() int { return 1 }
+func DeviceCodesMaxVersion() int { return migrate.MaxVersion(deviceCodeMigrations) }
 
 // PARMaxVersion returns the highest migration version declared for the
 // par store.

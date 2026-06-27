@@ -74,3 +74,28 @@ func TestDeviceConsumeIfApprovedAtomicRace(t *testing.T) {
 		t.Fatalf("exactly one concurrent ConsumeIfApproved should win the single-use claim, got %d", won)
 	}
 }
+
+func TestDeviceConsumeIfApprovedPreservesResources(t *testing.T) {
+	_, rdb := newTestClient(t)
+	s := NewDeviceCodeStore(rdb)
+	ctx := context.Background()
+	if err := s.Issue(ctx, &oauth.DeviceCode{
+		DeviceCode: "dc-res", UserCode: "uc-res", ClientID: "c",
+		Resources:  []string{"https://api.example.com"},
+		ExpiresAt:  time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := s.Approve(ctx, "uc-res", "user-1", "password", nil); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	got, err := s.ConsumeIfApproved(ctx, "dc-res")
+	if err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	// RFC 8707 audience restriction must survive Issue->Approve->Consume so the
+	// minted token's audience is not widened.
+	if len(got.Resources) != 1 || got.Resources[0] != "https://api.example.com" {
+		t.Fatalf("Resources dropped/altered: %v", got.Resources)
+	}
+}
