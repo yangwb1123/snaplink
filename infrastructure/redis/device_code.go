@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -22,6 +23,15 @@ const (
 	// TTL (the code's expiry), so they evict together — no dangling
 	// pointer outlives its record.
 	userCodeKeyPrefix = "sso:usercode:"
+	// sso:devicecode:lastpoll:<device_code> -> unix-nanos of the most recent
+	// poll. LastPoll lives in its OWN key (not the canonical JSON record) so
+	// the device's high-frequency poll loop (UpdateLastPoll) never rewrites
+	// the record the user's one-shot browser Approve/Deny owns. A whole-record
+	// read-modify-write on the same key would otherwise let a poll whose read
+	// predates Approve clobber Approved=true back to false on a real cluster
+	// (poll and approve served by different replicas, no in-process
+	// serialization). Carries the code's remaining TTL so it evicts with it.
+	lastPollKeyPrefix = "sso:devicecode:lastpoll:"
 )
 
 // DeviceCodeStore is the Redis-backed [oauth.DeviceCodeStore] for the
@@ -48,6 +58,7 @@ func (s *DeviceCodeStore) Ping(ctx context.Context) error {
 
 func deviceCodeKey(code string) string { return deviceCodeKeyPrefix + code }
 func userCodeKey(code string) string   { return userCodeKeyPrefix + code }
+func lastPollKey(code string) string   { return lastPollKeyPrefix + code }
 
 // Issue persists a pending device code as a JSON record keyed by
 // device_code, plus a user_code -> device_code pointer key. Both keys get
@@ -132,6 +143,15 @@ func (s *DeviceCodeStore) getByDeviceCode(ctx context.Context, deviceCode string
 		s.deleteBoth(ctx, out.DeviceCode, out.UserCode)
 		return nil, oauth.ErrDeviceCodeNotFound
 	}
+	// LastPoll lives in its own key; when present it is authoritative over the
+	// vestigial value carried in the record blob. A missing key (never polled)
+	// leaves the blob's zero value intact. Best-effort: a read error here only
+	// affects a UX timestamp, never the auth decision.
+	if lp, err := s.rdb.Get(ctx, lastPollKey(deviceCode)).Result(); err == nil {
+		if ns, perr := strconv.ParseInt(lp, 10, 64); perr == nil {
+			out.LastPoll = time.Unix(0, ns)
+		}
+	}
 	return &out, nil
 }
 
@@ -160,9 +180,23 @@ func (s *DeviceCodeStore) Deny(ctx context.Context, userCode string) error {
 // preserving the code's remaining TTL. Keyed by device_code (the poll
 // path).
 func (s *DeviceCodeStore) UpdateLastPoll(ctx context.Context, deviceCode string, t time.Time) error {
-	return s.mutateByDeviceCode(ctx, deviceCode, func(dc *oauth.DeviceCode) {
-		dc.LastPoll = t
-	})
+	// Write to the dedicated last_poll key with the record's REMAINING TTL, so
+	// the poll loop never rewrites the canonical record and thus can never
+	// clobber a concurrent Approve. Unknown/expired code -> ErrDeviceCodeNotFound
+	// (preserves the prior contract via the record key's PTTL).
+	ttl, err := s.rdb.PTTL(ctx, deviceCodeKey(deviceCode)).Result()
+	if err != nil {
+		return fmt.Errorf("redis: device_code pttl: %w", err)
+	}
+	if ttl == -2 { // key absent: unknown or TTL-evicted
+		return oauth.ErrDeviceCodeNotFound
+	}
+	// ttl == -1 (present, no expiry) clamps to 0 = no expiry on the poll key.
+	exp := max(ttl, 0)
+	if err := s.rdb.Set(ctx, lastPollKey(deviceCode), strconv.FormatInt(t.UnixNano(), 10), exp).Err(); err != nil {
+		return fmt.Errorf("redis: update last_poll: %w", err)
+	}
+	return nil
 }
 
 // mutateByUserCode resolves the pointer then applies a read-modify-write
@@ -175,13 +209,13 @@ func (s *DeviceCodeStore) mutateByUserCode(ctx context.Context, userCode string,
 	return s.mutateByDeviceCode(ctx, deviceCode, mut)
 }
 
-// mutateByDeviceCode applies a read-modify-write to the record, keeping
-// its remaining TTL (KEEPTTL) so a mutation never resurrects an expired
-// code nor extends a live one. Read + write are not a single atomic op,
-// but the device flow's writers don't contend: Approve / Deny are a
-// human one-shot action and UpdateLastPoll is the polling device's own
-// serial loop, so a lost-update race here has no security consequence (it
-// would at worst drop one slow_down timestamp).
+// mutateByDeviceCode applies a read-modify-write to the canonical record,
+// keeping its remaining TTL (KEEPTTL) so a mutation never resurrects an expired
+// code nor extends a live one. Only Approve and Deny use this path — a single
+// human one-shot per code (approve XOR deny) that cannot race itself, so the
+// whole-record rewrite is safe. The high-frequency poll path (UpdateLastPoll)
+// deliberately does NOT use it: it writes LastPoll to a separate key so it can
+// never clobber a concurrent Approve on a real cluster (see lastPollKeyPrefix).
 func (s *DeviceCodeStore) mutateByDeviceCode(ctx context.Context, deviceCode string, mut func(*oauth.DeviceCode)) error {
 	dc, err := s.getByDeviceCode(ctx, deviceCode)
 	if err != nil {
@@ -192,9 +226,14 @@ func (s *DeviceCodeStore) mutateByDeviceCode(ctx context.Context, deviceCode str
 	if err != nil {
 		return fmt.Errorf("redis: marshal device_code: %w", err)
 	}
-	// KEEPTTL preserves the existing window — the code must not outlive
-	// its original expiry just because it was approved or polled.
-	if err := s.rdb.Set(ctx, deviceCodeKey(deviceCode), blob, goredis.KeepTTL).Err(); err != nil {
+	// XX + KEEPTTL: write ONLY if the key still exists, preserving its window.
+	// A plain SET KEEPTTL against a key that a concurrent Delete (token-exchange
+	// consume) or the expiry-GC already removed would RESURRECT a consumed code
+	// with NO TTL (KEEPTTL has nothing to keep) — pollable inside the original
+	// window, a single-use violation. redis.Nil means the key was already gone,
+	// so dropping the mutation is the correct idempotent outcome, not an error.
+	err = s.rdb.SetArgs(ctx, deviceCodeKey(deviceCode), blob, goredis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
+	if err != nil && !errors.Is(err, goredis.Nil) {
 		return fmt.Errorf("redis: update device_code: %w", err)
 	}
 	return nil
@@ -230,9 +269,58 @@ func (s *DeviceCodeStore) Delete(ctx context.Context, deviceCode string) error {
 // already produced the correct caller-visible result).
 func (s *DeviceCodeStore) deleteBoth(ctx context.Context, deviceCode, userCode string) {
 	_ = s.rdb.Del(ctx, deviceCodeKey(deviceCode)).Err()
+	_ = s.rdb.Del(ctx, lastPollKey(deviceCode)).Err()
 	if userCode != "" {
 		_ = s.rdb.Del(ctx, userCodeKey(userCode)).Err()
 	}
+}
+
+// consumeIfApprovedScript atomically claims an APPROVED device code in one
+// server-side op: GET the record, and only when its Approved field is true DEL
+// the canonical key and return the blob; otherwise return false (missing /
+// pending / denied / undecodable). Single key (the device_code) -> cluster-slot
+// safe. The user_code pointer + last_poll key live in other slots and are reaped
+// by the Go caller after the win.
+var consumeIfApprovedScript = goredis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if not v then return false end
+local ok, obj = pcall(cjson.decode, v)
+if not ok then return false end
+if obj.Approved == true then
+  redis.call('DEL', KEYS[1])
+  return v
+end
+return false
+`)
+
+// ConsumeIfApproved atomically deletes + returns the record iff approved (the
+// Lua runs as one indivisible server-side op, so of N concurrent polls exactly
+// one wins the blob). A pending/denied/unknown/expired code -> the script
+// returns false -> ErrDeviceCodeNotFound.
+func (s *DeviceCodeStore) ConsumeIfApproved(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
+	res, err := consumeIfApprovedScript.Run(ctx, s.rdb, []string{deviceCodeKey(deviceCode)}).Result()
+	if errors.Is(err, goredis.Nil) {
+		return nil, oauth.ErrDeviceCodeNotFound // script returned false/nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis: consume_if_approved device_code: %w", err)
+	}
+	blob, ok := res.(string)
+	if !ok {
+		return nil, oauth.ErrDeviceCodeNotFound
+	}
+	var out oauth.DeviceCode
+	if err := json.Unmarshal([]byte(blob), &out); err != nil {
+		return nil, fmt.Errorf("redis: unmarshal device_code: %w", err)
+	}
+	// Canonical key already deleted by the script; reap the pointer + last_poll
+	// keys (different slots, so separate routed DELs) best-effort.
+	_ = s.rdb.Del(ctx, userCodeKey(out.UserCode)).Err()
+	_ = s.rdb.Del(ctx, lastPollKey(deviceCode)).Err()
+	if out.IsExpired() {
+		return nil, oauth.ErrDeviceCodeNotFound
+	}
+	return &out, nil
 }
 
 var _ oauth.DeviceCodeStore = (*DeviceCodeStore)(nil)
