@@ -24,9 +24,10 @@ func selfServiceDataExportOption(users core.UserProvider, sessions core.SessionM
 // selfServiceAccountEraseOption wires POST /me/account/erase (GDPR Art. 17
 // self-service) with a COMPLETE eraser (incl. refresh-token revocation across
 // clients) so a self-deletion also cuts off the user's tokens.
-func selfServiceAccountEraseOption(users core.UserProvider, sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore) sso.Option {
+func selfServiceAccountEraseOption(users core.UserProvider, sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore, consent core.ConsentStore, mfa core.MFAEnrollmentStore) sso.Option {
 	return sso.WithSelfServiceAccountErasure(&compliance.Eraser{
 		Users: users, Sessions: sessions, Refresh: refresh, Clients: clients,
+		Consent: consent, MFAEnrollments: mfa,
 	})
 }
 
@@ -44,11 +45,13 @@ const (
 // may be nil when the configured refresh-token store can't enumerate by
 // subject (the Eraser skips it then).
 type complianceDeps struct {
-	Users    core.UserProvider
-	Sessions core.SessionManager
-	Refresh  oauth.RefreshTokenSubjectIndex
-	Clients  core.ClientStore
-	Recorder *audit.Recorder
+	Users          core.UserProvider
+	Sessions       core.SessionManager
+	Refresh        oauth.RefreshTokenSubjectIndex
+	Clients        core.ClientStore
+	Consent        core.ConsentStore
+	MFAEnrollments core.MFAEnrollmentStore
+	Recorder       *audit.Recorder
 }
 
 // mountComplianceRoutes registers the subject export + erase endpoints.
@@ -122,10 +125,12 @@ func complianceEraseHandler(deps *complianceDeps) http.HandlerFunc {
 			_ = json.NewDecoder(r.Body).Decode(&req)
 		}
 		eraser := &compliance.Eraser{
-			Users:    deps.Users,
-			Sessions: deps.Sessions,
-			Refresh:  deps.Refresh,
-			Clients:  deps.Clients,
+			Users:          deps.Users,
+			Sessions:       deps.Sessions,
+			Refresh:        deps.Refresh,
+			Clients:        deps.Clients,
+			Consent:        deps.Consent,
+			MFAEnrollments: deps.MFAEnrollments,
 		}
 		rep, opErr := eraser.EraseSubject(r.Context(), id, compliance.EraseOptions{DryRun: req.DryRun})
 		recordCompliance(deps.Recorder, audit.EventAdminSubjectErased, id, r, opErr)

@@ -92,6 +92,11 @@ type appBuilder struct {
 	totpAuth        *authenticators.TOTPAuthenticator
 	totpEnrollStore sso.MFAEnrollmentStore
 
+	// Erasure-relevant stores, retained so the GDPR eraser can clear the
+	// inheritable state a re-registered account would otherwise pick up.
+	consentStore   sso.ConsentStore
+	mfaEnrollStore sso.MFAEnrollmentStore
+
 	// Region.
 	regionResolver region.Resolver
 
@@ -172,7 +177,7 @@ type serverRuntime struct {
 // final *app. Pure field mapping — no behavior.
 func (b *appBuilder) assemble(rt serverRuntime) *app {
 	cw, srw := rt.cluster, rt.snapshots
-	return &app{
+	a := &app{
 		server: rt.server, recorder: b.recorder, provider: b.provider, registry: cw.reg,
 		netStore:                b.netStore,
 		classifier:              b.classifier,
@@ -200,16 +205,10 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		auditRetentionDone:      b.auditRetentionDone,
 		snapshotRetentionCancel: srw.retentionCancel,
 		snapshotRetentionDone:   srw.retentionDone,
-		pushPruneCancel:         b.pushPruneCancel,
 		anomalyRT:               b.anomalyRT,
-		pushPruneDone:           b.pushPruneDone,
-		cibaPruneCancel:         b.cibaPruneCancel,
-		cibaPruneDone:           b.cibaPruneDone,
 		pushApprovalStore:       serverbuildsign.PushApprovalStoreIface(b.pushApprovalStore),
 		pushNotify:              b.pushNotify,
 		metrics:                 b.metricsRegistry,
-		netStop:                 b.netStop,
-		netCancel:               b.netCancel,
 		invalidationBus:         cw.invalidationBus,
 		busStop:                 rt.busStop,
 		signingKeyRegistry:      cw.signingKeyRegistry,
@@ -219,4 +218,10 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		redisClient:             b.redis,
 		pgDB:                    b.pgDB,
 	}
+	// Pairs moved out of the literal to keep assemble within the length budget.
+	a.consentStore, a.mfaEnrollStore = b.consentStore, b.mfaEnrollStore
+	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
+	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
+	a.netStop, a.netCancel = b.netStop, b.netCancel
+	return a
 }

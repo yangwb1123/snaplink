@@ -169,7 +169,7 @@ func (b *appBuilder) wireOAuthGrantStores() error {
 		if idx, ok := b.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
 			refreshIdx = idx
 		}
-		b.opts = append(b.opts, selfServiceAccountEraseOption(b.userProvider, b.sessionMgr, refreshIdx, b.clientStore))
+		b.opts = append(b.opts, selfServiceAccountEraseOption(b.userProvider, b.sessionMgr, refreshIdx, b.clientStore, b.consentStore, b.mfaEnrollStore))
 		b.logger.Info("self-service account erasure enabled (/me/account/erase)")
 	}
 	if err := b.wireDeviceCodePAR(); err != nil {

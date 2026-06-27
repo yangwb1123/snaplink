@@ -116,11 +116,13 @@ type app struct {
 	// Admin-plane dependencies. Held as concrete references so admin RPCs +
 	// bootstrap steps can mutate the same backing stores the SDK runtime
 	// reads from.
-	clientStore  sso.ClientStore
-	userProvider sso.UserProvider
-	sessionMgr   sso.SessionManager
-	tempStore    authenticators.TempTokenStore // may be nil when temp_token disabled
-	tokenIssuers map[string]sso.TokenIssuer
+	clientStore    sso.ClientStore
+	userProvider   sso.UserProvider
+	sessionMgr     sso.SessionManager
+	consentStore   sso.ConsentStore              // for the GDPR eraser
+	mfaEnrollStore sso.MFAEnrollmentStore        // for the GDPR eraser
+	tempStore      authenticators.TempTokenStore // may be nil when temp_token disabled
+	tokenIssuers   map[string]sso.TokenIssuer
 
 	// idTokenIssuer + refreshTokenStore are held so the WebAuthn
 	// ceremony extension can issue id_token / refresh_token alongside

@@ -152,11 +152,13 @@ func mountComplianceAndSCIM(cfg *config.Config, a *app, logger spi.Logger) error
 		refreshIdx = idx
 	}
 	if err := mountComplianceRoutes(a.server, &complianceDeps{
-		Users:    a.userProvider,
-		Sessions: a.sessionMgr,
-		Refresh:  refreshIdx,
-		Clients:  a.clientStore,
-		Recorder: a.recorder,
+		Users:          a.userProvider,
+		Sessions:       a.sessionMgr,
+		Refresh:        refreshIdx,
+		Clients:        a.clientStore,
+		Consent:        a.consentStore,
+		MFAEnrollments: a.mfaEnrollStore,
+		Recorder:       a.recorder,
 	}); err != nil {
 		return fmt.Errorf("mount compliance: %w", err)
 	}

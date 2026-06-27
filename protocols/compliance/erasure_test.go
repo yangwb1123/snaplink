@@ -190,3 +190,81 @@ func TestEraseSubject_EmptyUserID(t *testing.T) {
 		t.Fatal("expected error for empty user id")
 	}
 }
+
+// --- consent + MFA-enrollment stubs for the inheritance-erasure test ---
+
+type fakeConsentStore struct{ grants map[string][]core.ConsentGrant }
+
+func (f *fakeConsentStore) RecordConsent(_ context.Context, g core.ConsentGrant) error {
+	f.grants[g.UserID] = append(f.grants[g.UserID], g)
+	return nil
+}
+func (f *fakeConsentStore) GetConsent(_ context.Context, _, _ string) (core.ConsentGrant, error) {
+	return core.ConsentGrant{}, nil
+}
+func (f *fakeConsentStore) RevokeConsent(_ context.Context, userID, clientID string) error {
+	kept := f.grants[userID][:0]
+	for _, g := range f.grants[userID] {
+		if g.ClientID != clientID {
+			kept = append(kept, g)
+		}
+	}
+	f.grants[userID] = kept
+	return nil
+}
+func (f *fakeConsentStore) ListByUser(_ context.Context, userID string) ([]core.ConsentGrant, error) {
+	return f.grants[userID], nil
+}
+
+type fakeMFAEnroll struct{ factors map[string][]core.MFAEnrolledFactor }
+
+func (f *fakeMFAEnroll) ListFactors(_ context.Context, userID string) ([]core.MFAEnrolledFactor, error) {
+	return f.factors[userID], nil
+}
+func (f *fakeMFAEnroll) RemoveFactor(_ context.Context, userID, factorID string) error {
+	kept := f.factors[userID][:0]
+	for _, fc := range f.factors[userID] {
+		if fc.ID != factorID {
+			kept = append(kept, fc)
+		}
+	}
+	f.factors[userID] = kept
+	return nil
+}
+
+// TestEraseSubject_ClearsConsentAndMFAEnrollments guards that an erasure also
+// removes the inheritable state a re-registered account under the same id would
+// otherwise pick up: recorded consent grants (which would bypass the consent
+// gate) and registered second factors. Another subject's data is untouched.
+func TestEraseSubject_ClearsConsentAndMFAEnrollments(t *testing.T) {
+	consent := &fakeConsentStore{grants: map[string][]core.ConsentGrant{
+		"alice": {{UserID: "alice", ClientID: "app1"}, {UserID: "alice", ClientID: "app2"}},
+		"bob":   {{UserID: "bob", ClientID: "app1"}},
+	}}
+	mfa := &fakeMFAEnroll{factors: map[string][]core.MFAEnrolledFactor{
+		"alice": {{ID: "totp-1"}, {ID: "passkey-1"}},
+		"bob":   {{ID: "totp-9"}},
+	}}
+	e := &compliance.Eraser{Consent: consent, MFAEnrollments: mfa}
+
+	rep, err := e.EraseSubject(context.Background(), "alice", compliance.EraseOptions{})
+	if err != nil {
+		t.Fatalf("EraseSubject: %v", err)
+	}
+	if rep.ConsentRevoked != 2 {
+		t.Errorf("ConsentRevoked = %d, want 2", rep.ConsentRevoked)
+	}
+	if rep.MFAFactorsRemoved != 2 {
+		t.Errorf("MFAFactorsRemoved = %d, want 2", rep.MFAFactorsRemoved)
+	}
+	if len(consent.grants["alice"]) != 0 {
+		t.Errorf("alice consent not cleared: %v", consent.grants["alice"])
+	}
+	if len(mfa.factors["alice"]) != 0 {
+		t.Errorf("alice MFA factors not cleared: %v", mfa.factors["alice"])
+	}
+	// Cross-subject isolation.
+	if len(consent.grants["bob"]) != 1 || len(mfa.factors["bob"]) != 1 {
+		t.Errorf("bob's data was touched: consent=%v mfa=%v", consent.grants["bob"], mfa.factors["bob"])
+	}
+}

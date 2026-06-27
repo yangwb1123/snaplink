@@ -38,6 +38,18 @@ type Eraser struct {
 	Refresh oauth.RefreshTokenSubjectIndex
 	// Clients enumerates registered clients for Refresh revocation.
 	Clients core.ClientStore
+	// Consent revokes the subject's recorded consent grants so a re-registered
+	// account under the same id does NOT silently inherit prior consent (which
+	// would bypass the consent gate). Optional (nil -> skipped).
+	Consent core.ConsentStore
+	// MFAEnrollments removes the subject's registered second factors so a
+	// re-registered account doesn't inherit (or get locked out by) stale TOTP /
+	// WebAuthn enrollments. Optional (nil -> skipped).
+	MFAEnrollments core.MFAEnrollmentStore
+	// PasswordReset / EmailChange revoke any pending self-service tokens bound to
+	// the subject. Optional (nil / not a *Revoker -> skipped).
+	PasswordReset core.PasswordResetRevoker
+	EmailChange   core.EmailChangeRevoker
 }
 
 // EraseOptions tunes an erasure run.
@@ -59,6 +71,9 @@ type Report struct {
 	DryRun               bool
 	RefreshTokensDeleted int
 	SessionsDestroyed    int
+	ConsentRevoked       int
+	MFAFactorsRemoved    int
+	ResetTokensRevoked   int
 	UserDeleted          bool
 	// Skipped names steps skipped because their SPI wasn't wired (or,
 	// for refresh tokens under DryRun, because the step isn't previewable).
@@ -86,9 +101,88 @@ func (e *Eraser) EraseSubject(ctx context.Context, userID string, opts EraseOpti
 	// subject locked out rather than half-erased-but-usable.
 	e.eraseRefreshTokens(ctx, userID, opts, rep)
 	e.eraseSessions(ctx, userID, opts, rep)
+	// Clear inheritable state BEFORE deleting the account so a re-registered id
+	// can't inherit prior consent / second factors / pending self-service tokens.
+	e.eraseConsent(ctx, userID, opts, rep)
+	e.eraseMFAEnrollments(ctx, userID, opts, rep)
+	e.eraseSelfServiceTokens(ctx, userID, opts, rep)
 	e.eraseUser(ctx, userID, opts, rep)
 
 	return rep, rep.Err()
+}
+
+// eraseConsent revokes every recorded consent grant for the subject so a
+// re-registered account under the same id does not inherit prior consent.
+func (e *Eraser) eraseConsent(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
+	if e.Consent == nil {
+		rep.Skipped = append(rep.Skipped, "consent(not wired)")
+		return
+	}
+	grants, err := e.Consent.ListByUser(ctx, userID)
+	if err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("list consent: %w", err))
+		return
+	}
+	for _, g := range grants {
+		if opts.DryRun {
+			rep.ConsentRevoked++
+			continue
+		}
+		if err := e.Consent.RevokeConsent(ctx, userID, g.ClientID); err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("revoke consent %s: %w", g.ClientID, err))
+			continue
+		}
+		rep.ConsentRevoked++
+	}
+}
+
+// eraseMFAEnrollments removes every registered second factor for the subject.
+func (e *Eraser) eraseMFAEnrollments(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
+	if e.MFAEnrollments == nil {
+		rep.Skipped = append(rep.Skipped, "mfa_enrollments(not wired)")
+		return
+	}
+	factors, err := e.MFAEnrollments.ListFactors(ctx, userID)
+	if err != nil {
+		rep.Errors = append(rep.Errors, fmt.Errorf("list mfa factors: %w", err))
+		return
+	}
+	for _, f := range factors {
+		if opts.DryRun {
+			rep.MFAFactorsRemoved++
+			continue
+		}
+		if err := e.MFAEnrollments.RemoveFactor(ctx, userID, f.ID); err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("remove mfa factor %s: %w", f.ID, err))
+			continue
+		}
+		rep.MFAFactorsRemoved++
+	}
+}
+
+// eraseSelfServiceTokens revokes pending password-reset + email-change tokens.
+// Both backends expose RevokeByUser only as an OPTIONAL extension, so a nil
+// store is simply skipped. DryRun can't preview a count without a List SPI, so
+// it records the step as skipped under DryRun.
+func (e *Eraser) eraseSelfServiceTokens(ctx context.Context, userID string, opts EraseOptions, rep *Report) {
+	if opts.DryRun {
+		rep.Skipped = append(rep.Skipped, "self_service_tokens(dry-run not previewable)")
+		return
+	}
+	if e.PasswordReset != nil {
+		if n, err := e.PasswordReset.RevokeByUser(ctx, userID); err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("revoke password-reset tokens: %w", err))
+		} else {
+			rep.ResetTokensRevoked += n
+		}
+	}
+	if e.EmailChange != nil {
+		if n, err := e.EmailChange.RevokeByUser(ctx, userID); err != nil {
+			rep.Errors = append(rep.Errors, fmt.Errorf("revoke email-change tokens: %w", err))
+		} else {
+			rep.ResetTokensRevoked += n
+		}
+	}
 }
 
 // eraseRefreshTokens revokes the subject's refresh tokens across every

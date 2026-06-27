@@ -237,6 +237,7 @@ func (b *appBuilder) wireMFAEnrollment() {
 	if n > 1 {
 		store = defaultimpl.NewCompositeMFAEnrollmentStore(mfaEnrollStores...)
 	}
+	b.mfaEnrollStore = store // retained for the GDPR eraser
 	b.opts = append(b.opts, sso.WithMFAEnrollmentStore(store))
 	if b.totpEnrollStore != nil {
 		b.opts = append(b.opts, sso.WithTOTPEnroller(authenticators.NewTOTPEnroller(b.totpAuth)))

@@ -214,6 +214,7 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 		return fmt.Errorf("self_service consent store: %w", err)
 	}
 	if consentStore != nil {
+		b.consentStore = consentStore // retained for the GDPR eraser
 		b.opts = append(b.opts, sso.WithConsentStore(consentStore))
 		logger.Info("self-service consent enabled", "backend", cfg.SelfService.Consent.Backend)
 		// The consent GATE issues a single-use challenge nonce across two
