@@ -20,6 +20,28 @@ import (
 // endpoint / jwks — navigation, not trust. The signatures are re-verified in
 // validate(); a forged statement that lies about its superiors only steers the
 // walk somewhere that will fail validation.
+// fetchLeafConfig fetches the leaf Entity Configuration and binds it to the
+// REQUESTED id (OpenID Federation §9: iss == sub == leafEntityID), BEFORE the
+// climb reads its hints/keys. validate re-checks iss==sub per hop, but against
+// chain-internal values, not the requested leaf id — so without this binding a
+// member that can serve a well-known at the URL but with iss/sub naming a
+// DIFFERENT (legitimately-chained) entity would drive the whole trust climb off
+// that other identity yet have the result attributed to leafEntityID, letting it
+// auto-register an OAuth client under any client_id URL it can host a well-known
+// at.
+func (r *TrustChainResolver) fetchLeafConfig(ctx context.Context, state *walkState, leafEntityID string) (chainLink, error) {
+	leafConfig, err := r.fetchEntityConfig(ctx, state, leafEntityID)
+	if err != nil {
+		r.logError("federation: fetch leaf entity configuration", "entity_id", leafEntityID, "error", err)
+		return chainLink{}, err
+	}
+	if err := checkSelfSigned(leafConfig.claims, leafEntityID); err != nil {
+		r.logError("federation: leaf entity configuration not self-issued for the requested id", "entity_id", leafEntityID, "error", err)
+		return chainLink{}, err
+	}
+	return leafConfig, nil
+}
+
 func (r *TrustChainResolver) assemble(ctx context.Context, leafEntityID string) ([]chainLink, TrustAnchor, error) {
 	maxDepth := r.cfg.maxTrustChainDepth()
 
@@ -31,11 +53,8 @@ func (r *TrustChainResolver) assemble(ctx context.Context, leafEntityID string) 
 	// bound alone caps PATH length, the budget caps TOTAL work.
 	state := &walkState{remainingFetches: maxTotalFetches(maxDepth)}
 
-	// Fetch + parse the leaf Entity Configuration (self-signed). iss==sub is
-	// checked in validate; here we only need it parsed to read its hints/keys.
-	leafConfig, err := r.fetchEntityConfig(ctx, state, leafEntityID)
+	leafConfig, err := r.fetchLeafConfig(ctx, state, leafEntityID)
 	if err != nil {
-		r.logError("federation: fetch leaf entity configuration", "entity_id", leafEntityID, "error", err)
 		return nil, TrustAnchor{}, err
 	}
 

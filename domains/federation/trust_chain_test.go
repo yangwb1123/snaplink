@@ -210,6 +210,29 @@ func TestResolveTrustChain_HappyPath(t *testing.T) {
 	}
 }
 
+// TestResolveTrustChain_LeafNotSelfIssuedForRequestedID_Rejected guards OpenID
+// Federation §9: the Entity Configuration fetched from the requested leaf URL
+// MUST be self-issued FOR that id (iss==sub==leafEntityID). A member that can
+// host a well-known at the leaf URL but serves a config naming a DIFFERENT,
+// legitimately-chained entity must be REJECTED — otherwise it could auto-register
+// an OAuth client under any client_id URL it controls.
+func TestResolveTrustChain_LeafNotSelfIssuedForRequestedID_Rejected(t *testing.T) {
+	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{
+		"client_name":   "Impostor RP",
+		"redirect_uris": []any{"https://rp.federation.test/cb"},
+	}, nil, nil)
+
+	// At the leaf's well-known URL, serve a config self-issued for a DIFFERENT id.
+	impostor := newFedEntity(t, "https://impostor.federation.test")
+	f.configs[leaf.id] = impostor.entityConfig(t, []string{inter.id}, "",
+		map[string]any{"client_name": "Impostor RP"})
+
+	r := resolverFor(t, f, anchor)
+	if _, err := r.ResolveTrustChain(context.Background(), leaf.id); err == nil {
+		t.Fatal("ResolveTrustChain accepted a leaf config not self-issued for the requested entity id")
+	}
+}
+
 func TestResolveTrustChain_DirectAnchorChild(t *testing.T) {
 	// A leaf whose immediate superior IS the configured anchor (2-hop chain).
 	anchor := newFedEntity(t, tcAnchorID)
