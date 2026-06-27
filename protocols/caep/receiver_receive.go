@@ -78,9 +78,16 @@ func (r *Receiver) Receive(ctx context.Context, setBody string) (ReceiverResult,
 	}
 
 	// Steps 9-10: resolve the subject + revoke. A resolver/revoke store error
-	// returns (ReceiverResult{}, err) — NOT acked, NOT a reject — so the
-	// handler maps it to a 500/retry; the validated intent is real.
-	return r.actOnSubject(ctx, entry, &c, eventTypes)
+	// returns (ReceiverResult{}, err) — NOT acked, NOT a reject — so the handler
+	// maps it to a 500/retry; the validated intent is real. On that RETRYABLE
+	// path roll the consumed jti back so the resent SET is admitted rather than
+	// dropped as a replay (a transient store outage must not permanently lose a
+	// real revocation). A committed ack keeps the jti burned.
+	res, err := r.actOnSubject(ctx, entry, &c, eventTypes)
+	if err != nil {
+		r.rollbackJTI(ctx, &c)
+	}
+	return res, err
 }
 
 // authenticateSET runs validation steps 1-7 against an inbound SET body. On
@@ -172,8 +179,9 @@ func (r *Receiver) verifyAndBindClaims(setBody string, header []byte, keys []cor
 // guard). The replay key is bounded by exp+skew when exp is present, else the
 // default window from now. FAIL-CLOSED: a seen jti OR a store error rejects (an
 // external-driven revocation primitive must not double-act, nor act on store
-// uncertainty). The ack-even-on-no-op boundary in Receive sits AFTER MarkSeen.
-// All failures collapse to the SAME coarse ErrReceiverInvalidKey.
+// uncertainty). MarkSeen stays BEFORE the action to preserve that invariant; a
+// transient action failure is recovered by rolling the jti back (rollbackJTI),
+// NOT by deferring the mark. All failures collapse to ErrReceiverInvalidKey.
 func (r *Receiver) checkTemporalAndReplay(ctx context.Context, c *inboundSETClaims) (ReceiverResult, bool) {
 	now := r.now()
 	skew := r.maxClockSkew
@@ -206,6 +214,28 @@ func (r *Receiver) checkTemporalAndReplay(ctx context.Context, c *inboundSETClai
 		return r.reject(ErrReceiverInvalidKey), false
 	}
 	return ReceiverResult{}, true
+}
+
+// rollbackJTI releases a jti that checkTemporalAndReplay consumed, used when the
+// subsequent revocation/resolve returns a RETRYABLE error: the handler answers
+// the transmitter with a 500, so the resent SET (same jti) MUST be admitted
+// rather than dropped as a replay — otherwise a transient store outage silently
+// and PERMANENTLY loses a real session-revoked/account-disabled signal. The
+// replay invariant is preserved for committed outcomes (the jti stays burned on
+// a successful ack). Rollback is best-effort via the optional
+// security.JTIReplayForgetter: a store that can't forget, or a failed forget,
+// leaves the jti burned (the pre-fix behavior) and is logged, not fatal.
+func (r *Receiver) rollbackJTI(ctx context.Context, c *inboundSETClaims) {
+	forgetter, ok := r.jtiReplay.(security.JTIReplayForgetter)
+	if !ok {
+		if r.logger != nil {
+			r.logger.Error("ssf: jti replay store cannot roll back after a retryable action error; the retried SET will be dropped as a replay", "iss", c.Iss)
+		}
+		return
+	}
+	if err := forgetter.Forget(ctx, jtiNamespaceKey(c.Iss, c.Jti)); err != nil && r.logger != nil {
+		r.logger.Error("ssf: jti rollback failed; the retried SET may be dropped as a replay", "iss", c.Iss, "error", err.Error())
+	}
 }
 
 // selectActionableEvents (step 8) keeps only KNOWN event URIs the transmitter

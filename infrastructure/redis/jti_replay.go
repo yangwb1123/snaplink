@@ -63,4 +63,18 @@ func (s *JTIReplayStore) MarkSeen(ctx context.Context, jti string, expiresAt tim
 	return ok, nil
 }
 
-var _ security.JTIReplayStore = (*JTIReplayStore)(nil)
+// Forget DELs a previously MarkSeen jti so a retried request carrying it is
+// admitted rather than dropped as a replay (security.JTIReplayForgetter). Used
+// by the CAEP receiver to roll back the jti when a fail-closed mark was followed
+// by a retryable action failure. Single-key DEL — cluster-slot safe. Idempotent.
+func (s *JTIReplayStore) Forget(ctx context.Context, jti string) error {
+	if jti == "" {
+		return nil
+	}
+	return s.rdb.Del(ctx, jtiKey(jti)).Err()
+}
+
+var (
+	_ security.JTIReplayStore     = (*JTIReplayStore)(nil)
+	_ security.JTIReplayForgetter = (*JTIReplayStore)(nil)
+)

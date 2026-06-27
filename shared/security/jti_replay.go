@@ -32,6 +32,18 @@ type JTIReplayStore interface {
 	MarkSeen(ctx context.Context, jti string, expiresAt time.Time) (firstSighting bool, err error)
 }
 
+// JTIReplayForgetter is an OPTIONAL extension that releases a previously
+// MarkSeen jti. It exists for the narrow case where a caller consumed a jti
+// fail-closed (replay defense, BEFORE acting) but the subsequent action failed
+// RETRYABLY: rolling the jti back lets the retried request through instead of
+// dropping it as a replay. Used by the CAEP/SSF receiver so a transient
+// revoke-store outage can't permanently lose a real security event. Stores that
+// can atomically delete a key SHOULD implement it (memory map delete, Redis
+// DEL); the receiver type-asserts and degrades gracefully when it is absent.
+type JTIReplayForgetter interface {
+	Forget(ctx context.Context, jti string) error
+}
+
 // DefaultJTIReplayWindow is the fallback expiry used when a caller
 // has no `exp` claim to anchor against. Matches the typical
 // authorization-request lifetime (PAR's default TTL is 90s; JAR

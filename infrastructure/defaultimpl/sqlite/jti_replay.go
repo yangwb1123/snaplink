@@ -137,6 +137,21 @@ func (s *JTIReplayStore) MarkSeen(ctx context.Context, jti string, expiresAt tim
 	return n == 1, nil
 }
 
+// Forget DELETEs a previously MarkSeen jti so a retried request carrying it is
+// admitted rather than dropped as a replay (security.JTIReplayForgetter). Used
+// by the CAEP receiver to roll back the jti when a fail-closed mark was followed
+// by a retryable action failure. Idempotent — forgetting an unknown jti is a
+// no-op.
+func (s *JTIReplayStore) Forget(ctx context.Context, jti string) error {
+	if jti == "" {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM jti_replays WHERE jti = ?`, jti); err != nil {
+		return fmt.Errorf("sqlite: jti forget: %w", err)
+	}
+	return nil
+}
+
 func isConstraintErr(err error) bool {
 	if err == nil {
 		return false
@@ -149,4 +164,7 @@ func isConstraintErr(err error) bool {
 		strings.Contains(msg, "constraint failed")
 }
 
-var _ security.JTIReplayStore = (*JTIReplayStore)(nil)
+var (
+	_ security.JTIReplayStore     = (*JTIReplayStore)(nil)
+	_ security.JTIReplayForgetter = (*JTIReplayStore)(nil)
+)

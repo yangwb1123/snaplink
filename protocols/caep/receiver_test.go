@@ -3,6 +3,7 @@ package caep_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -809,5 +810,72 @@ func TestReceiver_EventsClaimShape(t *testing.T) {
 	}
 	if _, ok := m[caep.EventURICAEPSessionRevoked]; !ok {
 		t.Error("session-revoked URI missing from round-tripped events")
+	}
+}
+
+// failOnceRevoker errors on the first RevokeAllForSubject, then delegates.
+type failOnceRevoker struct {
+	inner caep.SubjectRevoker
+	calls int
+}
+
+func (r *failOnceRevoker) RevokeAllForSubject(ctx context.Context, localUserID string) (caep.RevocationResult, error) {
+	r.calls++
+	if r.calls == 1 {
+		return caep.RevocationResult{}, errors.New("transient revoke-store outage")
+	}
+	return r.inner.RevokeAllForSubject(ctx, localUserID)
+}
+
+// TestReceiver_RetryAfterRevokeError_SecondDeliveryRevokes guards the fail-closed
+// retry recovery: a transient revoke-store outage on the first delivery returns a
+// RETRYABLE error (the handler answers the transmitter with 500); the retried SET
+// (same jti) MUST still revoke. The consumed jti is rolled back on the error path
+// so the resend is admitted rather than dropped as a replay. Without the rollback
+// the subject keeps all access forever despite a valid session-revoked SET.
+func TestReceiver_RetryAfterRevokeError_SecondDeliveryRevokes(t *testing.T) {
+	ctx := context.Background()
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer(rcvIssuer))
+	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
+	refresh := defaultimpl.NewMemoryRefreshTokenStore()
+	clients := defaultimpl.NewMemoryClientStore()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = clients.Add(ctx, &core.Client{ID: "app", Active: true})
+	_ = users.CreateOrUpdate(ctx, &core.User{ID: rcvLocalUser})
+	if _, err := sessions.Create(ctx, rcvLocalUser); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	storeRevoker, _ := caep.NewStoreRevoker(sessions, refresh, clients)
+	revoker := &failOnceRevoker{inner: storeRevoker}
+	jwks, _ := issuer.JWKS(ctx)
+	rcv, err := caep.NewReceiver(rcvAudience, defaultimpl.NewMemoryJTIReplayStore(), revoker, users,
+		[]caep.TrustedTransmitter{{Issuer: rcvIssuer, JWKS: security.NewStaticJWKS(jwks), SubjectMode: caep.SubjectMapOpaque}})
+	if err != nil {
+		t.Fatalf("new receiver: %v", err)
+	}
+
+	set, err := issuer.SignJWT(ctx, caep.SecurityEventTokenTyp, sessionRevokedSET(rcvLocalUser, "jti-retry"))
+	if err != nil {
+		t.Fatalf("sign SET: %v", err)
+	}
+
+	// First delivery: revoke-store errors -> retryable error; jti rolled back.
+	if _, err := rcv.Receive(ctx, set); err == nil {
+		t.Fatal("first delivery must return a retryable error (revoke-store outage)")
+	}
+	if sess, _ := sessions.ListByUser(ctx, rcvLocalUser); len(sess) != 1 {
+		t.Fatalf("session should survive the failed first delivery, got %d", len(sess))
+	}
+
+	// Retry the SAME SET (same jti): must be admitted (not a replay) and revoke.
+	res, err := rcv.Receive(ctx, set)
+	if err != nil {
+		t.Fatalf("retry Receive error: %v", err)
+	}
+	if !res.Acted {
+		t.Fatal("retried SET was dropped as a replay instead of revoking (jti rollback failed)")
+	}
+	if sess, _ := sessions.ListByUser(ctx, rcvLocalUser); len(sess) != 0 {
+		t.Errorf("subject session survived after a successful retry: %d", len(sess))
 	}
 }

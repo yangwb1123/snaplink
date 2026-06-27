@@ -58,4 +58,22 @@ func (m *MemoryJTIReplayStore) MarkSeen(_ context.Context, jti string, expiresAt
 	return true, nil
 }
 
-var _ security.JTIReplayStore = (*MemoryJTIReplayStore)(nil)
+// Forget releases a previously MarkSeen jti so a retried request carrying it is
+// admitted rather than dropped as a replay (security.JTIReplayForgetter). Used
+// by the CAEP receiver to roll back the jti when a fail-closed mark was followed
+// by a retryable action failure. Idempotent — forgetting an unknown jti is a
+// no-op.
+func (m *MemoryJTIReplayStore) Forget(_ context.Context, jti string) error {
+	if jti == "" {
+		return nil
+	}
+	m.mu.Lock()
+	delete(m.entries, jti)
+	m.mu.Unlock()
+	return nil
+}
+
+var (
+	_ security.JTIReplayStore     = (*MemoryJTIReplayStore)(nil)
+	_ security.JTIReplayForgetter = (*MemoryJTIReplayStore)(nil)
+)
