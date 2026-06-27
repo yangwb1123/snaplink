@@ -54,6 +54,14 @@ func (s *Server) captureBackchannelTarget(ctx HandlerContext, bearer string) (bc
 		return "", "", ""
 	}
 	bcSubject = claims.Subject
+	// OIDC §8 pairwise: the bearer's sub is the per-sector pseudonym. Resolve it
+	// to the local id (mirrors handle_end_session) so the LOCAL-keyed
+	// subject_client_index fan-out hits AND sendBackchannelLogout can re-derive
+	// each target client's own pairwise sub. No-op for non-pairwise / already
+	// local subs.
+	if local, lerr := s.resolveLocalSubject(ctx.Request().Context(), bcSubject); lerr == nil && local != "" {
+		bcSubject = local
+	}
 	bcSID = claims.SID
 	if claims.ClientID != "" {
 		bcClientID = claims.ClientID

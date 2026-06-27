@@ -24,6 +24,14 @@ type silentDeps struct {
 	idErr       error
 	strategyErr error
 	recorded    bool
+	localFor    map[string]string // pairwise sub -> local id
+}
+
+func (d *silentDeps) ResolveLocalSubject(_ context.Context, sub string) (string, error) {
+	if l, ok := d.localFor[sub]; ok {
+		return l, nil
+	}
+	return sub, nil
 }
 
 func (d *silentDeps) SessionMgr() core.SessionManager   { return d.sessions }
@@ -209,6 +217,33 @@ func TestHandleSilentRenewal_SuccessWithIDToken(t *testing.T) {
 	}
 	if !d.recorded {
 		t.Error("silent renewal must record a login-success audit event")
+	}
+}
+
+// TestHandleSilentRenewal_PairwiseResolvesLocalForSessionLookup guards that a
+// pairwise client's silent renewal finds its live session: the id_token_hint
+// sub is the per-sector pseudonym, but sessions are keyed by the LOCAL id, so
+// the live-session probe MUST resolve pairwise -> local first. Without the fix
+// ListByUser(pseudonym) returns empty and the renewal is wrongly rejected with
+// login_required, forcing a full interactive re-login on every renewal.
+func TestHandleSilentRenewal_PairwiseResolvesLocalForSessionLookup(t *testing.T) {
+	d := newSilentDeps(t)
+	d.localFor = map[string]string{"pairwise-P": "user-1"}
+	if _, err := d.sessions.Create(context.Background(), "user-1"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	// Hint carries the pairwise pseudonym, exactly as the client received it.
+	hint := mintHint(t, d, "pairwise-P", "c")
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	handled := oidc.HandleSilentRenewal(d, ctx, []string{"none"},
+		oidc.SilentRenewalRequest{IDTokenHint: hint, Scope: []string{"openid"}, State: "st"},
+		&core.Client{ID: "c", AccessTokenTTL: time.Hour})
+
+	if !handled || rec.Code != http.StatusOK {
+		t.Fatalf("pairwise silent renewal must succeed; handled=%v code=%d body=%s", handled, rec.Code, rec.Body.Bytes())
+	}
+	if body := decodeBody(t, rec.Body.Bytes()); body[core.KeyAccessToken] == nil {
+		t.Error("renewed access_token missing")
 	}
 }
 

@@ -152,8 +152,16 @@ func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subje
 	}
 	tokenCtx, cancel := context.WithTimeout(ctx.Request().Context(), DefaultBackchannelLogoutTimeout)
 	defer cancel()
+	// OIDC BCL §2.1 + pairwise: the logout_token `sub` MUST be the identifier the
+	// TARGET client received in its id_token. For a pairwise client that is its
+	// per-sector pseudonym, NOT the local id. Emitting the local id would defeat
+	// pairwise unlinkability (colluding RPs correlate the user by the shared
+	// local id) AND break a sub-matching RP (the sub differs from the pseudonym
+	// it stored). The audit + subject_client_index stay keyed by the local
+	// subject; non-pairwise clients map to the local id unchanged.
+	clientSub := s.applyPairwiseSubject(ctx.Request().Context(), client, subject)
 	logoutToken, err := s.logoutTokenIssuer.IssueLogoutToken(tokenCtx, &LogoutTokenRequest{
-		Subject:  subject,
+		Subject:  clientSub,
 		Audience: client.ID,
 		// OIDC BCL §2.4: `sid` lets the RP scope the logout to
 		// the specific session it received the matching id_token

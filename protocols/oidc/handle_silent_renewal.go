@@ -22,6 +22,12 @@ type SilentRenewalDeps interface {
 	IDTokenIssuerForClient(c *core.Client) (IDTokenIssuer, bool, error)
 	SrvLogger() spi.Logger
 	ValidateAnyToken(ctx context.Context, token string) (*core.TokenClaims, string, error)
+	// ResolveLocalSubject translates an id_token_hint sub from a client's
+	// per-sector pairwise pseudonym back to the local user id (OIDC §8). The
+	// session manager + audit are keyed by the local id, so the lookup MUST
+	// resolve first or a pairwise client's silent renewal never finds its live
+	// session. No-op for non-pairwise / already-local subs (mirrors /userinfo).
+	ResolveLocalSubject(ctx context.Context, sub string) (string, error)
 	ResolveIssuer(ctx core.HandlerContext) string
 	AuthzErrorBody(ctx core.HandlerContext, code string) map[string]string
 	AuthzErrorBodyDesc(ctx core.HandlerContext, code, desc string) map[string]string
@@ -93,7 +99,13 @@ func HandleSilentRenewal(d SilentRenewalDeps, ctx core.HandlerContext, prompts [
 	// Silent renewal reuses the original session; emit a token-issued
 	// event at the same shape as a fresh login success so auditors
 	// see continuous activity per (client, subject).
-	d.RecordLoginSuccess(ctx, client.ID, "silent_renewal", strategy, claims.Subject, "")
+	// Audit under the LOCAL subject (as the original login does) so a pairwise
+	// client's renewal correlates with its login, not a per-sector pseudonym.
+	auditSub := claims.Subject
+	if local, perr := d.ResolveLocalSubject(ctx.Request().Context(), auditSub); perr == nil && local != "" {
+		auditSub = local
+	}
+	d.RecordLoginSuccess(ctx, client.ID, "silent_renewal", strategy, auditSub, "")
 	ctx.JSON(http.StatusOK, resp)
 	return true
 }
@@ -236,7 +248,15 @@ func silentRenewalSessionLive(d SilentRenewalDeps, ctx core.HandlerContext, clai
 		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
 		return false
 	}
-	sessions, err := sessionMgr.ListByUser(ctx.Request().Context(), claims.Subject)
+	// OIDC §8 pairwise: the id_token_hint sub is the per-sector pseudonym;
+	// sessions are keyed by the LOCAL id, so translate before the lookup (mirrors
+	// /userinfo + /end_session). Without this a pairwise client's silent renewal
+	// always finds zero sessions and is forced into a full interactive re-login.
+	lookupSub := claims.Subject
+	if local, perr := d.ResolveLocalSubject(ctx.Request().Context(), lookupSub); perr == nil && local != "" {
+		lookupSub = local
+	}
+	sessions, err := sessionMgr.ListByUser(ctx.Request().Context(), lookupSub)
 	if err != nil || len(sessions) == 0 {
 		ctx.JSON(http.StatusBadRequest, d.AuthzErrorBody(ctx, core.ErrLoginRequired))
 		return false

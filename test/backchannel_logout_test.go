@@ -20,6 +20,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // OIDC Back-Channel Logout 1.0:
@@ -443,5 +444,64 @@ func TestBCL_NotWired_NoNotification(t *testing.T) {
 	// When false, omitempty omits it entirely.
 	if doc["backchannel_logout_supported"] == true {
 		t.Errorf("backchannel_logout_supported should be omitted/false when not wired; got %v", doc["backchannel_logout_supported"])
+	}
+}
+
+// TestBCL_PairwiseClientLogoutTokenUsesPairwiseSub guards that the back-channel
+// logout_token carries the TARGET client's per-sector pairwise sub — the same
+// pseudonym the client received in its id_token — NOT the local user id. The
+// local id would defeat pairwise unlinkability (colluding RPs correlate by the
+// shared id) and break a sub-matching RP. Covers BOTH the local-resolution of
+// the bearer's pairwise sub in /logout and the per-client re-derivation in
+// sendBackchannelLogout.
+func TestBCL_PairwiseClientLogoutTokenUsesPairwiseSub(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: bclUser})
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: bclClient, Secret: bclSecret, Active: true,
+		AllowedAuthenticators: []string{"password"},
+		TokenStrategy:         "jwt",
+		BackchannelLogoutURI:  "https://app.example/bc-logout",
+		SubjectType:           security.SubjectTypePairwise,
+		SectorIdentifierURI:   "https://app.example/sector",
+	})
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if u == bclUser && p == bclPassword {
+				return &sso.AuthResult{UserID: bclUser}, nil
+			}
+			return nil, errors.New("bad")
+		},
+	))
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://sso.test"))
+	notifier := &captureNotifier{}
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithBackchannelLogout(issuer, notifier),
+		sso.WithPairwiseSubjectStore(security.NewMemoryPairwiseSubjectStore()),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	access := loginBCL(t, httpSrv)
+	pairwiseSub, _ := jwtAllClaims(t, access)["sub"].(string)
+	if pairwiseSub == "" || pairwiseSub == bclUser {
+		t.Fatalf("precondition: expected a pairwise sub distinct from local %q, got %q", bclUser, pairwiseSub)
+	}
+
+	logoutBCL(t, httpSrv, access)
+	calls := notifier.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 backchannel notify, got %d", len(calls))
+	}
+	gotSub, _ := jwtAllClaims(t, calls[0].LogoutToken)["sub"].(string)
+	if gotSub != pairwiseSub {
+		t.Errorf("logout_token sub = %q, want the pairwise pseudonym %q (NOT the local id %q)", gotSub, pairwiseSub, bclUser)
 	}
 }
