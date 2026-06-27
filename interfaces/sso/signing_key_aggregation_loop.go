@@ -217,15 +217,7 @@ func (s *Server) applySigningKeyEvent(evt signingkeys.Event) {
 		s.InvalidateJWKSBodyCache()
 	case signingkeys.EventKeysUpserted:
 		s.ensureIssuerAlgs()
-		s.dropAllAdopted(replicaID)
-		var adopted []string
-		for _, jwk := range evt.Announcement.Keys {
-			kid, ok := s.adoptPeerKey(replicaID, jwk)
-			if ok {
-				adopted = append(adopted, kid)
-			}
-		}
-		s.registerAdoptedKids(replicaID, adopted)
+		s.reconcileAdopted(replicaID, evt.Announcement.Keys)
 		s.InvalidateJWKSBodyCache()
 	}
 }
@@ -246,6 +238,81 @@ func (s *Server) registerAdoptedKids(replicaID string, kids []string) {
 	s.adoptedPeerKids[replicaID] = kids
 	for _, kid := range kids {
 		s.adoptedKidRefs[kid]++
+	}
+}
+
+// reconcileAdopted updates replicaID's adopted keyset to EXACTLY the announced
+// keys by SET DIFFERENCE, so a key the peer still announces is NEVER transiently
+// removed from the verify set mid-update (the prior drop-all-then-readd left a
+// window during which a concurrent Validate of a peer token signed by an
+// UNCHANGED key failed with "unknown kid"). Every announced key is adopted FIRST
+// (AdoptVerifyKey is idempotent), THEN only the kids this peer no longer
+// announces — and whose total refcount across peers reaches zero — are dropped.
+func (s *Server) reconcileAdopted(replicaID string, keys []core.JWK) {
+	announcedSet := make(map[string]struct{}, len(keys))
+	announced := make([]string, 0, len(keys))
+	for _, jwk := range keys {
+		kid, ok := s.adoptPeerKey(replicaID, jwk)
+		if !ok {
+			continue
+		}
+		if _, dup := announcedSet[kid]; dup {
+			continue
+		}
+		announcedSet[kid] = struct{}{}
+		announced = append(announced, kid)
+	}
+
+	s.adoptedPeerMu.Lock()
+	if s.adoptedPeerKids == nil {
+		s.adoptedPeerKids = make(map[string][]string)
+	}
+	if s.adoptedKidRefs == nil {
+		s.adoptedKidRefs = make(map[string]int)
+	}
+	prev := s.adoptedPeerKids[replicaID]
+	prevSet := make(map[string]struct{}, len(prev))
+	for _, kid := range prev {
+		prevSet[kid] = struct{}{}
+	}
+	// +1 for kids newly announced by this peer; unchanged kids keep their
+	// refcount (and stay installed). -1 for kids this peer dropped.
+	for _, kid := range announced {
+		if _, had := prevSet[kid]; !had {
+			s.adoptedKidRefs[kid]++
+		}
+	}
+	var toDrop []string
+	for _, kid := range prev {
+		if _, still := announcedSet[kid]; still {
+			continue
+		}
+		s.adoptedKidRefs[kid]--
+		if s.adoptedKidRefs[kid] <= 0 {
+			delete(s.adoptedKidRefs, kid)
+			toDrop = append(toDrop, kid)
+		}
+	}
+	s.adoptedPeerKids[replicaID] = announced
+	s.adoptedPeerMu.Unlock()
+
+	s.dropVerifyKidsFromIssuers(toDrop)
+}
+
+// dropVerifyKidsFromIssuers removes the given kids from every issuer's
+// peer-verify set (best-effort; issuers without DropVerifyKey are skipped).
+func (s *Server) dropVerifyKidsFromIssuers(kids []string) {
+	if len(kids) == 0 {
+		return
+	}
+	for _, ti := range s.tokenIssuers {
+		dropper, ok := ti.(interface{ DropVerifyKey(string) })
+		if !ok {
+			continue
+		}
+		for _, kid := range kids {
+			dropper.DropVerifyKey(kid)
+		}
 	}
 }
 
@@ -394,16 +461,5 @@ func (s *Server) dropAllAdopted(replicaID string) {
 		}
 	}
 	s.adoptedPeerMu.Unlock()
-	if len(toDrop) == 0 {
-		return
-	}
-	for _, ti := range s.tokenIssuers {
-		dropper, ok := ti.(interface{ DropVerifyKey(string) })
-		if !ok {
-			continue
-		}
-		for _, kid := range toDrop {
-			dropper.DropVerifyKey(kid)
-		}
-	}
+	s.dropVerifyKidsFromIssuers(toDrop)
 }
