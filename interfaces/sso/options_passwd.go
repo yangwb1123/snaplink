@@ -3,6 +3,7 @@ package sso
 import (
 	"github.com/snaplink/sso/domains/metering"
 	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"io/fs"
 	"time"
 
@@ -118,6 +119,24 @@ func WithEmailVerificationSender(sender spi.EmailVerificationSender) Option {
 // a PasswordCredentialStore are also wired.
 func WithSelfServiceSignup() Option {
 	return func(srv *Server) { srv.signupEnabled = true }
+}
+
+// WithSelfServiceSignupRateLimiter wires an optional per-IP rate limiter
+// to POST /auth/register. When non-nil, the handler checks the caller's
+// IP against the limiter before processing the request and returns 429
+// rate_limited when the bucket is exhausted. This is independent of the
+// global WithRateLimit middleware — it protects signup specifically with
+// a separate bucket, so operators can set tight limits (e.g. 3 per minute
+// per IP) without affecting login or other paths.
+//
+// Nil (the default) means no signup-specific rate limiting — full backward
+// compatibility with existing deployments that do not set this option.
+//
+// Pre-built limiters from interfaces/ratelimit:
+//
+//	ratelimit.NewMemoryLimiter(3.0/60, 3) // 3 signups / min, burst 3
+func WithSelfServiceSignupRateLimiter(limiter selfservicecore.RateLimiter) Option {
+	return func(srv *Server) { srv.signupRateLimiter = limiter }
 }
 
 // WithRegistrationGates wires zero or more self-service registration abuse-

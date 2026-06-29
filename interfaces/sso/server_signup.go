@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/protocols/selfservice"
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -137,6 +138,13 @@ func (s *Server) SignupRequiresVerification() bool {
 // RegistrationGates returns the wired registration abuse-protection gates.
 func (s *Server) RegistrationGates() []spi.RegistrationGate {
 	return s.registrationGates
+}
+
+// SignupRateLimiter returns the optional per-IP rate limiter for self-service
+// signup (WithSelfServiceSignupRateLimiter). Nil means no signup-specific
+// rate limiting — full backward compatibility.
+func (s *Server) SignupRateLimiter() selfservicecore.RateLimiter {
+	return s.signupRateLimiter
 }
 
 // EmailVerificationTTL returns the email verification token TTL.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/domains/metering"
 	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -103,6 +104,13 @@ type selfServiceState struct {
 	// All gate errors collapse to a single 403 registration_denied response
 	// (anti-enumeration).
 	registrationGates []spi.RegistrationGate
+
+	// signupRateLimiter is an optional per-IP rate limiter for POST /auth/register
+	// (WithSelfServiceSignupRateLimiter). When non-nil, the handler checks the
+	// caller's IP before processing the signup and returns 429 rate_limited when
+	// the bucket is exhausted. Nil (the default) means no signup-specific rate
+	// limiting — full backward compatibility.
+	signupRateLimiter selfservicecore.RateLimiter
 
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.

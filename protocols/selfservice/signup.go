@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 	"golang.org/x/crypto/bcrypt"
@@ -42,6 +44,9 @@ import (
 // loser retries). Rate-limited by the standard middleware. no-store headers.
 func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 	middleware.TokenNoStoreHeaders(ctx)
+	if rejectSignupRateLimit(d, ctx) {
+		return
+	}
 	var req struct {
 		Username     string `json:"username"`
 		Password     string `json:"password"`
@@ -78,6 +83,24 @@ func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	handleOptionalVerificationSignup(d, ctx, username, req.Password, strings.TrimSpace(req.Email))
+}
+
+// rejectSignupRateLimit enforces the optional per-IP rate limit for signup.
+// Returns true and writes a 429 response when the request must be rejected.
+func rejectSignupRateLimit(d Deps, ctx core.HandlerContext) bool {
+	lim := d.SignupRateLimiter()
+	if lim == nil {
+		return false
+	}
+	key := middleware.RealClientIP(ctx.Request())
+	if ok, retryAfter := lim.Allow(key); !ok {
+		if retryAfter > 0 {
+			ctx.ResponseWriter().Header().Set(selfservicecore.HeaderRetryAfter, strconv.Itoa(int(retryAfter.Seconds())))
+		}
+		ctx.JSON(http.StatusTooManyRequests, d.ErrorBody("rate_limited"))
+		return true
+	}
+	return false
 }
 
 // handleMandatoryVerificationSignup implements Mode B: requires email, issues
@@ -287,4 +310,31 @@ func checkPasswordPolicy(d Deps, rctx context.Context, ctx core.HandlerContext, 
 		return false
 	}
 	return true
+}
+
+// signupClientIPKey derives a rate-limit key from the request's client IP.
+// Duplicated from interfaces/ratelimit.KeyByClientIP to avoid importing
+// interfaces/ratelimit from the protocols layer.
+func signupClientIPKey(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if ip := extractIP(xff); ip != "" {
+			return "ip:" + ip
+		}
+	}
+	if ip := extractIP(r.RemoteAddr); ip != "" {
+		return "ip:" + ip
+	}
+	return "ip:unknown"
+}
+
+func extractIP(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	for i := 0; i < len(addr); i++ {
+		if addr[i] == ':' {
+			return addr[:i]
+		}
+	}
+	return addr
 }

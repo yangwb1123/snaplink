@@ -11,6 +11,16 @@ import (
 	"github.com/snaplink/sso/shared/spi"
 )
 
+// RateLimiter is the subset of ratelimit.Limiter that self-service handlers
+// need. Defined locally so protocols/selfservice does not depend on
+// interfaces/ratelimit (which would violate the layer boundary).
+type RateLimiter interface {
+	Allow(key string) (ok bool, retryAfter time.Duration)
+}
+
+// Retry-After header name, duplicated here to avoid importing interfaces/ratelimit.
+const HeaderRetryAfter = "Retry-After"
+
 // Deps defines the dependencies needed for self-service operations.
 // *sso.Server satisfies this interface via accessor methods.
 type Deps interface {
@@ -40,6 +50,7 @@ type Deps interface {
 	SignupRequiresVerification() bool
 	EmailVerificationTTL() time.Duration
 	RegistrationGates() []spi.RegistrationGate
+	SignupRateLimiter() RateLimiter
 
 	// Session management
 	SessionManager() core.SessionManager
