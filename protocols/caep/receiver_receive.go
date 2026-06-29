@@ -194,6 +194,18 @@ func (r *Receiver) checkTemporalAndReplay(ctx context.Context, c *inboundSETClai
 	if c.Iat != 0 && now.Add(skew).Before(time.Unix(c.Iat, 0)) {
 		return r.reject(ErrReceiverInvalidKey), false
 	}
+	// Without exp, the jti replay key below lives only DefaultJTIReplayWindow from
+	// FIRST sighting, while the checks above bound iat only against the FUTURE — so
+	// an old captured exp-less SET would pass freshness again once its jti expires,
+	// replaying indefinitely (re-revoking the subject every window). Bound iat age
+	// to the replay window (less skew) so the freshness-acceptance span never
+	// outlives the jti coverage span. exp is optional per RFC 8417, so iat-only
+	// SETs from an external transmitter are legitimate; when exp IS present its own
+	// past-check + exp-bounded jti window already align.
+	if c.Exp == 0 && c.Iat != 0 &&
+		now.Add(-(security.DefaultJTIReplayWindow - skew)).After(time.Unix(c.Iat, 0)) {
+		return r.reject(ErrReceiverInvalidKey), false
+	}
 	if c.Jti == "" {
 		return r.reject(ErrReceiverInvalidKey), false
 	}

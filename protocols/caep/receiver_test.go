@@ -879,3 +879,46 @@ func TestReceiver_RetryAfterRevokeError_SecondDeliveryRevokes(t *testing.T) {
 		t.Errorf("subject session survived after a successful retry: %d", len(sess))
 	}
 }
+
+// TestReceiver_ExpLessStaleSET_Rejected: a SET carrying iat but NO exp (RFC 8417
+// makes exp optional) whose iat is older than the jti replay window must be
+// REJECTED. Otherwise, once its 5-minute jti entry expires, the identical signed
+// SET re-passes freshness and re-revokes the subject -- an indefinite,
+// repeatable forced-logout replay.
+func TestReceiver_ExpLessStaleSET_Rejected(t *testing.T) {
+	f := newRcvFixture(t)
+	claims := sessionRevokedSET(rcvLocalUser, "jti-expless-stale")
+	delete(claims, "exp")                                    // exp-less
+	claims["iat"] = time.Now().Add(-10 * time.Minute).Unix() // older than the ~4min bound
+	set := f.signSET(t, claims)
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if res.Acked {
+		t.Fatal("stale exp-less SET was acked + acted (indefinite-replay vector open)")
+	}
+	if !f.subjectHasAccess(t) {
+		t.Fatal("stale exp-less SET revoked the subject")
+	}
+}
+
+// TestReceiver_ExpLessFreshSET_Accepted is the no-regression guard: a FRESH
+// exp-less SET is legitimate and must still be accepted + acted -- the new
+// iat-age bound only rejects STALE exp-less SETs.
+func TestReceiver_ExpLessFreshSET_Accepted(t *testing.T) {
+	f := newRcvFixture(t)
+	claims := sessionRevokedSET(rcvLocalUser, "jti-expless-fresh")
+	delete(claims, "exp")
+	claims["iat"] = time.Now().Unix()
+	set := f.signSET(t, claims)
+
+	res, err := f.receiver.Receive(context.Background(), set)
+	if err != nil {
+		t.Fatalf("Receive error: %v", err)
+	}
+	if !res.Acked {
+		t.Fatalf("fresh exp-less SET must be accepted: %+v", res)
+	}
+}
