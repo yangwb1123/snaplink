@@ -213,13 +213,14 @@ func (b *appBuilder) wireRefreshToken() error {
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-refresh-tokens", store)
 	b.refreshTokenStore = store
 	b.refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
-	// Opt-in refresh-rotation grace window: a concurrent double-submit of the
-	// just-rotated token is idempotent within the window instead of killing the
-	// family (multi-tab SPA / mobile cold-start races). The backend MUST be
-	// cluster-shared (redis) on a multi-replica deployment — the memory backend
-	// remembers the successor in one replica only, so a double-submit landing on
-	// a different replica trips a false family-reuse kill (logout storm). 0 =
-	// strict single-use (byte-identical).
+	return b.wireRefreshRotationGrace()
+}
+
+// wireRefreshRotationGrace opts into the refresh-rotation grace window for
+// multi-replica resilience. Extracted from wireRefreshToken for function-length
+// budget. 0 = strict single-use (no-op). Supports memory, sqlite, and redis.
+func (b *appBuilder) wireRefreshRotationGrace() error {
+	cfg := b.cfg
 	if w := cfg.OAuth.RefreshToken.RotationGraceWindow; w > 0 {
 		switch strings.ToLower(strings.TrimSpace(cfg.OAuth.RefreshToken.RotationGraceBackend)) {
 		case "", "memory":
@@ -231,8 +232,22 @@ func (b *appBuilder) wireRefreshToken() error {
 			}
 			b.opts = append(b.opts, sso.WithRefreshRotationGraceStore(redisbackend.NewRefreshGraceStore(b.redis, w)))
 			b.logger.Info("refresh rotation grace enabled (redis; cluster-shared)", "window", w)
+		case "sqlite":
+			if cfg.OAuth.SQLite.DSN == "" {
+				return errors.New("oauth.refresh_token.rotation_grace_backend=sqlite but no oauth.sqlite.dsn set")
+			}
+			store, err := sqlitestores.NewRefreshGraceStoreWithDSN(cfg.OAuth.SQLite.DSN, w, 0)
+			if err != nil {
+				return fmt.Errorf("refresh rotation grace store: %w", err)
+			}
+			b.opts = append(b.opts, sso.WithRefreshRotationGraceStore(store))
+			b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-refresh-grace", store)
+			b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-refresh-grace", store)
+			b.refreshGracePruneCancel = store.CleanupStop()
+			b.refreshGracePruneDone = store.CleanupDone()
+			b.logger.Info("refresh rotation grace enabled (sqlite; cluster-shared)", "window", w, "dsn", cfg.OAuth.SQLite.DSN)
 		default:
-			return fmt.Errorf("unknown oauth.refresh_token.rotation_grace_backend %q (supported: memory, redis)", cfg.OAuth.RefreshToken.RotationGraceBackend)
+			return fmt.Errorf("unknown oauth.refresh_token.rotation_grace_backend %q (supported: memory, sqlite, redis)", cfg.OAuth.RefreshToken.RotationGraceBackend)
 		}
 	}
 	return nil

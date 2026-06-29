@@ -114,10 +114,27 @@ func WithEmailVerificationSender(sender spi.EmailVerificationSender) Option {
 // signup is an abuse surface most enterprise deployments don't want (they
 // provision via SCIM/admin). The endpoint is rate-limited by the standard
 // middleware; operators wanting CAPTCHA / domain-allowlist / email-verification
-// gating should front or extend it. Mounts only when a UserProvider AND a
-// PasswordCredentialStore are also wired.
+// gating should use WithRegistrationGates. Mounts only when a UserProvider AND
+// a PasswordCredentialStore are also wired.
 func WithSelfServiceSignup() Option {
 	return func(srv *Server) { srv.signupEnabled = true }
+}
+
+// WithRegistrationGates wires zero or more self-service registration abuse-
+// protection gates. Each gate implements spi.RegistrationGate and is checked
+// in order during POST /auth/register, after the standard checks (rate limit,
+// validation) but BEFORE the user is created. If any gate returns an error,
+// the handler responds with 403 registration_denied (oracle-safe: the caller
+// cannot tell which gate blocked them, preventing domain/rule enumeration).
+//
+// Pre-built implementations live in domains/authenticators:
+//   - DomainAllowlistGate – allow specific email domains only
+//   - CaptchaGate – verify a captcha token via spi.CaptchaVerifier
+//
+// When no gates are wired (the default), registration behaviour is unchanged
+// (full backward compatibility).
+func WithRegistrationGates(gates ...spi.RegistrationGate) Option {
+	return func(srv *Server) { srv.registrationGates = gates }
 }
 
 // WithMFAEnrollmentStore wires a store for the self-service MFA management

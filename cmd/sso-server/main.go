@@ -174,6 +174,11 @@ type app struct {
 	cibaPruneCancel context.CancelFunc
 	cibaPruneDone   <-chan struct{}
 
+	// refreshGracePruneCancel + refreshGracePruneDone — same pattern for
+	// the refresh_grace_cache cleanup goroutine. SQLite backend only.
+	refreshGracePruneCancel context.CancelFunc
+	refreshGracePruneDone   <-chan struct{}
+
 	// pushApprovalStore is the SQLite-backed handle (or nil for
 	// memory backend / no push factor). Held so buildHTTPHandler
 	// can wire the reference callback handler against it.

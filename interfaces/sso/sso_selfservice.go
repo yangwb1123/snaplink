@@ -96,6 +96,14 @@ type selfServiceState struct {
 	// (signup creates the user + sets the password). Default-off.
 	signupEnabled bool
 
+	// registrationGates holds zero or more spi.RegistrationGate instances
+	// wired via WithRegistrationGates. Each gate is checked in order during
+	// self-service signup, before the user is created. When none are wired
+	// (the default), registration behaviour is unchanged (backward compat).
+	// All gate errors collapse to a single 403 registration_denied response
+	// (anti-enumeration).
+	registrationGates []spi.RegistrationGate
+
 	// mfaEnrollmentStore backs GET/DELETE /me/mfa (WithMFAEnrollmentStore).
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore

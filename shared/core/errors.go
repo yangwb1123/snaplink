@@ -121,4 +121,5 @@ const (
 	ErrResendTooSoon             = "resend_too_soon"
 	ErrNotFound                  = "not_found"
 	ErrNotSupported              = "not_supported"
+	ErrRegistrationDenied        = "registration_denied"
 )

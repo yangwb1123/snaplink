@@ -89,6 +89,10 @@ func IPFailureCounterMaxVersion() int { return 1 }
 // for the recent_login store.
 func RecentLoginMaxVersion() int { return 1 }
 
+// RefreshGraceMaxVersion returns the highest migration version declared for
+// the refresh_grace_cache store (refresh rotation double-submit grace).
+func RefreshGraceMaxVersion() int { return 1 }
+
 // DeviceSecretsMaxVersion returns the highest migration version declared
 // for the device_secrets store (Native SSO 1.0).
 func DeviceSecretsMaxVersion() int { return 1 }

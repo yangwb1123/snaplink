@@ -1,6 +1,7 @@
 package selfservice
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // HandleSelfRegister serves POST /auth/register — the opt-in UNAUTHENTICATED
@@ -40,9 +42,10 @@ import (
 func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 	middleware.TokenNoStoreHeaders(ctx)
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		Email        string `json:"email"`
+		CaptchaToken string `json:"captcha_token"`
 	}
 	if err := oauth.BindParams(ctx, &req); err != nil {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
@@ -54,6 +57,12 @@ func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	rctx := ctx.Request().Context()
+
+	// Run registration gates (abuse protection) BEFORE user creation. All
+	// gate errors collapse to 403 registration_denied.
+	if !runRegistrationGates(d, ctx, username, strings.TrimSpace(req.Email), req.CaptchaToken) {
+		return
+	}
 
 	if existing, err := d.UserProvider().GetByID(rctx, username); err == nil && existing != nil {
 		// Username taken — signup must not overwrite. (Operators who treat the
@@ -201,6 +210,28 @@ func sendOptionalVerification(d Deps, ctx core.HandlerContext, username, email s
 	if err := d.EmailVerificationSender().SendEmailVerificationToken(rctx, email, rawToken); err != nil {
 		d.Logger().Error("signup: optional verification send failed", "username", username, "error", err)
 	}
+}
+
+// runRegistrationGates runs the registration gate chain. Returns true if all
+// gates pass, false if a gate rejected the request (response already written).
+func runRegistrationGates(d Deps, ctx core.HandlerContext, username, email, captchaToken string) bool {
+	gates := d.RegistrationGates()
+	if len(gates) == 0 {
+		return true
+	}
+	rctx := ctx.Request().Context()
+	if captchaToken != "" {
+		rctx = context.WithValue(rctx, spi.CaptchaTokenContextKey{}, captchaToken)
+	}
+	ip := ctx.Request().RemoteAddr
+	for _, gate := range gates {
+		if err := gate.CheckRegistration(rctx, username, email, ip); err != nil {
+			recordSelfRegister(d, ctx, username, false)
+			ctx.JSON(http.StatusForbidden, d.ErrorBody(core.ErrRegistrationDenied))
+			return false
+		}
+	}
+	return true
 }
 
 func recordSelfRegister(d Deps, ctx core.HandlerContext, username string, ok bool) {

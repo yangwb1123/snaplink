@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // EmailSender delivers a verification code to an email address.
@@ -51,10 +53,6 @@ func NewEmailAuthenticator(store CodeStore, sender EmailSender, opts ...EmailOpt
 
 func (e *EmailAuthenticator) Name() string { return MethodEmail }
 
-// LockoutIdentity keys per-account lockout on the email this authenticator
-// actually verifies (core.LockoutKeyer), NORMALIZED identically to Authenticate
-// (lower + trim) so case/whitespace variants of the same address share one
-// lockout key — NOT the generic field precedence over the raw credential map.
 func (e *EmailAuthenticator) LockoutIdentity(credential map[string]string) string {
 	return strings.ToLower(strings.TrimSpace(credential["email"]))
 }
@@ -102,3 +100,74 @@ func (e *EmailAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (
 func (e *EmailAuthenticator) LoginURL(_ string) string { return "" }
 
 func (e *EmailAuthenticator) key(email string) string { return keyPrefixEmail + email }
+
+// ============================================================================
+// Registration abuse protection gates
+// ============================================================================
+
+// DomainAllowlistGate permits registration only from specified email domains.
+// With an empty allowlist (the zero value), all domains are permitted — the
+// gate is a no-op (backward compatible).
+type DomainAllowlistGate struct {
+	// AllowedDomains lists the email domains permitted to register.
+	// Case-insensitive comparison. Empty = all domains permitted.
+	AllowedDomains []string
+}
+
+// CheckRegistration implements spi.RegistrationGate.
+func (g *DomainAllowlistGate) CheckRegistration(_ context.Context, _ string, email, _ string) error {
+	if len(g.AllowedDomains) == 0 || email == "" {
+		return nil
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil {
+		return errors.New("registration not permitted")
+	}
+	parts := strings.SplitN(addr.Address, "@", 2)
+	if len(parts) != 2 {
+		return errors.New("registration not permitted")
+	}
+	domain := strings.ToLower(strings.TrimSpace(parts[1]))
+	for _, allowed := range g.AllowedDomains {
+		if strings.ToLower(strings.TrimSpace(allowed)) == domain {
+			return nil
+		}
+	}
+	return errors.New("registration not permitted")
+}
+
+// CaptchaGateOption configures a CaptchaGate.
+type CaptchaGateOption func(*CaptchaGate)
+
+// WithCaptchaVerifier sets the captcha verification backend. Required for
+// the gate to actually verify; without it the gate is a no-op.
+func WithCaptchaVerifier(v spi.CaptchaVerifier) CaptchaGateOption {
+	return func(g *CaptchaGate) { g.verifier = v }
+}
+
+// CaptchaGate checks a captcha token during registration. When no verifier
+// is wired, the gate silently passes (no-op for backward compatibility).
+type CaptchaGate struct {
+	verifier spi.CaptchaVerifier
+}
+
+// NewCaptchaGate creates a captcha verification gate.
+func NewCaptchaGate(opts ...CaptchaGateOption) *CaptchaGate {
+	g := &CaptchaGate{}
+	for _, o := range opts {
+		o(g)
+	}
+	return g
+}
+
+// CheckRegistration implements spi.RegistrationGate.
+func (g *CaptchaGate) CheckRegistration(ctx context.Context, _, _, _ string) error {
+	if g.verifier == nil {
+		return nil
+	}
+	token, _ := ctx.Value(spi.CaptchaTokenContextKey{}).(string)
+	if token == "" {
+		return errors.New("captcha verification required")
+	}
+	return g.verifier.Verify(ctx, token)
+}

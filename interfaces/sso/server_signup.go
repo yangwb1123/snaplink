@@ -134,6 +134,11 @@ func (s *Server) SignupRequiresVerification() bool {
 	return s.signupRequireVerification
 }
 
+// RegistrationGates returns the wired registration abuse-protection gates.
+func (s *Server) RegistrationGates() []spi.RegistrationGate {
+	return s.registrationGates
+}
+
 // EmailVerificationTTL returns the email verification token TTL.
 func (s *Server) EmailVerificationTTL() time.Duration {
 	return s.emailVerificationTTL

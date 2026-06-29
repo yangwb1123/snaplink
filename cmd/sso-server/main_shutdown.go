@@ -141,6 +141,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"push approval pruner did not exit cleanly")
 	stopScheduler(ctx, logger, a.cibaPruneCancel, a.cibaPruneDone,
 		"ciba request pruner did not exit cleanly")
+	stopScheduler(ctx, logger, a.refreshGracePruneCancel, a.refreshGracePruneDone,
+		"refresh grace pruner did not exit cleanly")
 }
 
 // stopScheduler cancels a background scheduler and waits for its done channel

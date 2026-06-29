@@ -129,6 +129,11 @@ type appBuilder struct {
 	// CIBA prune lifecycle.
 	cibaPruneCancel context.CancelFunc
 	cibaPruneDone   <-chan struct{}
+
+	// Refresh grace prune lifecycle (SQLite backend only; cleanup goroutine
+	// for expired refresh_grace_cache rows).
+	refreshGracePruneCancel context.CancelFunc
+	refreshGracePruneDone   <-chan struct{}
 }
 
 // finalize wires the cluster subsystems + the last Options, constructs the

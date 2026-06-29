@@ -39,6 +39,7 @@ type Deps interface {
 	EmailVerificationSender() spi.EmailVerificationSender
 	SignupRequiresVerification() bool
 	EmailVerificationTTL() time.Duration
+	RegistrationGates() []spi.RegistrationGate
 
 	// Session management
 	SessionManager() core.SessionManager
