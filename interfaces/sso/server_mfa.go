@@ -331,6 +331,9 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 	if s.residencyGateLogin(ctx, client.ID, state.Result.Provider, client.TenantID) {
 		return
 	}
+	if s.rejectUnverifiedEmail(ctx, &state.Request, state.Result) {
+		return
+	}
 	s.finishLogin(ctx, state.Result, state.Request, client)
 }
 

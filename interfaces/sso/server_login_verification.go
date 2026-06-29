@@ -14,6 +14,9 @@ func (s *Server) rejectUnverifiedEmail(ctx HandlerContext, req *login.Request, r
 	if !s.signupRequireVerification {
 		return false
 	}
+	if s.userProvider == nil {
+		return false
+	}
 	u, uerr := s.userProvider.GetByID(ctx.Request().Context(), result.UserID)
 	if uerr == nil && u != nil && u.Attributes["email_verified"] != "true" {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrEmailNotVerified)
