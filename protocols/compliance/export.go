@@ -25,6 +25,18 @@ type SubjectExporter interface {
 	ExportKey() string
 }
 
+// credentialUserAttrs lists User.Attributes keys that hold server-side
+// credentials — never appropriate for export to a data subject or admin.
+// A denylist is used here (not a broad allowlist) because the GDPR data
+// bundle should include operator-defined personal data (department, phone,
+// etc.); only the specific known-credential keys must be stripped. The
+// "default-deny allowlist is the only safe model" rule applies to third-party
+// release surfaces (/userinfo, /me); a compliance export to the subject/admin
+// uses a targeted denylist of system-internal credential fields.
+var credentialUserAttrs = map[string]struct{}{
+	"password_hash": {}, "password_hash_format": {}, "seeded_password": {},
+}
+
 // Exporter assembles a portable copy of a subject's data across stores —
 // the read-side counterpart to Eraser. It composes the built-in
 // UserProvider + SessionManager reads with any number of SubjectExporter
@@ -47,6 +59,26 @@ type Export struct {
 	Data        map[string]any `json:"data"`
 }
 
+// redactCredentialAttrs returns a shallow copy of u with known-credential
+// Attributes stripped so they never appear in a compliance export bundle.
+func redactCredentialAttrs(u *core.User) *core.User {
+	if u == nil {
+		return u
+	}
+	var clean map[string]string
+	for k, v := range u.Attributes {
+		if _, cred := credentialUserAttrs[k]; !cred {
+			if clean == nil {
+				clean = make(map[string]string, len(u.Attributes))
+			}
+			clean[k] = v
+		}
+	}
+	cp := *u
+	cp.Attributes = clean
+	return &cp
+}
+
 // ExportSubject collects the subject's data across every wired store.
 // Best-effort: a failing store is recorded in the returned (joined)
 // error but does not abort the others, so the subject still receives a
@@ -63,7 +95,7 @@ func (e *Exporter) ExportSubject(ctx context.Context, userID string) (*Export, e
 		if err != nil {
 			errs = append(errs, fmt.Errorf("user: %w", err))
 		} else {
-			exp.Data["user"] = u
+			exp.Data["user"] = redactCredentialAttrs(u)
 		}
 	}
 	if e.Sessions != nil {
