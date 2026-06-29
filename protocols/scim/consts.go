@@ -129,6 +129,11 @@ const filterMaxResults = maxPageSize
 // without enriching the core.User model. WHY namespaced: core.User is
 // intentionally minimal (no userName/active fields); persisting SCIM-only
 // attributes here keeps the integration additive and reversible.
+// scimAttrPrefix namespaces every SCIM-managed attribute key. A PATCH/PUT
+// projection preserves all attribute keys WITHOUT this prefix (password_hash,
+// OIDC claim attributes, ...) as server-managed state SCIM must not destroy.
+const scimAttrPrefix = "scim:"
+
 const (
 	attrUserName      = "scim:userName"
 	attrActive        = "scim:active"

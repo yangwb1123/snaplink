@@ -104,9 +104,10 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	u := res.toUser(id)
-	// Replace is a full overwrite of the resource attributes, but the
-	// creation timestamp is immutable — preserve it from the stored row.
+	// PUT overwrites the SCIM-modeled attributes but MUST preserve server-managed
+	// state no SCIM client can re-supply (Provider, password_hash, OIDC claims) —
+	// a full toUser() would wipe them. The creation timestamp is immutable.
+	u := res.toUserPreserving(id, existing)
 	u.CreatedAt = existing.CreatedAt
 	u.UpdatedAt = h.now()
 	if err := h.users.CreateOrUpdate(r.Context(), u); err != nil {
@@ -185,7 +186,8 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	u := res.toUser(id)
+	// PATCH is a partial update (RFC 7644 §3.5.2); toUserPreserving keeps non-SCIM state.
+	u := res.toUserPreserving(id, existing)
 	u.CreatedAt = existing.CreatedAt
 	u.UpdatedAt = h.now()
 	if err := h.users.CreateOrUpdate(r.Context(), u); err != nil {

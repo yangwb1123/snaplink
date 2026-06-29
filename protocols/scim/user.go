@@ -142,6 +142,37 @@ func (r *Resource) toUser(id string) *core.User {
 	return u
 }
 
+// toUserPreserving projects the resource onto a COPY of the EXISTING stored
+// user: it overwrites the SCIM-modeled fields (ExternalID/Email/Name and the
+// "scim:"-namespaced attribute keys) but carries over every server-managed field
+// SCIM does not model — the Provider linkage and all non-"scim:" attributes
+// (password_hash / password_hash_format, OIDC claim attributes, ...). RFC 7644
+// PATCH (§3.5.2) and PUT must not destroy attributes they did not touch; the
+// plain toUser builds a fresh Attributes map and would silently wipe them.
+func (r *Resource) toUserPreserving(id string, existing *core.User) *core.User {
+	modeled := r.toUser(id) // fresh user: only scim: keys + ExternalID/Email/Name
+	merged := map[string]string{}
+	for k, v := range existing.Attributes {
+		if !strings.HasPrefix(k, scimAttrPrefix) {
+			merged[k] = v // preserve server-managed / claim attributes
+		}
+	}
+	for k, v := range modeled.Attributes {
+		merged[k] = v // the recomputed scim: keys win
+	}
+	if len(merged) == 0 {
+		merged = nil
+	}
+	return &core.User{
+		ID:         id,
+		ExternalID: modeled.ExternalID,
+		Provider:   existing.Provider, // server-managed, not SCIM-modeled
+		Email:      modeled.Email,
+		Name:       modeled.Name,
+		Attributes: merged,
+	}
+}
+
 // nonPrimaryEmails returns the emails NOT selected as primaryEmail, so
 // they can be round-tripped through Attributes. The chosen primary is
 // reconstructed from core.User.Email on read.

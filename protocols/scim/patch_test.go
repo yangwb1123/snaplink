@@ -48,6 +48,76 @@ func TestPatchUser_DeprovisionActiveFalse(t *testing.T) {
 	assertSubjectAudited(t, sink, audit.EventAdminUserUpdated, id)
 }
 
+// TestPatchUser_PreservesNonSCIMState is the RFC 7644 §3.5.2 partial-update
+// regression guard: a PATCH (and PUT) MUST NOT wipe server-managed state SCIM
+// does not model -- the user's password_hash credential, federation Provider
+// linkage, and OIDC claim attributes. The lossy load->Resource->User round-trip
+// previously rebuilt Attributes from only "scim:" keys, so a routine deprovision
+// or displayName sync silently destroyed the credential (password lockout) and
+// the federation link.
+func TestPatchUser_PreservesNonSCIMState(t *testing.T) {
+	h, users, _ := newTestHandler(t)
+	ctx := context.Background()
+	id := seedUser(t, h, `{"userName":"keep@example.com","active":true,"displayName":"Before"}`)
+
+	// Inject state SCIM never models, exactly as login + federation would persist
+	// it on the SAME shared user record.
+	u, err := users.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if u.Attributes == nil {
+		u.Attributes = map[string]string{}
+	}
+	u.Attributes["password_hash"] = "$2a$10$deadbeefdeadbeefdeadbe"
+	u.Attributes["password_hash_format"] = "bcrypt"
+	u.Attributes["email_verified"] = "true"
+	u.Provider = "okta"
+	if err := users.CreateOrUpdate(ctx, u); err != nil {
+		t.Fatalf("seed non-scim state: %v", err)
+	}
+
+	assertPreserved := func(stage string) {
+		got, err := users.GetByID(ctx, id)
+		if err != nil {
+			t.Fatalf("%s: get: %v", stage, err)
+		}
+		if got.Attributes["password_hash"] != "$2a$10$deadbeefdeadbeefdeadbe" {
+			t.Errorf("%s: password_hash wiped (=%q) -- credential destroyed", stage, got.Attributes["password_hash"])
+		}
+		if got.Attributes["password_hash_format"] != "bcrypt" {
+			t.Errorf("%s: password_hash_format wiped", stage)
+		}
+		if got.Attributes["email_verified"] != "true" {
+			t.Errorf("%s: non-scim claim attribute wiped", stage)
+		}
+		if got.Provider != "okta" {
+			t.Errorf("%s: Provider federation linkage wiped (=%q)", stage, got.Provider)
+		}
+	}
+
+	// PATCH deprovision (the canonical Azure AD / Okta op).
+	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id,
+		`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","value":{"active":false}}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	assertPreserved("after PATCH")
+
+	// PUT full replace -- a SCIM client cannot re-supply password_hash / Provider.
+	rec = do(t, h, http.MethodPut, pathUsers+"/"+id,
+		`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"keep@example.com","displayName":"After","active":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	assertPreserved("after PUT")
+
+	// Sanity: the SCIM-modeled change DID still apply through the preservation.
+	if got, _ := users.GetByID(ctx, id); got.Name != "After" {
+		t.Errorf("PUT displayName not applied through preservation: Name=%q", got.Name)
+	}
+}
+
 // TestPatchUser_PathedReplaceActive exercises the explicit-path form
 // (path="active") that some connectors send instead of the value object.
 func TestPatchUser_PathedReplaceActive(t *testing.T) {
