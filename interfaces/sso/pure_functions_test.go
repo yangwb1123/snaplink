@@ -8,6 +8,23 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
+// TestBoundLoginProvider is the cardinality-DoS regression guard: an arbitrary
+// (attacker-supplied) provider on the pre-validation /auth/login failure path
+// must collapse to "unknown" so it cannot explode the provider metric label,
+// while a registered authenticator name passes through.
+func TestBoundLoginProvider(t *testing.T) {
+	t.Parallel()
+	s := &Server{wiringState: wiringState{authenticators: map[string]Authenticator{"password": nil, "webauthn": nil}}}
+	if got := s.boundLoginProvider("password"); got != "password" {
+		t.Errorf("registered provider must pass through: got %q", got)
+	}
+	for _, bogus := range []string{"evil-random-xyz", "", "PASSWORD", "../etc"} {
+		if got := s.boundLoginProvider(bogus); got != "unknown" {
+			t.Errorf("unregistered provider %q must collapse to unknown: got %q", bogus, got)
+		}
+	}
+}
+
 // TestBuildTokenExchangeRequest_ThreadsSenderConstraint verifies the /token
 // dispatch carries the captured DPoP JKT / mTLS x5t#S256 into the RFC 8693
 // token-exchange request so the issued token can be cnf-bound like every other

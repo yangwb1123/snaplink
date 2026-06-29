@@ -153,6 +153,22 @@ func (s *Server) jarmSignerForClient(c *Client) (oidc.JARMSigner, bool) {
 
 // === Audit helper methods (migrated from audit_helpers.go) ===
 
+// boundLoginProvider maps an arbitrary provider string to a BOUNDED Prometheus
+// label: a registered authenticator name passes through, anything else collapses
+// to "unknown". The /auth/login provider is request input and is recorded on the
+// PRE-validation failure path (e.g. unknown client_id) before getAuthenticator
+// ever runs, so without this an unauthenticated caller sending a unique random
+// provider per request would mint unbounded permanent series (cardinality DoS) on
+// sso_login_attempts_total + sso_login_duration_seconds. Same class as the
+// HTTP-method label fix; the raw provider still flows to audit/anomaly (forensics
+// need the real value — those are not bounded-cardinality metric labels).
+func (s *Server) boundLoginProvider(provider string) string {
+	if _, ok := s.authenticators[provider]; ok {
+		return provider
+	}
+	return "unknown"
+}
+
 func (s *Server) observeLoginDuration(ctx HandlerContext, provider, outcome string) {
 	if s.metrics == nil {
 		return
@@ -162,7 +178,7 @@ func (s *Server) observeLoginDuration(ctx HandlerContext, provider, outcome stri
 	if !ok {
 		return
 	}
-	s.metrics.LoginDuration.WithLabelValues(provider, outcome).Observe(time.Since(start).Seconds())
+	s.metrics.LoginDuration.WithLabelValues(s.boundLoginProvider(provider), outcome).Observe(time.Since(start).Seconds())
 }
 
 // recordLoginFailure emits a login-failure audit event AND bumps the
@@ -170,7 +186,7 @@ func (s *Server) observeLoginDuration(ctx HandlerContext, provider, outcome stri
 // the Err* constants describing why authentication was refused.
 func (s *Server) recordLoginFailure(ctx HandlerContext, clientID, provider, reason string) {
 	if s.metrics != nil {
-		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "failure").Inc()
+		s.metrics.LoginAttemptsTotal.WithLabelValues(s.boundLoginProvider(provider), "failure").Inc()
 	}
 	s.recordTenantLoginAttempt(ctx, clientID, "failure")
 	s.observeLoginDuration(ctx, provider, "failure")
@@ -217,7 +233,7 @@ func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, p
 // registry (nil-safe).
 func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, strategy, userID, sessionID string) {
 	if s.metrics != nil {
-		s.metrics.LoginAttemptsTotal.WithLabelValues(provider, "success").Inc()
+		s.metrics.LoginAttemptsTotal.WithLabelValues(s.boundLoginProvider(provider), "success").Inc()
 		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
 	}
 	s.recordTenantLoginAttempt(ctx, clientID, "success")
