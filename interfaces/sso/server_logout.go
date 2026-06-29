@@ -384,16 +384,19 @@ func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Se
 		return nil, err
 	}
 	if s.maxSessionsPerUser > 0 {
-		s.pruneExcessSessions(rctx, userID, tenantID, s.maxSessionsPerUser)
+		s.pruneExcessSessions(rctx, userID, tenantID, s.maxSessionsPerUser, sess.ID)
 	}
 	return sess, nil
 }
 
 // pruneExcessSessions evicts the oldest sessions for (userID, tenantID) when
-// the count exceeds limit. Scoped to tenantID so a user's sessions across
-// tenants are independent; an empty tenantID matches tenant-unbound sessions.
+// the count exceeds limit. newSessID is excluded from eviction candidates —
+// without this the newly created session can appear as the oldest entry in the
+// list and be self-evicted before createSession returns it (the prune loop
+// has no concept of "the caller's own session" otherwise).
+// Scoped to tenantID: a user's sessions in different tenants are independent.
 // Fail-open: any error is logged but does not block the caller.
-func (s *Server) pruneExcessSessions(rctx context.Context, userID, tenantID string, limit int) {
+func (s *Server) pruneExcessSessions(rctx context.Context, userID, tenantID string, limit int, newSessID string) {
 	sessions, err := s.sessionMgr.ListByUser(rctx, userID)
 	if err != nil {
 		if s.logger != nil {
@@ -403,11 +406,13 @@ func (s *Server) pruneExcessSessions(rctx context.Context, userID, tenantID stri
 	}
 	var scoped []*Session
 	for _, sess := range sessions {
-		if sess != nil && sess.TenantID == tenantID {
+		if sess != nil && sess.TenantID == tenantID && sess.ID != newSessID {
 			scoped = append(scoped, sess)
 		}
 	}
-	for len(scoped) > limit {
+	// scoped holds all pre-existing sessions for this tenant (excludes the new
+	// one). We want at most limit-1 of them so the total stays at limit.
+	for len(scoped) > limit-1 {
 		oldest := oldestSession(scoped)
 		if oldest == nil || oldest.ID == "" {
 			break

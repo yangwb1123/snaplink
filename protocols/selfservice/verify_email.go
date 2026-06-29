@@ -1,6 +1,7 @@
 package selfservice
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -72,41 +73,29 @@ func consumeVerificationToken(d Deps, ctx core.HandlerContext, rawToken string) 
 // Returns true on success so HandleVerifyEmail can write the 200.
 func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerificationToken) bool {
 	rctx := ctx.Request().Context()
-	attrs := map[string]string{"email_verified": "true"}
+	// Guard against upsert-overwrite: if the username was claimed between token
+	// issue and verify (concurrent duplicate registration, admin creation, etc.)
+	// treat the attempt as verification_invalid rather than silently overwriting
+	// the existing account's credentials. Oracle-safe: same response as a bad
+	// token — caller cannot distinguish "account taken" from "token expired".
+	if existing, err := d.UserProvider().GetByID(rctx, tok.Username); err == nil && existing != nil {
+		d.Logger().Error("verify-email: username already taken at verify time", "username", tok.Username)
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrVerificationInvalid))
+		return false
+	}
 	u := &core.User{
 		ID:         tok.Username,
 		Email:      tok.Email,
-		Attributes: attrs,
+		Attributes: map[string]string{"email_verified": "true"},
 	}
 	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
 		d.Logger().Error("verify-email: create user failed", "username", tok.Username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return false
 	}
-
-	// Install the password that was hashed at issue time. Mode B requires a
-	// PasswordCredentialStore that implements core.PasswordHashImporter so the
-	// pre-hashed credential can be stored without re-transmitting the plaintext.
-	if tok.PasswordHash != "" {
-		importer, ok := d.PasswordCredentialStore().(core.PasswordHashImporter)
-		if !ok {
-			d.Logger().Error("verify-email: password store does not implement PasswordHashImporter — Mode B signup requires it", "username", tok.Username)
-			if derr := d.UserProvider().Delete(rctx, tok.Username); derr != nil {
-				d.Logger().Error("verify-email: rollback delete failed", "username", tok.Username, "error", derr)
-			}
-			ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrServerMisconfigured))
-			return false
-		}
-		if err := importer.SetPasswordHash(rctx, tok.Username, tok.PasswordHash); err != nil {
-			d.Logger().Error("verify-email: set password hash failed", "username", tok.Username, "error", err)
-			if derr := d.UserProvider().Delete(rctx, tok.Username); derr != nil {
-				d.Logger().Error("verify-email: rollback delete failed", "username", tok.Username, "error", derr)
-			}
-			ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-			return false
-		}
+	if !installVerifiedPassword(d, ctx, rctx, tok.Username, tok.PasswordHash) {
+		return false
 	}
-
 	if d.Auditor() != nil {
 		evt := &audit.Event{
 			Type:    audit.EventSelfRegistered,
@@ -115,6 +104,34 @@ func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerifica
 			ActorIP: audit.ClientIP(ctx.Request()),
 		}
 		d.Auditor().Record(rctx, evt)
+	}
+	return true
+}
+
+// installVerifiedPassword installs the pre-hashed password from a verification
+// token into the credential store. Mode B requires core.PasswordHashImporter;
+// if the store does not implement it, the user record is rolled back and a 500
+// is written. Returns true on success or when no hash is present (Mode A).
+func installVerifiedPassword(d Deps, ctx core.HandlerContext, rctx context.Context, username, hash string) bool {
+	if hash == "" {
+		return true
+	}
+	importer, ok := d.PasswordCredentialStore().(core.PasswordHashImporter)
+	if !ok {
+		d.Logger().Error("verify-email: password store lacks PasswordHashImporter — Mode B requires it", "username", username)
+		if derr := d.UserProvider().Delete(rctx, username); derr != nil {
+			d.Logger().Error("verify-email: rollback delete failed", "username", username, "error", derr)
+		}
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrServerMisconfigured))
+		return false
+	}
+	if err := importer.SetPasswordHash(rctx, username, hash); err != nil {
+		d.Logger().Error("verify-email: set password hash failed", "username", username, "error", err)
+		if derr := d.UserProvider().Delete(rctx, username); derr != nil {
+			d.Logger().Error("verify-email: rollback delete failed", "username", username, "error", derr)
+		}
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return false
 	}
 	return true
 }
