@@ -61,7 +61,9 @@ func TestJWKSCache_GetUnknownKidTriggersRefetch(t *testing.T) {
 	url, hits, stop := jwksServer(t, pub)
 	defer stop()
 
-	cache := remote.NewJWKSCache(url)
+	// NewJWKSCache with a 1ns forced-fetch interval so the debounce window
+	// expires immediately and the re-fetch is not suppressed.
+	cache := remote.NewJWKSCache(url, remote.WithJWKSForcedFetchInterval(time.Nanosecond))
 	defer cache.Close()
 
 	// Prime cache.
@@ -78,6 +80,31 @@ func TestJWKSCache_GetUnknownKidTriggersRefetch(t *testing.T) {
 	}
 	if hits.Load() != 2 {
 		t.Fatalf("expected refetch on unknown kid; hit count = %d", hits.Load())
+	}
+}
+
+func TestJWKSCache_DebounceBlocksImmediateRefetch(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	url, hits, stop := jwksServer(t, pub)
+	defer stop()
+
+	cache := remote.NewJWKSCache(url)
+	defer cache.Close()
+
+	// Prime cache — first load unconditionally fetches.
+	_, _ = cache.Get(context.Background(), "test-kid")
+	if hits.Load() != 1 {
+		t.Fatalf("priming hit count = %d, want 1", hits.Load())
+	}
+
+	// Within the debounce window, unknown kid returns an error WITHOUT
+	// an upstream fetch — prevents amplification from attacker-controlled kids.
+	_, err := cache.Get(context.Background(), "rotated-kid")
+	if err == nil {
+		t.Fatal("expected error for unknown kid")
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("debounce should prevent refetch; hit count = %d, want 1", hits.Load())
 	}
 }
 

@@ -41,10 +41,11 @@ type JWKSCache struct {
 	url    string
 	client *http.Client
 
-	mu              sync.RWMutex
-	keys            map[string]core.JWK
-	loaded          bool
-	lastForcedFetch time.Time // debounce: tracks last on-demand miss fetch
+	mu                  sync.RWMutex
+	keys                map[string]core.JWK
+	loaded              bool
+	lastForcedFetch     time.Time // debounce: tracks last on-demand miss fetch
+	forcedFetchInterval time.Duration
 
 	refreshInterval time.Duration
 	closeOnce       sync.Once
@@ -70,6 +71,13 @@ func WithJWKSHTTPClient(c *http.Client) JWKSOption {
 // WithJWKSRefreshInterval overrides DefaultJWKSRefreshInterval.
 func WithJWKSRefreshInterval(d time.Duration) JWKSOption {
 	return func(j *JWKSCache) { j.refreshInterval = d }
+}
+
+// WithJWKSForcedFetchInterval overrides minForcedFetchInterval for testing.
+// A zero value disables the debounce entirely (every cache miss triggers a
+// fetch). This option is intended for tests only.
+func WithJWKSForcedFetchInterval(d time.Duration) JWKSOption {
+	return func(j *JWKSCache) { j.forcedFetchInterval = d }
 }
 
 // NewJWKSCache constructs the cache and starts the background refresher.
@@ -132,7 +140,11 @@ func (j *JWKSCache) getJWK(ctx context.Context, kid string) (core.JWK, error) {
 
 	// Debounce: if we fetched recently and the kid isn't there, don't re-fetch.
 	// New legitimate keys propagate on the next background refresh tick instead.
-	if loaded && time.Since(last) < minForcedFetchInterval {
+	debounce := minForcedFetchInterval
+	if j.forcedFetchInterval > 0 {
+		debounce = j.forcedFetchInterval
+	}
+	if loaded && time.Since(last) < debounce {
 		return core.JWK{}, fmt.Errorf("ssoclient/remote: kid %q not in JWKS", kid)
 	}
 
