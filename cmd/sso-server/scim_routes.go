@@ -50,7 +50,10 @@ func mountSCIMRoutes(srv *sso.Server, users core.UserProvider, recorder *audit.R
 	}
 	groupsEnabled := groups != nil && groups.provider != nil
 	if groupsEnabled {
-		opts = append(opts, scim.WithGroups(groups.provider, groups.clientID))
+		// Pass the authz-policy-bundle invalidator so a SCIM group role
+		// create/rename/delete evicts the local bundle cache + publishes
+		// KindAuthzPolicyChange to peers (matching the gRPC PermissionAdmin path).
+		opts = append(opts, scim.WithGroups(groups.provider, groups.clientID, srv.InvalidateAuthzPolicyBundleCache))
 	}
 	h := scim.NewHandler(users, scimBasePath, opts...)
 	serve := func(w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }

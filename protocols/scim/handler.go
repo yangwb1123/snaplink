@@ -101,10 +101,19 @@ func WithClock(now func() time.Time) Option {
 // model the rest of the server reads. clientID is the app the IdP
 // provisions for (""— the demo/default bucket — is valid). Omit this
 // option to leave /Groups unmounted (User provisioning still works).
-func WithGroups(perms permissions.Provider, clientID string) Option {
+// invalidateAuthzBundle is optional and variadic only to keep this an additive,
+// non-breaking signature change: pass (*sso.Server).InvalidateAuthzPolicyBundleCache
+// so a SCIM group role create/rename/delete evicts the local authz-policy-bundle
+// cache and publishes KindAuthzPolicyChange cross-replica (matching the gRPC
+// PermissionAdmin path). Omit it and group role changes go un-propagated until
+// the bundle cache TTL.
+func WithGroups(perms permissions.Provider, clientID string, invalidateAuthzBundle ...func(clientID string)) Option {
 	return func(h *Handler) {
 		if perms != nil {
 			h.groups = &groupRole{perms: perms, clientID: clientID}
+			if len(invalidateAuthzBundle) > 0 {
+				h.groups.invalidate = invalidateAuthzBundle[0]
+			}
 		}
 	}
 }

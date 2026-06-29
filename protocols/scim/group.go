@@ -78,6 +78,21 @@ func (g *GroupResource) memberValues() []string {
 type groupRole struct {
 	perms    permissions.Provider
 	clientID string
+	// invalidate, when wired, evicts the authz-policy-bundle cache + publishes
+	// KindAuthzPolicyChange to peers after a role-DEFINITION mutation (create /
+	// rename / delete). Without it a SCIM group change leaves stale role
+	// definitions served from the per-replica bundle cache for the cache TTL,
+	// authorizing under a de-provisioned role fleet-wide — the gRPC PermissionAdmin
+	// path does this; the byte-equivalent SCIM path must too.
+	invalidate func(clientID string)
+}
+
+// invalidateBundle fires the authz-policy-bundle cache invalidation after a role
+// definition changed. Nil-safe (no-op when the invalidator was not wired).
+func (gr *groupRole) invalidateBundle() {
+	if gr != nil && gr.invalidate != nil {
+		gr.invalidate(gr.clientID)
+	}
 }
 
 // listRoleCodes returns every group (role code) defined under clientID.

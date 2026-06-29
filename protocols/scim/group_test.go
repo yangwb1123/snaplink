@@ -464,3 +464,37 @@ func TestGroup_FallbackWithoutMembershipWriter(t *testing.T) {
 		t.Error("fallback replace did not remove y")
 	}
 }
+
+// TestGroup_RoleMutationsInvalidateAuthzBundle is the cross-replica-publish
+// regression guard: a SCIM group role create/delete (role-DEFINITION mutation)
+// MUST fire the authz-policy-bundle invalidator so peers don't keep serving a
+// de-provisioned role's permissions from a stale bundle cache. Mirrors the gRPC
+// PermissionAdmin path.
+func TestGroup_RoleMutationsInvalidateAuthzBundle(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	perms := permissions.NewMemoryProvider()
+	var invalidated []string
+	var seq int
+	gen := func() string { seq++; return fmt.Sprintf("grp-%d", seq) }
+	h := NewHandler(users, testBase,
+		WithIDGenerator(gen),
+		WithGroups(perms, groupClientID, func(cid string) { invalidated = append(invalidated, cid) }),
+	)
+
+	rec := do(t, h, http.MethodPost, pathGroups, `{"displayName":"admins"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create group: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(invalidated) != 1 || invalidated[0] != groupClientID {
+		t.Fatalf("create did not invalidate authz bundle: %v", invalidated)
+	}
+	id := decodeResource(t, rec).ID
+
+	rec = do(t, h, http.MethodDelete, pathGroups+"/"+id, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete group: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(invalidated) != 2 || invalidated[1] != groupClientID {
+		t.Fatalf("delete did not invalidate authz bundle: %v", invalidated)
+	}
+}

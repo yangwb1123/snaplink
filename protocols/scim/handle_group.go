@@ -39,6 +39,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, h.storageError(err))
 		return
 	}
+	h.groups.invalidateBundle() // evict local authz bundle + publish KindAuthzPolicyChange
 	// Grant the initial members. WHY after AddRole (not transactional): the
 	// permissions SPI has no multi-op transaction; AddRole then per-member
 	// AddRoleToUser is the same shape the admin API uses, and a partial
@@ -199,6 +200,7 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request, id string
 		h.writeError(w, h.storageError(err))
 		return
 	}
+	h.groups.invalidateBundle() // evict local authz bundle + publish KindAuthzPolicyChange
 	desired := g.memberValues()
 	if err := h.reconcileMembers(r.Context(), id, desired); err != nil {
 		h.writeError(w, h.storageError(err))
@@ -248,6 +250,7 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 			h.writeError(w, h.storageError(err))
 			return
 		}
+		h.groups.invalidateBundle() // evict local authz bundle + publish KindAuthzPolicyChange
 	}
 	if e := h.runMemberPlan(r.Context(), id, plan); e != nil {
 		h.writeError(w, *e)
@@ -320,6 +323,7 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, id string)
 		h.writeError(w, h.storageError(err))
 		return
 	}
+	h.groups.invalidateBundle() // evict local authz bundle + publish KindAuthzPolicyChange
 	h.auditGroup(r, audit.EventAdminRoleRemoved, id)
 	w.WriteHeader(http.StatusNoContent)
 }
