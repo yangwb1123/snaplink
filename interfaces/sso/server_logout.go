@@ -75,6 +75,11 @@ func (s *Server) captureBackchannelTarget(ctx HandlerContext, bearer string) (bc
 // bearer across every registered issuer, returning the list of revoked-credential
 // markers in append order: RevokedSession first, then one RevokedToken per issuer
 // that held the token.
+//
+// Uses the EXPORTED s.RevokeAcrossIssuers so the revocation is published on the
+// cluster Bus (KindTokenRevoked), matching /token/revoke and /end_session. The
+// unexported method is local-deny-set only; calling it here let a logged-out
+// stateless access token keep validating on peer replicas until its natural exp.
 func (s *Server) revokeLogoutCredentials(ctx HandlerContext, sessionID, bearer string) []string {
 	revoked := []string{}
 	if sessionID != "" && s.sessionMgr != nil {
@@ -85,7 +90,7 @@ func (s *Server) revokeLogoutCredentials(ctx HandlerContext, sessionID, bearer s
 		}
 	}
 	if bearer != "" && len(s.tokenIssuers) > 0 {
-		issuersHit, failedIssuers := s.revokeAcrossIssuers(ctx.Request().Context(), bearer)
+		issuersHit, failedIssuers := s.RevokeAcrossIssuers(ctx.Request().Context(), bearer)
 		for range issuersHit {
 			revoked = append(revoked, RevokedToken)
 		}
