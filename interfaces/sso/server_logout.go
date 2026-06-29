@@ -355,81 +355,58 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 // authenticating client's TenantID (empty for non-tenant clients, which leaves
 // the session tenant-unbound and relies on the membership-roster revoke path).
 //
-// When maxSessionsPerUser > 0, this method enforces a per-user session limit
-// with rolling eviction: if the user already has >= maxSessionsPerUser active
-// sessions, the OLDEST one is silently revoked before the new session is
-// created. The user stays logged in on their current device and the oldest
-// session is evicted. Fail-open: any listing/eviction error is logged and the
-// new session is still created (login is never blocked).
+// When maxSessionsPerUser > 0, the oldest session in this tenant is evicted
+// before the new one is created. Eviction is scoped to tenantID so each
+// tenant's quota is independent. Fail-open: any listing/eviction error is
+// logged but does not block login. The limit is a soft cap: under concurrent
+// logins two goroutines may both pass the >= limit check and both create (the
+// count transiently reaches limit+1). A distributed lock would be needed for
+// strict enforcement; the soft cap is the intended design.
 func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Session, error) {
 	rctx := ctx.Request().Context()
 
-	// Create the session first so login is never gated on eviction success.
-	// Eviction (below) happens after the new session exists, so the worst case
-	// under concurrent logins is briefly limit+K sessions, not 0.
-	var (
-		sess *Session
-		err  error
-	)
+	if s.maxSessionsPerUser > 0 {
+		s.evictOldestSession(rctx, userID, tenantID, s.maxSessionsPerUser)
+	}
+
 	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
-		sess, err = mc.CreateWithMeta(rctx, userID, SessionMeta{
+		return mc.CreateWithMeta(rctx, userID, SessionMeta{
 			IP:        audit.ClientIP(ctx.Request()),
 			UserAgent: ctx.Request().UserAgent(),
 			TenantID:  tenantID,
 		})
-	} else {
-		sess, err = s.sessionMgr.Create(rctx, userID)
 	}
-	if err != nil {
-		return nil, err
-	}
-	if s.maxSessionsPerUser > 0 {
-		s.pruneExcessSessions(rctx, userID, tenantID, s.maxSessionsPerUser, sess.ID)
-	}
-	return sess, nil
+	return s.sessionMgr.Create(rctx, userID)
 }
 
-// pruneExcessSessions evicts the oldest sessions for (userID, tenantID) when
-// the count exceeds limit. newSessID is excluded from eviction candidates —
-// without this the newly created session can appear as the oldest entry in the
-// list and be self-evicted before createSession returns it (the prune loop
-// has no concept of "the caller's own session" otherwise).
-// Scoped to tenantID: a user's sessions in different tenants are independent.
-// Fail-open: any error is logged but does not block the caller.
-func (s *Server) pruneExcessSessions(rctx context.Context, userID, tenantID string, limit int, newSessID string) {
+// evictOldestSession lists the user's sessions for the given tenant and, when
+// the count is at or above limit, destroys the session with the earliest
+// CreatedAt. Scoped to tenantID: each tenant's quota is independent.
+// Fail-open: any listing or eviction error is logged but does not block login.
+func (s *Server) evictOldestSession(rctx context.Context, userID, tenantID string, limit int) {
 	sessions, err := s.sessionMgr.ListByUser(rctx, userID)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("session limit: list failed", "error", err, "user", userID)
+			s.logger.Error("session limit: list by user failed", "error", err, "user", userID)
 		}
 		return
 	}
 	var scoped []*Session
 	for _, sess := range sessions {
-		if sess != nil && sess.TenantID == tenantID && sess.ID != newSessID {
+		if sess != nil && sess.TenantID == tenantID {
 			scoped = append(scoped, sess)
 		}
 	}
-	// scoped holds all pre-existing sessions for this tenant (excludes the new
-	// one). We want at most limit-1 of them so the total stays at limit.
-	for len(scoped) > limit-1 {
-		oldest := oldestSession(scoped)
-		if oldest == nil || oldest.ID == "" {
-			break
-		}
-		if err := s.sessionMgr.Destroy(rctx, oldest.ID); err != nil {
-			if s.logger != nil {
-				s.logger.Error("session limit: evict failed", "error", err, "user", userID, "session", oldest.ID)
-			}
-			break
-		}
-		trimmed := scoped[:0]
-		for _, sess := range scoped {
-			if sess.ID != oldest.ID {
-				trimmed = append(trimmed, sess)
-			}
-		}
-		scoped = trimmed
+	if len(scoped) < limit {
+		return
+	}
+	oldest := oldestSession(scoped)
+	if oldest == nil || oldest.ID == "" {
+		return
+	}
+	if err := s.sessionMgr.Destroy(rctx, oldest.ID); err != nil && s.logger != nil {
+		s.logger.Error("session limit: evict oldest failed",
+			"error", err, "user", userID, "session", oldest.ID)
 	}
 }
 

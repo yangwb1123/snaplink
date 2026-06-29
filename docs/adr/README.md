@@ -16,6 +16,7 @@ enforcement lives in the committed `*_test.go` gates and `checks/*.py`
 | [ADR-0005](ADR-0005-size-and-complexity-budgets.md) | File ≤500, cyclo ≤15, cognit ≤20, func ≤50; ratcheting; enforced as committed tests not shell stubs | Accepted |
 | [ADR-0006](ADR-0006-cognitive-architecture.md) | Seven-layer cognitive model enforced as a committed gate over the flat tree (no public-path moves) | Accepted |
 | [ADR-0007](ADR-0007-directory-fanout-and-the-monolith-exemption-class.md) | Per-directory fan-out budget (≤10 files); permanent exemption class for monolithic-shared-state / binary-root / depth-blocked / kernel dirs — never break a published import path to chase it | Accepted |
+| [ADR-0008](ADR-0008-proto-versioning.md) | Proto API versioning strategy (v1 stable / v2alpha preview / v2beta near-stable / v2 stable); deprecation annotations; buf breaking policy | Accepted |
 
 ## Writing a new ADR
 
