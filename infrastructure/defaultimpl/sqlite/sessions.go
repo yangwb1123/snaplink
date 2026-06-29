@@ -172,9 +172,10 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 }
 
 func (s *SessionManager) Get(ctx context.Context, sessionID string) (*sso.Session, error) {
+	now := time.Now().UnixNano()
 	row := s.db.QueryRowContext(ctx, `
         SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
-          FROM sessions WHERE id = ?`, sessionID)
+          FROM sessions WHERE id = ? AND revoked = 0 AND expires_at > ?`, sessionID, now)
 	out, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, sso.ErrSessionNotFound
@@ -222,9 +223,10 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 }
 
 func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.Session, error) {
+	now := time.Now().UnixNano()
 	rows, err := s.db.QueryContext(ctx, `
         SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
-          FROM sessions WHERE user_id = ?`, userID)
+          FROM sessions WHERE user_id = ? AND revoked = 0 AND expires_at > ?`, userID, now)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by user: %w", err)
 	}

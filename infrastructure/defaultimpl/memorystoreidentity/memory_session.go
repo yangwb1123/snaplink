@@ -82,6 +82,9 @@ func (m *MemorySessionManager) Get(_ context.Context, sessionID string) (*core.S
 	if !ok {
 		return nil, core.ErrSessionNotFound
 	}
+	if s.Revoked || s.IsExpired() {
+		return nil, core.ErrSessionNotFound
+	}
 	return s, nil
 }
 
@@ -118,7 +121,7 @@ func (m *MemorySessionManager) ListByUser(_ context.Context, userID string) ([]*
 	defer m.mu.RUnlock()
 	out := make([]*core.Session, 0)
 	for _, s := range m.sessions {
-		if s.UserID == userID {
+		if s.UserID == userID && !s.Revoked && !s.IsExpired() {
 			out = append(out, s)
 		}
 	}
