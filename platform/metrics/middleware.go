@@ -23,9 +23,26 @@ func Middleware(m *Metrics) func(http.Handler) http.Handler {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			m.HTTPRequestsTotal.WithLabelValues(r.Method, statusClass(rec.status)).Inc()
-			m.HTTPRequestDuration.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
+			method := sanitizeMethod(r.Method)
+			m.HTTPRequestsTotal.WithLabelValues(method, statusClass(rec.status)).Inc()
+			m.HTTPRequestDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
 		})
+	}
+}
+
+// sanitizeMethod maps the request method onto a BOUNDED known-method set so a
+// hostile client cannot explode Prometheus label cardinality — a DoS on the
+// scraped (and often unauthenticated) /metrics endpoint — by sending arbitrary
+// method strings. Anything not a standard HTTP method collapses to "other".
+// Mirrors prometheus/client_golang promhttp.sanitizeMethod.
+func sanitizeMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+		http.MethodPatch, http.MethodHead, http.MethodOptions,
+		http.MethodConnect, http.MethodTrace:
+		return m
+	default:
+		return "other"
 	}
 }
 
