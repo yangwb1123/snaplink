@@ -89,6 +89,13 @@ const (
 	KeyACR      = "acr"
 	KeyAMR      = "amr"
 
+	// RFC 7662 §2.2 / RFC 8705 §3.3 / RFC 9449 §7 confirmation member —
+	// introspection echoes the token's `cnf` so a resource server can enforce
+	// sender-constraint binding (mTLS x5t#S256 / DPoP jkt).
+	KeyCnf        = "cnf"
+	KeyCnfX5TS256 = "x5t#S256"
+	KeyCnfJKT     = "jkt"
+
 	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
 	KeyIDToken = "id_token"
 

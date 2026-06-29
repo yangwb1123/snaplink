@@ -317,3 +317,37 @@ func TestHandleIntrospect(t *testing.T) {
 		}
 	})
 }
+
+// TestIntrospectionEmitsCnf is the RFC 7662 §2.2 regression guard: introspection
+// MUST echo the sender-constraint confirmation so a resource server can enforce
+// RFC 8705 §3.3 (mTLS) / RFC 9449 §7 (DPoP) binding. Previously omitted entirely.
+func TestIntrospectionEmitsCnf(t *testing.T) {
+	// mTLS-bound token -> cnf.x5t#S256.
+	body := map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u", ConfirmationX5TS256: "thumb-abc"})
+	cnf, ok := body[core.KeyCnf].(map[string]any)
+	if !ok {
+		t.Fatalf("no cnf in introspection body for an mTLS-bound token: %v", body[core.KeyCnf])
+	}
+	if cnf[core.KeyCnfX5TS256] != "thumb-abc" {
+		t.Errorf("cnf x5t#S256 = %v, want thumb-abc", cnf[core.KeyCnfX5TS256])
+	}
+
+	// DPoP-bound token -> cnf.jkt.
+	body = map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u", ConfirmationJKT: "jkt-xyz"})
+	cnf, ok = body[core.KeyCnf].(map[string]any)
+	if !ok {
+		t.Fatalf("no cnf for a DPoP-bound token: %v", body[core.KeyCnf])
+	}
+	if cnf[core.KeyCnfJKT] != "jkt-xyz" {
+		t.Errorf("cnf jkt = %v, want jkt-xyz", cnf[core.KeyCnfJKT])
+	}
+
+	// Unbound bearer token -> NO cnf member.
+	body = map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u"})
+	if _, present := body[core.KeyCnf]; present {
+		t.Errorf("cnf emitted for an unbound token: %v", body[core.KeyCnf])
+	}
+}

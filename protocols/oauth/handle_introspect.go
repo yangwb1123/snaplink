@@ -228,6 +228,14 @@ func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClai
 	if len(claims.AMR) > 0 {
 		body[core.KeyAMR] = claims.AMR
 	}
+	// RFC 7662 §2.2: echo the sender-constraint confirmation so an
+	// introspection-based resource server can enforce RFC 8705 §3.3 (mTLS) /
+	// RFC 9449 §7 (DPoP) binding. A token carries at most one PoP mechanism.
+	if claims.ConfirmationX5TS256 != "" {
+		body[core.KeyCnf] = map[string]any{core.KeyCnfX5TS256: claims.ConfirmationX5TS256}
+	} else if claims.ConfirmationJKT != "" {
+		body[core.KeyCnf] = map[string]any{core.KeyCnfJKT: claims.ConfirmationJKT}
+	}
 }
 
 // introspectRefresh queries the optional RefreshTokenInspector.
