@@ -129,6 +129,32 @@ func (s *UserAdminService) ListUserSessions(ctx context.Context, in *adminv1.Lis
 	return out, nil
 }
 
+// adminUserAttrDenylist holds User.Attributes keys containing credential
+// material that must never be forwarded to callers. Matches the keys used by
+// interfaces/snapshot and protocols/compliance so all serialization surfaces
+// are consistent. A denylist (not an allowlist) is used here because admin
+// callers legitimately need custom attributes.
+var adminUserAttrDenylist = []string{"password_hash", "password_hash_format", "seeded_password"}
+
+// redactAdminUserAttrs returns a copy of attrs with credential keys removed.
+// Returns nil when the cleaned result is empty.
+func redactAdminUserAttrs(attrs map[string]string) map[string]string {
+	if len(attrs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		out[k] = v
+	}
+	for _, k := range adminUserAttrDenylist {
+		delete(out, k)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func userToProto(u *sso.User) *adminv1.User {
 	if u == nil {
 		return nil
@@ -137,7 +163,7 @@ func userToProto(u *sso.User) *adminv1.User {
 		Id:         u.ID,
 		ExternalId: u.ExternalID,
 		Provider:   u.Provider,
-		Attributes: u.Attributes,
+		Attributes: redactAdminUserAttrs(u.Attributes),
 	}
 }
 

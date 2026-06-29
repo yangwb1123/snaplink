@@ -190,6 +190,57 @@ func TestUserAdmin_CRUDAndSessions(t *testing.T) {
 	}
 }
 
+func TestUserAdmin_CredentialAttrsRedacted(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	conn := startAdminGRPC(t, nil, users, nil, nil, nil, nil)
+	c := adminv1.NewUserAdminServiceClient(conn)
+	ctx := context.Background()
+
+	// Seed a user that carries credential attributes alongside a custom one.
+	u := &sso.User{
+		ID:       "bob",
+		Provider: "password",
+		Attributes: map[string]string{
+			"password_hash":        "$2a$10$abc",
+			"password_hash_format": "bcrypt",
+			"seeded_password":      "hunter2",
+			"department":           "engineering",
+		},
+	}
+	if err := users.CreateOrUpdate(ctx, u); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	resp, err := c.Get(ctx, &adminv1.GetUserRequest{Id: "bob"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	attrs := resp.User.Attributes
+	for _, key := range []string{"password_hash", "password_hash_format", "seeded_password"} {
+		if _, ok := attrs[key]; ok {
+			t.Errorf("credential key %q must not appear in admin Get response", key)
+		}
+	}
+	if attrs["department"] != "engineering" {
+		t.Errorf("custom attribute department missing or wrong: %v", attrs)
+	}
+
+	// Confirm the same filtering applies to List.
+	list, err := c.List(ctx, &adminv1.ListUsersRequest{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list.Users) == 0 {
+		t.Fatal("List returned no users")
+	}
+	listAttrs := list.Users[0].Attributes
+	for _, key := range []string{"password_hash", "password_hash_format", "seeded_password"} {
+		if _, ok := listAttrs[key]; ok {
+			t.Errorf("credential key %q must not appear in admin List response", key)
+		}
+	}
+}
+
 // --- TokenAdmin ---
 
 func TestTokenAdmin_ListAndIssueTemp(t *testing.T) {
