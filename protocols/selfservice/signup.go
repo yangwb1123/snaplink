@@ -14,6 +14,7 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // HandleSelfRegister serves POST /auth/register — the opt-in UNAUTHENTICATED
@@ -91,46 +92,56 @@ func handleMandatoryVerificationSignup(d Deps, ctx core.HandlerContext, username
 	if !checkPasswordPolicy(d, rctx, ctx, password) {
 		return
 	}
-	// Generate a 32-byte random token.
+	// Hash the password now so the raw plaintext never leaves this frame.
+	// Mode B: the hash is stored in the pending token and committed to the
+	// password store only when the email is verified (createVerifiedUser).
+	pwHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		d.Logger().Error("signup: hash password failed", "username", username, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	if !issueVerificationToken(d, ctx, rctx, username, email, string(pwHash)) {
+		return
+	}
+	// Audit fires at verify-email (createVerifiedUser), not here: the user
+	// does not exist yet and the token may expire without being consumed.
+	ctx.JSON(http.StatusCreated, map[string]any{"status": "pending"})
+}
+
+// issueVerificationToken generates, stores, and sends a signup verification
+// token. Returns false when it has already written an error response.
+func issueVerificationToken(d Deps, ctx core.HandlerContext, rctx context.Context, username, email, pwHash string) bool {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		d.Logger().Error("signup: generate verification token failed", "username", username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
+		return false
 	}
 	rawToken := hex.EncodeToString(raw)
-
-	// SHA-256 hash for storage.
 	h := sha256.Sum256([]byte(rawToken))
-	hash := hex.EncodeToString(h[:])
-
 	ttl := d.EmailVerificationTTL()
 	if ttl <= 0 {
 		ttl = 15 * time.Minute
 	}
-
 	tok := &core.EmailVerificationToken{
-		Token:     hash,
-		Username:  username,
-		Email:     email,
-		ExpiresAt: time.Now().Add(ttl),
+		Token:        hex.EncodeToString(h[:]),
+		Username:     username,
+		Email:        email,
+		PasswordHash: pwHash,
+		ExpiresAt:    time.Now().Add(ttl),
 	}
-
 	if err := d.EmailVerificationStore().Issue(rctx, tok); err != nil {
 		d.Logger().Error("signup: issue verification token failed", "username", username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
+		return false
 	}
-
-	// Send the plaintext token (never persisted).
 	if err := d.EmailVerificationSender().SendEmailVerificationToken(rctx, email, rawToken); err != nil {
 		d.Logger().Error("signup: send verification token failed", "username", username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
+		return false
 	}
-
-	recordSelfRegister(d, ctx, username, true)
-	ctx.JSON(http.StatusCreated, map[string]any{"status": "pending"})
+	return true
 }
 
 // handleOptionalVerificationSignup implements Mode A: creates the user

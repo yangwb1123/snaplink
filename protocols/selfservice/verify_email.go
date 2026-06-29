@@ -30,11 +30,22 @@ func HandleVerifyEmail(d Deps, ctx core.HandlerContext) {
 
 	tok, err := consumeVerificationToken(d, ctx, req.Token)
 	if err != nil {
+		if d.Auditor() != nil {
+			evt := &audit.Event{
+				Type:    audit.EventSelfRegistered,
+				Outcome: audit.OutcomeFailure,
+				Reason:  "verification_invalid",
+				ActorIP: audit.ClientIP(ctx.Request()),
+			}
+			d.Auditor().Record(ctx.Request().Context(), evt)
+		}
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrVerificationInvalid))
 		return
 	}
 
-	createVerifiedUser(d, ctx, tok)
+	if !createVerifiedUser(d, ctx, tok) {
+		return
+	}
 	ctx.JSON(http.StatusOK, map[string]any{"status": "verified"})
 }
 
@@ -56,8 +67,10 @@ func consumeVerificationToken(d Deps, ctx core.HandlerContext, rawToken string) 
 }
 
 // createVerifiedUser creates the user record from a consumed verification
-// token, setting email_verified=true and emitting an audit event.
-func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerificationToken) {
+// token, setting email_verified=true, installing the password hash, and
+// emitting the self-registered audit event. It writes the response on error.
+// Returns true on success so HandleVerifyEmail can write the 200.
+func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerificationToken) bool {
 	rctx := ctx.Request().Context()
 	attrs := map[string]string{"email_verified": "true"}
 	u := &core.User{
@@ -68,8 +81,32 @@ func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerifica
 	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
 		d.Logger().Error("verify-email: create user failed", "username", tok.Username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
+		return false
 	}
+
+	// Install the password that was hashed at issue time. Mode B requires a
+	// PasswordCredentialStore that implements core.PasswordHashImporter so the
+	// pre-hashed credential can be stored without re-transmitting the plaintext.
+	if tok.PasswordHash != "" {
+		importer, ok := d.PasswordCredentialStore().(core.PasswordHashImporter)
+		if !ok {
+			d.Logger().Error("verify-email: password store does not implement PasswordHashImporter — Mode B signup requires it", "username", tok.Username)
+			if derr := d.UserProvider().Delete(rctx, tok.Username); derr != nil {
+				d.Logger().Error("verify-email: rollback delete failed", "username", tok.Username, "error", derr)
+			}
+			ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrServerMisconfigured))
+			return false
+		}
+		if err := importer.SetPasswordHash(rctx, tok.Username, tok.PasswordHash); err != nil {
+			d.Logger().Error("verify-email: set password hash failed", "username", tok.Username, "error", err)
+			if derr := d.UserProvider().Delete(rctx, tok.Username); derr != nil {
+				d.Logger().Error("verify-email: rollback delete failed", "username", tok.Username, "error", derr)
+			}
+			ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+			return false
+		}
+	}
+
 	if d.Auditor() != nil {
 		evt := &audit.Event{
 			Type:    audit.EventSelfRegistered,
@@ -79,4 +116,5 @@ func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerifica
 		}
 		d.Auditor().Record(rctx, evt)
 	}
+	return true
 }

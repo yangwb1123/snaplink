@@ -67,10 +67,11 @@ var ErrEmailChangeTokenNotFound = errors.New("sso: email change token not found 
 // to the target address — consuming it before user creation proves the
 // registrant controls that email.
 type EmailVerificationToken struct {
-	Token     string    // SHA-256 hash of the raw token (store primary key)
-	Username  string    // the desired username at signup
-	Email     string    // the address being verified
-	ExpiresAt time.Time // absolute expiry
+	Token        string    // SHA-256 hash of the raw token (store primary key)
+	Username     string    // the desired username at signup
+	Email        string    // the address being verified
+	PasswordHash string    // bcrypt hash of the signup password; set at issue, consumed at verify
+	ExpiresAt    time.Time // absolute expiry
 }
 
 // IsExpired reports whether the token has passed its expiry.
