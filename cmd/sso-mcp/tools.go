@@ -134,11 +134,14 @@ func (d *toolDeps) listRoles(ctx context.Context, _ *mcp.CallToolRequest, in sub
 // --- get_menus ---
 
 type menuDTO struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name,omitempty"`
-	Path       string    `json:"path,omitempty"`
-	Permission string    `json:"permission,omitempty"`
-	Children   []menuDTO `json:"children,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Permission string `json:"permission,omitempty"`
+	// Children is []any (not []menuDTO) to avoid a recursive type cycle that
+	// would cause jsonschema-go to panic during schema inference at AddTool time.
+	// Each element is a menuDTO serialised as JSON, so the wire format is identical.
+	Children []any `json:"children,omitempty"`
 }
 type getMenusOut struct {
 	Menus []menuDTO `json:"menus"`
@@ -155,10 +158,15 @@ func (d *toolDeps) getMenus(ctx context.Context, _ *mcp.CallToolRequest, in subj
 func toMenuDTOs(tree ssoclient.MenuTree) []menuDTO {
 	out := make([]menuDTO, 0, len(tree))
 	for _, m := range tree {
-		out = append(out, menuDTO{
-			ID: m.ID, Name: m.Name, Path: m.Path, Permission: m.Permission,
-			Children: toMenuDTOs(m.Children),
-		})
+		dto := menuDTO{ID: m.ID, Name: m.Name, Path: m.Path, Permission: m.Permission}
+		if len(m.Children) > 0 {
+			nested := toMenuDTOs(m.Children)
+			dto.Children = make([]any, len(nested))
+			for i := range nested {
+				dto.Children[i] = nested[i]
+			}
+		}
+		out = append(out, dto)
 	}
 	return out
 }
