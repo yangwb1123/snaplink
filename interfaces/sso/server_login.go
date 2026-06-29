@@ -63,14 +63,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 // bootstrapLoginRequest performs the /auth/login prologue — identical in
 // behavior and ORDER to the original inline opening — and returns the bound
 // request plus ok=false the instant a guard wrote a response (the caller MUST
-// return):
-//
-//   - Stamps the request start time onto the context for the
-//     sso_login_duration_seconds histogram observed in recordLoginSuccess /
-//     recordLoginFailure. That Login-specific histogram is separate from
-//     sso_http_request_duration_seconds because it carries the provider label —
-//     operators graphing "is the OIDC federation upstream slow" need the
-//     per-provider slicing the bounded HTTP histogram doesn't provide.
+//     return):
 //   - RFC 6749 §5.1: stamps Cache-Control: no-store + Pragma: no-cache, because
 //     /auth/login bodies carry access_token + refresh_token (and PKCE-flow code
 //     values) an intermediary cache must not retain.
@@ -129,7 +122,7 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 // runPostCredentialGates runs the gates that apply once credentials are
 // validated. It returns true the instant an inner guard wrote a response,
 // preserving the exact status+code and short-circuit ORDER of the original
-// inline sequence (ACR -> max_age -> risk):
+// inline sequence (ACR -> max_age -> risk -> email-verification):
 //
 //   - OIDC §3.1.2.6 / §5.5.1.1 ACR enforcement (acr_values OR claims
 //     id_token.acr), checked immediately after credential validation so it
@@ -139,6 +132,9 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 //     scorer configured; scorer errors fail OPEN by contract. Returns true when
 //     it owns the response (risk-denied, or an MFA challenge was issued and the
 //     client must follow up at /auth/mfa); false to proceed to finishLogin.
+//   - Email-verification gate — only active when WithSignupRequireVerification is
+//     set. Runs AFTER credential validation (oracle-safe: attacker who knows the
+//     password cannot distinguish "no such user" from "unverified").
 func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, result *AuthResult, client *Client) bool {
 	if s.enforceLoginACR(ctx, req, result) {
 		return true
@@ -147,6 +143,9 @@ func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, 
 		return true
 	}
 	if s.evaluateLoginRisk(ctx, result, req, client) {
+		return true
+	}
+	if s.rejectUnverifiedEmail(ctx, req, result) {
 		return true
 	}
 	return false
