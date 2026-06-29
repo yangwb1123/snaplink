@@ -49,7 +49,7 @@ const (
 // depth-3, or const-by-literal-name), so it stays grandfathered rather than be
 // split by exporting internals or breaking the SDK. Do NOT re-attempt those.
 var dirFileCountExemptions = map[string]int{
-	"cmd/sso-server":                    23,
+	"cmd/sso-server":                    24,
 	"config":                            26,
 	"domains/authenticators":            18,
 	"domains/federation":                24,

@@ -8,6 +8,8 @@ import (
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	connectionssqlite "github.com/snaplink/sso/domains/connections/sqlite"
+	tenantsqlite "github.com/snaplink/sso/domains/tenant/sqlite"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -27,6 +29,15 @@ func (b *appBuilder) wireTenant() error {
 	b.tenantStore = tenantStore
 	if tenantStore == nil {
 		return nil
+	}
+	// Schema-version boot gate: refuse to start when the SQLite tenant
+	// store's live schema is ahead of what this binary knows. Skip for
+	// postgres (its migrate ran at construction — a postgres canary gate
+	// is a follow-up).
+	if !strings.EqualFold(strings.TrimSpace(cfg.Tenant.Backend), "postgres") {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, tenantStore, "tenant", tenantsqlite.TenantMaxVersion()); err != nil {
+			return fmt.Errorf("schema check tenant: %w", err)
+		}
 	}
 	b.opts = append(b.opts, sso.WithTenantStore(tenantStore))
 	// SQLite-backed tenant store implements Ping → /readyz. Memory-backed
@@ -91,6 +102,12 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 	}
 	b.connectionStore = connectionStore
 	if connectionStore != nil {
+		// Schema-version boot gate: refuse to start when the SQLite
+		// connection store's live schema is ahead of what this binary
+		// knows. Memory backend silently no-ops (no DB() method).
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, connectionStore, "connections", connectionssqlite.ConnectionsMaxVersion()); err != nil {
+			return fmt.Errorf("schema check connections: %w", err)
+		}
 		b.opts = append(b.opts, sso.WithConnectionStore(connectionStore))
 		// SQLite-backed connections store implements Ping → /readyz; memory
 		// silently no-ops (serverbuildsign.AppendReadyCheck only registers satisfying types).

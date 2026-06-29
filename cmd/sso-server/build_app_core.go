@@ -13,6 +13,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/permissions"
+	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -202,6 +203,14 @@ func (b *appBuilder) wireAudit() error {
 	if err != nil {
 		return fmt.Errorf("audit: build primary sink: %w", err)
 	}
+	// Schema-version boot gate: refuse to start when the SQLite audit
+	// sink's live schema is ahead of what this binary knows. Skip for
+	// postgres (its migrate ran at construction).
+	if !strings.EqualFold(strings.TrimSpace(cfg.Audit.Backend), "postgres") {
+		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, primary, "audit", auditsqlite.AuditMaxVersion()); err != nil {
+			return fmt.Errorf("schema check audit: %w", err)
+		}
+	}
 	if err := b.startAuditRetention(primary, primaryName); err != nil {
 		return err
 	}
@@ -352,6 +361,14 @@ func (b *appBuilder) wirePermissions() error {
 		return fmt.Errorf("permissions: %w", err)
 	}
 	if provider != nil {
+		// Schema-version boot gate: refuse to start when the SQLite
+		// permissions store's live schema is ahead of what this binary
+		// knows. Skip for postgres (its migrate ran at construction).
+		if !strings.EqualFold(strings.TrimSpace(cfg.Permissions.Backend), "postgres") {
+			if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, provider, "permissions", permsqlite.PermissionsMaxVersion()); err != nil {
+				return fmt.Errorf("schema check permissions: %w", err)
+			}
+		}
 		b.opts = append(b.opts, sso.WithPermissionProvider(provider))
 		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-permissions", provider)
 		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-permissions", provider)

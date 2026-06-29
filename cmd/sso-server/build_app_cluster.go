@@ -12,7 +12,6 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	redisbackend "github.com/snaplink/sso/redis"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
@@ -201,52 +200,6 @@ func (b *appBuilder) wireFinalOptions() error {
 	}
 
 	return b.wireConsentNativeSSOPRM()
-}
-
-// wireConsentNativeSSOPRM wires the self-service consent store, the Native SSO
-// device-secret store, and RFC 9728 protected-resource metadata.
-func (b *appBuilder) wireConsentNativeSSOPRM() error {
-	cfg, logger := b.cfg, b.logger
-	// Self-service consent store. Opt-in: enabling it turns ON the consent gate
-	// at /auth/login and mounts /consents/me.
-	consentStore, err := serverbuildstore.BuildConsentStore(cfg.SelfService.Consent, b.pgDB, b.pgDialect)
-	if err != nil {
-		return fmt.Errorf("self_service consent store: %w", err)
-	}
-	if consentStore != nil {
-		b.consentStore = consentStore // retained for the GDPR eraser
-		b.opts = append(b.opts, sso.WithConsentStore(consentStore))
-		logger.Info("self-service consent enabled", "backend", cfg.SelfService.Consent.Backend)
-		// The consent GATE issues a single-use challenge nonce across two
-		// requests; with a Redis cluster wired, keep it cluster-shared so the
-		// approve re-POST consuming on a different replica doesn't loop forever.
-		if b.redis != nil {
-			b.opts = append(b.opts, sso.WithConsentChallengeStore(redisbackend.NewConsentChallengeStore(b.redis)))
-			logger.Info("consent challenge store: redis (cluster-shared)")
-		}
-	}
-
-	// OpenID Connect Native SSO 1.0 device_secret store. Opt-in.
-	deviceSecretStore, err := serverbuildstore.BuildDeviceSecretStore(cfg.NativeSSO, b.pgDB, b.pgDialect)
-	if err != nil {
-		return fmt.Errorf("native_sso device secret store: %w", err)
-	}
-	if deviceSecretStore != nil {
-		b.opts = append(b.opts, sso.WithDeviceSecretStore(deviceSecretStore, cfg.NativeSSO.TTL))
-		logger.Info("native sso enabled", "backend", cfg.NativeSSO.Backend)
-	}
-
-	// RFC 9728 OAuth 2.0 Protected Resource Metadata (opt-in).
-	if prm := cfg.ProtectedResource; prm.Enabled {
-		b.opts = append(b.opts, sso.WithProtectedResourceMetadata(sso.ProtectedResourceMetadata{
-			Resource:              prm.Resource,
-			AuthorizationServers:  prm.AuthorizationServers,
-			ResourceName:          prm.ResourceName,
-			ResourceDocumentation: prm.ResourceDocumentation,
-		}))
-		logger.Info("protected resource metadata enabled", "path", "/.well-known/oauth-protected-resource")
-	}
-	return nil
 }
 
 // startBackgroundWorkers boots the invalidation-bus subscriber, the

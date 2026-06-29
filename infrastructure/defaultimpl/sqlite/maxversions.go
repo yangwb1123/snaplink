@@ -96,3 +96,11 @@ func RefreshGraceMaxVersion() int { return 1 }
 // DeviceSecretsMaxVersion returns the highest migration version declared
 // for the device_secrets store (Native SSO 1.0).
 func DeviceSecretsMaxVersion() int { return 1 }
+
+// ConsentMaxVersion returns the highest migration version declared for
+// the consent store (self-service consent grants).
+func ConsentMaxVersion() int { return migrate.MaxVersion(consentMigrations) }
+
+// RevocationsMaxVersion returns the highest migration version declared for
+// the revocations store (access-token revocation deny-set).
+func RevocationsMaxVersion() int { return migrate.MaxVersion(revocationMigrations) }

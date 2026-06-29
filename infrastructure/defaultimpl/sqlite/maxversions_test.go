@@ -40,6 +40,8 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 		{"DeviceSecrets", sqlite.DeviceSecretsMaxVersion},
 		{"Invitations", sqlite.InvitationsMaxVersion},
 		{"TenantMemberships", sqlite.TenantMembershipsMaxVersion},
+		{"Consent", sqlite.ConsentMaxVersion},
+		{"Revocations", sqlite.RevocationsMaxVersion},
 	}
 	for _, v := range all {
 		if got := v.fn(); got < 1 {
