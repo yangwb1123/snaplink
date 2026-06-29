@@ -3,6 +3,7 @@ package sso
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/snaplink/sso/internal/auth/login"
@@ -326,13 +327,26 @@ func (s *Server) enforceLoginACR(ctx HandlerContext, req *login.Request, result 
 	return false
 }
 
+// loginUsedPAR reports whether the authorization request was driven by a real
+// RFC 9126 pushed authorization request, NOT an RFC 9101 JAR-by-reference
+// request_uri. Both arrive in req.RequestURI (the PAR merge / JAR fetch leave it
+// populated), but only a PAR reference carries the
+// urn:ietf:params:oauth:request_uri: scheme — server-stored, single-use,
+// replay-resistant. An https JAR request_uri is re-fetched fresh on every
+// /auth/login and is NOT a PAR. The RequirePAR gate and FAPI's PAR-required rule
+// MUST key off this prefix: keying off mere presence let a JAR-by-reference
+// silently satisfy a PAR mandate and downgrade PAR's single-use guarantee.
+func loginUsedPAR(req *login.Request) bool {
+	return strings.HasPrefix(req.RequestURI, oauth.PARURIPrefix)
+}
+
 // resolveAndValidateLoginClient looks up the requesting client and runs the
 // pre-authentication client gates: existence, active, tenant binding,
 // data-residency write-gate, RFC 9126 RequirePAR, RFC 9101
 // RequireSignedRequestObject, and the per-client authenticator allowlist.
 // Returns the client and handled=true when it wrote an error response (the
-// caller MUST return). RequirePAR is checked after the PAR merge consumed
-// req.RequestURI, so an empty value here means no push. Extracted from
+// caller MUST return). RequirePAR distinguishes a real PAR reference from a JAR
+// request_uri via loginUsedPAR (both populate req.RequestURI). Extracted from
 // handleLogin to keep that orchestrator within the complexity budget.
 func (s *Server) resolveAndValidateLoginClient(ctx HandlerContext, req *login.Request) (*Client, bool) {
 	if req.ClientID == "" {
@@ -362,7 +376,7 @@ func (s *Server) resolveAndValidateLoginClient(ctx HandlerContext, req *login.Re
 	if s.residencyGateLogin(ctx, req.ClientID, req.Provider, client.TenantID) {
 		return nil, true
 	}
-	if client.RequirePAR && req.RequestURI == "" {
+	if client.RequirePAR && !loginUsedPAR(req) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "client requires pushed authorization request"))
 		return nil, true
@@ -394,7 +408,7 @@ func (s *Server) enforceFAPIAuthorizationLogin(ctx HandlerContext, req *login.Re
 	vs := s.fapiValidator.CheckAuthorization(fapi.AuthorizationContext{
 		ClientID:            req.ClientID,
 		ResponseType:        req.ResponseType,
-		UsedPAR:             req.RequestURI != "",
+		UsedPAR:             loginUsedPAR(req),
 		SignedRequest:       req.Request != "",
 		CodeChallenge:       req.CodeChallenge,
 		CodeChallengeMethod: req.CodeChallengeMethod,

@@ -3,7 +3,34 @@ package sso
 import (
 	"testing"
 	"time"
+
+	"github.com/snaplink/sso/internal/auth/login"
+	"github.com/snaplink/sso/protocols/oauth"
 )
+
+// TestLoginUsedPAR locks in the RFC 9126-vs-RFC 9101 distinction: only the
+// urn:ietf:params:oauth:request_uri: PAR scheme counts as "used PAR". A JAR
+// (https/http) request_uri must NOT satisfy the RequirePAR gate or FAPI's
+// PAR-required rule, or a replayable JAR-by-reference silently downgrades PAR's
+// single-use guarantee.
+func TestLoginUsedPAR(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		requestURI string
+		want       bool
+	}{
+		{"real PAR urn reference", oauth.PARURIPrefix + "abc123", true},
+		{"JAR-by-reference https URL is not PAR", "https://rp.example.com/req.jwt", false},
+		{"JAR-by-reference http URL is not PAR", "http://rp.example.com/req.jwt", false},
+		{"empty request_uri is not PAR", "", false},
+	}
+	for _, tc := range tests {
+		if got := loginUsedPAR(&login.Request{RequestURI: tc.requestURI}); got != tc.want {
+			t.Errorf("%s: loginUsedPAR(%q) = %v, want %v", tc.name, tc.requestURI, got, tc.want)
+		}
+	}
+}
 
 func TestIsSecureRedirectURI(t *testing.T) {
 	t.Parallel()
