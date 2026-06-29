@@ -16,6 +16,7 @@ import (
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 )
 
 // newMeSessionsHarness wires a minimal server for /sessions/me and
@@ -642,5 +643,229 @@ func TestConsentRoutes_NotMountedWithoutConsentStore(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (route unmounted)", resp.StatusCode)
+	}
+}
+
+// ---------- GET /me/sessions ----------
+//
+// These tests mirror the /sessions/me tests but hit the /me/sessions
+// alias registered in mountSelfServiceProfile.
+
+func TestGetMeSessions_HappyPath(t *testing.T) {
+	srv, _, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+
+	code, body := doReq(t, srv, http.MethodGet, "/me/sessions", tok)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", code, body)
+	}
+	list, _ := body["sessions"].([]any)
+	if len(list) == 0 {
+		t.Errorf("expected at least one session, got %v", body)
+	}
+}
+
+func TestGetMeSessions_NoBearer(t *testing.T) {
+	srv, _, _ := newMeSessionsHarness(t)
+	code, body := doReq(t, srv, http.MethodGet, "/me/sessions", "")
+	if code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %v", code, body)
+	}
+	if body["error"] != "missing_token" {
+		t.Errorf("error = %v, want missing_token", body["error"])
+	}
+}
+
+func TestGetMeSessions_InvalidBearer(t *testing.T) {
+	srv, _, _ := newMeSessionsHarness(t)
+	code, body := doReq(t, srv, http.MethodGet, "/me/sessions", "not-a-real-token")
+	if code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %v", code, body)
+	}
+	if body["error"] != "invalid_token" {
+		t.Errorf("error = %v, want invalid_token", body["error"])
+	}
+}
+
+func TestGetMeSessions_NoStoreHeaders(t *testing.T) {
+	srv, _, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/me/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+}
+
+// ---------- DELETE /me/sessions/:id ----------
+
+func TestDeleteMeSession_HappyPath(t *testing.T) {
+	srv, sessions, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+
+	all, _ := sessions.ListByUser(context.Background(), "u-alice")
+	if len(all) == 0 {
+		t.Fatal("no sessions found for alice after login")
+	}
+	sessID := all[0].ID
+
+	code, _ := doReq(t, srv, http.MethodDelete, "/me/sessions/"+sessID, tok)
+	if code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", code)
+	}
+
+	remaining, _ := sessions.ListByUser(context.Background(), "u-alice")
+	for _, s := range remaining {
+		if s.ID == sessID {
+			t.Error("deleted session still present")
+		}
+	}
+}
+
+func TestDeleteMeSession_OtherUserSession(t *testing.T) {
+	srv, sessions, loginAs := newMeSessionsHarness(t)
+	tokAlice := loginAs("alice")
+	_ = loginAs("bob")
+
+	bobSessions, _ := sessions.ListByUser(context.Background(), "u-bob")
+	if len(bobSessions) == 0 {
+		t.Fatal("no sessions found for bob after login")
+	}
+	bobSessID := bobSessions[0].ID
+
+	code, body := doReq(t, srv, http.MethodDelete, "/me/sessions/"+bobSessID, tokAlice)
+	if code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %v", code, body)
+	}
+	if body["error"] != "not_found" {
+		t.Errorf("error = %v, want not_found", body["error"])
+	}
+	remaining, _ := sessions.ListByUser(context.Background(), "u-bob")
+	found := false
+	for _, s := range remaining {
+		if s.ID == bobSessID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("bob's session was deleted by alice — ownership not enforced")
+	}
+}
+
+func TestDeleteMeSession_Unknown(t *testing.T) {
+	srv, _, loginAs := newMeSessionsHarness(t)
+	tok := loginAs("alice")
+
+	code, body := doReq(t, srv, http.MethodDelete, "/me/sessions/no-such-session", tok)
+	if code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %v", code, body)
+	}
+	if body["error"] != "not_found" {
+		t.Errorf("error = %v, want not_found", body["error"])
+	}
+}
+
+func TestDeleteMeSession_NoBearer(t *testing.T) {
+	srv, _, _ := newMeSessionsHarness(t)
+	code, _ := doReq(t, srv, http.MethodDelete, "/me/sessions/any-id", "")
+	if code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", code)
+	}
+}
+
+// ---------- POST /me/sessions/revoke-all ----------
+//
+// Uses the same harness as /token/revoke-all since both delegate to
+// oauth.HandleRevokeAll internally.
+
+func postMeSessionsRevokeAll(t *testing.T, srv *httptest.Server, bearer string) (int, map[string]any) {
+	t.Helper()
+	r, _ := http.NewRequest(http.MethodPost, srv.URL+"/me/sessions/revoke-all", nil)
+	if bearer != "" {
+		r.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatalf("revoke-all: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	out := map[string]any{}
+	_ = json.Unmarshal(raw, &out)
+	return resp.StatusCode, out
+}
+
+func TestMeSessionsRevokeAll_KillsAllRefreshTokens(t *testing.T) {
+	srv, store := newRevokeAllServer(t)
+
+	access, _ := loginAndCaptureTokens(t, srv)
+	_, r2 := loginAndCaptureTokens(t, srv)
+
+	status, body := postMeSessionsRevokeAll(t, srv, access)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%v", status, body)
+	}
+	if _, err := store.Consume(context.Background(), r2); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Errorf("refresh token survived revoke-all: err=%v", err)
+	}
+	count, _ := body["refresh_tokens_revoked"].(float64)
+	if count < 2 {
+		t.Errorf("refresh_tokens_revoked = %v want >= 2", count)
+	}
+}
+
+func TestMeSessionsRevokeAll_RequiresBearer(t *testing.T) {
+	srv, _ := newRevokeAllServer(t)
+	status, body := postMeSessionsRevokeAll(t, srv, "")
+	if status != http.StatusUnauthorized {
+		t.Errorf("status = %d want 401", status)
+	}
+	if body["error"] != "missing_token" {
+		t.Errorf("error = %v", body["error"])
+	}
+}
+
+func TestMeSessionsRevokeAll_InvalidBearer(t *testing.T) {
+	srv, _ := newRevokeAllServer(t)
+	status, body := postMeSessionsRevokeAll(t, srv, "garbage-bearer")
+	if status != http.StatusUnauthorized {
+		t.Errorf("status = %d want 401", status)
+	}
+	if body["error"] != "invalid_token" {
+		t.Errorf("error = %v", body["error"])
+	}
+}
+
+// ---------- routes not mounted without store ----------
+
+func TestMeSessionRoutes_NotMountedWithoutSessionMgr(t *testing.T) {
+	// Without a SessionManager, /me/sessions* routes must not be mounted.
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{ID: "no-sess", Secret: "s", Active: true, TokenStrategy: "jwt"})
+	srv := sso.NewServer(
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	for _, path := range []string{"/me/sessions", "/me/sessions/any-id", "/me/sessions/revoke-all"} {
+		resp, err := http.Get(hs.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404 (route unmounted)", path, resp.StatusCode)
+		}
 	}
 }

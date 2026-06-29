@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/selfservice"
 
 	"github.com/snaplink/sso/shared/core"
@@ -133,6 +134,15 @@ func (s *Server) handleDeleteMySession(ctx HandlerContext) { selfservice.HandleD
 func (s *Server) handleRevokeMySessions(ctx HandlerContext) {
 	selfservice.HandleRevokeMySessions(s, ctx)
 }
+
+// handleMeSessions delegates to selfservice.HandleMySessions for GET /me/sessions.
+func (s *Server) handleMeSessions(ctx HandlerContext) { selfservice.HandleMySessions(s, ctx) }
+
+// handleDeleteMeSession delegates to selfservice.HandleDeleteMySession for DELETE /me/sessions/:id.
+func (s *Server) handleDeleteMeSession(ctx HandlerContext) { selfservice.HandleDeleteMySession(s, ctx) }
+
+// handleMeSessionsRevokeAll delegates to oauth.HandleRevokeAll for POST /me/sessions/revoke-all.
+func (s *Server) handleMeSessionsRevokeAll(ctx HandlerContext) { oauth.HandleRevokeAll(s, ctx) }
 
 // handleMyConsents delegates to selfservice.HandleMyConsents.
 func (s *Server) handleMyConsents(ctx HandlerContext) { selfservice.HandleMyConsents(s, ctx) }

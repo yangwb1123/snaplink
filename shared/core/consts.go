@@ -40,6 +40,15 @@ const (
 	PathMyRoles       = "/roles/me"
 	PathMySessions    = "/sessions/me"
 	PathMySessionByID = "/sessions/me/:id"
+
+	// PathMeSessions*, PathMeSessionByID, and PathMeSessionsRevokeAll are the
+	// /me/*-namespace variants of the /sessions/me* paths. These follow the
+	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a
+	// single discoverable prefix for the self-service portal SPA.
+	PathMeSessions         = "/me/sessions"
+	PathMeSessionByID      = "/me/sessions/:id"
+	PathMeSessionsRevokeAll = "/me/sessions/revoke-all"
+
 	PathMyConsents    = "/consents/me"
 	PathMyConsentByID = "/consents/me/:client_id"
 

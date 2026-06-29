@@ -164,6 +164,11 @@ func (s *Server) mountSelfServiceProfile() {
 		s.router.GET(PathMySessions, s.handleMySessions)
 		s.router.DELETE(PathMySessions, s.handleRevokeMySessions)
 		s.router.DELETE(PathMySessionByID, s.handleDeleteMySession)
+		// /me/sessions* self-service endpoints follow the /me/* naming
+		// convention used by the rest of the self-service API surface.
+		s.router.GET(PathMeSessions, s.handleMeSessions)
+		s.router.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
+		s.router.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
 	}
 	if s.consentStore != nil {
 		s.router.GET(PathMyConsents, s.handleMyConsents)
