@@ -12,8 +12,15 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/snaplink/sso/shared/core"
 )
+
+// minForcedFetchInterval is the minimum time between on-demand (cache-miss)
+// JWKS fetches. Prevents amplification attacks where many requests with
+// distinct unknown kids trigger sequential upstream fetches.
+const minForcedFetchInterval = 10 * time.Second
 
 // DefaultJWKSRefreshInterval is how often the cache re-fetches by default.
 // Short enough that key rotation propagates promptly; long enough to dodge
@@ -34,13 +41,18 @@ type JWKSCache struct {
 	url    string
 	client *http.Client
 
-	mu     sync.RWMutex
-	keys   map[string]core.JWK
-	loaded bool
+	mu              sync.RWMutex
+	keys            map[string]core.JWK
+	loaded          bool
+	lastForcedFetch time.Time // debounce: tracks last on-demand miss fetch
 
 	refreshInterval time.Duration
 	closeOnce       sync.Once
 	done            chan struct{}
+
+	// sfg deduplicates concurrent on-demand fetches: N simultaneous requests
+	// for unknown kids collapse to one upstream call (singleflight).
+	sfg singleflight.Group
 }
 
 type JWKSOption func(*JWKSCache)
@@ -100,10 +112,12 @@ func (j *JWKSCache) Get(ctx context.Context, kid string) (ed25519.PublicKey, err
 	return ed25519.PublicKey(raw), nil
 }
 
-// getJWK returns the raw JWK for kid, fetching on first call or cache miss
-// (the miss path also covers key rotation where the kid is new). The
-// single-flight + background-refresh behavior is identical for every key
-// type — only the post-fetch parsing differs.
+// getJWK returns the raw JWK for kid, fetching on first call or cache miss.
+// Two defenses against amplification from attacker-controlled kids:
+//   - singleflight: N concurrent miss requests collapse to one upstream call
+//   - debounce: successive misses are rate-limited to one re-fetch per
+//     minForcedFetchInterval (prevents sequential bursts of distinct unknown
+//     kids each triggering their own upstream request)
 func (j *JWKSCache) getJWK(ctx context.Context, kid string) (core.JWK, error) {
 	j.mu.RLock()
 	loaded := j.loaded
@@ -113,9 +127,23 @@ func (j *JWKSCache) getJWK(ctx context.Context, kid string) (core.JWK, error) {
 			return k, nil
 		}
 	}
+	last := j.lastForcedFetch
 	j.mu.RUnlock()
 
-	if err := j.fetch(ctx); err != nil {
+	// Debounce: if we fetched recently and the kid isn't there, don't re-fetch.
+	// New legitimate keys propagate on the next background refresh tick instead.
+	if loaded && time.Since(last) < minForcedFetchInterval {
+		return core.JWK{}, fmt.Errorf("ssoclient/remote: kid %q not in JWKS", kid)
+	}
+
+	// Singleflight: collapse all concurrent on-demand fetches to one HTTP call.
+	_, err, _ := j.sfg.Do("fetch", func() (any, error) {
+		j.mu.Lock()
+		j.lastForcedFetch = time.Now()
+		j.mu.Unlock()
+		return nil, j.fetch(ctx)
+	})
+	if err != nil {
 		return core.JWK{}, err
 	}
 
