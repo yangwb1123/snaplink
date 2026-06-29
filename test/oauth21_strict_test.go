@@ -143,6 +143,24 @@ func TestOAuth21Strict_AllowsResponseTypeCodeWithPKCE(t *testing.T) {
 	}
 }
 
+func TestOAuth21Strict_RejectsPlainPKCEMethod(t *testing.T) {
+	// OAuth 2.1 §7.6: S256 is the only permitted code_challenge_method
+	// when oauth21StrictMode=true. An explicit "plain" must be rejected.
+	srv := newStrictServer(t, true, strictRedirect)
+	status, body := loginStrict(t, srv, map[string]any{
+		"response_type":         "code",
+		"redirect_uri":          strictRedirect,
+		"code_challenge":        validVerifier,
+		"code_challenge_method": "plain",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%v want 400", status, body)
+	}
+	if body["error"] != "invalid_pkce_method" {
+		t.Errorf("error = %v want invalid_pkce_method", body["error"])
+	}
+}
+
 func TestOAuth21Strict_RequiresPKCEDespitePerClientOptOut(t *testing.T) {
 	srv := newStrictServer(t, true, strictRedirect)
 	status, body := loginStrict(t, srv, map[string]any{
