@@ -56,3 +56,19 @@ func TestLoadConfig_RejectsUnknownTransport(t *testing.T) {
 		t.Fatal("unknown transport must error")
 	}
 }
+
+func TestNewSnaplinkClient_ConstructsAndCloses(t *testing.T) {
+	c, err := newSnaplinkClient(&Config{
+		JWKSURL:      "https://sso/.well-known/jwks.json",
+		SnaplinkGRPC: "localhost:8081",
+	})
+	if err != nil {
+		t.Fatalf("newSnaplinkClient: %v", err)
+	}
+	if c.auth == nil || c.authz == nil {
+		t.Fatal("clients not wired")
+	}
+	if err := c.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
