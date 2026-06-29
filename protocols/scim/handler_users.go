@@ -19,9 +19,10 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
 		return
 	}
-	// Normalize to lowercase before uniqueness check and storage (RFC 7643
-	// §8.7.1: caseExact=false — the server owns canonical form).
-	res.UserName = strings.ToLower(strings.TrimSpace(res.UserName))
+	// Trim whitespace but preserve the caller's casing — RFC 7643 §7.6 defines
+	// caseExact=false as a comparison rule, not a normalization directive.
+	// userNameExists uses strings.EqualFold for case-insensitive uniqueness.
+	res.UserName = strings.TrimSpace(res.UserName)
 	id := h.newID()
 	// Guard against an id collision (newID is random, but a custom
 	// generator could clash) AND enforce userName uniqueness. WHY a
@@ -103,9 +104,8 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 	if !ok {
 		return
 	}
-	// Normalize to lowercase before the blank + uniqueness checks in
-	// validateReplaceUser and before storage (RFC 7643 §8.7.1: caseExact=false).
-	res.UserName = strings.ToLower(strings.TrimSpace(res.UserName))
+	// Trim whitespace; casing is preserved — see createUser for rationale.
+	res.UserName = strings.TrimSpace(res.UserName)
 	if !h.validateReplaceUser(w, r, res, id) {
 		return
 	}

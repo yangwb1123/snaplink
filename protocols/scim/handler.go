@@ -217,25 +217,25 @@ func (h *Handler) userNameExists(ctx context.Context, userName, excludeID string
 	return false, nil
 }
 
-// normalizeAndCheckUserName normalizes userName to lowercase (RFC 7643
-// §8.7.1: caseExact=false — server owns canonical form), then enforces
-// required and uniqueness in one step. Returns the normalized name on
-// success; writes the SCIM error and returns ("", false) on failure.
+// normalizeAndCheckUserName trims userName and enforces required and uniqueness
+// in one step. Returns the trimmed name on success; writes the SCIM error and
+// returns ("", false) on failure. Casing is preserved — RFC 7643 §7.6 defines
+// caseExact=false as a comparison rule; userNameExists uses strings.EqualFold.
 // excludeID is excluded from the uniqueness scan (pass "" on create).
 func (h *Handler) normalizeAndCheckUserName(w http.ResponseWriter, r *http.Request, userName, excludeID string) (string, bool) {
-	if strings.TrimSpace(userName) == "" {
+	trimmed := strings.TrimSpace(userName)
+	if trimmed == "" {
 		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
 		return "", false
 	}
-	lower := strings.ToLower(userName)
-	if dup, err := h.userNameExists(r.Context(), lower, excludeID); err != nil {
+	if dup, err := h.userNameExists(r.Context(), trimmed, excludeID); err != nil {
 		h.writeError(w, h.storageError(err))
 		return "", false
 	} else if dup {
 		h.writeError(w, newError(http.StatusConflict, scimTypeUniqueness, "userName already exists"))
 		return "", false
 	}
-	return lower, true
+	return trimmed, true
 }
 
 // decode reads and validates the SCIM JSON request body into a Resource.
