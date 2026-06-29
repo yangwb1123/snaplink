@@ -73,16 +73,37 @@ func HandleRevokeMySessions(d Deps, ctx core.HandlerContext) {
 	if !ok {
 		return
 	}
-	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), claims.Subject)
+	keepCurrent := claims.SID != "" && ctx.Query("all") != "true"
+	destroyUserSessions(d, ctx, claims.Subject, claims.SID, keepCurrent)
+}
+
+// HandleRevokeAllMySessions serves POST /me/sessions/revoke-all — force
+// sign-out from EVERY session including the caller's current one. Unlike
+// HandleRevokeMySessions (which defaults to preserving the current session for
+// the "sign out of other devices" UX), this endpoint always revokes all
+// sessions with no keepCurrent logic. There is no ?all flag: the endpoint name
+// makes the intent unambiguous. Credential-adjacent, so no-store headers.
+func HandleRevokeAllMySessions(d Deps, ctx core.HandlerContext) {
+	d.TokenNoStoreHeaders(ctx)
+	claims, ok := d.MeClaimsOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	destroyUserSessions(d, ctx, claims.Subject, "", false)
+}
+
+// destroyUserSessions lists and destroys sessions for the given user. When
+// keepCurrent is true, the session identified by currentSID is preserved.
+func destroyUserSessions(d Deps, ctx core.HandlerContext, userID, currentSID string, keepCurrent bool) {
+	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
 	if err != nil {
-		d.Logger().Error("list sessions failed", "user_id", claims.Subject, "error", err)
+		d.Logger().Error("list sessions failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
-	keepCurrent := claims.SID != "" && ctx.Query("all") != "true"
 	revoked := 0
 	for _, sess := range sessions {
-		if keepCurrent && sess.ID == claims.SID {
+		if keepCurrent && sess.ID == currentSID {
 			continue
 		}
 		if err := d.SessionManager().Destroy(ctx.Request().Context(), sess.ID); err != nil {

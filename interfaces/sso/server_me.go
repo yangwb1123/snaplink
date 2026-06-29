@@ -140,9 +140,10 @@ func (s *Server) handleMeSessions(ctx HandlerContext) { selfservice.HandleMySess
 // handleDeleteMeSession delegates to selfservice.HandleDeleteMySession for DELETE /me/sessions/:id.
 func (s *Server) handleDeleteMeSession(ctx HandlerContext) { selfservice.HandleDeleteMySession(s, ctx) }
 
-// handleMeSessionsRevokeAll delegates to selfservice.HandleRevokeMySessions for POST /me/sessions/revoke-all.
+// handleMeSessionsRevokeAll delegates to selfservice.HandleRevokeAllMySessions for POST /me/sessions/revoke-all.
+// Unlike DELETE /sessions/me, this always revokes every session (no keepCurrent).
 func (s *Server) handleMeSessionsRevokeAll(ctx HandlerContext) {
-	selfservice.HandleRevokeMySessions(s, ctx)
+	selfservice.HandleRevokeAllMySessions(s, ctx)
 }
 
 // handleMyConsents delegates to selfservice.HandleMyConsents.
