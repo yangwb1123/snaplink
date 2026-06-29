@@ -182,3 +182,66 @@ func TestRelPathPassThroughAndNoLocation(t *testing.T) {
 		t.Errorf("meta.location = %q, want empty with no base path", res.Meta.Location)
 	}
 }
+
+// TestCreate_CaseInsensitiveDuplicateUserName: posting "Alice@example.com" when
+// "alice@example.com" already exists is a 409 (RFC 7643 §8.7.1: caseExact=false).
+func TestCreate_CaseInsensitiveDuplicateUserName(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	if rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"alice@example.com"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("seed status = %d", rec.Code)
+	}
+	rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"Alice@example.com"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if e := decodeError(t, rec); e.ScimType != scimTypeUniqueness {
+		t.Errorf("scimType = %q, want %q", e.ScimType, scimTypeUniqueness)
+	}
+}
+
+// TestCreate_UserNameNormalizedToLowercase: a mixed-case userName is stored and
+// returned as lowercase (RFC 7643 §8.7.1: server owns the canonical lowercase form).
+func TestCreate_UserNameNormalizedToLowercase(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"Alice@Example.COM"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeResource(t, rec).UserName
+	if got != "alice@example.com" {
+		t.Errorf("userName = %q, want %q", got, "alice@example.com")
+	}
+}
+
+// TestReplaceUser_CaseInsensitiveDuplicateUserName: a PUT that renames a user to a
+// userName held by another user with different case is a 409 (RFC 7643 §8.7.1).
+func TestReplaceUser_CaseInsensitiveDuplicateUserName(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	seedUser(t, h, `{"userName":"taken@example.com"}`)
+	id := seedUser(t, h, `{"userName":"other@example.com"}`)
+	rec := do(t, h, http.MethodPut, pathUsers+"/"+id, `{"userName":"TAKEN@EXAMPLE.COM"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if e := decodeError(t, rec); e.ScimType != scimTypeUniqueness {
+		t.Errorf("scimType = %q, want %q", e.ScimType, scimTypeUniqueness)
+	}
+}
+
+// TestPatchUser_CaseInsensitiveDuplicateUserName: a PATCH that sets userName to a
+// value differing only in case from another user's is a 409 (RFC 7643 §8.7.1).
+func TestPatchUser_CaseInsensitiveDuplicateUserName(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	seedUser(t, h, `{"userName":"a@example.com"}`)
+	id := seedUser(t, h, `{"userName":"b@example.com"}`)
+	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+		{"op":"replace","path":"userName","value":"A@EXAMPLE.COM"}
+	]}`
+	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if e := decodeError(t, rec); e.ScimType != scimTypeUniqueness {
+		t.Errorf("scimType = %q, want %q", e.ScimType, scimTypeUniqueness)
+	}
+}

@@ -2,6 +2,7 @@ package scim
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -315,6 +316,47 @@ func TestFilterGroupAttrs(t *testing.T) {
 		expr := mustParse(t, tc.filter)
 		if got := matchesGroup(g, expr); got != tc.want {
 			t.Errorf("matchesGroup(%q) = %v, want %v", tc.filter, got, tc.want)
+		}
+	}
+}
+
+// TestFilterDepthAndLengthLimits verifies the two DoS guards: a filter string
+// that exceeds maxFilterLen is rejected before tokenizing, and a deeply-nested
+// paren expression that exceeds maxFilterDepth is rejected during parsing.
+// Neither test sends input that would actually overflow the stack — the guards
+// must fire well before that point.
+func TestFilterDepthAndLengthLimits(t *testing.T) {
+	// Length guard: build a string just over maxFilterLen. Content does not
+	// need to be a valid filter — the length check fires first.
+	overLen := strings.Repeat("x", maxFilterLen+1)
+	_, err := parseFilter(overLen)
+	if err == nil {
+		t.Fatal("overlong filter: expected errInvalidFilter, got nil")
+	}
+	if !errors.Is(err, errInvalidFilter) {
+		t.Errorf("overlong filter: got %v, want errInvalidFilter", err)
+	}
+
+	// Depth guard: build (((…(userName eq "a")…))) with depth = maxFilterDepth+1.
+	// The string is well within maxFilterLen; the recursion guard must catch it.
+	inner := `userName eq "a"`
+	depth := maxFilterDepth + 1
+	nested := strings.Repeat("(", depth) + inner + strings.Repeat(")", depth)
+	_, err = parseFilter(nested)
+	if err == nil {
+		t.Fatal("over-depth filter: expected errInvalidFilter, got nil")
+	}
+	if !errors.Is(err, errInvalidFilter) {
+		t.Errorf("over-depth filter: got %v, want errInvalidFilter", err)
+	}
+
+	// Boundary: exactly maxFilterDepth levels of nesting must still parse.
+	// Builds a filter long enough to need a non-trivial depth but under the cap.
+	boundary := strings.Repeat("(", maxFilterDepth) + inner + strings.Repeat(")", maxFilterDepth)
+	if len(boundary) <= maxFilterLen {
+		_, err = parseFilter(boundary)
+		if err != nil {
+			t.Errorf("at-limit depth filter: unexpected error: %v", err)
 		}
 	}
 }

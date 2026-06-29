@@ -54,6 +54,18 @@ var errInvalidFilter = errors.New("invalid SCIM filter")
 // later without touching every caller.
 func filterError(string) error { return errInvalidFilter }
 
+// maxFilterLen is the byte limit enforced before tokenizing. A real SCIM
+// filter for even the most complex provisioning reconcile is a few hundred
+// bytes; 4096 is generous. Rejecting overlong inputs early prevents the
+// O(n) tokenizer from amplifying a memory-abuse payload.
+const maxFilterLen = 4096
+
+// maxFilterDepth caps recursive-descent nesting (parenthesized groups and
+// "not(…)" clauses both enter a new recursive frame). 50 levels is far
+// beyond any legitimate SCIM filter; the limit prevents a crafted deeply-
+// nested filter string from causing a goroutine stack overflow.
+const maxFilterDepth = 50
+
 // logicalAnd / logicalOr / logicalNot are the lower-cased logical keywords
 // (RFC 7644 §3.4.2.2). Keyword matching folds case ("AND" == "and").
 const (
@@ -264,6 +276,11 @@ func foldLower(s string) string { return strings.ToLower(s) }
 // reaching here is a client error (the handler treats an absent ?filter=
 // as "no filter" before calling this).
 func parseFilter(raw string) (filterExpr, error) {
+	// Reject inputs that exceed the byte budget before touching the tokenizer.
+	// This is the first line of defence against memory-amplification attacks.
+	if len(raw) > maxFilterLen {
+		return nil, filterError("filter exceeds maximum length")
+	}
 	toks, err := tokenizeFilter(raw)
 	if err != nil {
 		return nil, err
@@ -285,9 +302,13 @@ func parseFilter(raw string) (filterExpr, error) {
 }
 
 // filterParser is the recursive-descent cursor over the token stream.
+// depth tracks the current paren-group nesting level; it is incremented on
+// entry to each parenthesized sub-expression and checked against
+// maxFilterDepth to prevent stack overflow from adversarial input.
 type filterParser struct {
-	toks []token
-	pos  int
+	toks  []token
+	pos   int
+	depth int
 }
 
 func (p *filterParser) atEnd() bool { return p.pos >= len(p.toks) }
@@ -358,7 +379,12 @@ func (p *filterParser) parseNot() (filterExpr, error) {
 		if !ok || open.kind != tokLParen {
 			return nil, filterError("not must be followed by '('")
 		}
+		p.depth++
+		if p.depth > maxFilterDepth {
+			return nil, filterError("filter nesting depth exceeded")
+		}
 		inner, err := p.parseOr()
+		p.depth--
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +404,12 @@ func (p *filterParser) parsePrimary() (filterExpr, error) {
 	}
 	if t.kind == tokLParen {
 		p.next() // consume "("
+		p.depth++
+		if p.depth > maxFilterDepth {
+			return nil, filterError("filter nesting depth exceeded")
+		}
 		inner, err := p.parseOr()
+		p.depth--
 		if err != nil {
 			return nil, err
 		}

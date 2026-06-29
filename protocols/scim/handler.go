@@ -30,6 +30,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // IDGenerator mints the storage id for a newly created resource. The
@@ -61,6 +62,9 @@ type Handler struct {
 	// auth context in. Kept as a plain func so scim stays decoupled from the
 	// auth middleware package.
 	meResolver func(*http.Request) (string, bool)
+	// logger is optional; when non-nil, storage errors are logged with the
+	// real detail before the generic 500 is returned to the caller.
+	logger spi.Logger
 }
 
 // Option configures a Handler.
@@ -132,6 +136,17 @@ func WithMeResolver(resolve func(*http.Request) (string, bool)) Option {
 	}
 }
 
+// WithLogger wires an spi.Logger so that unexpected storage errors are
+// logged with their real detail before the generic 500 is returned to the
+// caller (preventing internal detail from leaking in the SCIM response).
+func WithLogger(l spi.Logger) Option {
+	return func(h *Handler) {
+		if l != nil {
+			h.logger = l
+		}
+	}
+}
+
 // NewHandler builds a SCIM Handler over users. basePath is the absolute
 // URL prefix the handler is mounted under (used to strip the route prefix
 // and to render meta.location); pass "" if mounting at the root.
@@ -195,11 +210,32 @@ func (h *Handler) userNameExists(ctx context.Context, userName, excludeID string
 		if u.ID == excludeID {
 			continue
 		}
-		if u.Attributes[attrUserName] == userName {
+		if strings.EqualFold(u.Attributes[attrUserName], userName) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// normalizeAndCheckUserName normalizes userName to lowercase (RFC 7643
+// §8.7.1: caseExact=false — server owns canonical form), then enforces
+// required and uniqueness in one step. Returns the normalized name on
+// success; writes the SCIM error and returns ("", false) on failure.
+// excludeID is excluded from the uniqueness scan (pass "" on create).
+func (h *Handler) normalizeAndCheckUserName(w http.ResponseWriter, r *http.Request, userName, excludeID string) (string, bool) {
+	if strings.TrimSpace(userName) == "" {
+		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
+		return "", false
+	}
+	lower := strings.ToLower(userName)
+	if dup, err := h.userNameExists(r.Context(), lower, excludeID); err != nil {
+		h.writeError(w, h.storageError(err))
+		return "", false
+	} else if dup {
+		h.writeError(w, newError(http.StatusConflict, scimTypeUniqueness, "userName already exists"))
+		return "", false
+	}
+	return lower, true
 }
 
 // decode reads and validates the SCIM JSON request body into a Resource.
@@ -255,11 +291,14 @@ func (h *Handler) locationFor(collection, id string) string {
 	return h.basePath + collection + "/" + id
 }
 
-// storageError maps an unexpected store error to a SCIM 500. core.User
-// store errors carry no oracle risk here (the surface is admin-only), so
-// the detail is passed through to aid operators.
+// storageError maps an unexpected store error to a SCIM 500. The real error
+// detail is logged (not returned) to prevent internal store messages from
+// leaking in the API response, even though this surface is admin-only.
 func (h *Handler) storageError(err error) ErrorResponse {
-	return newError(http.StatusInternalServerError, "", err.Error())
+	if h.logger != nil {
+		h.logger.Error("SCIM storage error", "error", err)
+	}
+	return newError(http.StatusInternalServerError, "", "internal server error")
 }
 
 // audit emits the reused admin user event, stamping the data subject and

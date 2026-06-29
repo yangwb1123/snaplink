@@ -19,6 +19,9 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
 		return
 	}
+	// Normalize to lowercase before uniqueness check and storage (RFC 7643
+	// §8.7.1: caseExact=false — the server owns canonical form).
+	res.UserName = strings.ToLower(strings.TrimSpace(res.UserName))
 	id := h.newID()
 	// Guard against an id collision (newID is random, but a custom
 	// generator could clash) AND enforce userName uniqueness. WHY a
@@ -100,6 +103,9 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 	if !ok {
 		return
 	}
+	// Normalize to lowercase before the blank + uniqueness checks in
+	// validateReplaceUser and before storage (RFC 7643 §8.7.1: caseExact=false).
+	res.UserName = strings.ToLower(strings.TrimSpace(res.UserName))
 	if !h.validateReplaceUser(w, r, res, id) {
 		return
 	}
@@ -172,30 +178,31 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeError(w, e)
 		return
 	}
-	// userName is REQUIRED (RFC 7643 §4.1.1): a PATCH must not leave it
-	// blank (e.g. replace userName="").
-	if strings.TrimSpace(res.UserName) == "" {
-		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
+	if h.patchUserCommit(w, r, res, id, existing) {
 		return
 	}
-	if dup, err := h.userNameExists(r.Context(), res.UserName, id); err != nil {
-		h.writeError(w, h.storageError(err))
-		return
-	} else if dup {
-		h.writeError(w, newError(http.StatusConflict, scimTypeUniqueness, "userName already exists"))
-		return
-	}
+}
 
+// patchUserCommit validates userName, checks uniqueness, persists the patched
+// user, and emits the audit event. Returns true when it has written an error
+// and the caller must stop.
+func (h *Handler) patchUserCommit(w http.ResponseWriter, r *http.Request, res Resource, id string, existing *core.User) bool {
+	normalized, ok := h.normalizeAndCheckUserName(w, r, res.UserName, id)
+	if !ok {
+		return true
+	}
+	res.UserName = normalized
 	// PATCH is a partial update (RFC 7644 §3.5.2); toUserPreserving keeps non-SCIM state.
 	u := res.toUserPreserving(id, existing)
 	u.CreatedAt = existing.CreatedAt
 	u.UpdatedAt = h.now()
 	if err := h.users.CreateOrUpdate(r.Context(), u); err != nil {
 		h.writeError(w, h.storageError(err))
-		return
+		return true
 	}
 	h.audit(r, audit.EventAdminUserUpdated, id)
 	h.writeUserResource(w, http.StatusOK, userToResource(u, h.location(id)))
+	return false
 }
 
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request, id string) {
