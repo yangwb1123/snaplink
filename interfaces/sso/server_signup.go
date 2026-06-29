@@ -144,6 +144,12 @@ func (s *Server) EmailVerificationTTL() time.Duration {
 	return s.emailVerificationTTL
 }
 
+// PasswordPolicyValidator returns the wired password policy validator, or nil
+// if no policy is enforced.
+func (s *Server) PasswordPolicyValidator() spi.PasswordPolicyValidator {
+	return s.passwordPolicyValidator
+}
+
 // handleForgotPassword delegates to selfservice.HandleForgotPassword.
 func (s *Server) handleForgotPassword(ctx HandlerContext) {
 	selfservice.HandleForgotPassword(s, ctx)

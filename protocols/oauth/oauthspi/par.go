@@ -69,7 +69,7 @@ type PARRequest struct {
 
 // IsExpired reports whether the PAR record's lifetime has elapsed.
 func (p *PARRequest) IsExpired() bool {
-	return time.Now().After(p.ExpiresAt)
+	return time.Since(p.ExpiresAt) > 0
 }
 
 // PARStore persists pushed authorization requests. The request_uri

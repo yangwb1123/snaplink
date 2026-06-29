@@ -138,7 +138,7 @@ func (s *PushApprovalStore) Get(ctx context.Context, id string) (*defaultimpl.Pu
 		return nil, fmt.Errorf("sqlite: get push_approval: %w", err)
 	}
 	expiresAt := time.Unix(0, expiresNs).UTC()
-	if time.Now().After(expiresAt) {
+	if time.Since(expiresAt) > 0 {
 		// Lazy expiry: delete the stale row so Get callers don't
 		// repeatedly hit it. Errors here are swallowed — the
 		// caller's wire response is unchanged either way.

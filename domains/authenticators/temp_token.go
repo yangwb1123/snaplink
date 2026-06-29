@@ -45,7 +45,7 @@ func (m *MemoryTempTokenStore) Consume(_ context.Context, token string) (*sso.Su
 	defer m.mu.Unlock()
 	e, ok := m.entries[token]
 	delete(m.entries, token)
-	if !ok || time.Now().After(e.expiresAt) {
+	if !ok || time.Since(e.expiresAt) > 0 {
 		return nil, ErrCodeInvalid
 	}
 	return e.subject, nil

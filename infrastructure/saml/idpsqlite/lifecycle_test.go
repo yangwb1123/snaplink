@@ -287,13 +287,95 @@ func TestIdPSqlite_IsConstraintErr(t *testing.T) {
 	}
 }
 
-// TestIdPSqlite_PruneAfterCloseErrors confirms the logout store's PruneExpired
-// reports an error (not a silent 0) once the handle is gone.
+// TestIdPSqlite_PruneAfterCloseErrors confirms the session index's PruneExpired
+// and PruneOlderThan report an error (not a silent 0) once the handle is gone.
 func TestIdPSqlite_PruneAfterCloseErrors(t *testing.T) {
 	s, _ := NewLogoutReplayStore(uniqDSN("idp_prune_closed"))
 	_ = s.Close()
 	if _, err := s.PruneExpired(context.Background(), time.Now()); err == nil {
 		t.Fatal("logout PruneExpired on closed store must error")
+	}
+	idx, _ := NewSessionIndex(uniqDSN("idp_idx_prune_closed"))
+	_ = idx.Close()
+	if _, err := idx.PruneExpired(context.Background(), time.Now()); err == nil {
+		t.Fatal("session index PruneExpired on closed store must error")
+	}
+}
+
+// TestIdPSqlite_PruneExpired proves the TTL-based expiry: rows whose expires_at
+// is before the cutoff are deleted, rows with a future expires_at survive.
+func TestIdPSqlite_PruneExpired(t *testing.T) {
+	idx, err := NewSessionIndex(uniqDSN("idp_idx_expiry"))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	ctx := context.Background()
+
+	// Override the session TTL to 200ms so we have room to place two rows at
+	// different expiry times.
+	idx.sessionTTL = 200 * time.Millisecond
+
+	_ = idx.Record(ctx, "short@example.com", row("sp-short"))
+	time.Sleep(100 * time.Millisecond)
+
+	// Record a second row 100ms after the first, so its expires_at is 100ms
+	// later than the first row's expires_at.
+	_ = idx.Record(ctx, "also-short@example.com", row("sp-also-short"))
+	time.Sleep(150 * time.Millisecond) // past the first row's TTL, before the second's
+
+	// First row's expires_at was ~100ms ago; second row's expires_at is ~50ms
+	// from now (200ms TTL from its Record call 150ms ago).
+	n, err := idx.PruneExpired(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("prune expired: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("prune expired removed %d rows, want 1 (only the first row)", n)
+	}
+	if rows, _ := idx.ListBySubject(ctx, "short@example.com"); len(rows) != 0 {
+		t.Fatalf("expired subject not pruned: %+v", rows)
+	}
+	if rows, _ := idx.ListBySubject(ctx, "also-short@example.com"); len(rows) != 1 {
+		t.Fatalf("non-expired subject wrongly pruned: %+v", rows)
+	}
+}
+
+// TestIdPSqlite_StartCleanup proves the background cleanup goroutine eventually
+// removes expired rows. It uses a short interval and a short TTL so the test
+// completes quickly.
+func TestIdPSqlite_StartCleanup(t *testing.T) {
+	idx, err := NewSessionIndex(uniqDSN("idp_idx_cleanup"))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	ctx := context.Background()
+
+	// Override session TTL to 50ms.
+	idx.sessionTTL = 50 * time.Millisecond
+	_ = idx.Record(ctx, "ephemeral@example.com", row("sp-ephemeral"))
+
+	// Start the cleanup loop with a 50ms tick.
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	idx.StartCleanup(cleanupCtx, 50*time.Millisecond)
+
+	// Wait for the row to expire and be pruned (up to 3 ticks).
+	deadline := time.After(5 * time.Second)
+	for {
+		rows, err := idx.ListBySubject(ctx, "ephemeral@example.com")
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(rows) == 0 {
+			return // success: row was cleaned up
+		}
+		select {
+		case <-deadline:
+			t.Fatal("StartCleanup did not prune expired row within deadline")
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }
 

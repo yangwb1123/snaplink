@@ -1,6 +1,10 @@
 package spi
 
-import "context"
+import (
+	"context"
+	"errors"
+	"unicode"
+)
 
 // CaptchaTokenContextKey is the context key used to pass a captcha token from
 // the HTTP handler to CaptchaGate during self-service registration. The
@@ -24,4 +28,75 @@ type RegistrationGate interface {
 // When nil, CaptchaGate silently skips the check.
 type CaptchaVerifier interface {
 	Verify(ctx context.Context, captchaToken string) error
+}
+
+// ErrPasswordPolicyViolation is returned by PasswordPolicyValidator when a
+// proposed password fails to meet the configured policy rules. The error
+// message is deliberately generic to prevent enumeration of policy internals.
+var ErrPasswordPolicyViolation = errors.New("password does not meet policy requirements")
+
+// PasswordPolicyValidator validates a proposed password against policy rules.
+type PasswordPolicyValidator interface {
+	ValidatePassword(ctx context.Context, password string) error
+}
+
+// PasswordPolicyConfig carries the operator-configured password policy rules.
+// Zero values mean the corresponding rule is not enforced (backward compatible).
+type PasswordPolicyConfig struct {
+	MinLength      int  // minimum password length (0 = no minimum)
+	RequireUpper   bool // require at least one uppercase letter
+	RequireLower   bool // require at least one lowercase letter
+	RequireDigit   bool // require at least one digit
+	RequireSpecial bool // require at least one special character
+	MaxHistory     int  // number of previous passwords to check (0 = no history)
+	MaxAgeDays     int  // password maximum age in days (0 = no expiry)
+}
+
+type passwordPolicyValidator struct {
+	cfg PasswordPolicyConfig
+}
+
+// NewPasswordPolicyValidator creates a PasswordPolicyValidator from config.
+func NewPasswordPolicyValidator(cfg PasswordPolicyConfig) PasswordPolicyValidator {
+	return &passwordPolicyValidator{cfg: cfg}
+}
+
+func (v *passwordPolicyValidator) ValidatePassword(_ context.Context, password string) error {
+	if v.cfg.MinLength > 0 && len(password) < v.cfg.MinLength {
+		return ErrPasswordPolicyViolation
+	}
+	if v.cfg.RequireUpper && !hasRune(password, unicode.IsUpper) {
+		return ErrPasswordPolicyViolation
+	}
+	if v.cfg.RequireLower && !hasRune(password, unicode.IsLower) {
+		return ErrPasswordPolicyViolation
+	}
+	if v.cfg.RequireDigit && !hasRune(password, unicode.IsDigit) {
+		return ErrPasswordPolicyViolation
+	}
+	if v.cfg.RequireSpecial && !hasSpecial(password) {
+		return ErrPasswordPolicyViolation
+	}
+	return nil
+}
+
+// hasRune checks whether string s contains at least one rune satisfying pred.
+func hasRune(s string, pred func(rune) bool) bool {
+	for _, r := range s {
+		if pred(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSpecial checks whether string s contains at least one special character
+// (anything that is not upper, lower, digit, or whitespace).
+func hasSpecial(s string) bool {
+	for _, r := range s {
+		if !unicode.IsUpper(r) && !unicode.IsLower(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
 }

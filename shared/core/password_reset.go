@@ -18,7 +18,7 @@ type PasswordResetToken struct {
 }
 
 // IsExpired reports whether the token has passed its expiry.
-func (r *PasswordResetToken) IsExpired() bool { return time.Now().After(r.ExpiresAt) }
+func (r *PasswordResetToken) IsExpired() bool { return time.Since(r.ExpiresAt) > 0 }
 
 // PasswordResetStore persists single-use password-reset tokens. When nil (not
 // wired), the forgot-password flow is disabled — byte-identical to a build

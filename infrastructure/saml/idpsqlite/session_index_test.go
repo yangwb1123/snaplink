@@ -59,28 +59,29 @@ func TestSessionIndex_ReRecordBumpsOrder(t *testing.T) {
 	}
 }
 
-// TestSessionIndex_Migration proves the baseline migration applies on a fresh DB
-// (records v1) and no-ops on re-open.
+// TestSessionIndex_Migration proves the schema migration applies on a fresh DB
+// (records v2, the latest) and no-ops on re-open.
 func TestSessionIndex_Migration(t *testing.T) {
 	db := openSharedDB(t, "idp_sessidx_migrate")
 	ctx := context.Background()
 	if _, err := NewSessionIndexWithDB(db); err != nil {
 		t.Fatalf("fresh: %v", err)
 	}
-	if v, err := migrate.CurrentVersion(ctx, db, "saml_session_index"); err != nil || v != 1 {
-		t.Fatalf("version = %d (err %v), want 1", v, err)
+	if v, err := migrate.CurrentVersion(ctx, db, "saml_session_index"); err != nil || v != 2 {
+		t.Fatalf("version = %d (err %v), want 2", v, err)
 	}
 	if _, err := NewSessionIndexWithDB(db); err != nil {
 		t.Fatalf("populated: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "saml_session_index"); v != 1 {
-		t.Fatalf("version after re-open = %d, want 1", v)
+	if v, _ := migrate.CurrentVersion(ctx, db, "saml_session_index"); v != 2 {
+		t.Fatalf("version after re-open = %d, want 2", v)
 	}
 }
 
 // TestSessionIndex_SharedDBNamespaceIsolation proves the session index + the
 // logout-replay store can share one *sql.DB without their migration namespaces
-// clobbering each other (distinct schema_migrations_* tables, both v1).
+// clobbering each other. The session index is at v2 (with expires_at), the
+// logout replay remains at v1.
 func TestSessionIndex_SharedDBNamespaceIsolation(t *testing.T) {
 	db := openSharedDB(t, "idp_shared")
 	ctx := context.Background()
@@ -90,10 +91,11 @@ func TestSessionIndex_SharedDBNamespaceIsolation(t *testing.T) {
 	if _, err := NewLogoutReplayStoreWithDB(db); err != nil {
 		t.Fatalf("logout replay: %v", err)
 	}
-	for _, ns := range []string{"saml_session_index", "saml_idp_logout_replay"} {
-		if v, err := migrate.CurrentVersion(ctx, db, ns); err != nil || v != 1 {
-			t.Fatalf("namespace %s version = %d (err %v), want 1", ns, v, err)
-		}
+	if v, err := migrate.CurrentVersion(ctx, db, "saml_session_index"); err != nil || v != 2 {
+		t.Fatalf("saml_session_index version = %d (err %v), want 2", v, err)
+	}
+	if v, err := migrate.CurrentVersion(ctx, db, "saml_idp_logout_replay"); err != nil || v != 1 {
+		t.Fatalf("saml_idp_logout_replay version = %d (err %v), want 1", v, err)
 	}
 }
 

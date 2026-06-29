@@ -22,7 +22,7 @@ type Invitation struct {
 }
 
 // IsExpired reports whether the invitation has passed its expiry.
-func (i *Invitation) IsExpired() bool { return time.Now().After(i.ExpiresAt) }
+func (i *Invitation) IsExpired() bool { return time.Since(i.ExpiresAt) > 0 }
 
 // InvitationStore persists single-use org-invitation tokens. When nil (not
 // wired), org invitations are disabled — byte-identical to a build without them.

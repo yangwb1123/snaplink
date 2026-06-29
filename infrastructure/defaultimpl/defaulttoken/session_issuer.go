@@ -87,7 +87,7 @@ func (s *SessionTokenIssuer) Validate(_ context.Context, token string) (*core.To
 		return nil, errors.New("session_issuer: invalid token")
 	}
 	entry := v.(*sessionEntry)
-	if time.Now().After(entry.expiresAt) {
+	if time.Since(entry.expiresAt) > 0 {
 		s.tokens.Delete(token)
 		return nil, errors.New("session_issuer: token expired")
 	}

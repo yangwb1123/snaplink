@@ -359,6 +359,17 @@ func WithSecurityHeaders() Option {
 	return func(s *Server) { s.securityHeadersEnabled = true }
 }
 
+// WithPasswordPolicy wires a password policy validator that checks proposed
+// passwords against operator-configured complexity rules and (optionally)
+// password history. When nil (the default), no policy is enforced — behaviour
+// is byte-identical to a build without the feature. The validator is applied
+// in every code path that sets a password: self-service signup, POST /me/password,
+// and POST /auth/reset-password. All validation failures return the same generic
+// error to prevent enumeration of policy internals.
+func WithPasswordPolicy(v spi.PasswordPolicyValidator) Option {
+	return func(srv *Server) { srv.passwordPolicyValidator = v }
+}
+
 // WithMaxSessionsPerUser sets a per-user limit on concurrent active sessions.
 // When a user already has >= n active sessions and a new login creates another,
 // the OLDEST session is silently evicted (rolling eviction) before the new one

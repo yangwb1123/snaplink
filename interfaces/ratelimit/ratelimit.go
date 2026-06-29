@@ -187,7 +187,7 @@ func (m *MemoryLimiter) Buckets() int {
 // pruneLocked scans sh.buckets for stale entries. Called with sh.mu held.
 func (m *MemoryLimiter) pruneLocked(sh *shard, now time.Time) {
 	for k, b := range sh.buckets {
-		if now.Sub(b.lastSeen) > m.stalePruneAfter {
+		if time.Since(b.lastSeen) > m.stalePruneAfter {
 			delete(sh.buckets, k)
 		}
 	}

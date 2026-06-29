@@ -19,7 +19,7 @@ type EmailChangeToken struct {
 }
 
 // IsExpired reports whether the token has passed its expiry.
-func (e *EmailChangeToken) IsExpired() bool { return time.Now().After(e.ExpiresAt) }
+func (e *EmailChangeToken) IsExpired() bool { return time.Since(e.ExpiresAt) > 0 }
 
 // EmailChangeStore persists single-use email-change verification tokens. When
 // nil (not wired), the verified-email-change flow is disabled — byte-identical
@@ -74,7 +74,7 @@ type EmailVerificationToken struct {
 }
 
 // IsExpired reports whether the token has passed its expiry.
-func (e *EmailVerificationToken) IsExpired() bool { return time.Now().After(e.ExpiresAt) }
+func (e *EmailVerificationToken) IsExpired() bool { return time.Since(e.ExpiresAt) > 0 }
 
 // EmailVerificationStore persists single-use signup email-verification tokens.
 // Issue stores the SHA-256 hash as the key; Consume atomically retrieves AND

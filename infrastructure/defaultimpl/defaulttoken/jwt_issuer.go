@@ -91,7 +91,7 @@ func (j *JWTIssuer) Validate(ctx context.Context, token string) (*core.TokenClai
 		return nil, fmt.Errorf("jwt: invalid token")
 	}
 	c := claims.(*core.TokenClaims)
-	if time.Now().After(c.ExpiresAt) {
+	if time.Since(c.ExpiresAt) > 0 {
 		return nil, fmt.Errorf("jwt: token expired")
 	}
 	return c, nil

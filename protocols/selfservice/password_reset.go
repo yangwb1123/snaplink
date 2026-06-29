@@ -107,6 +107,10 @@ func HandleResetPassword(d Deps, ctx core.HandlerContext) {
 			return
 		}
 	}
+	// Validate the new password against the policy before setting it.
+	if !checkPasswordPolicy(d, rctx, ctx, req.NewPassword) {
+		return
+	}
 	if err := d.PasswordCredentialStore().SetPassword(rctx, rt.UserID, req.NewPassword); err != nil {
 		// Token already consumed; the user must request another reset. We return
 		// the SAME reset_invalid (not 500) so an attacker can't distinguish a

@@ -275,7 +275,7 @@ func enforceJARReplay(ctx context.Context, p *jarPayload, replay security.JTIRep
 		return false, nil
 	}
 	expiresAt := time.Unix(p.Exp, 0)
-	if p.Exp == 0 || expiresAt.Before(time.Now()) {
+	if p.Exp == 0 || time.Since(expiresAt) > 0 {
 		expiresAt = time.Now().Add(security.DefaultJTIReplayWindow)
 	}
 	first, err := replay.MarkSeen(ctx, p.JTI, expiresAt)

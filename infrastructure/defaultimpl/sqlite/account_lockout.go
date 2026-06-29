@@ -126,7 +126,7 @@ func (a *AccountLockout) IsLocked(ctx context.Context, key string) (bool, time.T
 		return false, time.Time{}, nil
 	}
 	until := time.Unix(0, lockedUntilNs).UTC()
-	if time.Now().After(until) {
+	if time.Since(until) > 0 {
 		// Lazy-expire: clear the field so the next IsLocked reads it
 		// as 0 without a transaction. RegisterFailure resets the
 		// counter on a fresh window.

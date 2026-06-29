@@ -99,7 +99,7 @@ func (c *residencyCache) get(tenantID string) (region.ResidencyPolicy, bool) {
 	if !ok {
 		return region.ResidencyPolicy{}, false
 	}
-	if time.Now().After(e.expiresAt) {
+	if time.Since(e.expiresAt) > 0 {
 		return region.ResidencyPolicy{}, false
 	}
 	return e.policy, true

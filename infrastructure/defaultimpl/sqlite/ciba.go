@@ -164,7 +164,7 @@ func (s *CIBAStore) Get(ctx context.Context, authReqID string) (*oauth.CIBAReque
 		return nil, fmt.Errorf("sqlite: get ciba_request: %w", err)
 	}
 	expiresAt := time.Unix(0, raw.expiresNs).UTC()
-	if time.Now().After(expiresAt) {
+	if time.Since(expiresAt) > 0 {
 		_, _ = s.db.ExecContext(ctx, `DELETE FROM ciba_requests WHERE auth_req_id = ?`, authReqID)
 		return nil, oauth.ErrCIBARequestNotFound
 	}
@@ -293,7 +293,7 @@ func (s *CIBAStore) ConsumeIfApproved(ctx context.Context, authReqID string) (*o
 		return nil, fmt.Errorf("sqlite: consume_if_approved ciba_request: %w", err)
 	}
 	expiresAt := time.Unix(0, raw.expiresNs).UTC()
-	if time.Now().After(expiresAt) {
+	if time.Since(expiresAt) > 0 {
 		return nil, oauth.ErrCIBARequestNotFound
 	}
 	return raw.toRequest(authReqID, expiresAt), nil

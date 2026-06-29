@@ -73,7 +73,7 @@ func (m *MemoryCodeStore) Verify(_ context.Context, key, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.entries[key]
-	if !ok || time.Now().After(e.expiresAt) {
+	if !ok || time.Since(e.expiresAt) > 0 {
 		delete(m.entries, key)
 		return ErrCodeInvalid
 	}

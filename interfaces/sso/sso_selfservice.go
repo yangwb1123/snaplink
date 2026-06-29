@@ -170,4 +170,10 @@ type selfServiceState struct {
 	// and /me/mfa with the end-user's own Bearer token. Nil (the default)
 	// leaves /portal/ unmounted — byte-identical to a build without it.
 	portalFS fs.FS
+
+	// passwordPolicyValidator checks proposed passwords against operator-
+	// configured complexity rules and password history (WithPasswordPolicy).
+	// Nil (the default) means no password policy is enforced — behavior is
+	// byte-identical to a build without the feature.
+	passwordPolicyValidator spi.PasswordPolicyValidator
 }

@@ -232,7 +232,7 @@ func (c *suspensionCache) get(tenantID string) (suspended bool, fresh bool) {
 	if !ok {
 		return false, false
 	}
-	if time.Now().After(e.expiresAt) {
+	if time.Since(e.expiresAt) > 0 {
 		return false, false
 	}
 	return e.suspended, true

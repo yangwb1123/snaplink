@@ -103,7 +103,7 @@ type CIBARequest struct {
 
 // IsExpired reports whether the request's lifetime has elapsed.
 func (r *CIBARequest) IsExpired() bool {
-	return time.Now().After(r.ExpiresAt)
+	return time.Since(r.ExpiresAt) > 0
 }
 
 // CIBAStore persists poll-mode backchannel authentication requests

@@ -76,7 +76,7 @@ type AuthCode struct {
 // does — it lets a custom store skip the round trip when its own TTL
 // already cleared the entry.
 func (c *AuthCode) IsExpired() bool {
-	return time.Now().After(c.ExpiresAt)
+	return time.Since(c.ExpiresAt) > 0
 }
 
 // AuthCodeStore persists short-lived OAuth 2.0 authorization codes.

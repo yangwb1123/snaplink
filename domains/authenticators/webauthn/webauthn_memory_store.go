@@ -160,7 +160,7 @@ func (m *MemorySessionStore) Take(_ context.Context, sessionID string) (*gw.Sess
 	if !ok {
 		return nil, ErrSessionUnknown
 	}
-	if time.Now().After(e.expiresAt) {
+	if time.Since(e.expiresAt) > 0 {
 		return nil, ErrSessionExpired
 	}
 	return e.data, nil

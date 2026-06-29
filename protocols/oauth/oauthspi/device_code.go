@@ -39,7 +39,7 @@ type DeviceCode struct {
 
 // IsExpired reports whether the device code's lifetime has elapsed.
 func (d *DeviceCode) IsExpired() bool {
-	return time.Now().After(d.ExpiresAt)
+	return time.Since(d.ExpiresAt) > 0
 }
 
 // DeviceCodeStore persists OAuth 2.0 device authorization codes

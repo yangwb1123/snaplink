@@ -151,7 +151,7 @@ func (s *MFAChallengeStore) Consume(ctx context.Context, id string) (*spi.MFACha
 	// caller collapses missing + expired to the same wire response, so
 	// the deletion alone is sufficient to enforce both single-use and
 	// the expiry boundary.
-	if time.Now().After(out.ExpiresAt) {
+	if time.Since(out.ExpiresAt) > 0 {
 		return nil, spi.ErrMFAChallengeNotFound
 	}
 	return &out, nil

@@ -102,7 +102,7 @@ func (m *MemoryPushApprovalStore) Get(_ context.Context, id string) (*PushApprov
 	if !ok {
 		return nil, ErrPushApprovalNotFound
 	}
-	if time.Now().After(entry.ExpiresAt) {
+	if time.Since(entry.ExpiresAt) > 0 {
 		delete(m.entries, id)
 		return nil, ErrPushApprovalNotFound
 	}

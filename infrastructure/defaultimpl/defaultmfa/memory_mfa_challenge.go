@@ -61,7 +61,7 @@ func (m *MemoryMFAChallengeStore) Consume(_ context.Context, id string) (*spi.MF
 	// ExpiresAt, the entry is gone now. Re-checking expiry here keeps
 	// the wire contract consistent with the SQLite peer which prunes
 	// expired rows lazily on Consume too.
-	if time.Now().After(entry.ExpiresAt) {
+	if time.Since(entry.ExpiresAt) > 0 {
 		return nil, spi.ErrMFAChallengeNotFound
 	}
 	return entry, nil

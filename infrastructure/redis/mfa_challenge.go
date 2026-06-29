@@ -89,7 +89,7 @@ func (s *MFAChallengeStore) Consume(ctx context.Context, id string) (*spi.MFACha
 	// deleted (GETDEL), so we never restore it — collapsing missing +
 	// expired to the same not-found result is sufficient for both
 	// single-use and the expiry boundary, exactly like the SQLite peer.
-	if time.Now().After(out.ExpiresAt) {
+	if time.Since(out.ExpiresAt) > 0 {
 		return nil, spi.ErrMFAChallengeNotFound
 	}
 	return &out, nil

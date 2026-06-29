@@ -21,7 +21,7 @@ type DeviceSecret struct {
 }
 
 // IsExpired reports whether the binding has passed its expiry.
-func (d *DeviceSecret) IsExpired() bool { return time.Now().After(d.ExpiresAt) }
+func (d *DeviceSecret) IsExpired() bool { return time.Since(d.ExpiresAt) > 0 }
 
 // DeviceSecretStore persists Native SSO device-secret bindings. When nil (not
 // wired), the whole Native SSO feature is disabled — byte-identical to a build

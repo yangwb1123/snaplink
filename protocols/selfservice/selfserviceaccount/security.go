@@ -44,6 +44,13 @@ func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidPassword))
 		return
 	}
+	// Validate the new password against the policy before setting it.
+	if v := d.PasswordPolicyValidator(); v != nil {
+		if err := v.ValidatePassword(ctx.Request().Context(), req.NewPassword); err != nil {
+			ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrPasswordPolicyViolation))
+			return
+		}
+	}
 	if err := d.PasswordCredentialStore().SetPassword(ctx.Request().Context(), userID, req.NewPassword); err != nil {
 		d.Logger().Error("set password failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))

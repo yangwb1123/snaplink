@@ -108,7 +108,7 @@ type RefreshAuthContext struct {
 // indistinguishable from missing for security reasons), but this helper
 // lets the handler short-circuit a known-stale lookup.
 func (r *RefreshToken) IsExpired() bool {
-	return time.Now().After(r.ExpiresAt)
+	return time.Since(r.ExpiresAt) > 0
 }
 
 // RefreshTokenStore persists OAuth 2.0 refresh tokens. Implementations

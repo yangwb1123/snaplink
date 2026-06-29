@@ -122,4 +122,5 @@ const (
 	ErrNotFound                  = "not_found"
 	ErrNotSupported              = "not_supported"
 	ErrRegistrationDenied        = "registration_denied"
+	ErrPasswordPolicyViolation   = "password_policy_violation"
 )

@@ -166,7 +166,7 @@ func (p *PushMFAProvider) checkApproval(ctx context.Context, id, subjectID strin
 		_ = p.store.Delete(ctx, id)
 		return true, ErrPushApprovalDenied
 	}
-	if time.Now().After(deadline) {
+	if time.Since(deadline) > 0 {
 		_ = p.store.Delete(ctx, id)
 		return true, ErrPushApprovalTimeout
 	}

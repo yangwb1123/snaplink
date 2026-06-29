@@ -87,9 +87,10 @@ func handleMandatoryVerificationSignup(d Deps, ctx core.HandlerContext, username
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-
 	rctx := ctx.Request().Context()
-
+	if !checkPasswordPolicy(d, rctx, ctx, password) {
+		return
+	}
 	// Generate a 32-byte random token.
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -137,6 +138,11 @@ func handleMandatoryVerificationSignup(d Deps, ctx core.HandlerContext, username
 // circuit trust). Supports ?send_verification=true for optional verification.
 func handleOptionalVerificationSignup(d Deps, ctx core.HandlerContext, username, password, email string) {
 	rctx := ctx.Request().Context()
+
+	// Validate password policy before creating the user.
+	if !checkPasswordPolicy(d, rctx, ctx, password) {
+		return
+	}
 
 	attrs := make(map[string]string)
 	if email != "" {
@@ -249,4 +255,19 @@ func recordSelfRegister(d Deps, ctx core.HandlerContext, username string, ok boo
 		evt.Reason = "account_exists"
 	}
 	d.Auditor().Record(ctx.Request().Context(), evt)
+}
+
+// checkPasswordPolicy validates the proposed password against the wired policy.
+// Returns true when the password is acceptable or no policy is configured.
+// On violation, writes a 400 response and returns false.
+func checkPasswordPolicy(d Deps, rctx context.Context, ctx core.HandlerContext, password string) bool {
+	v := d.PasswordPolicyValidator()
+	if v == nil {
+		return true
+	}
+	if err := v.ValidatePassword(rctx, password); err != nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrPasswordPolicyViolation))
+		return false
+	}
+	return true
 }

@@ -204,7 +204,7 @@ func (c *ClientStoreCache) getFresh(clientID string) (*core.Client, bool) {
 	if !ok {
 		return nil, false
 	}
-	if time.Now().After(e.expiresAt) {
+	if time.Since(e.expiresAt) > 0 {
 		return nil, false
 	}
 	return cloneClient(e.client), true

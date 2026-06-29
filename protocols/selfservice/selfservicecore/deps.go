@@ -95,6 +95,9 @@ type Deps interface {
 	// GDPR self-service
 	DataExporter() *compliance.Exporter
 	AccountEraser() *compliance.Eraser
+
+	// Password policy
+	PasswordPolicyValidator() spi.PasswordPolicyValidator
 }
 
 // RecordSelfErase emits a subject_self_erased audit event for GDPR Art. 17
