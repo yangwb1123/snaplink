@@ -198,10 +198,17 @@ func tokExActorJTIReplay(d TokenExchangeDeps, ctx core.HandlerContext, actorClai
 	if d.JTIReplayStore() == nil || actorClaims.JTI == "" {
 		return false
 	}
+	// Remember the jti until the LATEST instant the actor_token would still be
+	// accepted, not just its raw exp: token validation tolerates clock skew, so a
+	// jti expiring exactly at exp leaves a skew-sized replay gap (same misalignment
+	// class as the DPoP / CAEP jti windows). Add a generous safe margin so the
+	// remembered span always covers the validator's acceptance span; a zero-exp
+	// actor_token falls back to a window from now.
 	expiry := actorClaims.ExpiresAt
 	if expiry.IsZero() {
-		expiry = time.Now().Add(security.DefaultJTIReplayWindow)
+		expiry = time.Now()
 	}
+	expiry = expiry.Add(security.DefaultJTIReplayWindow)
 	first, rerr := d.JTIReplayStore().MarkSeen(ctx.Request().Context(), "tokex-act:"+actorClaims.JTI, expiry)
 	switch {
 	case rerr != nil:
