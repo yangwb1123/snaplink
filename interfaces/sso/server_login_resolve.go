@@ -70,6 +70,14 @@ func (s *Server) consumePARRequest(ctx HandlerContext, req *login.Request) bool 
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
 		return true
 	}
+	// RFC 9126 §4: when client_id is present in the request, it MUST match the
+	// client that pushed the PAR. An attacker who substitutes a different request_uri
+	// (e.g. one from their own PAR) while keeping the victim client's client_id in the
+	// URL would otherwise have the stored redirect_uri silently overwritten to theirs.
+	if req.ClientID != "" && stored.ClientID != "" && req.ClientID != stored.ClientID {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		return true
+	}
 	mergeStoredPARRequest(req, stored)
 	return false
 }
