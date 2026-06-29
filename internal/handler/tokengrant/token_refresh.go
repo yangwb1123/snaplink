@@ -22,7 +22,7 @@ type RefreshGrantDeps interface {
 	RefreshGrace() RefreshGraceStore
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
@@ -73,6 +73,13 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return
 	}
+	// RFC 9449 §5: if the refresh token was issued with a DPoP key binding,
+	// the presenter MUST use the SAME key — a stolen refresh token can't be
+	// redeemed with an attacker-controlled key.
+	if info.ConfirmationJKT != "" && dpopJKT != info.ConfirmationJKT {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return
+	}
 	grantScopes, ok := refreshResolveScopes(ctx, info, scope)
 	if !ok {
 		return
@@ -112,7 +119,7 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 		// RFC 9068 §2.2: a rotation propagates the ORIGINAL auth context unchanged
 		// (does NOT reset auth_time, keeps amr/acr) so the chain never down-trusts.
 		oauth.RefreshAuthContext{AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime},
-		client.RefreshTokenTTL)
+		client.RefreshTokenTTL, info.ConfirmationJKT) // RFC 9449: key binding propagates unchanged
 	if err != nil {
 		d.LogErrorCtx(ctx, "refresh token rotation failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))

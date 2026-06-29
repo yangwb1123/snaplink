@@ -51,7 +51,7 @@ type TokenExchangeDeps interface {
 	ValidateAnyToken(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	ResolveLocalSubject(ctx context.Context, sub string) (string, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
 	SPIFFEValidator() *security.SPIFFEValidator
 	SPIFFEAudience() string

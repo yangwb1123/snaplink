@@ -82,6 +82,13 @@ type RefreshToken struct {
 	Amr      []string
 	Acr      string
 	AuthTime time.Time
+
+	// ConfirmationJKT is the RFC 9449 DPoP JKT this refresh token is bound to.
+	// Empty means unbound (no DPoP was presented at issue time). When non-empty,
+	// the rotation handler MUST reject any refresh-grant request whose presented
+	// DPoP proof does not carry the same key — a stolen refresh token can't be
+	// redeemed with an attacker-controlled key.
+	ConfirmationJKT string `json:"confirmation_jkt,omitempty"`
 }
 
 // RefreshAuthContext groups the original authentication-event claims threaded

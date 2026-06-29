@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     sid                    TEXT    NOT NULL DEFAULT '',
     amr                    TEXT    NOT NULL DEFAULT '[]',
     acr                    TEXT    NOT NULL DEFAULT '',
-    auth_time              INTEGER NOT NULL DEFAULT 0
+    auth_time              INTEGER NOT NULL DEFAULT 0,
+    confirmation_jkt       TEXT    NOT NULL DEFAULT ''
 );`
 
 // refreshTokensIndexDDL creates indexes + the family ledger. Runs AFTER
@@ -84,6 +85,10 @@ var refreshTokenMigrations = []migrate.Migration{
 	// — so the adds stay idempotent (SQLite has no ADD COLUMN IF NOT EXISTS);
 	// fresh DBs whose baseline DDL already carries the columns skip every add.
 	{Version: 3, Name: "refresh_token_auth_context", Func: addRefreshTokenAuthContext},
+	// v4 backfills the RFC 9449 DPoP key-binding column. Fresh DBs get it from
+	// the baseline DDL; pre-v4 DBs get it here. Existing rows default to ''
+	// (unbound), preserving the pre-feature behavior exactly.
+	{Version: 4, Name: "refresh_token_dpop_binding", Func: addRefreshTokenDPoPBinding},
 }
 
 // addRefreshTokenAuthContext adds amr/acr/auth_time (preserve original
@@ -140,6 +145,21 @@ func ensureRefreshTokenSchema(ctx context.Context, x migrate.Execer) error {
 		return err
 	}
 	return nil
+}
+
+// addRefreshTokenDPoPBinding adds confirmation_jkt (RFC 9449 DPoP key binding)
+// to a pre-existing refresh_tokens table. Idempotent via the column-exists check.
+func addRefreshTokenDPoPBinding(ctx context.Context, x migrate.Execer) error {
+	has, err := refreshTokenColumnExists(ctx, x, "confirmation_jkt")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE refresh_tokens ADD COLUMN confirmation_jkt TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 // refreshTokenColumnExists reports whether refresh_tokens already has the

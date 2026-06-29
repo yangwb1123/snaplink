@@ -100,14 +100,14 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
             scopes, attributes, issued_at, expires_at, family_id, resources,
-            authorization_details, sid, amr, acr, auth_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            authorization_details, sid, amr, acr, auth_time, confirmation_jkt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
 		info.FamilyID, string(resources),
 		string(info.AuthorizationDetails), info.SID,
-		string(amr), info.Acr, authTimeNs,
+		string(amr), info.Acr, authTimeNs, info.ConfirmationJKT,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
@@ -143,7 +143,8 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
         DELETE FROM refresh_tokens WHERE token = ?
         RETURNING user_id, client_id, provider, scopes, attributes,
                   issued_at, expires_at, family_id, resources,
-                  authorization_details, sid, amr, acr, auth_time`, token)
+                  authorization_details, sid, amr, acr, auth_time,
+                  confirmation_jkt`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
@@ -175,7 +176,8 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 	row := s.db.QueryRowContext(ctx, `
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, resources,
-               authorization_details, sid, amr, acr, auth_time
+               authorization_details, sid, amr, acr, auth_time,
+               confirmation_jkt
         FROM refresh_tokens WHERE token = ?`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -329,6 +331,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		amrJSON, acr                               string
 		issuedAtUnixNs, expiresAtUnixNs            int64
 		authTimeUnixNs                             int64
+		confirmationJKT                            string
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &provider,
@@ -337,9 +340,11 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		&familyID, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
+		&confirmationJKT,
 	); err != nil {
 		return nil, err
 	}
+	out.ConfirmationJKT = confirmationJKT
 	if authDetails != "" {
 		out.AuthorizationDetails = json.RawMessage(authDetails)
 	}

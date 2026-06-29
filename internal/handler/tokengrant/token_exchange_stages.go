@@ -410,7 +410,7 @@ func tokExIssueRefresh(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 		// amr/acr/auth_time so a rotated chain keeps the original auth context
 		// (mirrors the exchanged access token's Subject).
 		oauth.RefreshAuthContext{AMR: st.claims.AMR, ACR: st.claims.ACR, AuthTime: st.claims.AuthTime},
-		client.RefreshTokenTTL,
+		client.RefreshTokenTTL, req.DPoPJKT,
 	)
 	if rerr != nil {
 		d.SrvLogger().Error("token exchange refresh issue failed", "strategy", st.strategy, "error", rerr)

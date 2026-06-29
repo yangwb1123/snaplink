@@ -195,6 +195,9 @@ type IssueRefreshTokenParams struct {
 	ACR               string
 	AuthTime          time.Time
 	ClientTTLOverride time.Duration
+	// ConfirmationJKT binds this refresh token to the DPoP key the client
+	// used at issue time (RFC 9449 §5). Empty = unbound.
+	ConfirmationJKT string
 }
 
 // IssueRefreshToken generates and stores a refresh token.
@@ -236,6 +239,7 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 		Amr:                  append([]string(nil), p.AMR...),
 		Acr:                  p.ACR,
 		AuthTime:             p.AuthTime,
+		ConfirmationJKT:      p.ConfirmationJKT,
 	}
 	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)

@@ -323,8 +323,8 @@ func (s *Server) ApplyPairwiseSubject(ctx context.Context, client *Client, local
 }
 
 // IssueRefreshToken mints a refresh token, seeding a new rotation family.
-func (s *Server) IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error) {
-	return s.issueRefreshToken(ctx, userID, clientID, provider, scopes, attributes, familyID, resources, authDetails, sid, authCtx, clientTTLOverride)
+func (s *Server) IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error) {
+	return s.issueRefreshToken(ctx, userID, clientID, provider, scopes, attributes, familyID, resources, authDetails, sid, authCtx, clientTTLOverride, confirmationJKT)
 }
 
 // IssueDeviceSecret mints a Native SSO device secret (OIDC Native SSO §3.1).

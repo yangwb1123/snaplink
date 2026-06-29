@@ -28,7 +28,7 @@ type AuthCodeGrantDeps interface {
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	IDTokenIssuerForClient(c *core.Client) (oidc.IDTokenIssuer, bool, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
-	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration) (string, error)
+	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
 	IssueDeviceSecret(ctx context.Context, subject, sid, clientID string) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
 	DPoPTokenTypeOr(defaultType, jkt string) string
@@ -69,7 +69,7 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 	if !ok {
 		return
 	}
-	authCodeIssueRefresh(d, ctx, client, info, scopes, resp)
+	authCodeIssueRefresh(d, ctx, client, info, scopes, dpopJKT, resp)
 	var deviceSecretValue string
 	if slices.Contains(info.Scopes, core.ScopeDeviceSSO) && d.DeviceSecretStore() != nil {
 		if ds, dsErr := d.IssueDeviceSecret(ctx.Request().Context(), info.UserID, info.SID, client.ID); dsErr != nil {
@@ -180,7 +180,7 @@ func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core
 
 // authCodeIssueRefresh fail-OPENs (log + continue): a refresh issuance error
 // never aborts the access-token response. Family seed "" starts a new family.
-func authCodeIssueRefresh(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.AuthCode, scopes []string, resp map[string]any) {
+func authCodeIssueRefresh(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.AuthCode, scopes []string, dpopJKT string, resp map[string]any) {
 	if d.RefreshTokenStore() == nil {
 		return
 	}
@@ -191,7 +191,7 @@ func authCodeIssueRefresh(d AuthCodeGrantDeps, ctx core.HandlerContext, client *
 		// (raw AuthMethods so rotation re-resolves via AmrOrProvider exactly
 		// like the access token above) so a refresh chain keeps the MFA context.
 		oauth.RefreshAuthContext{AMR: info.AuthMethods, ACR: info.ACR, AuthTime: info.AuthTime},
-		client.RefreshTokenTTL)
+		client.RefreshTokenTTL, dpopJKT)
 	if err != nil {
 		d.SrvLogger().Error("refresh token issue failed", "error", err, "client", client.ID, "user", info.UserID)
 		return

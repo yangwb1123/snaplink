@@ -97,6 +97,7 @@ func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *o
 		Amr:                  append([]string(nil), info.Amr...),
 		Acr:                  info.Acr,
 		AuthTime:             info.AuthTime,
+		ConfirmationJKT:      info.ConfirmationJKT,
 	}
 	// Stamp the family even when active so reuse detection works after
 	// the leaf is consumed.
