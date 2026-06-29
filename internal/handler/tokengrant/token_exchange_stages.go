@@ -2,13 +2,11 @@ package tokengrant
 
 import (
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 )
@@ -28,6 +26,11 @@ type tokExState struct {
 	issuedSub string
 	token     *core.Token
 	resp      map[string]any
+	// confJKT / confX5T are the sender-constraint thumbprints (DPoP JKT / mTLS
+	// x5t#S256) captured from the /token request; set on the issued access token's
+	// cnf so a sender-constrained exchange yields a bound token, not an unbound one.
+	confJKT string
+	confX5T string
 }
 
 // tokExValidateRequestTypes runs the RFC 8693 pre-flight type validation. Every
@@ -300,7 +303,28 @@ func tokExResolveSubjectAndIssue(d TokenExchangeDeps, ctx core.HandlerContext, c
 		return true
 	}
 	st.issuedSub = d.ApplyPairwiseSubject(ctx.Request().Context(), client, localSub)
-	token, err := st.ti.Issue(ctx.Request().Context(), &core.Subject{
+	token, err := st.ti.Issue(ctx.Request().Context(), tokExSubject(client, st), st.scopes)
+	if err != nil {
+		d.SrvLogger().Error("token exchange issuance failed", "strategy", st.strategy, "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return true
+	}
+	st.token = token
+	d.RecordTokenIssued(ctx, client.ID, st.strategy, st.claims.Subject)
+	// Index by the LOCAL id, not the (possibly pairwise) inbound subject_token
+	// sub. The subject_client_index is local-keyed at every other write site and
+	// at every back-channel/front-channel logout read site, so recording a
+	// pairwise-origin client under its foreign pseudonym here would silently omit
+	// the exchanged RP from the logout fan-out (its session never torn down).
+	d.RecordSubjectClientAccess(ctx.Request().Context(), localSub, client.ID)
+	return false
+}
+
+// tokExSubject assembles the core.Subject for the exchanged access token from
+// the resolved exchange state. Extracted from tokExResolveSubjectAndIssue to keep
+// that stage within the function-length budget.
+func tokExSubject(client *core.Client, st *tokExState) *core.Subject {
+	return &core.Subject{
 		ID:        st.issuedSub,
 		Claims:    st.claims.Extra,
 		Resources: st.resources,
@@ -319,21 +343,12 @@ func tokExResolveSubjectAndIssue(d TokenExchangeDeps, ctx core.HandlerContext, c
 		// exchange so the resulting token carries the same fine-grained
 		// authorization the user originally consented to.
 		AuthorizationDetails: oauth.CloneRawJSON(st.claims.AuthorizationDetails),
-	}, st.scopes)
-	if err != nil {
-		d.SrvLogger().Error("token exchange issuance failed", "strategy", st.strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return true
+		// RFC 9449 / RFC 8705 sender constraint: bind the exchanged token to the
+		// presented DPoP key / mTLS cert thumbprint when one was supplied, matching
+		// every other issuance grant. Empty leaves the token unbound (as before).
+		ConfirmationJKT:     st.confJKT,
+		ConfirmationX5TS256: st.confX5T,
 	}
-	st.token = token
-	d.RecordTokenIssued(ctx, client.ID, st.strategy, st.claims.Subject)
-	// Index by the LOCAL id, not the (possibly pairwise) inbound subject_token
-	// sub. The subject_client_index is local-keyed at every other write site and
-	// at every back-channel/front-channel logout read site, so recording a
-	// pairwise-origin client under its foreign pseudonym here would silently omit
-	// the exchanged RP from the logout fan-out (its session never torn down).
-	d.RecordSubjectClientAccess(ctx.Request().Context(), localSub, client.ID)
-	return false
 }
 
 // tokExAuditSPIFFE records the internal audit trail for an accepted SPIFFE
@@ -401,86 +416,5 @@ func tokExIssueRefresh(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 	d.RecordRefreshTokenIssued(ctx, client.ID, st.claims.Subject, false)
 }
 
-// tokExIssueIDToken mints an id_token when requested_token_type is id_token.
-// This path is FAIL-CLOSED: a non-openid scope is invalid_request, and any
-// issuer/issuance/JWE-required failure collapses to the internal error. Returns
-// true when it has written a response and the caller must stop.
-func tokExIssueIDToken(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, req TokenExchangeRequest, st *tokExState) bool {
-	// RFC 8693 §2.2.1 id_token output. The access token is always returned. The
-	// IDTokenIssuer was confirmed wired up-front (fail-closed invalid_request
-	// above), so a resolution failure here is a genuine internal/tenant
-	// misconfiguration, NOT a feature-off case.
-	//
-	// An id_token is only meaningful for an OIDC exchange — one carrying the
-	// `openid` scope. A service-to-service exchange (no openid scope; e.g. a
-	// SPIFFE SVID) has no user to assert, so demanding an id_token for it is a
-	// malformed request → invalid_request (oracle-safe: identical to the
-	// unsupported-type collapse).
-	if req.RequestedTokenType != core.TokenTypeIDToken {
-		return false
-	}
-	if !slices.Contains(st.scopes, core.ScopeOpenID) {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
-		return true
-	}
-	enc, ok := tokExMintIDToken(d, ctx, client, st)
-	if !ok {
-		// tokExMintIDToken already wrote the fail-closed internal-error response
-		// at whichever sub-gate (issuer resolution / issuance / JWE-required) it
-		// failed at.
-		return true
-	}
-	st.resp[core.KeyIDToken] = enc
-	// issued_token_type reports the REQUESTED token type (id_token) — what the
-	// caller asked the exchange to issue — while the access token is ALSO
-	// returned alongside in access_token (RFC 8693 §2.2.1: requested_token_type
-	// names what issued_token_type reports, not the exclusive output). The
-	// requested id_token is delivered in the dedicated id_token member. This is
-	// a deliberate non-exclusive-output design (see TestTokenExchange_IDTokenOutput).
-	st.resp[core.KeyIssuedTokenType] = core.TokenTypeIDToken
-	d.RecordIDTokenIssued(ctx, client.ID, st.claims.Subject)
-	return false
-}
-
-// tokExMintIDToken resolves the per-client issuer, mints the id_token, and
-// applies per-client JWE. This whole path is FAIL-CLOSED: any issuer-resolution,
-// issuance, or JWE-required failure writes the internal error and returns
-// ok=false. Returns the (possibly encrypted) id_token on success.
-func tokExMintIDToken(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, st *tokExState) (string, bool) {
-	idIssuer, _, idErr := d.IDTokenIssuerForClient(client)
-	if idErr != nil || idIssuer == nil {
-		d.SrvLogger().Error("token exchange id_token issuer resolution failed", "client", client.ID, "error", idErr)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return "", false
-	}
-	// auth_time / acr / amr / sid propagate from the inbound subject_token
-	// exactly as the access token above. AccessToken is the one just minted
-	// so the issuer stamps OIDC Core §3.1.3.6 at_hash. No nonce: there is no
-	// authorization request in a token-exchange.
-	idToken, iErr := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:     st.issuedSub,
-		Audience:    client.ID,
-		AuthTime:    st.claims.AuthTime,
-		ACR:         st.claims.ACR,
-		AMR:         append([]string(nil), st.claims.AMR...),
-		Claims:      st.claims.Extra,
-		SID:         st.claims.SID,
-		AccessToken: st.token.AccessToken,
-	})
-	if iErr != nil {
-		d.SrvLogger().Error("token exchange id_token issue failed", "client", client.ID, "error", iErr)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return "", false
-	}
-	// Per-client id_token JWE (OIDC §10.2) when configured — a no-op
-	// pass-through when the client has no encrypted-response metadata.
-	enc, ok := d.MaybeEncryptIDToken(ctx.Request().Context(), client, idToken)
-	if !ok {
-		// Encryption requested but no encrypter wired — omitting a requested
-		// id_token silently would be a confusing partial success, so collapse
-		// to the internal error.
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return "", false
-	}
-	return enc, true
-}
+// The id_token output path (tokExIssueIDToken / tokExMintIDToken) lives in
+// token_exchange_idtoken.go to keep this file within the size budget.

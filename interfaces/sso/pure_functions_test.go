@@ -8,6 +8,25 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
+// TestBuildTokenExchangeRequest_ThreadsSenderConstraint verifies the /token
+// dispatch carries the captured DPoP JKT / mTLS x5t#S256 into the RFC 8693
+// token-exchange request so the issued token can be cnf-bound like every other
+// grant (the binding was previously dropped for token-exchange only).
+func TestBuildTokenExchangeRequest_ThreadsSenderConstraint(t *testing.T) {
+	t.Parallel()
+	got := buildTokenExchangeRequest(oauth.TokenRequest{
+		SubjectToken:     "st",
+		SubjectTokenType: "urn:ietf:params:oauth:token-type:access_token",
+		Scope:            "openid",
+	}, "jkt-xyz", "x5t-uvw")
+	if got.DPoPJKT != "jkt-xyz" || got.MTLSX5T != "x5t-uvw" {
+		t.Fatalf("sender constraint not threaded into exchange request: jkt=%q x5t=%q", got.DPoPJKT, got.MTLSX5T)
+	}
+	if got.SubjectToken != "st" || got.Scope != "openid" {
+		t.Fatalf("base fields not mapped: %+v", got)
+	}
+}
+
 // TestLoginUsedPAR locks in the RFC 9126-vs-RFC 9101 distinction: only the
 // urn:ietf:params:oauth:request_uri: PAR scheme counts as "used PAR". A JAR
 // (https/http) request_uri must NOT satisfy the RequirePAR gate or FAPI's

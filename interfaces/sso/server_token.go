@@ -73,17 +73,7 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	case GrantCIBA:
 		s.handleCIBATokenGrant(ctx, client, req.AuthReqID, dpopJKT, mtlsX5T)
 	case GrantTokenExchange:
-		s.handleTokenExchangeGrant(ctx, client, tokengrant.TokenExchangeRequest{
-			SubjectToken:       req.SubjectToken,
-			SubjectTokenType:   req.SubjectTokenType,
-			ActorToken:         req.ActorToken,
-			ActorTokenType:     req.ActorTokenType,
-			Resource:           req.Resource,
-			Audience:           req.Audience,
-			Scope:              req.Scope,
-			RequestedTokenType: req.RequestedTokenType,
-			ACRValues:          req.ACRValues,
-		})
+		s.handleTokenExchangeGrant(ctx, client, buildTokenExchangeRequest(req, dpopJKT, mtlsX5T))
 	case GrantClientCredentials:
 		// RFC 6749 §4.4: the client_credentials grant MUST only be used by
 		// CONFIDENTIAL clients. A public client (no stored secret) passes the
@@ -105,6 +95,27 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 			KeyError:           ErrUnsupportedGrantType,
 			KeySupportedGrants: SupportedGrants,
 		})
+	}
+}
+
+// buildTokenExchangeRequest maps the parsed /token parameters onto the RFC 8693
+// token-exchange request, threading the captured RFC 9449 DPoP / RFC 8705 mTLS
+// sender-constraint thumbprints so the exchanged token is cnf-bound like every
+// other issuance grant. Kept out of dispatchTokenGrant to hold that switch within
+// the function-length budget.
+func buildTokenExchangeRequest(req oauth.TokenRequest, dpopJKT, mtlsX5T string) tokengrant.TokenExchangeRequest {
+	return tokengrant.TokenExchangeRequest{
+		SubjectToken:       req.SubjectToken,
+		SubjectTokenType:   req.SubjectTokenType,
+		ActorToken:         req.ActorToken,
+		ActorTokenType:     req.ActorTokenType,
+		Resource:           req.Resource,
+		Audience:           req.Audience,
+		Scope:              req.Scope,
+		RequestedTokenType: req.RequestedTokenType,
+		ACRValues:          req.ACRValues,
+		DPoPJKT:            dpopJKT,
+		MTLSX5T:            mtlsX5T,
 	}
 }
 

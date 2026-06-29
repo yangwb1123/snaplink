@@ -32,6 +32,13 @@ type TokenExchangeRequest struct {
 	// insufficient_user_authentication. Empty = no demand (inbound ACR
 	// transparently propagates as today).
 	ACRValues string
+	// DPoPJKT / MTLSX5T are the sender-constraint thumbprints captured from the
+	// /token request (RFC 9449 DPoP proof JKT / RFC 8705 mTLS x5t#S256). When a
+	// proof/cert was presented, the exchanged access token is cnf-bound to it,
+	// exactly as the authorization_code / refresh / CIBA / client_credentials
+	// grants do. Empty = no sender-constraint (unbound token, as before).
+	DPoPJKT string
+	MTLSX5T string
 }
 
 // TokenExchangeDeps is what HandleTokenExchangeGrant needs. *sso.Server
@@ -78,7 +85,7 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	if tokExValidateRequestTypes(d, ctx, client, req) {
 		return
 	}
-	st := &tokExState{}
+	st := &tokExState{confJKT: req.DPoPJKT, confX5T: req.MTLSX5T}
 	if tokExResolveSubject(d, ctx, req, st) {
 		return
 	}

@@ -3,7 +3,38 @@ package tokengrant
 import (
 	"testing"
 	"time"
+
+	"github.com/snaplink/sso/shared/core"
 )
+
+// TestTokExSubject_SenderConstraint locks RFC 9449 / RFC 8705: the exchanged
+// access token's Subject carries the captured DPoP JKT / mTLS x5t#S256, so a
+// sender-constrained token-exchange yields a cnf-bound token (previously the
+// token-exchange grant alone dropped the binding, issuing an unbound token).
+func TestTokExSubject_SenderConstraint(t *testing.T) {
+	client := &core.Client{ID: "rp"}
+
+	bound := tokExSubject(client, &tokExState{
+		claims:    &core.TokenClaims{Subject: "alice"},
+		issuedSub: "alice",
+		confJKT:   "jkt-abc",
+		confX5T:   "x5t-def",
+	})
+	if bound.ConfirmationJKT != "jkt-abc" || bound.ConfirmationX5TS256 != "x5t-def" {
+		t.Fatalf("sender constraint not bound onto the exchanged token: jkt=%q x5t=%q",
+			bound.ConfirmationJKT, bound.ConfirmationX5TS256)
+	}
+
+	// No proof presented -> the exchanged token stays unbound (unchanged).
+	plain := tokExSubject(client, &tokExState{
+		claims:    &core.TokenClaims{Subject: "alice"},
+		issuedSub: "alice",
+	})
+	if plain.ConfirmationJKT != "" || plain.ConfirmationX5TS256 != "" {
+		t.Fatalf("unbound exchange must leave cnf empty: jkt=%q x5t=%q",
+			plain.ConfirmationJKT, plain.ConfirmationX5TS256)
+	}
+}
 
 // TestRefreshGraceCache_RememberLookup locks the core double-submit idempotency:
 // a token remembered within the window replays its cached successor, the cached
