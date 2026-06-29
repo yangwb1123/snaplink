@@ -116,6 +116,7 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 		stepSeedDefaultNetpolicy(seed),
 		stepSeedAdminClient(seed),
 		stepSeedAdminConsoleClient(seed),
+		stepClearSeededPassword(seed),
 	}
 }
 
@@ -184,13 +185,13 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		if err != nil {
 			return fmt.Errorf("seed_admin_user: rand: %w", err)
 		}
+		// The password is printed to stdout once and never stored — keeping a
+		// plaintext copy in Attributes creates a persistent credential oracle
+		// that survives rotation and is readable via the admin user API.
 		user := &sso.User{
 			ID:         seed.AdminUserID,
 			ExternalID: seed.AdminUserID,
 			Provider:   "password",
-			Attributes: map[string]string{
-				"seeded_password": password,
-			},
 		}
 		if err := seed.Users.CreateOrUpdate(ctx, user); err != nil {
 			return err
@@ -201,6 +202,37 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 			}
 		}
 		seed.PasswordPrinter(password)
+		return nil
+	})
+}
+
+// stepClearSeededPassword is version 6: remove the plaintext seeded_password
+// attribute from the admin user if an earlier boot wrote it. Versions of this
+// server prior to this step stored the generated password verbatim in
+// User.Attributes so operators could confirm it via the admin API; that
+// created a persistent credential oracle. The password is emitted to stdout
+// at first boot and does not need to persist in the user record.
+//
+// Fail-open: a store error is printed and the step is still marked applied so
+// it does not block startup on every subsequent boot.
+func stepClearSeededPassword(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("clear_seeded_password", 6, func(ctx context.Context) error {
+		if seed.Users == nil {
+			return nil
+		}
+		u, err := seed.Users.GetByID(ctx, seed.AdminUserID)
+		if err != nil {
+			// User absent (fresh install that never wrote seeded_password). Nothing to clear.
+			return nil
+		}
+		if _, ok := u.Attributes["seeded_password"]; !ok {
+			return nil // already clean
+		}
+		delete(u.Attributes, "seeded_password")
+		if err := seed.Users.CreateOrUpdate(ctx, u); err != nil {
+			// Fail-open: log and mark applied so we do not retry on every restart.
+			fmt.Printf("bootstrap: clear_seeded_password: update user %s: %v\n", seed.AdminUserID, err)
+		}
 		return nil
 	})
 }

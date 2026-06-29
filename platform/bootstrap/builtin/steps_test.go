@@ -50,8 +50,8 @@ func (c *capturePrinter) Print(p string) { c.calls = append(c.calls, p) }
 func runAllSteps(t *testing.T, seed *builtin.AdminSeed) {
 	t.Helper()
 	steps := builtin.Steps(seed)
-	if len(steps) != 5 {
-		t.Fatalf("Steps returned %d, want 5 (role, user, netpolicy, client, console-client)", len(steps))
+	if len(steps) != 6 {
+		t.Fatalf("Steps returned %d, want 6 (role, user, netpolicy, client, console-client, clear-seeded-pw)", len(steps))
 	}
 	runner := bootstrap.NewRunner("sso-server", memory.New())
 	runner.Register(steps...)
@@ -117,20 +117,19 @@ func TestSteps_SeedsAdminUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByID(admin): %v", err)
 	}
-	pw, ok := u.Attributes["seeded_password"]
-	if !ok || pw == "" {
-		t.Fatalf("seeded_password missing from user attrs: %+v", u.Attributes)
-	}
-	// 24-byte secret → base64.RawURLEncoding length = ceil(24*4/3) = 32 chars.
-	if len(pw) != 32 {
-		t.Errorf("seeded_password length = %d, want 32 (base64url of 24 bytes)", len(pw))
+	// seeded_password must not be stored in attributes — it is a credential
+	// oracle if the user record is ever exposed via the admin API.
+	if _, ok := u.Attributes["seeded_password"]; ok {
+		t.Errorf("seeded_password must not persist in user attributes: %+v", u.Attributes)
 	}
 
+	// The password is still printed exactly once so the operator can capture it.
 	if len(printer.calls) != 1 {
 		t.Errorf("PasswordPrinter called %d times, want 1", len(printer.calls))
 	}
-	if printer.calls[0] != pw {
-		t.Errorf("printer received %q, want stored password %q", printer.calls[0], pw)
+	// 24-byte secret → base64.RawURLEncoding length = ceil(24*4/3) = 32 chars.
+	if len(printer.calls[0]) != 32 {
+		t.Errorf("printed password length = %d, want 32 (base64url of 24 bytes)", len(printer.calls[0]))
 	}
 
 	roles, _ := seed.Permissions.Roles(context.Background(), "admin", seed.AdminClientID)
@@ -281,18 +280,49 @@ func TestSteps_ApplyRestoreErrors(t *testing.T) {
 
 func TestGeneratePassword_LengthAndAlphabet(t *testing.T) {
 	// generatePassword is unexported but exercised through seed_admin_user.
-	// The end-to-end path lands the password in user attrs, where we can
-	// re-decode it to confirm it's well-formed base64url of the right length.
-	seed, _ := fullSeed(t)
+	// The password is emitted via PasswordPrinter; decode it from there to
+	// confirm it's well-formed base64url of the right length.
+	seed, printer := fullSeed(t)
 	runAllSteps(t, seed)
-	u, _ := seed.Users.GetByID(context.Background(), "admin")
-	pw := u.Attributes["seeded_password"]
+	if len(printer.calls) == 0 {
+		t.Fatal("PasswordPrinter was not called; cannot verify password format")
+	}
+	pw := printer.calls[0]
 	decoded, err := base64.RawURLEncoding.DecodeString(pw)
 	if err != nil {
 		t.Fatalf("password not base64url: %v", err)
 	}
 	if len(decoded) != 24 {
 		t.Errorf("decoded len = %d, want 24 bytes", len(decoded))
+	}
+}
+
+func TestSteps_ClearSeededPassword_RemovesLegacyAttr(t *testing.T) {
+	// Simulate an existing deployment that wrote seeded_password under a prior
+	// server version. On the next boot the clear_seeded_password step (version 6)
+	// must remove the attribute and persist the updated record.
+	seed, _ := fullSeed(t)
+
+	// Pre-create the admin user with a plaintext seeded_password, as older
+	// bootstrap code did.
+	legacy := &sso.User{
+		ID:         "admin",
+		ExternalID: "admin",
+		Provider:   "password",
+		Attributes: map[string]string{"seeded_password": "plaintext-secret"},
+	}
+	if err := seed.Users.CreateOrUpdate(context.Background(), legacy); err != nil {
+		t.Fatalf("pre-create admin: %v", err)
+	}
+
+	runAllSteps(t, seed)
+
+	u, err := seed.Users.GetByID(context.Background(), "admin")
+	if err != nil {
+		t.Fatalf("GetByID(admin): %v", err)
+	}
+	if _, ok := u.Attributes["seeded_password"]; ok {
+		t.Errorf("clear_seeded_password step did not remove attribute: %+v", u.Attributes)
 	}
 }
 
