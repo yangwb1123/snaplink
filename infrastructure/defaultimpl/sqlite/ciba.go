@@ -270,6 +270,35 @@ func (s *CIBAStore) Delete(ctx context.Context, authReqID string) error {
 	return nil
 }
 
+// ConsumeIfApproved atomically deletes + returns the row IFF approved, via a
+// single DELETE ... WHERE status = 'approved' RETURNING. The DELETE is the
+// atomic claim (SQLite serializes writers), so concurrent /token polls of one
+// approved request yield exactly one winner; no matching row (pending / denied /
+// unknown / already-consumed) → ErrCIBARequestNotFound.
+func (s *CIBAStore) ConsumeIfApproved(ctx context.Context, authReqID string) (*oauth.CIBARequest, error) {
+	if authReqID == "" {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	row := s.db.QueryRowContext(ctx, `
+        DELETE FROM ciba_requests WHERE auth_req_id = ? AND status = 'approved'
+        RETURNING client_id, subject_id, provider, scopes, acr_values,
+                  binding_message, resources, nonce, client_notification_token,
+                  request_context, status, interval_ns, last_poll,
+                  created_at, expires_at`, authReqID)
+	var raw cibaRow
+	if err := raw.scan(row); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, oauth.ErrCIBARequestNotFound
+		}
+		return nil, fmt.Errorf("sqlite: consume_if_approved ciba_request: %w", err)
+	}
+	expiresAt := time.Unix(0, raw.expiresNs).UTC()
+	if time.Now().After(expiresAt) {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	return raw.toRequest(authReqID, expiresAt), nil
+}
+
 // PruneExpired deletes every entry whose expires_at has passed.
 // Returns the row count for operators wiring a cron prune loop.
 func (s *CIBAStore) PruneExpired(ctx context.Context) (int64, error) {

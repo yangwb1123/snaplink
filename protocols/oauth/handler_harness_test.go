@@ -355,6 +355,18 @@ func (s *memCIBAStore) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (s *memCIBAStore) ConsumeIfApproved(_ context.Context, id string) (*CIBARequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[id]
+	if !ok || e.IsExpired() || e.Status != CIBAApproved {
+		return nil, ErrCIBARequestNotFound
+	}
+	cp := *e
+	delete(s.entries, id)
+	return &cp, nil
+}
+
 var _ CIBAStore = (*memCIBAStore)(nil)
 
 // --- in-memory JTIReplayStore ----------------------------------------------

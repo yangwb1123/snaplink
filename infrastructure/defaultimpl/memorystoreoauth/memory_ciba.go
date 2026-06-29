@@ -125,6 +125,29 @@ func (m *MemoryCIBAStore) Delete(_ context.Context, authReqID string) error {
 	return nil
 }
 
+// ConsumeIfApproved atomically (under the store mutex) returns + deletes the
+// request iff it is approved; a pending/denied/unknown/expired request returns
+// ErrCIBARequestNotFound WITHOUT consuming. So of N concurrent polls exactly one
+// wins — the single-use claim the /token poll makes before minting (one
+// out-of-band approval can never mint two token sets).
+func (m *MemoryCIBAStore) ConsumeIfApproved(_ context.Context, authReqID string) (*oauth.CIBARequest, error) {
+	if authReqID == "" {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.entries[authReqID]
+	if !ok || entry.IsExpired() || entry.Status != oauth.CIBAApproved {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	cp := *entry
+	cp.Scopes = append([]string(nil), entry.Scopes...)
+	cp.Resources = append([]string(nil), entry.Resources...)
+	cp.RequestContext = cloneRawBytes(entry.RequestContext)
+	delete(m.entries, authReqID)
+	return &cp, nil
+}
+
 // GenerateCIBAAuthReqID mints a crypto/rand auth_req_id with the
 // oauth.AuthReqIDPrefix namespace. Exposed so custom oauth.CIBAStore
 // implementations reuse the same shape.

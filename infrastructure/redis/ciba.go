@@ -217,4 +217,61 @@ func (s *CIBAStore) Delete(ctx context.Context, authReqID string) error {
 	return nil
 }
 
+// cibaConsumeIfApprovedScript atomically claims an APPROVED request in one
+// server-side op: GET the record, and only when its Status is 'approved' DEL the
+// key and return the ORIGINAL blob; otherwise return false (missing / pending /
+// denied / undecodable). Single key (the auth_req_id) -> cluster-slot safe.
+//
+// It echoes the stored blob `v` verbatim rather than cjson.encode(obj). The
+// empty-array corruption (real-Redis lua-cjson rewrites an empty JSON array `[]`
+// to `{}`, which then fails json.Unmarshal back into []string) is already
+// prevented upstream: Issue nil-normalizes empty Scopes/Resources so no `[]` is
+// ever stored to be mangled (the approved blob this returns was last written by
+// SetStatus's cjson round-trip, so `v` is not strictly Go-marshaled bytes —
+// echoing it just avoids one redundant re-encode on the claim path). Mirrors the
+// device-code consume script.
+//
+// KEYS[1] = ciba key
+var cibaConsumeIfApprovedScript = goredis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if not v then return false end
+local ok, obj = pcall(cjson.decode, v)
+if not ok then return false end
+if obj['Status'] == 'approved' then
+  redis.call('DEL', KEYS[1])
+  return v
+end
+return false
+`)
+
+// ConsumeIfApproved atomically deletes + returns the request iff approved (the
+// Lua runs as one indivisible server-side op, so of N concurrent polls exactly
+// one wins the blob). A pending/denied/unknown/expired request -> the script
+// returns false -> ErrCIBARequestNotFound. A just-expired (but not TTL-evicted)
+// record is caught by the post-decode IsExpired check.
+func (s *CIBAStore) ConsumeIfApproved(ctx context.Context, authReqID string) (*oauth.CIBARequest, error) {
+	if authReqID == "" {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	res, err := cibaConsumeIfApprovedScript.Run(ctx, s.rdb, []string{cibaKey(authReqID)}).Result()
+	if errors.Is(err, goredis.Nil) {
+		return nil, oauth.ErrCIBARequestNotFound // script returned false/nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis: consume_if_approved ciba_request: %w", err)
+	}
+	blob, ok := res.(string)
+	if !ok {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	var out oauth.CIBARequest
+	if err := json.Unmarshal([]byte(blob), &out); err != nil {
+		return nil, fmt.Errorf("redis: unmarshal ciba_request: %w", err)
+	}
+	if out.IsExpired() {
+		return nil, oauth.ErrCIBARequestNotFound
+	}
+	return &out, nil
+}
+
 var _ oauth.CIBAStore = (*CIBAStore)(nil)

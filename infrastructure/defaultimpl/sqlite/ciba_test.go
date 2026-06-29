@@ -121,3 +121,69 @@ func TestCIBAStore_UpdateLastPollAndPrune(t *testing.T) {
 		t.Fatalf("expected at least 1 pruned, got %d", n)
 	}
 }
+
+// TestCIBAStore_ConsumeIfApproved verifies the atomic single-use claim: only an
+// approved row is deleted+returned; pending survives; a second consume is
+// not-found. The DELETE ... WHERE status='approved' RETURNING is what makes one
+// out-of-band approval mint exactly one token set.
+func TestCIBAStore_ConsumeIfApproved(t *testing.T) {
+	s := newCIBAStoreForTest(t)
+	ctx := context.Background()
+
+	// Pending: not consumed; survives for the next poll.
+	idPending, _ := s.Issue(ctx, sampleCIBAReq())
+	if _, err := s.ConsumeIfApproved(ctx, idPending); !errors.Is(err, oauth.ErrCIBARequestNotFound) {
+		t.Fatalf("pending should be not-found, got %v", err)
+	}
+	if _, err := s.Get(ctx, idPending); err != nil {
+		t.Fatalf("pending request must survive a failed ConsumeIfApproved: %v", err)
+	}
+
+	// Approved: consumed once with resources intact; second consume not-found.
+	id, _ := s.Issue(ctx, sampleCIBAReq())
+	if err := s.SetStatus(ctx, id, oauth.CIBAApproved); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	got, err := s.ConsumeIfApproved(ctx, id)
+	if err != nil {
+		t.Fatalf("consume approved: %v", err)
+	}
+	if got.SubjectID != "alice" || got.Status != oauth.CIBAApproved {
+		t.Fatalf("consumed record wrong: %+v", got)
+	}
+	if len(got.Resources) != 1 || got.Resources[0] != "https://api.example" {
+		t.Fatalf("RFC 8707 Resources dropped/altered: %v", got.Resources)
+	}
+	if _, err := s.ConsumeIfApproved(ctx, id); !errors.Is(err, oauth.ErrCIBARequestNotFound) {
+		t.Fatalf("second consume must be not-found (single-use), got %v", err)
+	}
+}
+
+// TestCIBAStore_ConsumeIfApprovedSingleWinner asserts that of N concurrent polls
+// of one approved request exactly one wins — one approval can never mint N token
+// sets even under concurrent token-endpoint polls.
+func TestCIBAStore_ConsumeIfApprovedSingleWinner(t *testing.T) {
+	s := newCIBAStoreForTest(t)
+	ctx := context.Background()
+	id, _ := s.Issue(ctx, sampleCIBAReq())
+	if err := s.SetStatus(ctx, id, oauth.CIBAApproved); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	const n = 8
+	wins := make(chan bool, n)
+	for range n {
+		go func() {
+			_, err := s.ConsumeIfApproved(ctx, id)
+			wins <- err == nil
+		}()
+	}
+	won := 0
+	for range n {
+		if <-wins {
+			won++
+		}
+	}
+	if won != 1 {
+		t.Fatalf("exactly one concurrent ConsumeIfApproved should win, got %d", won)
+	}
+}

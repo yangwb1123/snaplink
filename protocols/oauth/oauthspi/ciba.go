@@ -139,6 +139,16 @@ type CIBAStore interface {
 	// Delete removes an entry (after a successful poll mints tokens,
 	// or on a terminal denied poll). Idempotent.
 	Delete(ctx context.Context, authReqID string) error
+
+	// ConsumeIfApproved ATOMICALLY deletes and returns the request IFF it is
+	// currently approved, so of N concurrent grant_type=ciba polls of one
+	// approved auth_req_id exactly ONE wins (gets the record); the rest get
+	// ErrCIBARequestNotFound. A pending/denied/unknown/expired request returns
+	// ErrCIBARequestNotFound WITHOUT consuming. The /token poll calls this as the
+	// single-use claim before minting, so one out-of-band approval can never mint
+	// two token sets (race-safe across replicas) — mirrors
+	// DeviceCodeStore.ConsumeIfApproved.
+	ConsumeIfApproved(ctx context.Context, authReqID string) (*CIBARequest, error)
 }
 
 // CIBATransport is the out-of-band delivery seam for the CIBA

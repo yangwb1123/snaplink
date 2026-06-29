@@ -42,11 +42,31 @@ type CIBAGrantDeps interface {
 // (auth_req_id issued for a different client), or a standard token response on
 // success. AMR/AuthTime are set from the approval event per RFC 9068.
 func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, authReqID, dpopJKT, mtlsX5T string) {
-	r, now, ok := cibaPollGate(d, ctx, client, authReqID)
+	_, now, ok := cibaPollGate(d, ctx, client, authReqID)
 	if !ok {
 		return
 	}
 
+	// Atomically CLAIM the approved request BEFORE minting: of N concurrent polls
+	// exactly one wins the delete-and-return; the losers (and an already-consumed
+	// or expired request) get ErrCIBARequestNotFound -> expired_token. This is what
+	// makes one out-of-band approval mint exactly one token set under concurrency
+	// — the prior gate-then-mint-then-Delete let two simultaneous polls each mint a
+	// full set. Mirrors the device-code grant's atomic consume.
+	r, err := d.CIBAStore().ConsumeIfApproved(ctx.Request().Context(), authReqID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
+		return
+	}
+
+	cibaMintAndRespond(d, ctx, client, r, now, dpopJKT, mtlsX5T)
+}
+
+// cibaMintAndRespond issues the access/refresh/id tokens for an already-claimed
+// (atomically consumed) approved CIBA request and writes the 200. AMR/AuthTime
+// are set from the approval event per RFC 9068. The store entry was already
+// deleted by the ConsumeIfApproved claim, so no Delete fires here.
+func cibaMintAndRespond(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, now time.Time, dpopJKT, mtlsX5T string) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
@@ -86,7 +106,6 @@ func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Clie
 	d.RecordTokenIssued(ctx, client.ID, strategy, r.SubjectID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), r.SubjectID, client.ID)
 	d.RecordCIBADecision(ctx, client.ID, r.SubjectID, true)
-	_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
 	ctx.JSON(http.StatusOK, resp)
 }
 

@@ -307,3 +307,80 @@ func TestCIBAStore_Ping(t *testing.T) {
 		t.Fatal("Ping on a nil store must error, not panic")
 	}
 }
+
+// TestCIBAStore_ConsumeIfApproved verifies the atomic single-use claim: the Lua
+// deletes+returns only an approved request; pending survives; a second consume
+// is not-found. The returned blob is the original Go-marshaled bytes (not a
+// cjson re-encode), so RFC 8707 resources round-trip intact.
+func TestCIBAStore_ConsumeIfApproved(t *testing.T) {
+	_, rdb := newTestClient(t)
+	ctx := context.Background()
+	s := NewCIBAStore(rdb)
+
+	// Pending: not consumed; survives for the next poll.
+	idPending, err := s.Issue(ctx, newCIBARequest(time.Minute))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := s.ConsumeIfApproved(ctx, idPending); !errors.Is(err, oauth.ErrCIBARequestNotFound) {
+		t.Fatalf("pending should be not-found, got %v", err)
+	}
+	if _, err := s.Get(ctx, idPending); err != nil {
+		t.Fatalf("pending request must survive a failed ConsumeIfApproved: %v", err)
+	}
+
+	// Approved: consumed once with resources intact; second consume not-found.
+	id, err := s.Issue(ctx, newCIBARequest(time.Minute))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if err := s.SetStatus(ctx, id, oauth.CIBAApproved); err != nil {
+		t.Fatalf("SetStatus(approved): %v", err)
+	}
+	got, err := s.ConsumeIfApproved(ctx, id)
+	if err != nil {
+		t.Fatalf("consume approved: %v", err)
+	}
+	if got.SubjectID != "user-1" || got.Status != oauth.CIBAApproved {
+		t.Fatalf("consumed record wrong: %+v", got)
+	}
+	if len(got.Resources) != 1 || got.Resources[0] != "https://api.example.com" {
+		t.Fatalf("RFC 8707 Resources dropped/altered: %v", got.Resources)
+	}
+	if _, err := s.ConsumeIfApproved(ctx, id); !errors.Is(err, oauth.ErrCIBARequestNotFound) {
+		t.Fatalf("second consume must be not-found (single-use), got %v", err)
+	}
+}
+
+// TestCIBAStore_ConsumeIfApprovedAtomicRace asserts that of N concurrent polls
+// of one approved request exactly ONE wins the indivisible server-side claim —
+// the cross-replica invariant that stops one approval from minting N token sets.
+func TestCIBAStore_ConsumeIfApprovedAtomicRace(t *testing.T) {
+	_, rdb := newTestClient(t)
+	ctx := context.Background()
+	s := NewCIBAStore(rdb)
+	id, err := s.Issue(ctx, newCIBARequest(time.Minute))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if err := s.SetStatus(ctx, id, oauth.CIBAApproved); err != nil {
+		t.Fatalf("SetStatus(approved): %v", err)
+	}
+	const n = 16
+	wins := make(chan bool, n)
+	for range n {
+		go func() {
+			_, err := s.ConsumeIfApproved(ctx, id)
+			wins <- err == nil
+		}()
+	}
+	won := 0
+	for range n {
+		if <-wins {
+			won++
+		}
+	}
+	if won != 1 {
+		t.Fatalf("exactly one concurrent ConsumeIfApproved should win the single-use claim, got %d", won)
+	}
+}
