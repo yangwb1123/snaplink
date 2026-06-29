@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -73,7 +74,15 @@ func consumeVerificationToken(d Deps, ctx core.HandlerContext, rawToken string) 
 // Returns true on success so HandleVerifyEmail can write the 200.
 func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerificationToken) bool {
 	rctx := ctx.Request().Context()
-	if existing, err := d.UserProvider().GetByID(rctx, tok.Username); err == nil && existing != nil {
+	existing, lookupErr := d.UserProvider().GetByID(rctx, tok.Username)
+	if lookupErr != nil && !errors.Is(lookupErr, core.ErrNoSuchUser) {
+		// Transient store error: fail closed rather than falling through to creation
+		// which could produce a duplicate or overwrite a live record on retry.
+		d.Logger().Error("verify-email: user lookup failed", "username", tok.Username, "error", lookupErr)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return false
+	}
+	if existing != nil {
 		// Mode A opt-in verify: user was created immediately at register time so
 		// no password hash was stored in the token. Stamp email_verified=true on
 		// the live record rather than treating it as a conflict.
@@ -158,14 +167,18 @@ func recordSelfRegisteredFailure(d Deps, ctx core.HandlerContext, rctx context.C
 }
 
 // updateVerifiedEmail stamps email_verified=true on an already-existing user
-// record (Mode A opt-in verify). The user record is updated in-place so other
-// attributes are preserved. Emits EventSelfRegistered/success on the auditor.
+// record (Mode A opt-in verify). Clones the user and its Attributes map before
+// mutating to avoid a data race with concurrent readers that may hold the same
+// pointer returned by the provider's cache. Emits EventSelfRegistered/success.
 func updateVerifiedEmail(d Deps, ctx core.HandlerContext, rctx context.Context, u *core.User) bool {
-	if u.Attributes == nil {
-		u.Attributes = map[string]string{}
+	updated := *u
+	attrs := make(map[string]string, len(u.Attributes)+1)
+	for k, v := range u.Attributes {
+		attrs[k] = v
 	}
-	u.Attributes["email_verified"] = "true"
-	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
+	attrs["email_verified"] = "true"
+	updated.Attributes = attrs
+	if err := d.UserProvider().CreateOrUpdate(rctx, &updated); err != nil {
 		d.Logger().Error("verify-email: update email_verified failed", "user_id", u.ID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return false
