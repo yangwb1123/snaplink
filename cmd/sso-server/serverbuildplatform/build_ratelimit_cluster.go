@@ -37,9 +37,10 @@ import (
 // Each prefix becomes its own Limiter (sized by per_sec + burst);
 // Default kicks in for paths no prefix matches. A zero DefaultPerSec
 // leaves Default nil (no limit on unmatched paths — useful when only
-// a few hot endpoints need throttling). KeyByClientIDOrIP is used so
-// HTTP-Basic-authenticated /token traffic buckets per-client, with
-// IP as the fallback for unauthenticated paths.
+// a few hot endpoints need throttling). The bucket is keyed by
+// KeyByClientIP (the edge-validated source IP): the limiter runs BEFORE
+// client auth, so keying on the unverified HTTP-Basic client_id would let
+// a single source rotate it to escape all throttling.
 //
 // Backend choice:
 //   - "" / "memory" — per-replica MemoryLimiter (default).
@@ -63,7 +64,7 @@ func BuildRateLimitPolicy(cfg config.RateLimitConfig, rdb goredis.Cmdable) (rate
 // cluster-shared — the effective limit is N x configured across N replicas, so
 // prefer redis/sqlite for a multi-replica fleet.
 func memoryRateLimitPolicy(cfg config.RateLimitConfig) ratelimit.Policy {
-	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIP}
 	if cfg.DefaultPerSec > 0 {
 		p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
 	}
@@ -84,7 +85,7 @@ func redisRateLimitPolicy(cfg config.RateLimitConfig, rdb goredis.Cmdable) (rate
 	if rdb == nil {
 		return ratelimit.Policy{}, errors.New("security.rate_limit.backend=redis but no redis block configured (set redis.addrs)")
 	}
-	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIP}
 	if cfg.DefaultPerSec > 0 {
 		p.Default = redisbackend.NewLimiterFromRate(rdb, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
 	}
@@ -103,7 +104,7 @@ func sqliteRateLimitPolicy(cfg config.RateLimitConfig) (ratelimit.Policy, error)
 	if cfg.SQLite.DSN == "" {
 		return ratelimit.Policy{}, errors.New("security.rate_limit.sqlite.dsn required when backend=sqlite")
 	}
-	p := ratelimit.Policy{Key: ratelimit.KeyByClientIDOrIP}
+	p := ratelimit.Policy{Key: ratelimit.KeyByClientIP}
 	if cfg.DefaultPerSec > 0 {
 		lim, err := ratelimit.NewSQLiteLimiter(cfg.SQLite.DSN, cfg.DefaultPerSec, cfg.DefaultBurst, "default")
 		if err != nil {

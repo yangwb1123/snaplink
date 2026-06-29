@@ -40,19 +40,19 @@ type PrefixRule struct {
 // KeyFunc extracts a bucket key from a request.
 type KeyFunc func(*http.Request) string
 
-// KeyByClientIDOrIP keys the limiter by `client_id` when an
-// authenticated /token-style request supplies one via HTTP Basic
-// (RFC 6749 §2.3.1's mandated method); otherwise falls back to
-// [KeyByClientIP]. Useful on /token, /par, /token/introspect and
-// /token/revoke where the appropriate noisy-neighbor blast radius
-// is the client, not the source IP (which may be shared by
-// thousands of users behind a NAT or corporate proxy).
+// KeyByClientIDOrIP is UNSAFE as a sole rate-limit key and is retained only for
+// SDK back-compat — the binary now keys by [KeyByClientIP] (see
+// serverbuildplatform). The rate-limit middleware runs BEFORE client
+// authentication, so the HTTP Basic username here is unverified, attacker-chosen
+// input. Keying a bucket on it lets a single source rotate the username per
+// request (`Basic r1:x`, `Basic r2:x`, ...) to spawn a fresh empty bucket every
+// time and escape ALL throttling — both the per-bucket and the per-IP bound —
+// turning the limiter off for credential-stuffing / flood / bcrypt-CPU DoS.
 //
-// Body-supplied credentials (client_secret_post) are NOT inspected
-// because doing so would consume r.Body and break downstream
-// handlers that depend on parsing it themselves. The IP fallback
-// kicks in for those requests — operators who need per-client
-// rate-limiting MUST require client_secret_basic for those endpoints.
+// A per-client bucket can only be keyed SAFELY on an AUTHENTICATED client, which
+// is a post-auth concern this pre-auth middleware cannot satisfy. Prefer
+// [KeyByClientIP]: the edge-validated source IP cannot be forged per request, so
+// it is the un-escapable abuse bound.
 func KeyByClientIDOrIP(r *http.Request) string {
 	if cid, _, ok := r.BasicAuth(); ok && cid != "" {
 		return "client:" + cid
