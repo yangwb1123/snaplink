@@ -163,6 +163,20 @@ func unionStringSlices(prev, next any) (any, error) {
 // `subset_of` / `superset_of`; a `default` must satisfy the same constraints;
 // `subset_of` must be reconcilable with `superset_of`.
 func checkOperatorConsistency(param string, pp paramPolicy) error {
+	// Security (OpenID Federation 1.0 §5.1.2): a higher authority's pinned `value`
+	// must be the final, NARROWING word. EnforcePolicy applies modifiers in the
+	// order value (overwrite) then add (append), and nothing re-validates after
+	// add, so a subordinate authority's `add` for the same parameter silently
+	// WIDENS the pin (a compromised intermediate appends an attacker redirect_uri
+	// past a trust anchor's value-pin -> auth-code interception). Reject the
+	// combination so a malicious subordinate fails the chain closed instead of
+	// escalating. (value+one_of/subset_of/superset_of stay allowed below: those
+	// constraints re-validate the result, so unlike add they cannot widen a pin.)
+	if _, pinned := pp[opValue]; pinned {
+		if _, widened := pp[opAdd]; widened {
+			return fmt.Errorf("metadata policy: %q value may not be combined with add (a subordinate add cannot widen a pinned value)", param)
+		}
+	}
 	if v, ok := pp[opValue]; ok {
 		if err := valueSatisfiesConstraints(param, opValue, v, pp); err != nil {
 			return err

@@ -236,6 +236,25 @@ func TestPolicy_MergeConflict_ValueDisagrees(t *testing.T) {
 	}
 }
 
+// A higher authority's `value` pin may NOT be widened by a subordinate's `add`
+// (OpenID Federation §5.1.2): the anchor pins redirect_uris to one callback; a
+// compromised intermediate tries to append an attacker callback. The merge must
+// fail the chain closed (ErrTrustChainInvalid), not silently union the two.
+func TestPolicy_MergeConflict_ValuePlusAddRejected(t *testing.T) {
+	_, err := resolveWithMergedPolicy(t,
+		map[string]any{"redirect_uris": []any{"https://rp.example/cb"}},
+		policy(map[string]map[string]any{ // anchor about inter: pin
+			"redirect_uris": {"value": []any{"https://rp.example/cb"}},
+		}),
+		policy(map[string]map[string]any{ // inter about leaf: compromised widen
+			"redirect_uris": {"add": []any{"https://attacker.evil/cb"}},
+		}),
+	)
+	if !errors.Is(err, federation.ErrTrustChainInvalid) {
+		t.Fatalf("value+add merge must fail closed (no widening past the anchor pin): err = %v, want ErrTrustChainInvalid", err)
+	}
+}
+
 // one_of merges by intersection; disjoint sets → empty intersection → conflict.
 func TestPolicy_MergeConflict_OneOfDisjoint(t *testing.T) {
 	_, err := resolveWithMergedPolicy(t,
