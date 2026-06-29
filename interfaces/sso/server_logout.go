@@ -200,12 +200,14 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 	grant, err := s.consentStore.GetConsent(requestCtx, userID, clientID)
 
 	if !s.evaluateConsentNeed(userID, client, scopes, prompt, grant, err) {
-		// Grant exists and is sufficient (or store outage fell through): persist
-		// an up-to-date record so the granted_at timestamp stays fresh and any
-		// newly-in-scope scopes are saved. Fail-open on write errors — the
-		// absence of a stored grant is not a correctness issue here since we
-		// already confirmed the existing grant is sufficient.
-		s.recordConsentGrant(requestCtx, userID, clientID, scopes)
+		// Grant exists and is sufficient. Refresh the record using the stored
+		// grant's scope set (not the current request's narrower scopes) so that
+		// previously-approved scopes are never silently erased. On store outage
+		// (err != nil) grant is a zero value; skip the write and rely on the
+		// fail-open path that already passed the gate.
+		if err == nil {
+			s.recordConsentGrant(requestCtx, userID, clientID, grant.Scopes)
+		}
 		return false
 	}
 
