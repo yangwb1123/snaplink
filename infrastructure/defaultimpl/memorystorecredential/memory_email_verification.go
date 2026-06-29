@@ -28,9 +28,20 @@ func NewMemoryEmailVerificationStore() *MemoryEmailVerificationStore {
 // Issue stores a copy of the token keyed by its SHA-256 hash value and updates
 // the username secondary index. A prior pending token for the same username is
 // silently overwritten (only the latest token is valid after re-issue).
+// Lazy GC: expired entries are swept from both maps before each insert so the
+// store stays bounded by the count of non-expired tokens (no background goroutine
+// required; same pattern as MemoryJTIReplayStore).
 func (m *MemoryEmailVerificationStore) Issue(_ context.Context, tok *core.EmailVerificationToken) error {
 	cp := *tok
 	m.mu.Lock()
+	// Sweep expired entries before inserting. Bounded by O(n) on active window;
+	// n is small for any realistic registration rate * token-TTL product.
+	for hash, t := range m.tokens {
+		if t.IsExpired() {
+			delete(m.usernameIndex, t.Username)
+			delete(m.tokens, hash)
+		}
+	}
 	if old, ok := m.usernameIndex[tok.Username]; ok {
 		delete(m.tokens, old)
 	}
