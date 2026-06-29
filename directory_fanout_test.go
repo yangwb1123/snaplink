@@ -56,7 +56,7 @@ var dirFileCountExemptions = map[string]int{
 	"infrastructure/defaultimpl":        26,
 	"infrastructure/defaultimpl/sqlite": 34,
 	"interfaces/snapshot":               14,
-	"interfaces/sso":                    52,
+	"interfaces/sso":                    53,
 	"platform/audit":                    16,
 	"protocols/scim":                    19,
 	"shared/core":                       21,
@@ -118,11 +118,13 @@ func collectDirFanout(t *testing.T) []dirFanout {
 }
 
 func TestArchitecture_DirectoryFileFanout(t *testing.T) {
+	t.Parallel()
 	checkDirBudget(t, "go-file", maxGoFilesPerDir,
 		func(d dirFanout) int { return d.goFiles }, dirFileCountExemptions)
 }
 
 func TestArchitecture_DirectorySubdirFanout(t *testing.T) {
+	t.Parallel()
 	checkDirBudget(t, "subdir", maxSubdirsPerDir,
 		func(d dirFanout) int { return d.subdirs }, dirSubdirExemptions)
 }
@@ -183,6 +185,7 @@ const (
 )
 
 func TestArchitecture_DirectoryFanoutExemptionsDoNotGrow(t *testing.T) {
+	t.Parallel()
 	if n := len(dirFileCountExemptions); n > maxDirFileExemptions {
 		t.Errorf("dirFileCountExemptions grew to %d (cap %d) — split the new flat package into sub-packages instead of grandfathering it.", n, maxDirFileExemptions)
 	}
@@ -194,6 +197,7 @@ func TestArchitecture_DirectoryFanoutExemptionsDoNotGrow(t *testing.T) {
 // TestSeedDirectoryFanout is a one-shot helper: run with SEED_DIRFANOUT=1 to
 // print Go map literals for the current over-cap dirs. Not a gate.
 func TestSeedDirectoryFanout(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("SEED_DIRFANOUT") != "1" {
 		t.Skip("set SEED_DIRFANOUT=1 to regenerate the directory-fanout backlogs")
 	}

@@ -218,6 +218,7 @@ const ErrUnsupportedGrantType = core.ErrUnsupportedGrantType
 const ErrUnsupportedProvider = core.ErrUnsupportedProvider
 const ErrUnsupportedResponseType = core.ErrUnsupportedResponseType
 const ErrUseDPoPNonce = core.ErrUseDPoPNonce
+const ErrEmailNotVerified = core.ErrEmailNotVerified
 const ErrNotFound = core.ErrNotFound
 const ErrNotSupported = core.ErrNotSupported
 const ErrUserNotFound = core.ErrUserNotFound

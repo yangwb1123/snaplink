@@ -124,6 +124,17 @@ self_service:
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
 
+  # Self-service signup email verification. When signup is enabled, this section
+  # controls whether email verification is required (Mode B) or optional (Mode A).
+  # require_verification: when true, POST /auth/register requires email and returns
+  #   201 {"status":"pending"} — the user is NOT created until they complete
+  #   verification via POST /auth/verify-email. When false (default), accounts are
+  #   created immediately and email_verified is set to "true" if email is provided.
+  # verification_token_ttl: how long a verification token remains valid. 0 = 15m.
+  registration:
+    require_verification: false
+    verification_token_ttl: 0
+
 # OpenID Connect Native SSO 1.0. When enabled, a /token request that includes
 # the device_sso scope gets a device_secret (+ ds_hash in the id_token); a
 # second native app on the same device exchanges that id_token + device_secret
