@@ -44,7 +44,10 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 		}
 		if err := rc.Check(ctx); err != nil {
-			results[rc.Name] = err.Error()
+			// Log the raw error server-side; the HTTP body must not
+			// expose internal strings to unauthenticated callers.
+			s.logger.Error("readyz check failed", "check", rc.Name, "error", err)
+			results[rc.Name] = "check failed"
 			allOK = false
 		} else {
 			results[rc.Name] = "ok"
