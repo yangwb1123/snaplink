@@ -42,7 +42,7 @@ var fileSizeExemptions = map[string]bool{}
 // skipDirs are not part of this module's hand-written production surface.
 var skipDirs = map[string]bool{
 	"gen": true, ".claude": true, ".git": true, "web": true, "node_modules": true,
-	"dist": true, "bin": true,
+	"dist": true, "bin": true, ".superpowers": true,
 	// nested modules (own go.mod)
 	"kms": true, "redis": true, "postgres": true, "saml": true, "ldap": true,
 	"extauthz": true, "kerberos": true, "radius": true,
