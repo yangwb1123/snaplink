@@ -28,6 +28,15 @@ type RegisterDeps interface {
 	// the returned Recorder may be nil and Record is nil-safe, so callers
 	// invoke it unconditionally.
 	Auditor() *audit.Recorder
+
+	// InvalidateClientCache evicts the client from the local ClientStoreCache AND
+	// publishes a cluster KindClientChange so peer replicas converge before their
+	// own cache TTL. The DCR register/update/delete handlers MUST call it after a
+	// store write (mirroring the admin path) — without it, peers serve stale or
+	// deleted client metadata (old redirect_uris, a deleted public client, an
+	// un-rotated registration access token) until the cache expires. Nil-safe on
+	// *sso.Server when no cache/bus is wired.
+	InvalidateClientCache(clientID string)
 }
 
 // DCRRequest mirrors the RFC 7591 §2 client metadata subset this
@@ -150,18 +159,10 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	id, err := GenerateClientID()
-	if err != nil {
-		d.SrvLogger().Error("dcr id gen failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
-	}
-
 	// Public clients ("none" auth method) skip secret issuance per RFC 7591 §2.
 	public := req.TokenEndpointAuthMethod == "none"
-	secret, regToken, err := mintClientCredentials(d, public)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+	id, secret, regToken, ok := mintClientIdentity(d, ctx, public)
+	if !ok {
 		return
 	}
 	client := buildRegisteredClient(&req, policy, id, secret, regToken, public)
@@ -170,6 +171,7 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	d.InvalidateClientCache(client.ID) // evict local + publish KindClientChange to peers
 	// Forensic trail — recorded ONLY now that the store write succeeded.
 	recordRegistrationCreated(d, ctx, policy, client.ID)
 	ctx.JSON(http.StatusCreated, buildDCRResponse(&req, client, ctx, secret, regToken))
@@ -228,6 +230,7 @@ func HandleRegistrationPut(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	d.InvalidateClientCache(updated.ID) // evict local + publish KindClientChange to peers
 	// Recorded only AFTER an authorized bearer + successful write —
 	// authorizeRegistrationMgmt already short-circuited every failed-bearer /
 	// unknown-client path with an identical 401 (no event), so this never
@@ -257,6 +260,7 @@ func HandleRegistrationDelete(d RegisterDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	d.InvalidateClientCache(client.ID) // evict local + publish KindClientChange to peers
 	// As with the update path: authorizeRegistrationMgmt gates this, so the
 	// event records an authorized self-service deletion only — never a
 	// failed-bearer probe (anti-enumeration, §2).

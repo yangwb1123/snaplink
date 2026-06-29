@@ -17,9 +17,10 @@ import (
 // returns nil — audit.Recorder.Record is nil-safe, exactly as the contract
 // documents.
 type registerDeps struct {
-	policy  *DCRPolicy
-	clients core.ClientStore
-	reqErr  error // forced RequireClientStore error
+	policy      *DCRPolicy
+	clients     core.ClientStore
+	reqErr      error    // forced RequireClientStore error
+	invalidated []string // client IDs passed to InvalidateClientCache
 }
 
 func (d *registerDeps) DCRPolicy() *DCRPolicy                                          { return d.policy }
@@ -29,6 +30,7 @@ func (d *registerDeps) ResolveIssuer(core.HandlerContext) string                
 func (d *registerDeps) SetBearerChallenge(core.HandlerContext, string, string, string) {}
 func (d *registerDeps) RequireClientStore() error                                      { return d.reqErr }
 func (d *registerDeps) Auditor() *audit.Recorder                                       { return nil }
+func (d *registerDeps) InvalidateClientCache(id string)                                { d.invalidated = append(d.invalidated, id) }
 
 var _ RegisterDeps = (*registerDeps)(nil)
 
@@ -153,6 +155,11 @@ func TestHandleRegister(t *testing.T) {
 		}
 		if !stored.Active {
 			t.Error("DefaultActive should make the client active")
+		}
+		// DCR MUST invalidate the client cache (evict local + publish
+		// KindClientChange) so peer replicas don't serve a stale/missing client.
+		if len(d.invalidated) != 1 || d.invalidated[0] != id {
+			t.Errorf("InvalidateClientCache not called for the new client: got %v", d.invalidated)
 		}
 	})
 

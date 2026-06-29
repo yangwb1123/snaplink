@@ -45,6 +45,26 @@ func authorizeRegistration(d RegisterDeps, ctx core.HandlerContext, policy *DCRP
 	return true
 }
 
+// mintClientIdentity mints the client_id and (for confidential clients) the
+// secret + registration_access_token, writing the 500 response and returning
+// ok=false on any generation failure. Extracted to keep HandleRegister within
+// the function-length budget.
+func mintClientIdentity(d RegisterDeps, ctx core.HandlerContext, public bool) (id, secret, regToken string, ok bool) {
+	var err error
+	id, err = GenerateClientID()
+	if err != nil {
+		d.SrvLogger().Error("dcr id gen failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return "", "", "", false
+	}
+	secret, regToken, err = mintClientCredentials(d, public)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return "", "", "", false
+	}
+	return id, secret, regToken, true
+}
+
 // mintClientCredentials generates the client_secret (skipped for public
 // clients per RFC 7591 §2 + RFC 6749 §2.3) and the RFC 7592 §3
 // registration_access_token. Each generator failure keeps its own distinct
