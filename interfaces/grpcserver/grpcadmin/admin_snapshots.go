@@ -128,6 +128,17 @@ func (s *SnapshotAdminService) Get(ctx context.Context, in *adminv1.GetSnapshotR
 	}, nil
 }
 
+// Restore applies a snapshot to the wired stores.
+//
+// CACHE LIMITATION: the Restorer writes the RAW underlying stores, so a restore
+// on a LIVE replica with warm per-replica caches (client store cache, authz
+// policy bundle cache, discovery cache) does NOT evict them or publish the
+// cross-replica change events, so this replica AND its peers can serve stale
+// pre-restore metadata until each cache's TTL. Restore is intended for
+// fresh/maintenance nodes; an operator restoring into a live fleet should cycle
+// the affected replicas (or accept TTL-bounded staleness) rather than rely on
+// live restore for an incident-response client/role change — use the admin
+// client/permission RPCs (which DO invalidate + publish) for that.
 func (s *SnapshotAdminService) Restore(ctx context.Context, in *adminv1.RestoreSnapshotRequest) (*adminv1.RestoreSnapshotResponse, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
