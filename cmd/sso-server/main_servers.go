@@ -116,9 +116,12 @@ func startGRPCServer(a *app, grpcListen string, logger spi.Logger, errCh chan<- 
 }
 
 // newGRPCServer registers every available service on a fresh grpc.Server.
-// Phase A: AuditWriter, Authorizer, Discovery (always). Phase B:
-// PolicyService when network is enabled. Phase C: 4 admin services when
-// admin is enabled — gated by AdminMiddleware's UnaryServerInterceptor.
+// Phase A: Authorizer, Discovery (always — read-only, in-cluster trust model).
+// Phase B: AuditWriter + PolicyService when admin is enabled, gated by
+// AdminMiddleware's UnaryServerInterceptor. AuditWriter is a write endpoint
+// (it appends to the audit log); NetPolicy mutates network rules. Both require
+// admin auth: registering them without interceptors when admin.enabled=false
+// would leave mutation endpoints unauthenticated on the gRPC back-channel.
 func newGRPCServer(a *app) *grpc.Server {
 	var opts []grpc.ServerOption
 	if a.adminMW != nil {
@@ -128,13 +131,13 @@ func newGRPCServer(a *app) *grpc.Server {
 		)
 	}
 	s := grpc.NewServer(opts...)
-	auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
 	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
 	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
-	if a.netStore != nil {
-		netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
-	}
 	if a.adminMW != nil {
+		auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
+		if a.netStore != nil {
+			netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
+		}
 		adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache))
 		adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
 		adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
