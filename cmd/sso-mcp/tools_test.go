@@ -14,6 +14,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/interfaces/ssoclient"
 	"github.com/snaplink/sso/interfaces/ssoclient/remote"
 	"github.com/snaplink/sso/shared/core"
 	"google.golang.org/grpc"
@@ -136,7 +137,7 @@ func TestGetMenusFiltered(t *testing.T) {
 func TestIntrospectToken(t *testing.T) {
 	iss := edIssuer()
 	d := &toolDeps{intro: jwksAuthClient(t, iss)}
-	tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "user-1"}, []string{"mcp:read"})
+	tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "user-1", ClientID: "web-app"}, []string{"mcp:read"})
 	must(t, err)
 
 	_, out, err := d.introspectToken(context.Background(), nil, introspectIn{Token: tok.AccessToken})
@@ -149,8 +150,27 @@ func TestIntrospectToken(t *testing.T) {
 	if out.ExpiresAt <= 0 {
 		t.Errorf("want ExpiresAt > 0; got %d", out.ExpiresAt)
 	}
+	if out.ClientID != "web-app" {
+		t.Errorf("want ClientID=%q; got %q", "web-app", out.ClientID)
+	}
 	_, bad, _ := d.introspectToken(context.Background(), nil, introspectIn{Token: "not.a.jwt"})
 	if bad.Active {
 		t.Fatal("invalid token must be inactive")
+	}
+}
+
+func TestToMenuDTOs_Nesting(t *testing.T) {
+	tree := ssoclient.MenuTree{
+		{ID: "root", Name: "Root", Children: []ssoclient.MenuItem{
+			{ID: "child", Name: "Child", Permission: "x:read"},
+		}},
+	}
+	out := toMenuDTOs(tree)
+	if len(out) != 1 || out[0].ID != "root" || len(out[0].Children) != 1 {
+		t.Fatalf("nesting lost: %+v", out)
+	}
+	child, ok := out[0].Children[0].(menuDTO)
+	if !ok || child.ID != "child" {
+		t.Fatalf("child not a menuDTO with ID=child: %+v", out[0].Children[0])
 	}
 }

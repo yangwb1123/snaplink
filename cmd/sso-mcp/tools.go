@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/snaplink/sso/interfaces/ssoclient"
@@ -41,6 +44,7 @@ type introspectIn struct {
 type introspectOut struct {
 	Active    bool     `json:"active" jsonschema:"whether the token is valid and unexpired"`
 	Subject   string   `json:"subject,omitempty" jsonschema:"the sub claim"`
+	ClientID  string   `json:"client_id,omitempty" jsonschema:"the client the token was issued to"`
 	Scopes    []string `json:"scopes,omitempty" jsonschema:"granted OAuth scopes"`
 	Audience  []string `json:"audience,omitempty" jsonschema:"the aud claim"`
 	ExpiresAt int64    `json:"expires_at,omitempty" jsonschema:"expiry, unix seconds"`
@@ -55,6 +59,7 @@ func (d *toolDeps) introspectToken(ctx context.Context, _ *mcp.CallToolRequest, 
 	return nil, introspectOut{
 		Active:    true,
 		Subject:   subj.ID,
+		ClientID:  clientIDFromToken(in.Token),
 		Scopes:    subj.Scopes,
 		Audience:  subj.Audience,
 		ExpiresAt: subj.ExpiresAt,
@@ -169,4 +174,25 @@ func toMenuDTOs(tree ssoclient.MenuTree) []menuDTO {
 		out = append(out, dto)
 	}
 	return out
+}
+
+// clientIDFromToken best-effort reads the client_id claim from an
+// already-validated token. ValidateToken has verified the signature+exp, so
+// decoding the payload here is safe; on any decode error we return "".
+func clientIDFromToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var p struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return ""
+	}
+	return p.ClientID
 }
