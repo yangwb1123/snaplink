@@ -12,18 +12,29 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
-// Key layout. The active token is a JSON string with a TTL. Three
-// auxiliary SETs index it for bulk operations, and a per-token family
-// membership marker — written at ISSUE time, mirroring SQLite's
-// refresh_token_families ledger — preserves the (token -> family_id) link
-// after the active key is gone (Consume'd OR TTL-evicted) so a presented-
-// after-rotation token can be recognized as a replay (OAuth Security BCP
-// §4.13/§4.14). Writing it at Issue (not only at Consume) means even an
-// active-key-evicted-but-never-consumed token still triggers family-kill,
-// matching the SQLite peer exactly.
+// Key layout. The active token is a JSON string with a TTL. Three auxiliary
+// SETs index it for bulk operations, and a per-token family-membership marker
+// carries reuse-detection state.
+//
+// The marker is written at CONSUME time (NOT Issue): its presence means the
+// token was actually rotated away, so a later replay of a consumed token is a
+// reuse-after-rotation -> ErrRefreshTokenReused with the family stamped, and the
+// handler kills the whole family (OAuth Security BCP §4.13/§4.14). A token that
+// is NEVER consumed leaves no marker, so when its active key TTL-evicts at expiry
+// its replay is a plain not-found, NOT a spurious family-kill.
+//
+// This matches the SQLite / memory peers, whose active record persists until
+// consumed (a never-consumed token therefore always hits their IsExpired ->
+// not-found path) so their reuse ledger only ever fires for a genuinely consumed
+// token. The two wrong alternatives both fail: writing the marker at Issue (as
+// this store previously did) misclassifies a naturally-expired never-consumed
+// token as reuse; keying the marker off the token's own expiry instead MISSES a
+// consumed token replayed AFTER expiry — and that family-kill revokes the
+// attacker's still-live SIBLING, which outlives the stolen token under sliding
+// TTLs. The CONSUME event, not the token's lifetime, is the correct reuse signal.
 const (
 	rtKeyPrefix        = "sso:rt:"         // sso:rt:<token> -> JSON (active)
-	rtFamilyMemPrefix  = "sso:rt:famof:"   // sso:rt:famof:<token> -> family_id (issue-time ledger; reuse detection)
+	rtFamilyMemPrefix  = "sso:rt:famof:"   // sso:rt:famof:<token> -> family_id (written at CONSUME; reuse detection)
 	rtFamilyKeyPrefix  = "sso:rt:family:"  // sso:rt:family:<fid> -> SET of token ids
 	rtSubjectKeyPrefix = "sso:rt:subject:" // sso:rt:subject:<uid>\x00<client> -> SET of token ids
 	rtClientKeyPrefix  = "sso:rt:client:"  // sso:rt:client:<client> -> SET of token ids
@@ -133,15 +144,11 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	s.indexAdd(ctx, rtSubjectKey(info.UserID, info.ClientID), token, idxTTL)
 	s.indexAdd(ctx, rtClientKey(info.ClientID), token, idxTTL)
 	if info.FamilyID != "" {
+		// Only the family INDEX (for DeleteFamily) is seeded at Issue. The famof
+		// reuse-detection marker is deliberately NOT written here — it is written
+		// at Consume, so a never-consumed token leaves no marker and its post-expiry
+		// replay reads as not-found rather than a spurious family-kill (see Consume).
 		s.indexAdd(ctx, rtFamilyKey(info.FamilyID), token, s.familyTTL)
-		// Write the (token -> family_id) membership marker NOW, at Issue,
-		// mirroring SQLite's refresh_token_families ledger. Because it
-		// outlives the active key by familyTTL, a token whose active key is
-		// later GETDEL-consumed OR silently TTL-evicted still resolves to its
-		// family on replay — so reuse detection (family-kill) covers the
-		// evicted-never-consumed class too, matching the SQLite peer. Empty
-		// FamilyID opts out (no marker; replay degrades to vanilla not-found).
-		_ = s.rdb.Set(ctx, rtFamilyMemKey(token), info.FamilyID, s.familyTTL).Err()
 	}
 	return nil
 }
@@ -185,17 +192,20 @@ func (s *RefreshTokenStore) indexAdd(ctx context.Context, key, member string, tt
 // reuse-detection bookkeeping ONLY and is never a second-redeem path —
 // GETDEL remains the sole single-use gate.
 //
-// On a miss it consults the family-membership marker (written at Issue, so
-// it survives both Consume AND a silent TTL eviction of the active key): a
-// token known there but no longer active is a reuse-after-rotation — return
-// ErrRefreshTokenReused with the FamilyID stamped so the handler kills the
-// whole family (BCP §4.13). This matches SQLite, whose ledger is likewise
-// written at Issue. Unknown / expired / opted-out (no marker) all collapse
+// On a SUCCESSFUL consume it stamps the famof marker (token -> family_id) so a
+// later replay of this now-rotated token is recognized as reuse-after-rotation.
+// On a miss it consults that marker: a token with a marker was consumed before,
+// so its replay is a reuse — return ErrRefreshTokenReused with the FamilyID so
+// the handler kills the whole family (BCP §4.13), regardless of the replayed
+// token's own expiry (the kill revokes the attacker's still-live sibling).
+// Unknown / never-consumed-then-TTL-evicted / opted-out (no marker) all collapse
 // to ErrRefreshTokenNotFound (oracle-resistance §2).
 func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.RefreshToken, error) {
 	blob, err := s.rdb.GetDel(ctx, rtKey(token)).Bytes()
 	if errors.Is(err, goredis.Nil) {
-		// Active key gone — reuse-detection path.
+		// Active key gone. A famof marker means this token was previously CONSUMED
+		// (the marker is written only on a successful consume) -> reuse-after-
+		// rotation. No marker -> never consumed (TTL-evicted) or unknown -> not-found.
 		fid, ferr := s.rdb.Get(ctx, rtFamilyMemKey(token)).Result()
 		if errors.Is(ferr, goredis.Nil) {
 			return nil, oauth.ErrRefreshTokenNotFound
@@ -212,12 +222,17 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
 	if err := json.Unmarshal(blob, &out); err != nil {
 		return nil, fmt.Errorf("redis: unmarshal refresh_token: %w", err)
 	}
-	// The family-membership marker was already written at Issue (mirroring
-	// SQLite's ledger-at-Issue) and intentionally outlives this delete, so a
-	// later replay of THIS token resolves to its family above. Nothing to
-	// write here — Consume only removes the active key.
 	if out.IsExpired() {
+		// Expired token was never successfully rotated; do NOT stamp a reuse marker.
 		return nil, oauth.ErrRefreshTokenNotFound
+	}
+	// Successful rotation: record that THIS token was consumed so its later replay
+	// is detected as reuse, outliving the token's own TTL by familyTTL. Best-effort
+	// (a crash before this Set degrades a later replay to not-found, never to a
+	// false single-use win — GETDEL already deleted the key). Empty FamilyID opts
+	// out of family tracking.
+	if out.FamilyID != "" {
+		_ = s.rdb.Set(ctx, rtFamilyMemKey(token), out.FamilyID, s.familyTTL).Err()
 	}
 	return &out, nil
 }

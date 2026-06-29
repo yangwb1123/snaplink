@@ -11,6 +11,38 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
+// TestRefreshConsumedReplayAfterExpiryIsReuse is the BCP §4.13 regression guard:
+// a token CONSUMED (rotated) and then replayed AFTER its own expiry must STILL be
+// detected as reuse and stamp the FamilyID. The family-kill revokes the
+// attacker's still-live sibling (which outlives the stolen token under sliding
+// rotation TTLs), so the consume event -- not the token's lifetime -- is the
+// reuse signal. The famof marker is written at Consume, so it survives expiry.
+func TestRefreshConsumedReplayAfterExpiryIsReuse(t *testing.T) {
+	mr, rdb := newTestClient(t)
+	s := NewRefreshTokenStore(rdb)
+	ctx := context.Background()
+
+	info := newRTInfo("alice", "app", "F")
+	info.ExpiresAt = time.Now().Add(time.Second) // short-lived
+	if err := s.Issue(ctx, "rt-a", info); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	// Rotate rt-a (successful consume) -> famof marker stamped for rt-a.
+	if _, err := s.Consume(ctx, "rt-a"); err != nil {
+		t.Fatalf("consume rt-a: %v", err)
+	}
+	// rt-a is now past its own expiry (active key gone), but it WAS consumed,
+	// so its replay must be reuse with the family stamped -- not a benign miss.
+	mr.FastForward(2 * time.Second)
+	got, err := s.Consume(ctx, "rt-a")
+	if !errors.Is(err, oauth.ErrRefreshTokenReused) {
+		t.Fatalf("consumed token replayed after expiry must be reuse, got %v", err)
+	}
+	if got == nil || got.FamilyID != "F" {
+		t.Fatalf("reuse must carry FamilyID F to kill the live sibling, got %+v", got)
+	}
+}
+
 func newRTInfo(user, client, family string) *oauth.RefreshToken {
 	now := time.Now()
 	return &oauth.RefreshToken{
@@ -212,54 +244,51 @@ func TestRefreshConcurrentIssueBulkRevoke(t *testing.T) {
 	}
 }
 
-// TestRefreshFamilyReuseNeverConsumed guards FIX 3: the family-membership
-// ledger is written at ISSUE (mirroring SQLite), so a token whose active
-// key is GONE WITHOUT EVER BEING CONSUMED (e.g. TTL-evicted) is still
-// recognized as a family member on replay and triggers ErrRefreshTokenReused
-// + the FamilyID — matching the SQLite peer. Pre-fix the Redis marker was
-// only written at Consume, so an evicted-never-consumed token lost reuse
-// detection (degraded to plain not-found), weakening BCP §4.13 family-kill
-// for that class.
+// TestRefreshFamilyReuse_MarkerAtConsume pins the corrected reuse model: the
+// famof marker is written at CONSUME, so reuse is keyed on whether the token was
+// actually rotated, not on mere issuance.
 //
-// We simulate the active key vanishing without a Consume by DELeting just
-// rtKey(token) while leaving the issue-time membership marker intact (the
-// realistic case is a silent TTL eviction of the active key, whose marker
-// outlives it by familyTTL).
-func TestRefreshFamilyReuseNeverConsumed(t *testing.T) {
+// An earlier revision wrote the marker at ISSUE so an evicted-never-consumed
+// token would still trigger a family-kill, "to match SQLite". That premise was
+// wrong: SQLite/memory keep the active record until consumed, so a never-consumed
+// token always hits their IsExpired -> not-found path (NOT the reuse ledger), and
+// the marker-at-Issue scheme spuriously revoked a live family whenever a
+// legitimate client belatedly presented its own naturally expired token. Reuse
+// means a token was CONSUMED and then presented again.
+//
+// The active key vanishing without a Consume is simulated by DELeting just
+// rtKey(token) (a silent TTL eviction analogue).
+func TestRefreshFamilyReuse_MarkerAtConsume(t *testing.T) {
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
 
-	// Issue with a family; do NOT Consume it.
+	// (a) Issued, NEVER consumed, active key vanishes: no marker was ever written
+	// -> replay is a plain not-found, NOT a spurious family-kill.
 	if err := s.Issue(ctx, "ghost-tok", newRTInfo("alice", "app", "FAM")); err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-
-	// Active key disappears without a Consume (TTL eviction analogue): the
-	// issue-time membership marker remains.
 	if err := rdb.Del(ctx, rtKey("ghost-tok")).Err(); err != nil {
 		t.Fatalf("evict active key: %v", err)
 	}
-
-	// First presentation after the active key is gone: must be detected as
-	// reuse with the family, NOT plain not-found.
-	got, err := s.Consume(ctx, "ghost-tok")
-	if !errors.Is(err, oauth.ErrRefreshTokenReused) {
-		t.Fatalf("evicted-never-consumed replay: want ErrRefreshTokenReused, got %v", err)
-	}
-	if got == nil || got.FamilyID != "FAM" {
-		t.Fatalf("reuse must carry FamilyID FAM, got %+v", got)
+	if _, err := s.Consume(ctx, "ghost-tok"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Fatalf("evicted-never-consumed replay must be not-found (no spurious family-kill), got %v", err)
 	}
 
-	// A second presentation is likewise reuse (the marker is a stable ledger,
-	// not a single-use gate) — matches SQLite, and never a redeem path.
-	got2, err := s.Consume(ctx, "ghost-tok")
-	if !errors.Is(err, oauth.ErrRefreshTokenReused) || got2 == nil || got2.FamilyID != "FAM" {
-		t.Fatalf("second replay: want reuse+FAM, got %+v err=%v", got2, err)
+	// (b) Consumed (rotated) then replayed -> genuine reuse with the family
+	// stamped so the handler kills the family (BCP 4.13).
+	if err := s.Issue(ctx, "live-tok", newRTInfo("alice", "app", "FAM2")); err != nil {
+		t.Fatalf("issue live: %v", err)
+	}
+	if _, err := s.Consume(ctx, "live-tok"); err != nil {
+		t.Fatalf("consume live-tok: %v", err)
+	}
+	got, err := s.Consume(ctx, "live-tok")
+	if !errors.Is(err, oauth.ErrRefreshTokenReused) || got == nil || got.FamilyID != "FAM2" {
+		t.Fatalf("consumed-then-replayed must be reuse+FAM2, got %+v err=%v", got, err)
 	}
 
-	// The empty-FamilyID opt-out still degrades to plain not-found even when
-	// the active key vanishes without a Consume (no marker was written).
+	// (c) Opt-out (empty FamilyID): never tracked -> always plain not-found.
 	if err := s.Issue(ctx, "ghost-nofam", newRTInfo("alice", "app", "")); err != nil {
 		t.Fatalf("issue nofam: %v", err)
 	}
