@@ -55,20 +55,25 @@ func Compose(redactors ...Redactor) Redactor {
 }
 
 // SnapshotRedactSecrets returns a Redactor that zeros every
-// credential-bearing field on every client in the snapshot:
+// credential-bearing field on every client AND user in the snapshot:
 //
 //   - Client.Secret — the client_secret used on the /token endpoint.
 //   - Client.RegistrationAccessToken — the RFC 7592 management bearer.
+//   - User.Attributes credential keys — the password_hash + format the
+//     authenticator verifies against, and the bootstrap admin's generated
+//     PLAINTEXT seeded_password.
 //
-// It deliberately leaves all NON-secret material intact: client ID,
-// name, redirect URIs, scopes, and the public JWKS verification keys
-// (zeroing those would defeat the inspection use case the redaction
-// exists for). Users carry no credential field in this data model, so
-// they are untouched.
+// It deliberately leaves all NON-secret material intact: client ID, name,
+// redirect URIs, scopes, the public JWKS verification keys, and a user's
+// profile attributes (zeroing those would defeat the inspection use case the
+// redaction exists for).
 //
-// Deterministic and allocation-light: it only walks the existing client
-// slice and writes empty strings into two scalar fields per client; it
-// allocates nothing.
+// SAFETY: it ONLY mutates export-local copies. Export deep-copies clients AND
+// users (copyClientsForRedaction / copyUsersForRedaction) before invoking the
+// redactor — that struct copy is what isolates each export user from the live
+// UserProvider object. redactUserSecrets then assigns the COPY a fresh,
+// secret-free Attributes map, never deleting from the shared source map, so the
+// running server's user (and its password_hash) is never disturbed.
 func SnapshotRedactSecrets() Redactor {
 	return RedactorFunc(func(snap *Snapshot) {
 		if snap == nil {
@@ -80,6 +85,12 @@ func SnapshotRedactSecrets() Redactor {
 			}
 			redactClientSecrets(c)
 		}
+		for _, u := range snap.Resources.Users {
+			if u == nil {
+				continue
+			}
+			redactUserSecrets(u)
+		}
 	})
 }
 
@@ -89,4 +100,31 @@ func SnapshotRedactSecrets() Redactor {
 func redactClientSecrets(c *sso.Client) {
 	c.Secret = ""
 	c.RegistrationAccessToken = ""
+}
+
+// secretUserAttrKeys are the User.Attributes keys holding credential material:
+// the password verifier's hash (+ format) and the bootstrap admin's generated
+// PLAINTEXT password. Kept as literals (matching authenticators.AttrPasswordHash
+// / AttrPasswordHashFormat and platform/bootstrap's seeded_password) to avoid a
+// cross-layer import in this thin redactor.
+var secretUserAttrKeys = []string{"password_hash", "password_hash_format", "seeded_password"}
+
+// redactUserSecrets removes credential attribute keys from a user by ASSIGNING a
+// fresh Attributes map (never deleting from the existing one) so the source
+// user's map is never mutated even if the user was not deep-copied first.
+func redactUserSecrets(u *sso.User) {
+	if len(u.Attributes) == 0 {
+		return
+	}
+	cleaned := make(map[string]string, len(u.Attributes))
+	for k, v := range u.Attributes {
+		cleaned[k] = v
+	}
+	for _, k := range secretUserAttrKeys {
+		delete(cleaned, k)
+	}
+	if len(cleaned) == 0 {
+		cleaned = nil
+	}
+	u.Attributes = cleaned
 }

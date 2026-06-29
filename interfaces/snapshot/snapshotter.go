@@ -135,6 +135,7 @@ func (s *Snapshotter) exportResources(ctx context.Context, snap *Snapshot, opts 
 func (s *Snapshotter) applyRedaction(snap *Snapshot, opts ExportOptions) {
 	if r := effectiveRedactor(opts.Redactor, s.DefaultExportRedactor); r != nil {
 		copyClientsForRedaction(snap)
+		copyUsersForRedaction(snap)
 		r.Redact(snap)
 	}
 }
@@ -298,6 +299,27 @@ func copyClientsForRedaction(snap *Snapshot) {
 		out[i] = &cp
 	}
 	snap.Resources.Clients = out
+}
+
+// copyUsersForRedaction replaces snap.Resources.Users with a slice of shallow
+// user copies so the redactor's secret-attribute scrub mutates only the export's
+// copies, never the source store's objects. The shallow copy aliases the source
+// Attributes MAP, but redactUserSecrets reassigns the copy a fresh map rather
+// than deleting from the shared one, so the live user's password_hash survives.
+func copyUsersForRedaction(snap *Snapshot) {
+	src := snap.Resources.Users
+	if len(src) == 0 {
+		return
+	}
+	out := make([]*sso.User, len(src))
+	for i, u := range src {
+		if u == nil {
+			continue
+		}
+		cp := *u
+		out[i] = &cp
+	}
+	snap.Resources.Users = out
 }
 
 // newSnapshotID returns a sortable, time-prefixed ID:

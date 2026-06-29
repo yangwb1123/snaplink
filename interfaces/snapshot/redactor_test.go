@@ -259,3 +259,61 @@ func TestSnapshotRedactSecretsNilSafe(t *testing.T) {
 		t.Errorf("Secret not redacted in nil-mixed slice")
 	}
 }
+
+// TestRedactedExportScrubsUserCredentials proves the redactor strips user
+// credential attributes (password_hash + the bootstrap admin's PLAINTEXT
+// seeded_password) from a shareable export while keeping profile attributes,
+// AND -- the critical safety -- never mutates the LIVE user (which would strip
+// password_hash and break login). MemoryUserProvider.List hands out live
+// pointers, so the export-local copy is load-bearing.
+func TestRedactedExportScrubsUserCredentials(t *testing.T) {
+	ctx := context.Background()
+	users := defaultimpl.NewMemoryUserProvider()
+	if err := users.CreateOrUpdate(ctx, &sso.User{
+		ID: "u1", Email: "u1@example.com", Name: "User One",
+		Attributes: map[string]string{
+			"password_hash":        "$2a$10$bcrypthashvalue",
+			"password_hash_format": "bcrypt",
+			"seeded_password":      "generated-plaintext-pw",
+			"team":                 "platform",
+		},
+	}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	sn := &snapshot.Snapshotter{Users: users}
+
+	snap, err := sn.Export(ctx, snapshot.ExportOptions{Redactor: snapshot.SnapshotRedactSecrets()})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	var exported *sso.User
+	for _, u := range snap.Resources.Users {
+		if u != nil && u.ID == "u1" {
+			exported = u
+		}
+	}
+	if exported == nil {
+		t.Fatal("u1 missing from snapshot")
+	}
+	for _, k := range []string{"password_hash", "password_hash_format", "seeded_password"} {
+		if _, present := exported.Attributes[k]; present {
+			t.Errorf("credential attr %q leaked in redacted snapshot", k)
+		}
+	}
+	if exported.Attributes["team"] != "platform" {
+		t.Errorf("non-secret profile attr dropped: %v", exported.Attributes)
+	}
+
+	// CRITICAL: the LIVE user must still hold its credentials.
+	live, err := users.GetByID(ctx, "u1")
+	if err != nil {
+		t.Fatalf("get live u1: %v", err)
+	}
+	if live.Attributes["password_hash"] != "$2a$10$bcrypthashvalue" {
+		t.Errorf("LIVE user mutated: password_hash = %q (login would break)", live.Attributes["password_hash"])
+	}
+	if live.Attributes["seeded_password"] != "generated-plaintext-pw" {
+		t.Errorf("LIVE user mutated: seeded_password was stripped from the running store")
+	}
+}
