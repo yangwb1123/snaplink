@@ -173,11 +173,19 @@ func WithSETTTL(d time.Duration) Option {
 // receivers (they are not broadcast to all clients — that would leak).
 func NewTransmitter(signer JWTSigner, clients core.ClientStore, opts ...Option) *Transmitter {
 	t := &Transmitter{
-		signer:     signer,
-		clients:    clients,
-		httpClient: &http.Client{Timeout: DefaultReceiverTimeout},
-		timeout:    DefaultReceiverTimeout,
-		setTTL:     DefaultSETTTL,
+		signer:  signer,
+		clients: clients,
+		// Redirect-follow is disabled: a registered receiver that 302s to an
+		// internal IP would otherwise bypass the https-only URL validation done
+		// at client create/update time (the same SSRF pivot that the federation
+		// fetcher and SAML SLO fan-out explicitly close). We treat the stored
+		// endpoint as authoritative and never follow redirects.
+		httpClient: &http.Client{
+			Timeout:       DefaultReceiverTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+		timeout: DefaultReceiverTimeout,
+		setTTL:  DefaultSETTTL,
 	}
 	if ts, ok := clients.(core.TenantScopedClientStore); ok {
 		t.tenantScoped = ts
