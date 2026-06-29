@@ -8,6 +8,7 @@
 /cmd/sso-audit-verify/sso-audit-verify
 /cmd/sso-snapshotctl/sso-snapshotctl
 /cmd/sso-migrate/sso-migrate
+/cmd/sso-mcp/sso-mcp
 /bin/
 /dist/
 
