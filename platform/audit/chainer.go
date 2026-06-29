@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // chainer maintains a running hash chain over the events a Recorder
@@ -30,6 +31,7 @@ import (
 type chainer struct {
 	mu       sync.Mutex
 	prevHash string
+	lastTS   time.Time // last stamped Timestamp; keeps stamped ts strictly monotonic
 }
 
 // ChainTip is the optional [Sink] extension that lets a Recorder
@@ -67,6 +69,18 @@ func (c *chainer) seed(prev string) {
 func (c *chainer) stamp(e *Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Persist a strictly-MONOTONIC timestamp in chain (stamp) order. Record
+	// assigns e.Timestamp OUTSIDE this lock, so two concurrent records whose
+	// wall-clock order inverts relative to the mutex-acquisition order would be
+	// read back out of chain order by the durable path's ORDER BY ts_unix_ns,
+	// and VerifyChain would report a false break. Bumping a non-increasing
+	// timestamp to lastTS+1ns makes ts order == chain order without a separate
+	// sequence column. (Wall clock must slew, never step, per the ops contract,
+	// so this stays within nanoseconds of real time.)
+	if !e.Timestamp.After(c.lastTS) {
+		e.Timestamp = c.lastTS.Add(time.Nanosecond)
+	}
+	c.lastTS = e.Timestamp
 	e.PrevHash = c.prevHash
 	e.Hash = eventHash(e)
 	c.prevHash = e.Hash
@@ -100,6 +114,13 @@ func eventHash(e *Event) string {
 	cp := *e
 	cp.ID = ""
 	cp.Hash = ""
+	// Normalize the timestamp to UTC before hashing. The durable sinks persist
+	// only the instant (UnixNano) and reconstruct e.Timestamp as .UTC() on read,
+	// while Record stamps it from the server's LOCAL-zone clock (time.Now). Without
+	// this, a non-UTC deployment hashes "...-04:00" at write but recomputes "...Z"
+	// at verify -> VerifyChain falsely reports every event as tampered. UTC is the
+	// canonical, location-independent form for both write and read.
+	cp.Timestamp = cp.Timestamp.UTC()
 	raw, _ := json.Marshal(&cp)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

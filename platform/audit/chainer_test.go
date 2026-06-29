@@ -151,3 +151,63 @@ func TestHashChain_DisabledByDefault(t *testing.T) {
 			got[0].Hash, got[0].PrevHash)
 	}
 }
+
+// TestHashChain_TimezoneStableAcrossDurableReadback guards the false-tamper bug
+// on non-UTC hosts: events stamped from a LOCAL-zone clock must still VerifyChain
+// after the durable round-trip reconstructs Timestamp as UTC. Without the
+// eventHash UTC normalization, VerifyChain reports every event as tampered.
+func TestHashChain_TimezoneStableAcrossDurableReadback(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tz db unavailable: %v", err)
+	}
+	sink := audit.NewMemorySink(8)
+	base := time.Unix(1782000000, 123456789).In(loc) // non-UTC offset, like time.Now() on a local host
+	n := 0
+	r := audit.New(sink, audit.WithHashChain(), audit.WithClock(func() time.Time {
+		n++
+		return base.Add(time.Duration(n) * time.Second)
+	}))
+	for k := 0; k < 5; k++ {
+		r.Record(context.Background(), &audit.Event{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, ActorID: "u"})
+	}
+	newestFirst, err := sink.Query(context.Background(), audit.Query{Limit: 8})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	events := make([]*audit.Event, len(newestFirst))
+	for j, e := range newestFirst {
+		cp := *e
+		cp.Timestamp = e.Timestamp.UTC() // simulate the durable sink read-back (same instant, UTC)
+		events[len(newestFirst)-1-j] = &cp
+	}
+	if err := audit.VerifyChain(events); err != nil {
+		t.Fatalf("chain falsely BROKEN after UTC read-back of locally-stamped events: %v", err)
+	}
+}
+
+// TestHashChain_StampedTimestampsAreMonotonic guards the chain-order fix: even
+// when the wall clock returns decreasing values across records, the stamped
+// (persisted) timestamps must be strictly increasing in chain order so the
+// durable ORDER BY ts_unix_ns reconstructs the true chain order (not a false break).
+func TestHashChain_StampedTimestampsAreMonotonic(t *testing.T) {
+	sink := audit.NewMemorySink(8)
+	calls := 0
+	r := audit.New(sink, audit.WithHashChain(), audit.WithClock(func() time.Time {
+		calls++
+		return time.Unix(1700000000, 0).Add(-time.Duration(calls) * time.Second).UTC() // goes BACKWARD
+	}))
+	for k := 0; k < 5; k++ {
+		r.Record(context.Background(), &audit.Event{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, ActorID: "u"})
+	}
+	newestFirst, _ := sink.Query(context.Background(), audit.Query{Limit: 8})
+	events := make([]*audit.Event, len(newestFirst))
+	for j, e := range newestFirst {
+		events[len(newestFirst)-1-j] = e
+	}
+	for i := 1; i < len(events); i++ {
+		if !events[i].Timestamp.After(events[i-1].Timestamp) {
+			t.Fatalf("stamped ts not strictly increasing at %d: %v <= %v", i, events[i].Timestamp, events[i-1].Timestamp)
+		}
+	}
+}
