@@ -83,6 +83,15 @@ func must(t *testing.T, err error) {
 	}
 }
 
+func sliceContains(ss []string, target string) bool {
+	for _, s := range ss {
+		if s == target {
+			return true
+		}
+	}
+	return false
+}
+
 // --- tool tests ---
 
 func TestCheckPermission(t *testing.T) {
@@ -93,9 +102,12 @@ func TestCheckPermission(t *testing.T) {
 	if err != nil || !out.Allowed {
 		t.Fatalf("want allowed; out=%+v err=%v", out, err)
 	}
-	_, out2, _ := d.checkPermission(context.Background(), nil, checkIn{
+	_, out2, err2 := d.checkPermission(context.Background(), nil, checkIn{
 		SubjectID: "user-alice", ClientID: "web-app", Permission: "audit:read",
 	})
+	if err2 != nil {
+		t.Fatalf("deny-path Check errored: %v", err2)
+	}
 	if out2.Allowed {
 		t.Fatal("want denied for audit:read")
 	}
@@ -130,6 +142,12 @@ func TestIntrospectToken(t *testing.T) {
 	_, out, err := d.introspectToken(context.Background(), nil, introspectIn{Token: tok.AccessToken})
 	if err != nil || !out.Active || out.Subject != "user-1" {
 		t.Fatalf("introspect=%+v err=%v", out, err)
+	}
+	if !sliceContains(out.Scopes, "mcp:read") {
+		t.Errorf("want Scopes to contain %q; got %v", "mcp:read", out.Scopes)
+	}
+	if out.ExpiresAt <= 0 {
+		t.Errorf("want ExpiresAt > 0; got %d", out.ExpiresAt)
 	}
 	_, bad, _ := d.introspectToken(context.Background(), nil, introspectIn{Token: "not.a.jwt"})
 	if bad.Active {
