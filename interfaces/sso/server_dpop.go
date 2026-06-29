@@ -48,7 +48,7 @@ func verifyDPoPProof(
 	if err := enforceDPoPNonce(nonceProvider, p.Nonce); err != nil {
 		return nil, err
 	}
-	if err := enforceDPoPReplay(ctx, replay, replayFailClosed, p.JTI, maxAge); err != nil {
+	if err := enforceDPoPReplay(ctx, replay, replayFailClosed, p.JTI, p.IAT, maxAge); err != nil {
 		return nil, err
 	}
 	if err := checkDPoPAth(p.Ath, accessToken); err != nil {
@@ -170,20 +170,28 @@ func enforceDPoPNonce(nonceProvider DPoPNonceProvider, nonce string) error {
 }
 
 // enforceDPoPReplay applies replay defense — when wired, refuse a second
-// sighting of the same jti within the proof's max age. Without a store the
-// iat-window check is the only protection (acceptable for single-replica
-// deployments; production should wire the store).
+// sighting of the same jti within the proof's FULL acceptance horizon. Without a
+// store the iat-window check is the only protection (acceptable for
+// single-replica deployments; production should wire the store).
+//
+// The jti is remembered until iat+maxAge — the LATEST time the iat-window still
+// accepts this proof (parseAndCheckDPoPPayload rejects only iat < now-maxAge).
+// Anchoring to now+maxAge instead would expire the jti up to clockSkew seconds
+// before the proof itself stops being accepted (when first sighted early, as a
+// clock-skewed future iat allows), leaving a replay gap. Mirrors the JAR path,
+// which anchors the replay TTL to the JWT's own time bound.
 func enforceDPoPReplay(
 	ctx context.Context,
 	replay security.JTIReplayStore,
 	replayFailClosed bool,
 	jti string,
+	iat int64,
 	maxAge time.Duration,
 ) error {
 	if replay == nil {
 		return nil
 	}
-	first, err := replay.MarkSeen(ctx, "dpop:"+jti, time.Now().Add(maxAge))
+	first, err := replay.MarkSeen(ctx, "dpop:"+jti, time.Unix(iat, 0).Add(maxAge))
 	switch {
 	case err != nil:
 		// Store error — default fail-OPEN (continue). Fail-CLOSED
