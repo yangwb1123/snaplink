@@ -74,7 +74,7 @@ func HandleUserInfo(d UserInfoDeps, ctx core.HandlerContext) {
 	}
 
 	// OIDC profile: when the token carries "openid", project the OIDC-standard
-	// claim shape (§5.4). Non-OIDC tokens get the full User struct unchanged.
+	// claim shape (§5.4). Non-OIDC tokens get the user profile, SANITIZED below.
 	if slices.Contains(claims.Scopes, core.ScopeOpenID) {
 		body := buildOIDCUserInfoBody(user, claims)
 		// OIDC Core §5.3.2 — signed JWT response when the client opted in.
@@ -85,7 +85,7 @@ func HandleUserInfo(d UserInfoDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, user)
+	ctx.JSON(http.StatusOK, SanitizeUserForUserInfo(user))
 }
 
 // authenticateUserInfoBearer runs the /userinfo bearer gauntlet: presence,

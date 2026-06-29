@@ -3,9 +3,57 @@ package oidcsupport
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 
 	"github.com/snaplink/sso/shared/core"
 )
+
+// releasableUserInfoClaims is the OIDC Core §5.1 Standard Claim set that the
+// §5.5 `claims` request parameter may surface from User.Attributes. It is an
+// ALLOWLIST (default-deny): User.Attributes also holds credential material
+// (password_hash / password_hash_format), SCIM plumbing (scim:*), and
+// auth-backend internals (krb5_*, radius_class, ...). Honoring an arbitrary
+// requested claim name read straight out of Attributes leaked the stored
+// password hash; an allowlist — unlike a denylist — can never surface a
+// future-added internal key.
+var releasableUserInfoClaims = map[string]struct{}{
+	"name": {}, "given_name": {}, "family_name": {}, "middle_name": {},
+	"nickname": {}, "preferred_username": {}, "profile": {}, "picture": {},
+	"website": {}, "email": {}, "email_verified": {}, "gender": {},
+	"birthdate": {}, "zoneinfo": {}, "locale": {}, "phone_number": {},
+	"phone_number_verified": {}, "address": {}, "updated_at": {},
+}
+
+// isSensitiveUserAttr reports whether a User.Attributes key holds credential or
+// storage-internal state that MUST NEVER appear in a /userinfo response.
+func isSensitiveUserAttr(name string) bool {
+	switch name {
+	case "password_hash", "password_hash_format":
+		return true
+	}
+	return strings.HasPrefix(name, "scim:")
+}
+
+// SanitizeUserForUserInfo returns a shallow copy of u with credential /
+// storage-internal attribute keys (password_hash*, scim:*) removed, safe to
+// serialize directly. The non-OIDC /userinfo path returns the user profile as-is
+// for tokens lacking the openid scope; without this it leaked the stored
+// password hash and SCIM plumbing to any bearer.
+func SanitizeUserForUserInfo(u *core.User) *core.User {
+	if u == nil || len(u.Attributes) == 0 {
+		return u
+	}
+	clean := make(map[string]string, len(u.Attributes))
+	for k, v := range u.Attributes {
+		if isSensitiveUserAttr(k) {
+			continue
+		}
+		clean[k] = v
+	}
+	cp := *u
+	cp.Attributes = clean
+	return &cp
+}
 
 // ProjectUserInfoForOIDC returns the OIDC-standard claim set for a user
 // gated by the token's scopes. OIDC Core §5.4 mapping:
@@ -116,6 +164,11 @@ func projectRequestedClaims(out map[string]any, u *core.User, requestedClaims js
 	}
 	for claimName := range userinfoReq {
 		if _, alreadySet := out[claimName]; alreadySet {
+			continue
+		}
+		// Default-deny: only a standard OIDC claim name may be surfaced from
+		// Attributes, so a requested "password_hash" / "scim:*" can never leak.
+		if _, releasable := releasableUserInfoClaims[claimName]; !releasable {
 			continue
 		}
 		if v, ok := u.Attributes[claimName]; ok && v != "" {
