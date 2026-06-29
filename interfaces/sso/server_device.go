@@ -306,9 +306,8 @@ func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, c
 	return true
 }
 
-// handleDeviceTokenGrant is the device's poll path on /token. Called
-// from the GrantDeviceCode case in handleToken; pulled out so the
-// switch stays readable.
+// handleDeviceTokenGrant is the device's poll path on /token. dpopJKT and
+// mtlsX5T carry the sender-constraints extracted by the caller.
 //
 // Returns one of the RFC 8628 §3.5 sentinels:
 //   - authorization_pending: user hasn't acted yet
@@ -318,8 +317,8 @@ func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, c
 //   - invalid_grant: unknown code / wrong client
 //
 // or a standard token response on success.
-func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, deviceCode string) {
-	tokengrant.HandleDeviceGrant(s, ctx, client, deviceCode)
+func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, deviceCode, dpopJKT, mtlsX5T string) {
+	tokengrant.HandleDeviceGrant(s, ctx, client, deviceCode, dpopJKT, mtlsX5T)
 }
 
 // normalizeUserCode delegates to oauth.NormalizeUserCode.
@@ -331,20 +330,13 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 // Mode dispatch (query-param driven):
 //   ?check=USERCODE  — JSON status (for the page's JS polling). Unauthenticated;
 //                      only reveals states the device already learns via /token.
-//   ?info=USERCODE   — JSON device info (client_id, client_name, scopes) for the
-//                      page's sign-in view. Unauthenticated; only reveals what the
-//                      user already has from the device screen.
-//   (no check/info)  — HTML verification page with content negotiation:
+//   (no check)       — HTML verification page with content negotiation:
 //                      Accept: text/html → HTML page; otherwise → 406.
 //
 // The HTML page includes code entry, inline authentication, and approval flow.
 func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
 	if userCode := ctx.Query("check"); userCode != "" {
 		s.handleDeviceVerifyCheck(ctx, userCode)
-		return
-	}
-	if userCode := ctx.Query("info"); userCode != "" {
-		s.handleDeviceVerifyInfo(ctx, userCode)
 		return
 	}
 	if s.deviceCodeStore == nil {
@@ -382,48 +374,6 @@ func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
 func acceptsHTML(accept string) bool {
 	// text/html explicitly listed, or no preference that excludes it.
 	return strings.Contains(accept, "text/html") || strings.Contains(accept, "*/*")
-}
-
-// handleDeviceVerifyInfo returns JSON info about a device code by user_code.
-// The response is intentionally limited to client_id, client_name, and scopes
-// — no tokens, no user identity, no secrets. Unauthenticated because the user
-// already knows the user_code (displayed on the device screen).
-func (s *Server) handleDeviceVerifyInfo(ctx HandlerContext, userCode string) {
-	if s.deviceCodeStore == nil {
-		ctx.JSON(http.StatusNotImplemented, map[string]string{"status": "error"})
-		return
-	}
-	uc := normalizeUserCode(userCode)
-	if uc == "" {
-		ctx.JSON(http.StatusOK, map[string]string{"status": "invalid"})
-		return
-	}
-	dc, err := s.deviceCodeStore.GetByUserCode(ctx.Request().Context(), uc)
-	if err != nil {
-		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
-			ctx.JSON(http.StatusOK, map[string]string{"status": "not_found"})
-		} else {
-			s.logger.Error("device verify info lookup failed", "error", err)
-			ctx.JSON(http.StatusInternalServerError, map[string]string{"status": "error"})
-		}
-		return
-	}
-	if dc.IsExpired() {
-		ctx.JSON(http.StatusOK, map[string]string{"status": "expired"})
-		return
-	}
-	clientName := ""
-	if s.clientStore != nil {
-		if client, err := s.clientStore.Get(ctx.Request().Context(), dc.ClientID); err == nil && client != nil {
-			clientName = client.Name
-		}
-	}
-	ctx.JSON(http.StatusOK, map[string]any{
-		"status":      "ok",
-		"client_id":   dc.ClientID,
-		"client_name": clientName,
-		"scopes":      dc.Scopes,
-	})
 }
 
 // handleDeviceVerifyCheck returns the current state of a user_code as JSON for

@@ -77,7 +77,7 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	case GrantRefreshToken:
 		s.handleRefreshTokenGrant(ctx, client, req.RefreshToken, req.Scope, dpopJKT, mtlsX5T)
 	case GrantDeviceCode:
-		s.handleDeviceTokenGrant(ctx, client, req.DeviceCode)
+		s.handleDeviceTokenGrant(ctx, client, req.DeviceCode, dpopJKT, mtlsX5T)
 	case GrantCIBA:
 		s.handleCIBATokenGrant(ctx, client, req.AuthReqID, dpopJKT, mtlsX5T)
 	case GrantTokenExchange:

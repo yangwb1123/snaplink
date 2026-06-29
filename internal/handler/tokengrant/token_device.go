@@ -25,6 +25,7 @@ type DeviceGrantDeps interface {
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
 	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
+	DPoPTokenTypeOr(defaultType, jkt string) string
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordIDTokenIssued(ctx core.HandlerContext, clientID, subjectID string)
@@ -33,14 +34,12 @@ type DeviceGrantDeps interface {
 }
 
 // HandleDeviceGrant is the device's poll path on /token (RFC 8628 §3.4-3.5).
-// Behavior is byte-identical to the prior root handler.
-//
-// Returns one of the RFC 8628 §3.5 sentinels: authorization_pending (user hasn't
-// acted), slow_down (polled faster than Interval), access_denied (user denied),
-// expired_token (TTL elapsed / unknown code), invalid_grant (wrong client), or a
-// standard token response on success. The device_code is single-use — deleted on
-// success and on denial.
-func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, deviceCode string) {
+// dpopJKT and mtlsX5T carry the RFC 9449 DPoP / RFC 8705 mTLS sender-constraints
+// extracted by the caller; both are "" when the client sent no proof.
+// Returns one of the RFC 8628 §3.5 sentinels: authorization_pending, slow_down,
+// access_denied, expired_token, invalid_grant, or a standard token response.
+// The device_code is single-use — deleted on success and on denial.
+func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, deviceCode, dpopJKT, mtlsX5T string) {
 	store := d.DeviceCodeStore()
 	if store == nil {
 		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrDeviceCodeNotConfigured))
@@ -67,12 +66,14 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 	}
 
 	// Won the claim (already consumed atomically above) → mint + respond.
-	deviceMintAndRespond(d, ctx, client, dc)
+	deviceMintAndRespond(d, ctx, client, dc, dpopJKT, mtlsX5T)
 }
 
 // deviceMintAndRespond issues the access/refresh/id tokens for an
 // already-claimed (atomically consumed) approved device code and writes the 200.
-func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode) {
+// dpopJKT and mtlsX5T bind the issued tokens to the caller's DPoP key or
+// mTLS certificate (RFC 9449 / RFC 8705).
+func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, dpopJKT, mtlsX5T string) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
@@ -81,11 +82,13 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, dc.UserID)
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID: issuedSub, Provider: dc.Provider, Claims: dc.Attributes,
-		Resources: dc.Resources,
-		ClientID:  client.ID,
-		AuthTime:  time.Now(),
-		AMR:       []string{dc.Provider},
-		TTL:       client.AccessTokenTTL,
+		Resources:            dc.Resources,
+		ClientID:             client.ID,
+		AuthTime:             time.Now(),
+		AMR:                  []string{dc.Provider},
+		TTL:                  client.AccessTokenTTL,
+		ConfirmationJKT:      dpopJKT,
+		ConfirmationX5TS256:  mtlsX5T,
 	}, dc.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("device token issuance failed", "strategy", strategy, "error", err)
@@ -94,12 +97,12 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 	}
 	resp := map[string]any{
 		core.KeyAccessToken:   token.AccessToken,
-		core.KeyTokenType:     token.TokenType,
+		core.KeyTokenType:     d.DPoPTokenTypeOr(token.TokenType, dpopJKT),
 		core.KeyExpiresIn:     token.ExpiresIn,
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	}
-	deviceIssueRefresh(d, ctx, client, dc, resp)
+	deviceIssueRefresh(d, ctx, client, dc, resp, dpopJKT)
 	deviceIssueIDToken(d, ctx, client, dc, issuedSub, token.AccessToken, resp)
 	d.RecordTokenIssued(ctx, client.ID, strategy, dc.UserID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), dc.UserID, client.ID)
@@ -150,7 +153,7 @@ func devicePollGate(d DeviceGrantDeps, ctx core.HandlerContext, store oauth.Devi
 
 // deviceIssueRefresh mints a refresh token (fail-open: a failure is logged and
 // the access token is still returned). Adds the token + records issuance on resp.
-func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, resp map[string]any) {
+func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, dc *oauth.DeviceCode, resp map[string]any, dpopJKT string) {
 	if d.RefreshTokenStore() == nil {
 		return
 	}
@@ -162,7 +165,7 @@ func deviceIssueRefresh(d DeviceGrantDeps, ctx core.HandlerContext, client *core
 		// rotation falls back to Provider (dc.Provider) — matching the access
 		// token's AMR=[dc.Provider]; the device flow carries no acr.
 		oauth.RefreshAuthContext{AuthTime: time.Now()},
-		client.RefreshTokenTTL, "") // device flow: dpopJKT not threaded to this handler; unbound
+		client.RefreshTokenTTL, dpopJKT)
 	if err != nil {
 		d.SrvLogger().Error("refresh token issue failed", "error", err)
 		return

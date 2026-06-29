@@ -199,17 +199,18 @@ func TestCreate_CaseInsensitiveDuplicateUserName(t *testing.T) {
 	}
 }
 
-// TestCreate_UserNameNormalizedToLowercase: a mixed-case userName is stored and
-// returned as lowercase (RFC 7643 §8.7.1: server owns the canonical lowercase form).
-func TestCreate_UserNameNormalizedToLowercase(t *testing.T) {
+// TestCreate_UserNameCasingPreserved: a mixed-case userName is stored and
+// returned with the original casing intact. RFC 7643 §7.6 defines caseExact=false
+// as a comparison rule, not a normalization directive — round-trip fidelity is preserved.
+func TestCreate_UserNameCasingPreserved(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"Alice@Example.COM"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
 	got := decodeResource(t, rec).UserName
-	if got != "alice@example.com" {
-		t.Errorf("userName = %q, want %q", got, "alice@example.com")
+	if got != "Alice@Example.COM" {
+		t.Errorf("userName = %q, want %q", got, "Alice@Example.COM")
 	}
 }
 

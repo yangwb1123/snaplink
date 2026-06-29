@@ -217,34 +217,36 @@ return false;
 }
 setError("code-error", "");
 setLoading($("submit-btn"), true);
-
+// Validate the code via the check endpoint, then navigate to the
+// server-rendered page so client info is populated server-side
+// without exposing a separate unauthenticated metadata endpoint.
 var xhr = new XMLHttpRequest();
-xhr.open("GET", "/device/verify?info=" + encodeURIComponent(code), true);
+xhr.open("GET", "/device/verify?check=" + encodeURIComponent(code), true);
 xhr.onload = function(){
 setLoading($("submit-btn"), false);
-if(xhr.status === 200){
 try{
 var data = JSON.parse(xhr.responseText);
-if(data.status === "ok"){
-showSignin(code, data);
+if(data.status === "pending"){
+window.location.href = "/device/verify?user_code=" + encodeURIComponent(code);
 return;
 }
-}catch(e){}
-}
-// If info endpoint returns error or unknown code, show the polling flow as fallback
-// (the device might already be approved by another channel)
+if(data.status === "approved"){
 currentUserCode = code;
 showView("polling");
 $("poll-status").textContent = "Checking status...";
 pollStatus(code);
+return;
+}
+if(data.status === "expired"){
+setError("code-error", "This code has expired. Please request a new code on your device.");
+return;
+}
+}catch(e){}
+setError("code-error", "Invalid or unknown code. Please check and try again.");
 };
 xhr.onerror = function(){
 setLoading($("submit-btn"), false);
-// Fallback: start polling
-currentUserCode = code;
-showView("polling");
-$("poll-status").textContent = "Waiting for approval...";
-pollStatus(code);
+setError("code-error", "Network error. Please try again.");
 };
 xhr.send();
 return false;
@@ -428,6 +430,22 @@ if(p.protocol === "https:" || p.protocol === "http:"){
 $("redirect-uri").setAttribute("data-uri", p.href);
 }
 }catch(e){}
+}
+
+// ---- Auto-show sign-in when server has pre-rendered code info ----
+// Triggered when the page loads with ?user_code=CODE and the server found it.
+var _serverClientID = "{{.ClientID}}";
+var _serverUserCode = "{{.UserCode}}";
+if(_serverClientID){
+var _serverScopes = [];
+{{range .Scopes}}_serverScopes.push("{{.}}");
+{{end}}showSignin(_serverUserCode, {
+client_id: _serverClientID,
+client_name: "{{.ClientName}}",
+scopes: _serverScopes
+});
+} else if(_serverUserCode){
+setError("code-error", "Invalid or unknown code. Please check and try again.");
 }
 
 // ---- Expose submitCode globally for form onsubmit ----
