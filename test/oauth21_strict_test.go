@@ -127,12 +127,13 @@ func TestOAuth21Strict_RejectsEmptyResponseType(t *testing.T) {
 }
 
 func TestOAuth21Strict_AllowsResponseTypeCodeWithPKCE(t *testing.T) {
+	// OAuth 2.1 §7.6 requires S256; plain is rejected even in strict mode.
 	srv := newStrictServer(t, true, strictRedirect)
 	status, body := loginStrict(t, srv, map[string]any{
 		"response_type":         "code",
 		"redirect_uri":          strictRedirect,
-		"code_challenge":        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789012",
-		"code_challenge_method": "plain",
+		"code_challenge":        s256Challenge(validVerifier),
+		"code_challenge_method": "S256",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("status=%d body=%v want 200", status, body)
@@ -175,12 +176,13 @@ func TestOAuth21Strict_RejectsNonHTTPSRedirectURI(t *testing.T) {
 }
 
 func TestOAuth21Strict_AllowsHTTPLocalhostForDev(t *testing.T) {
+	// Localhost http:// redirect is permitted; S256 PKCE is still required.
 	srv := newStrictServer(t, true, "http://localhost:3000/cb")
 	status, body := loginStrict(t, srv, map[string]any{
 		"response_type":         "code",
 		"redirect_uri":          "http://localhost:3000/cb",
-		"code_challenge":        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789012",
-		"code_challenge_method": "plain",
+		"code_challenge":        s256Challenge(validVerifier),
+		"code_challenge_method": "S256",
 	})
 	if status != http.StatusOK {
 		t.Fatalf("status=%d body=%v want 200 (localhost permitted)", status, body)

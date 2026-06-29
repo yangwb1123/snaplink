@@ -16,10 +16,12 @@ import (
 // a cost-10 dummy would finish measurably faster than a real verify, leaking
 // "this username is unknown" as a timing side channel. Operators whose
 // imported bcrypt hashes use a specific cost SHOULD pin it via
-// WithStoredHashDummyCost so the miss path matches the hit path. A non-bcrypt
-// imported corpus (argon2id / PBKDF2) cannot be matched exactly across formats
-// — the dummy is a bcrypt floor, narrowing but not eliminating the gap; the
-// only complete fix there is to import at a uniform KDF.
+// WithStoredHashDummyCost so the miss path matches the hit path, or wire a
+// Hasher via WithHasher so the dummy cost tracks the operator's configured
+// hash cost automatically. A non-bcrypt imported corpus (argon2id / PBKDF2)
+// cannot be matched exactly across formats — the dummy is a bcrypt floor,
+// narrowing but not eliminating the gap; the only complete fix there is to
+// import at a uniform KDF.
 const DefaultStoredHashDummyCost = 12
 
 // Attribute keys under which a migration tool (cmd/sso-import) persists a user's
@@ -60,6 +62,7 @@ type StoredHashOption func(*storedHashConfig)
 
 type storedHashConfig struct {
 	dummyCost int
+	hasher    Hasher
 }
 
 // WithStoredHashDummyCost pins the bcrypt cost of the miss-path dummy hash so
@@ -73,6 +76,15 @@ func WithStoredHashDummyCost(cost int) StoredHashOption {
 	return func(c *storedHashConfig) { c.dummyCost = cost }
 }
 
+// WithHasher lets the constructed verifier query the hasher's current
+// cost parameter and use it for the miss-path dummy hash. When set, the
+// hasher's cost takes effect ONLY if WithStoredHashDummyCost was NOT also
+// given (explicit pinning wins). If neither is set,
+// DefaultStoredHashDummyCost applies.
+func WithHasher(h Hasher) StoredHashOption {
+	return func(c *storedHashConfig) { c.hasher = h }
+}
+
 // NewStoredHashVerifier returns a verifier that reads imported hashes from the
 // UserProvider. The login username is looked up via GetByID — migration tools
 // set the user ID to the login identifier (sanitized email / username).
@@ -81,13 +93,24 @@ func NewStoredHashVerifier(users sso.UserProvider, opts ...StoredHashOption) *St
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	if cfg.dummyCost < bcrypt.MinCost || cfg.dummyCost > bcrypt.MaxCost {
-		cfg.dummyCost = DefaultStoredHashDummyCost
+	// Resolve the effective dummy cost:
+	//   1. An explicit WithStoredHashDummyCost wins everything.
+	//   2. Otherwise, if a hasher is wired, use its cost.
+	//   3. Fall back to DefaultStoredHashDummyCost.
+	cost := cfg.dummyCost
+	if cfg.dummyCost == DefaultStoredHashDummyCost && cfg.hasher != nil {
+		if hc := cfg.hasher.Cost(); hc >= bcrypt.MinCost && hc <= bcrypt.MaxCost {
+			cost = hc
+		}
 	}
-	// Precompute one dummy bcrypt hash at the configured cost for timing
-	// equalization on misses. Computed once at construction so the per-login
-	// miss path only runs the (cost-bounded) compare, not a fresh generate.
-	b, _ := bcrypt.GenerateFromPassword([]byte("stored-hash-verifier-dummy-timing-equalizer"), cfg.dummyCost)
+	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
+		cost = DefaultStoredHashDummyCost
+	}
+	// Precompute one dummy bcrypt hash at the resolved cost for timing
+	// equalization on misses (see cost resolution above). Computed once at
+	// construction so the per-login miss path only runs the (cost-bounded)
+	// compare, not a fresh generate.
+	b, _ := bcrypt.GenerateFromPassword([]byte("stored-hash-verifier-dummy-timing-equalizer"), cost)
 	return &StoredHashVerifier{users: users, dummyHash: PasswordHash{Format: HashFormatBcrypt, Hash: string(b)}}
 }
 

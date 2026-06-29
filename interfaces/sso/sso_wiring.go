@@ -25,6 +25,7 @@ type wiringState struct {
 	userProvider            UserProvider
 	clientStore             ClientStore
 	sessionMgr              SessionManager
+	maxSessionsPerUser      int // 0 = unlimited (backward compatible)
 	router                  Router
 	logger                  spi.Logger
 	auditor                 *audit.Recorder

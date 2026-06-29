@@ -10,6 +10,16 @@ import (
 	"github.com/snaplink/sso/shared/spi"
 )
 
+// DefaultIntrospectionCacheTTL is the default lifetime of a cached
+// introspection result. 60 seconds is safe for typical access tokens
+// with 5–60 minute lifetimes — the tradeoff is a short window of
+// eventual consistency for revoked tokens in exchange for avoiding
+// JWT signature verification on every introspection poll from a
+// microservice mesh with 100+ services. The TTL must ALWAYS be
+// shorter than the token's remaining lifetime; 60s satisfies that
+// for any production token lifetime.
+const DefaultIntrospectionCacheTTL = 60 * time.Second
+
 func WithRouter(r Router) Option {
 	return func(s *Server) { s.router = r }
 }
@@ -234,6 +244,49 @@ func WithClientStore(cs ClientStore) Option {
 // clients too).
 func WithClientStoreCache(ttl time.Duration) Option {
 	return func(s *Server) { s.clientStoreCacheTTL = ttl }
+}
+
+// WithIntrospectionCache enables optional best-effort caching for token
+// introspection results. Every /token/introspect call without caching
+// does full JWT signature verification (asymmetric cryptography + claims
+// validation + revocation check). In microservice mesh deployments with
+// 100+ services polling this endpoint every few seconds, the CPU cost
+// is significant.
+//
+// The cache wraps the existing handler — it does NOT replace it. On a
+// CACHE HIT the result is returned immediately without any JWT signature
+// verification. On a CACHE MISS the full verification runs and the result
+// is stored (including negative results — {active: false} — so a flood of
+// expired-token polls also skips verification).
+//
+// SECURITY CONSIDERATIONS:
+//   - The cache key is SHA-256(token), not the raw token — an attacker who
+//     dumps the cache sees only opaque digests.
+//   - The cache TTL must be SHORTER than the token's remaining lifetime.
+//     The 60s default is safe for typical access tokens with 5–60 minute
+//     lifetimes.
+//   - A revoked token might be served from cache for up to TTL seconds.
+//     This is an INTENTIONAL tradeoff: revocation is not instant (eventual
+//     consistency). The alternative (no cache) means every introspection
+//     pays full signature verification cost.
+//   - The cache is BEST-EFFORT: on store error (including a full cache),
+//     verification proceeds normally (fail-open).
+//
+// Pass cache=nil or omit the option to disable caching entirely (every
+// introspection pays full verification — byte-identical to a build without
+// this feature). Pass a *handler.MemoryIntrospectionCache (from
+// internal/handler) for single-replica deployments. Multi-replica
+// deployments should provide a shared backend (e.g. Redis) via a custom
+// oauth.IntrospectionCache implementation.
+func WithIntrospectionCache(cache oauth.IntrospectionCache, ttl time.Duration) Option {
+	return func(s *Server) {
+		s.introspectionCache = cache
+		if ttl > 0 {
+			s.introspectionCacheTTL = ttl
+		} else {
+			s.introspectionCacheTTL = DefaultIntrospectionCacheTTL
+		}
+	}
 }
 
 // WithSessionManager sets the session manager.

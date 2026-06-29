@@ -283,6 +283,15 @@ func (s *Server) SPIFFEValidator() *security.SPIFFEValidator { return s.spiffeVa
 // SPIFFEAudience is this server's identifier that an inbound JWT-SVID must target.
 func (s *Server) SPIFFEAudience() string { return s.spiffeAudience }
 
+// IntrospectionCache returns the optional introspection result cache
+// (WithIntrospectionCache). Nil means caching is disabled and every
+// /token/introspect call pays full JWT verification.
+func (s *Server) IntrospectionCache() oauth.IntrospectionCache { return s.introspectionCache }
+
+// IntrospectionCacheTTL returns the configured TTL for cached introspection
+// results. Only meaningful when IntrospectionCache() is non-nil.
+func (s *Server) IntrospectionCacheTTL() time.Duration { return s.introspectionCacheTTL }
+
 // HandleDeviceSecretExchange delegates the Native SSO device-secret actor branch
 // of token-exchange to the root implementation (server_native_sso.go).
 func (s *Server) HandleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, client *Client, req tokengrant.TokenExchangeRequest) {

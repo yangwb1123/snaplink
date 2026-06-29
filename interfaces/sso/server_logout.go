@@ -354,15 +354,51 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 // actively revoke this session when its tenant is suspended/deleted — pass the
 // authenticating client's TenantID (empty for non-tenant clients, which leaves
 // the session tenant-unbound and relies on the membership-roster revoke path).
+//
+// When maxSessionsPerUser > 0, this method enforces a per-user session limit
+// with rolling eviction: if the user already has >= maxSessionsPerUser active
+// sessions, the OLDEST one is silently revoked before the new session is
+// created. The user stays logged in on their current device and the oldest
+// session is evicted. Fail-open: any listing/eviction error is logged and the
+// new session is still created (login is never blocked).
 func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Session, error) {
+	rctx := ctx.Request().Context()
+
+	// Rolling eviction: when the user has reached the configured limit, evict
+	// the oldest session before creating the new one. Never blocks login.
+	if limit := s.maxSessionsPerUser; limit > 0 {
+		sessions, err := s.sessionMgr.ListByUser(rctx, userID)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("session limit: list by user failed",
+					"error", err, "user", userID)
+			}
+		} else if len(sessions) >= limit {
+			oldest := sessions[0]
+			for _, sess := range sessions[1:] {
+				if sess != nil && sess.CreatedAt.Before(oldest.CreatedAt) {
+					oldest = sess
+				}
+			}
+			if oldest != nil && oldest.ID != "" {
+				if err := s.sessionMgr.Destroy(rctx, oldest.ID); err != nil {
+					if s.logger != nil {
+						s.logger.Error("session limit: evict oldest failed",
+							"error", err, "user", userID, "session", oldest.ID)
+					}
+				}
+			}
+		}
+	}
+
 	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
-		return mc.CreateWithMeta(ctx.Request().Context(), userID, SessionMeta{
+		return mc.CreateWithMeta(rctx, userID, SessionMeta{
 			IP:        audit.ClientIP(ctx.Request()),
 			UserAgent: ctx.Request().UserAgent(),
 			TenantID:  tenantID,
 		})
 	}
-	return s.sessionMgr.Create(ctx.Request().Context(), userID)
+	return s.sessionMgr.Create(rctx, userID)
 }
 
 // describeScopes pairs each requested scope with its operator-defined human

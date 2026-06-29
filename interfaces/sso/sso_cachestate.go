@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso/servercache"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -69,4 +70,16 @@ type cacheState struct {
 	// resolves, so an ES256-labelled token only verifies against an
 	// ES256 key and an EdDSA-labelled token only against an EdDSA key.
 	supportedSigningAlgs []string
+
+	// introspectionCache is the optional best-effort token introspection
+	// cache (WithIntrospectionCache). When nil (the default), every
+	// /token/introspect call pays full JWT signature verification —
+	// byte-identical to a build without caching support.
+	introspectionCache oauth.IntrospectionCache
+	// introspectionCacheTTL bounds how long a cached introspection
+	// result stays valid. Defaults to DefaultIntrospectionCacheTTL (60s)
+	// when the option is wired without an explicit TTL. The TTL must be
+	// SHORTER than the token's remaining lifetime; 60s is safe for
+	// typical access tokens with 5-60 minute lifetimes.
+	introspectionCacheTTL time.Duration
 }

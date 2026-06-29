@@ -27,6 +27,25 @@ const (
 	HashFormatPBKDF2SHA512 = "pbkdf2-sha512"
 )
 
+// Hasher knows the cryptographic cost parameter used to hash passwords.
+// Implementations return the current bcrypt cost, which callers (e.g.
+// StoredHashVerifier) use to match the miss-path dummy hash cost to the
+// hit-path cost, preventing a timing oracle on unknown usernames.
+type Hasher interface {
+	// Cost returns the bcrypt cost used for new hashes. Must be >=
+	// bcrypt.MinCost and <= bcrypt.MaxCost when valid; a zero or
+	// out-of-range value causes callers to fall back to their default.
+	Cost() int
+}
+
+// bcryptHasher is a simple Hasher backed by a fixed bcrypt cost.
+type bcryptHasher struct{ cost int }
+
+// NewBcryptHasher returns a Hasher that reports the given bcrypt cost.
+func NewBcryptHasher(cost int) Hasher { return &bcryptHasher{cost: cost} }
+
+func (h *bcryptHasher) Cost() int { return h.cost }
+
 // PasswordHash holds a stored hash with its format identifier.
 // The Hash field is the full encoded string in the format-specific encoding:
 //

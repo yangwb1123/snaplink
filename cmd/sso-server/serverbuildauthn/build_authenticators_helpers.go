@@ -17,6 +17,7 @@ import (
 	postgresbackend "github.com/snaplink/sso/postgres"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // authReplayStoreFn lazily resolves the shared keypair/TOTP replay-defense
@@ -70,6 +71,14 @@ func buildPasswordAuthVerifier(a *config.PasswordConfig, passwordStore sso.Passw
 		var shOpts []authenticators.StoredHashOption
 		if a.ImportedHashDummyCost > 0 {
 			shOpts = append(shOpts, authenticators.WithStoredHashDummyCost(a.ImportedHashDummyCost))
+		}
+		// Wire a Hasher so the dummy cost tracks the operator's target cost
+		// automatically when no explicit pin is set. Use bcrypt.DefaultCost
+		// (matching HashPassword) as the hasher's report — the lazy rehash
+		// path re-mints imported hashes at this cost, so the miss-path dummy
+		// should match it in steady state.
+		if a.ImportedHashDummyCost <= 0 {
+			shOpts = append(shOpts, authenticators.WithHasher(authenticators.NewBcryptHasher(bcrypt.DefaultCost)))
 		}
 		lazyStored := &authenticators.LazyRehashVerifier{
 			Underlying:  authenticators.NewStoredHashVerifier(userProvider, shOpts...),

@@ -59,3 +59,49 @@ func TestStoredHashVerifier_DummyRejectsOutOfRangeCost(t *testing.T) {
 		}
 	}
 }
+
+// TestStoredHashVerifier_HasherCostWinsOverDefault proves WithHasher sets the
+// dummy cost to the hasher's cost when no explicit dummy cost is pinned.
+func TestStoredHashVerifier_HasherCostWinsOverDefault(t *testing.T) {
+	const want = 14
+	v := NewStoredHashVerifier(nil, WithHasher(NewBcryptHasher(want)))
+	cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
+	if err != nil {
+		t.Fatalf("dummy hash not bcrypt: %v", err)
+	}
+	if cost != want {
+		t.Fatalf("hasher cost = %d; dummy cost = %d; want %d", want, cost, want)
+	}
+}
+
+// TestStoredHashVerifier_ExplicitPinWinsOverHasher proves WithStoredHashDummyCost
+// takes precedence over WithHasher (explicit pinning wins).
+func TestStoredHashVerifier_ExplicitPinWinsOverHasher(t *testing.T) {
+	const pinned = 8 // intentionally below default
+	v := NewStoredHashVerifier(nil,
+		WithStoredHashDummyCost(pinned),
+		WithHasher(NewBcryptHasher(14)),
+	)
+	cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
+	if err != nil {
+		t.Fatalf("dummy hash not bcrypt: %v", err)
+	}
+	if cost != pinned {
+		t.Fatalf("explicit pin = %d; dummy cost = %d; want %d", pinned, cost, pinned)
+	}
+}
+
+// TestStoredHashVerifier_HasherInvalidCostFallsBack proves WithHasher with an
+// out-of-range cost falls back to DefaultStoredHashDummyCost.
+func TestStoredHashVerifier_HasherInvalidCostFallsBack(t *testing.T) {
+	for _, bad := range []int{0, bcrypt.MaxCost + 1} {
+		v := NewStoredHashVerifier(nil, WithHasher(NewBcryptHasher(bad)))
+		cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
+		if err != nil {
+			t.Fatalf("cost %d: dummy hash not bcrypt: %v", bad, err)
+		}
+		if cost != DefaultStoredHashDummyCost {
+			t.Fatalf("invalid hasher cost %d: dummy cost = %d; want default %d", bad, cost, DefaultStoredHashDummyCost)
+		}
+	}
+}

@@ -341,3 +341,19 @@ func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
 func WithSecurityHeaders() Option {
 	return func(s *Server) { s.securityHeadersEnabled = true }
 }
+
+// WithMaxSessionsPerUser sets a per-user limit on concurrent active sessions.
+// When a user already has >= n active sessions and a new login creates another,
+// the OLDEST session is silently evicted (rolling eviction) before the new one
+// is persisted — the user stays logged in on the new device, and the oldest
+// session is revoked.
+//
+// 0 (the default) means unlimited, preserving full backward compatibility for
+// existing deployments that never set a limit.
+//
+// This is NOT a security boundary: a user who deliberately exceeds the limit
+// gets their oldest session kicked off, but is never denied login. Hard session
+// caps should be enforced at the store level paired with this option.
+func WithMaxSessionsPerUser(n int) Option {
+	return func(s *Server) { s.maxSessionsPerUser = n }
+}

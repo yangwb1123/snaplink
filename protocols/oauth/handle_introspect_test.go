@@ -44,6 +44,9 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 	return d.verifyCA(ctx, a, f, i)
 }
 
+func (d *introspectDeps) IntrospectionCache() IntrospectionCache { return nil }
+func (d *introspectDeps) IntrospectionCacheTTL() time.Duration  { return 0 }
+
 var _ IntrospectDeps = (*introspectDeps)(nil)
 
 // dummyIssuer satisfies map[string]core.TokenIssuer membership so

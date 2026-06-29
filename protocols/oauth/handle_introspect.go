@@ -2,9 +2,12 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -28,6 +31,13 @@ type IntrospectDeps interface {
 	ResolveIssuer(ctx core.HandlerContext) string
 	ValidateAnyToken(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
+	// IntrospectionCache returns the optional token introspection cache.
+	// Returns nil when caching is disabled — every introspection pays the
+	// full JWT verification cost.
+	IntrospectionCache() IntrospectionCache
+	// IntrospectionCacheTTL returns the TTL for cached introspection
+	// results. Only meaningful when IntrospectionCache() is non-nil.
+	IntrospectionCacheTTL() time.Duration
 }
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
@@ -46,6 +56,15 @@ type introspectRequest struct {
 // only, with no extra metadata — §2.2 mandates this to limit
 // oracle leakage.
 //
+// When an IntrospectionCache is wired, the handler checks the cache
+// (keyed by SHA-256(token)) BEFORE performing full JWT signature
+// verification. On a hit the cached response is returned immediately.
+// On a miss the normal verification runs and the result is stored for
+// the configured TTL (default 60s). This trades immediate revocation
+// propagation for dramatic CPU savings in high-traffic microservice
+// meshes — see the security considerations on the option doc for the
+// deliberate eventual-consistency window.
+//
 // Auth: the introspecting client authenticates with client_id +
 // client_secret (Basic auth or form body). Per §2.1 any registered
 // active client may introspect — production deployments that want
@@ -53,7 +72,8 @@ type introspectRequest struct {
 // checks a custom "introspect" scope or role on the client.
 func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 	middleware.TokenNoStoreHeaders(ctx)
-	if d.ClientStoreAccessor() == nil {
+	clientStore := d.ClientStoreAccessor()
+	if clientStore == nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrServerMisconfigured))
 		return
 	}
@@ -70,8 +90,6 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		req.ClientSecret = secret
 	}
 
-	clientStore := d.ClientStoreAccessor()
-
 	// Client auth: the assertion branch and the secret-creds branch both
 	// write the identical 401 invalid_client on failure (oracle-leak
 	// collapse). handled==true means a response was already written.
@@ -84,13 +102,41 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	if body, ok := resolveIntrospection(d, ctx, req.Token, req.TokenTypeHint); ok {
+	serveIntrospectWithCache(d, ctx, req.Token, req.TokenTypeHint)
+}
+
+// serveIntrospectWithCache performs the resolution + optional-cache step of
+// HandleIntrospect. Cache is keyed by SHA-256(token) so raw tokens are never
+// stored in plaintext; both active and inactive results are cached.
+func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint string) {
+	// OPTIONAL cache check: keyed by SHA-256(token) so the raw token
+	// is never stored in plaintext. When the cache is unwired, both
+	// d.IntrospectionCache() and the cache itself are nil — every
+	// branch falls through to full verification.
+	cache := d.IntrospectionCache()
+	var cacheKey string
+	if cache != nil {
+		cacheKey = tokenHash(token)
+		if cached, ok := cache.Get(cacheKey); ok {
+			ctx.JSON(http.StatusOK, cached.Body)
+			return
+		}
+	}
+
+	if body, ok := resolveIntrospection(d, ctx, token, hint); ok {
+		if cache != nil {
+			cache.Set(cacheKey, &CachedResult{Body: body}, d.IntrospectionCacheTTL())
+		}
 		ctx.JSON(http.StatusOK, body)
 		return
 	}
 
 	// Unknown / expired / revoked → §2.2 mandates {active: false} only.
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyActive: false})
+	inactive := map[string]any{core.KeyActive: false}
+	if cache != nil {
+		cache.Set(cacheKey, &CachedResult{Body: inactive}, d.IntrospectionCacheTTL())
+	}
+	ctx.JSON(http.StatusOK, inactive)
 }
 
 // authenticateIntrospectClient runs the hint-independent client-auth gate
@@ -286,4 +332,13 @@ func authenticateIntrospectionClient(clientStore core.ClientStore, ctx core.Hand
 		return errors.New("tenant mismatch")
 	}
 	return clientStore.ValidateSecret(ctx.Request().Context(), id, secret)
+}
+
+// tokenHash returns the hex-encoded SHA-256 digest of token. The hash
+// (not the raw token) is the cache key so that plaintext tokens are
+// never stored in the cache — an attacker who dumps the cache sees only
+// opaque digests, not bearer credentials.
+func tokenHash(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
