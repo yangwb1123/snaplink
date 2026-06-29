@@ -168,6 +168,63 @@ func TestSignupRequireVerification_NilProviderPassthrough(t *testing.T) {
 	}
 }
 
+// TestSignupRequireVerification_WithProviderBlocks is a positive companion to
+// TestSignupRequireVerification_NilProviderPassthrough. It proves the gate
+// actually fires (not just that it doesn't panic when nil): alice exists in
+// the UserProvider but has no email_verified attribute, so /auth/login with
+// signupRequireVerification=true must return 403 email_not_verified.
+// If rejectUnverifiedEmail were deleted from the login path the test fails.
+func TestSignupRequireVerification_WithProviderBlocks(t *testing.T) {
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("verify-block-test"))
+	sessions := defaultimpl.NewMemorySessionManager()
+	users := defaultimpl.NewMemoryUserProvider()
+	// alice exists but email_verified is absent.
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "alice"})
+
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: "app", AllowedAuthenticators: []string{authenticators.MethodPassword},
+		TokenStrategy: "jwt", Active: true,
+	})
+	pw := authenticators.NewPasswordAuthenticator(
+		authenticators.PasswordVerifierFunc(func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if u == "alice" && p == "pw" {
+				return &sso.AuthResult{UserID: "alice"}, nil
+			}
+			return nil, errors.New("bad creds")
+		}),
+	)
+	server := sso.NewServer(
+		sso.WithSignupRequireVerification(true),
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(sessions),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+	)
+	hs := httptest.NewServer(server.Handler())
+	defer hs.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"provider": "password", "client_id": "app",
+		"credential": map[string]string{"username": "alice", "password": "pw"},
+	})
+	resp, err := http.Post(hs.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d want 403; unverified user must be blocked: body=%v", resp.StatusCode, out)
+	}
+	if out["error"] != sso.ErrEmailNotVerified {
+		t.Errorf("error = %v, want %v", out["error"], sso.ErrEmailNotVerified)
+	}
+}
+
 // ---------- per-IP signup rate limiter ----------
 
 // stubSignupRateLimiter implements selfservicecore.RateLimiter for testing.
@@ -204,10 +261,15 @@ func TestSignupRateLimit_Returns429WithRetryAfterCeiling(t *testing.T) {
 		if err != nil {
 			t.Fatalf("retryAfter=%v: request: %v", tc.retryAfter, err)
 		}
+		var respBody map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&respBody)
 		_ = resp.Body.Close()
 
 		if resp.StatusCode != http.StatusTooManyRequests {
 			t.Errorf("retryAfter=%v: status = %d, want 429", tc.retryAfter, resp.StatusCode)
+		}
+		if respBody["error"] != "rate_limited" {
+			t.Errorf("retryAfter=%v: error = %v, want rate_limited", tc.retryAfter, respBody["error"])
 		}
 		got := resp.Header.Get("Retry-After")
 		if tc.wantHeaderSet {

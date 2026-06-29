@@ -645,3 +645,41 @@ func TestMFA_EmailVerificationGate_BlocksUnverified(t *testing.T) {
 		t.Errorf("error = %v, want %v", body["error"], sso.ErrEmailNotVerified)
 	}
 }
+
+// TestMFA_EmailVerificationGate_FailClosedOnMissingUser proves the
+// fail-closed branch of rejectUnverifiedEmail: when the user is deleted
+// from the UserProvider between MFA challenge issuance and completion,
+// GetByID returns (nil, nil) — the gate must reject with 403
+// email_not_verified, NOT pass through (which was the pre-R24 behavior).
+func TestMFA_EmailVerificationGate_FailClosedOnMissingUser(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "alice"})
+
+	srv, _, secret := buildMFAHarness(t,
+		sso.WithSignupRequireVerification(true),
+		sso.WithUserProvider(users), // override default provider so we can delete alice
+	)
+
+	status, body := loginMFA(t, srv)
+	if status != http.StatusOK {
+		t.Fatalf("login status = %d want 200; body=%v", status, body)
+	}
+	chal, _ := body["mfa_challenge_id"].(string)
+	if chal == "" {
+		t.Fatalf("mfa_challenge_id missing; body=%v", body)
+	}
+
+	// Delete alice between challenge issuance and completion.
+	if err := users.Delete(context.Background(), "alice"); err != nil {
+		t.Fatalf("delete alice: %v", err)
+	}
+
+	code := validTOTPCode(t, secret)
+	status, body = completeMFA(t, srv, chal, authenticators.MethodTOTP, code)
+	if status != http.StatusForbidden {
+		t.Errorf("MFA for deleted user: status = %d, want 403 (fail-closed); body=%v", status, body)
+	}
+	if body["error"] != sso.ErrEmailNotVerified {
+		t.Errorf("error = %v, want %v", body["error"], sso.ErrEmailNotVerified)
+	}
+}

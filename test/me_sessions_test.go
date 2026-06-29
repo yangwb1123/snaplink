@@ -799,15 +799,21 @@ func postMeSessionsRevokeAll(t *testing.T, srv *httptest.Server, bearer string) 
 
 func TestMeSessionsRevokeAll_RevokesAllIncludingCurrent(t *testing.T) {
 	// POST /me/sessions/revoke-all is a hard sign-out-everywhere: it revokes
-	// ALL sessions including the caller's current session (no keepCurrent logic).
+	// ALL of the caller's sessions including the current one (no keepCurrent
+	// logic), while leaving other users' sessions untouched.
 	srv, sessions, loginAs := newMeSessionsHarness(t)
 
 	tok1 := loginAs("alice")
-	_ = loginAs("alice") // second session
+	_ = loginAs("alice") // second alice session
+	_ = loginAs("bob")   // bob's session must survive
 
 	before, _ := sessions.ListByUser(context.Background(), "u-alice")
 	if len(before) < 2 {
-		t.Fatalf("expected >= 2 sessions before revoke-all, got %d", len(before))
+		t.Fatalf("expected >= 2 alice sessions before revoke-all, got %d", len(before))
+	}
+	bobBefore, _ := sessions.ListByUser(context.Background(), "u-bob")
+	if len(bobBefore) == 0 {
+		t.Fatal("bob must have a session for cross-user isolation check")
 	}
 
 	status, body := postMeSessionsRevokeAll(t, srv, tok1)
@@ -817,10 +823,15 @@ func TestMeSessionsRevokeAll_RevokesAllIncludingCurrent(t *testing.T) {
 	if revoked, _ := body["revoked"].(float64); int(revoked) != len(before) {
 		t.Errorf("revoked = %v want %d (all sessions including current)", revoked, len(before))
 	}
-	// No sessions must remain — including the caller's current one.
+	// All alice sessions must be gone — including the caller's current one.
 	after, _ := sessions.ListByUser(context.Background(), "u-alice")
 	if len(after) != 0 {
-		t.Errorf("sessions remaining = %d, want 0 after revoke-all", len(after))
+		t.Errorf("alice sessions remaining = %d, want 0 after revoke-all", len(after))
+	}
+	// Bob's session must be untouched.
+	bobAfter, _ := sessions.ListByUser(context.Background(), "u-bob")
+	if len(bobAfter) != len(bobBefore) {
+		t.Errorf("bob sessions = %d, want %d (revoke-all must not touch other users)", len(bobAfter), len(bobBefore))
 	}
 }
 
