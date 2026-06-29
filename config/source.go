@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"regexp"
 
 	"github.com/goccy/go-yaml"
 )
@@ -72,6 +74,12 @@ func (l *Loader) Sources() []Source {
 // the accumulator, then materializes the result into *Config with
 // defaults applied + validated. The first source error short-circuits
 // the load.
+//
+// Strict parsing: the merged YAML is first decoded with
+// DisallowUnknownField enabled. If unknown keys are found, a WARNING
+// is logged listing them, and the config is re-decoded without the
+// restriction — existing configs continue to work, but operators get
+// actionable feedback about misspellings or stale keys.
 func (l *Loader) Load(ctx context.Context) (*Config, error) {
 	merged := map[string]any{}
 	for _, s := range l.sources {
@@ -87,15 +95,56 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal merged: %w", err)
 	}
+
 	c := &Config{}
-	if err := yaml.Unmarshal(raw, c); err != nil {
-		return nil, fmt.Errorf("config: unmarshal merged: %w", err)
+
+	// Strict pass — reject unknown fields so operators catch typos.
+	if err := yaml.UnmarshalWithOptions(raw, c, yaml.DisallowUnknownField()); err != nil {
+		unknownKeys := extractUnknownFields(err)
+
+		// Re-decode without strict mode so the config still works.
+		c = &Config{}
+		if err2 := yaml.Unmarshal(raw, c); err2 != nil {
+			return nil, fmt.Errorf("config: unmarshal merged: %w", err2)
+		}
+
+		if len(unknownKeys) > 0 {
+			slog.Warn("config: unknown keys detected in YAML config — they are ignored and will become errors in a future version",
+				"unknown_keys", unknownKeys,
+				"hint", "check the YAML config file(s) for typos or keys that no longer exist",
+			)
+		}
 	}
+
 	c.applyDefaults()
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// extractUnknownFields parses goccy/go-yaml's "unknown field" error
+// messages and returns the field names. The error format is:
+//
+//	[line:col] unknown field "field_name"
+//
+// Matching is best-effort — if the format changes, the function
+// returns nil and the caller simply won't log a hint (the strict
+// decode already failed, so it falls through to lenient mode).
+func extractUnknownFields(err error) []string {
+	if err == nil {
+		return nil
+	}
+	re := regexp.MustCompile(`unknown field "([^"]+)"`)
+	matches := re.FindAllStringSubmatch(err.Error(), -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	fields := make([]string, 0, len(matches))
+	for _, m := range matches {
+		fields = append(fields, m[1])
+	}
+	return fields
 }
 
 // deepMerge writes src into dst, recursively merging nested maps and

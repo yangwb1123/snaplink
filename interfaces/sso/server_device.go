@@ -1,12 +1,14 @@
 package sso
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oidc"
 )
 
 func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode() }
@@ -321,3 +323,61 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 }
 
 // normalizeUserCode delegates to oauth.NormalizeUserCode.
+
+// handleDeviceVerifyPage serves the RFC 8628 device verification HTML page at
+// GET /device/verify. No authentication is required — the page is a public
+// form where users enter the user_code displayed on their device.
+//
+// When called with ?check=USERCODE it returns JSON status (for the page's JS
+// polling) instead of HTML. The status endpoint is intentionally unauthenticated
+// because it only reveals states the device already learns through /token polling
+// (pending / approved / denied / expired / not_found).
+func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
+	if userCode := ctx.Query("check"); userCode != "" {
+		s.handleDeviceVerifyCheck(ctx, userCode)
+		return
+	}
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		return
+	}
+	oidc.RenderDeviceVerifyPage(ctx.ResponseWriter(), ctx.Query("user_code"))
+}
+
+// handleDeviceVerifyCheck returns the current state of a user_code as JSON for
+// the device verification page's polling loop. It is unauthenticated and only
+// reveals information the device already has via /token polling.
+func (s *Server) handleDeviceVerifyCheck(ctx HandlerContext, userCode string) {
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, map[string]string{"status": "error"})
+		return
+	}
+	uc := normalizeUserCode(userCode)
+	if uc == "" {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "invalid"})
+		return
+	}
+	dc, err := s.deviceCodeStore.GetByUserCode(ctx.Request().Context(), uc)
+	if err != nil {
+		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			ctx.JSON(http.StatusOK, map[string]string{"status": "not_found"})
+		} else {
+			s.logger.Error("device verify check lookup failed", "error", err)
+			ctx.JSON(http.StatusInternalServerError, map[string]string{"status": "error"})
+		}
+		return
+	}
+	if dc.IsExpired() {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "expired"})
+		return
+	}
+	if dc.Approved {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "approved"})
+		return
+	}
+	if dc.Denied {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "denied"})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]string{"status": "pending"})
+}

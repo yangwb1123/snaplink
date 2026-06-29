@@ -133,6 +133,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.POST(PathRevoke, s.handleRevoke)
 	s.router.POST(PathRevokeAll, s.handleRevokeAll)
 	s.router.POST(PathDeviceCode, s.handleDeviceCode)
+	s.router.GET(PathDeviceVerify, s.handleDeviceVerifyPage)
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.POST(PathPAR, s.handlePAR)
 	s.router.POST(PathBackchannelAuth, s.handleBackchannelAuth)

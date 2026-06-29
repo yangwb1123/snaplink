@@ -1,8 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +131,46 @@ func TestLoader_DefaultsApplied(t *testing.T) {
 	}
 	if cfg.Server.Issuer == "" {
 		t.Errorf("default issuer not applied")
+	}
+}
+
+// TestLoader_UnknownKey_Warns verifies that unknown YAML keys produce a
+// warning log instead of silently defaulting. The config itself still
+// loads successfully — this is the graceful-fallback contract.
+func TestLoader_UnknownKey_Warns(t *testing.T) {
+	// Capture slog output.
+	var buf bytes.Buffer
+	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(oldLogger)
+
+	src := &stubSource{name: "typo", data: map[string]any{
+		"server": map[string]any{
+			"listen":       ":9090",
+			"typo_listen":  ":8080", // unknown key (should trigger warning)
+			"sesssion_ttl": "30m",   // unknown key (triple-s typo)
+		},
+		"unknown_section": map[string]any{"a": 1}, // unknown top-level key
+	}}
+
+	cfg, err := NewLoader(src).Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load should succeed even with unknown keys, got: %v", err)
+	}
+	// Known keys should still be parsed correctly.
+	if cfg.Server.Listen != ":9090" {
+		t.Errorf("known key server.listen = %q, want :9090", cfg.Server.Listen)
+	}
+
+	logged := buf.String()
+	t.Logf("captured slog output:\n%s", logged)
+
+	// The warning MUST mention at least one unknown key.
+	// Note: goccy/go-yaml stops at the first unknown field, so we
+	// won't necessarily see *all* keys in a single warning — but
+	// at least one actionable message is guaranteed.
+	if !strings.Contains(logged, "unknown") {
+		t.Error("expected slog warning about unknown keys, got none")
 	}
 }
