@@ -129,17 +129,21 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 // runPostCredentialGates runs the gates that apply once credentials are
 // validated. It returns true the instant an inner guard wrote a response,
 // preserving the exact status+code and short-circuit ORDER of the original
-// inline sequence (ACR -> risk):
+// inline sequence (ACR -> max_age -> risk):
 //
 //   - OIDC §3.1.2.6 / §5.5.1.1 ACR enforcement (acr_values OR claims
 //     id_token.acr), checked immediately after credential validation so it
 //     applies regardless of a following MFA / risk decision.
+//   - OIDC §3.1.2.6 max_age enforcement — satisfied by fresh credentials.
 //   - Risk evaluation + step-up gate. Skipped entirely (zero overhead) when no
 //     scorer configured; scorer errors fail OPEN by contract. Returns true when
 //     it owns the response (risk-denied, or an MFA challenge was issued and the
 //     client must follow up at /auth/mfa); false to proceed to finishLogin.
 func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, result *AuthResult, client *Client) bool {
 	if s.enforceLoginACR(ctx, req, result) {
+		return true
+	}
+	if s.enforceLoginMaxAge(ctx, req, result) {
 		return true
 	}
 	if s.evaluateLoginRisk(ctx, result, req, client) {
@@ -324,6 +328,18 @@ func (s *Server) enforceLoginACR(ctx HandlerContext, req *login.Request, result 
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnmetAuthReqs))
 		return true
 	}
+	return false
+}
+
+// enforceLoginMaxAge enforces OIDC Core §3.1.2.6 max_age. Fresh
+// credentials always satisfy any max_age window (AuthTime=now).
+func (s *Server) enforceLoginMaxAge(ctx HandlerContext, req *login.Request, result *AuthResult) bool {
+	if req.MaxAge == nil {
+		return false
+	}
+	// max_age=0 → require fresh auth (user provided credentials ✓).
+	// max_age=N → auth must be within N seconds (AuthTime=now ✓).
+	// Issuance path sets AuthTime = time.Now() in tokens.
 	return false
 }
 

@@ -73,13 +73,17 @@ func consumeVerificationToken(d Deps, ctx core.HandlerContext, rawToken string) 
 // Returns true on success so HandleVerifyEmail can write the 200.
 func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerificationToken) bool {
 	rctx := ctx.Request().Context()
-	// Guard against upsert-overwrite: if the username was claimed between token
-	// issue and verify (concurrent duplicate registration, admin creation, etc.)
-	// treat the attempt as verification_invalid rather than silently overwriting
-	// the existing account's credentials. Oracle-safe: same response as a bad
-	// token — caller cannot distinguish "account taken" from "token expired".
 	if existing, err := d.UserProvider().GetByID(rctx, tok.Username); err == nil && existing != nil {
+		// Mode A opt-in verify: user was created immediately at register time so
+		// no password hash was stored in the token. Stamp email_verified=true on
+		// the live record rather than treating it as a conflict.
+		if tok.PasswordHash == "" {
+			return updateVerifiedEmail(d, ctx, rctx, existing)
+		}
+		// Mode B conflict: username was claimed between token issue and verify.
+		// Oracle-safe: indistinguishable from a bad or expired token.
 		d.Logger().Error("verify-email: username already taken at verify time", "username", tok.Username)
+		recordSelfRegisteredFailure(d, ctx, rctx, "", "username_taken")
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrVerificationInvalid))
 		return false
 	}
@@ -90,6 +94,7 @@ func createVerifiedUser(d Deps, ctx core.HandlerContext, tok *core.EmailVerifica
 	}
 	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
 		d.Logger().Error("verify-email: create user failed", "username", tok.Username, "error", err)
+		recordSelfRegisteredFailure(d, ctx, rctx, tok.Username, "create_failed")
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return false
 	}
@@ -127,11 +132,51 @@ func installVerifiedPassword(d Deps, ctx core.HandlerContext, rctx context.Conte
 	}
 	if err := importer.SetPasswordHash(rctx, username, hash); err != nil {
 		d.Logger().Error("verify-email: set password hash failed", "username", username, "error", err)
+		recordSelfRegisteredFailure(d, ctx, rctx, username, "password_install_failed")
 		if derr := d.UserProvider().Delete(rctx, username); derr != nil {
 			d.Logger().Error("verify-email: rollback delete failed", "username", username, "error", derr)
 		}
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return false
+	}
+	return true
+}
+
+// recordSelfRegisteredFailure emits an EventSelfRegistered/OutcomeFailure audit event
+// when a non-nil Auditor is present. actorID may be empty for pre-user-creation failures.
+func recordSelfRegisteredFailure(d Deps, ctx core.HandlerContext, rctx context.Context, actorID, reason string) {
+	if d.Auditor() == nil {
+		return
+	}
+	d.Auditor().Record(rctx, &audit.Event{
+		Type:    audit.EventSelfRegistered,
+		Outcome: audit.OutcomeFailure,
+		Reason:  reason,
+		ActorID: actorID,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	})
+}
+
+// updateVerifiedEmail stamps email_verified=true on an already-existing user
+// record (Mode A opt-in verify). The user record is updated in-place so other
+// attributes are preserved. Emits EventSelfRegistered/success on the auditor.
+func updateVerifiedEmail(d Deps, ctx core.HandlerContext, rctx context.Context, u *core.User) bool {
+	if u.Attributes == nil {
+		u.Attributes = map[string]string{}
+	}
+	u.Attributes["email_verified"] = "true"
+	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
+		d.Logger().Error("verify-email: update email_verified failed", "user_id", u.ID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return false
+	}
+	if d.Auditor() != nil {
+		d.Auditor().Record(rctx, &audit.Event{
+			Type:    audit.EventSelfRegistered,
+			Outcome: audit.OutcomeSuccess,
+			ActorID: u.ID,
+			ActorIP: audit.ClientIP(ctx.Request()),
+		})
 	}
 	return true
 }

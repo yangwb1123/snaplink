@@ -121,10 +121,17 @@ func (s *Server) mountCoreOAuthOIDC() {
 	// Opt-in self-service signup. Needs a UserProvider (create) + credential
 	// store (set password). Default-off — byte-identical when not enabled.
 	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil {
-		s.router.POST(PathSignup, s.handleSelfRegister)
-		// Mandatory email verification endpoint (Mode B). Mounted only when
-		// signup requires verification AND the store + sender are wired.
-		if s.signupRequireVerification && s.emailVerificationStore != nil && s.emailVerificationSender != nil {
+		// Mode B (mandatory verification) requires the store + sender; without
+		// them the handler nil-derefs on EmailVerificationStore.Issue(). Suppress
+		// the route rather than panic at request time.
+		if !s.signupRequireVerification || (s.emailVerificationStore != nil && s.emailVerificationSender != nil) {
+			s.router.POST(PathSignup, s.handleSelfRegister)
+		}
+		// Verification endpoint: Mode B needs store + sender (both required for
+		// the register route above). Mode A opt-in (?send_verification=true) only
+		// needs the store — the sender was already invoked at register time.
+		// Mount whenever the store is wired so Mode A opt-in verify does not 404.
+		if s.emailVerificationStore != nil {
 			s.router.POST(PathVerifyEmail, s.handleVerifyEmail)
 		}
 	}
