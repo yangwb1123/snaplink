@@ -137,10 +137,19 @@ func defaultMethodScopes() map[string]string {
 // API (the same one HTTP gates at /api/v1/netpolicy/classify) — the mesh data
 // plane uses the IN-PROCESS classifier and the authz Check RPC, never this
 // service. The authz Authorizer (ext-authz data plane + subject permission
-// queries) and the discovery service registry are intentionally open on BOTH
-// transports and are therefore not gated. Gating by service prefix is fail-safe:
-// any future method added under a gated service is gated by default.
+// queries) is intentionally open on both transports. Discovery read operations
+// (Discover, Watch) are also open — service discovery clients query those without
+// admin tokens. Discovery write mutations (Register, Deregister) are gated by
+// exact method match because they modify the live service registry; a prefix gate
+// would block the open read operations on the same service. Gating by service
+// prefix is fail-safe for admin/audit/netpolicy: any future method added under
+// those services is gated by default.
 func isGatedGRPCMethod(fullMethod string) bool {
+	switch fullMethod {
+	case "/snaplink.discovery.v1.Discovery/Register",
+		"/snaplink.discovery.v1.Discovery/Deregister":
+		return true
+	}
 	return strings.HasPrefix(fullMethod, "/snaplink.admin.v1.") ||
 		strings.HasPrefix(fullMethod, "/snaplink.audit.v1.") ||
 		strings.HasPrefix(fullMethod, "/snaplink.netpolicy.v1.")

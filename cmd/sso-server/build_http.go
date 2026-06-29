@@ -8,12 +8,12 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/snaplink/sso/cmd/sso-server/serverwebauthn"
 	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/spi"
-
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"github.com/snaplink/sso/interfaces/grpcserver"
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handler, error) {
@@ -45,13 +45,13 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	if a.adminMW == nil || !cfg.Admin.APIRESTEnabled {
 		return base, nil
 	}
-	return buildAdminRESTMux(a, base, logger)
+	return buildAdminRESTMux(a, base, cfg, logger)
 }
 
 // buildAdminRESTMux registers the admin gRPC-gateway and composes the outer mux:
 // admin paths go through the admin middleware → gateway; everything else falls
 // through to the SSO runtime handler.
-func buildAdminRESTMux(a *app, base http.Handler, logger spi.Logger) (http.Handler, error) {
+func buildAdminRESTMux(a *app, base http.Handler, cfg *config.Config, logger spi.Logger) (http.Handler, error) {
 	gw := runtime.NewServeMux()
 	if err := registerAdminGateway(context.Background(), gw, a); err != nil {
 		return nil, err
@@ -59,6 +59,14 @@ func buildAdminRESTMux(a *app, base http.Handler, logger spi.Logger) (http.Handl
 	logger.Info("admin REST gateway mounted", "prefix", adminAPIPathPrefix)
 
 	gated := a.adminMW.HTTPMiddleware(gw)
+	// Apply the same request body-size cap as the main SSO middleware chain so
+	// admin write endpoints (JSON create/update) are covered by the operator's
+	// configured limit. Without this the gRPC-gateway subtree would accept
+	// arbitrarily large bodies, bypassing the cap. A limit of 0 means the
+	// operator has not configured one — skip wrapping to stay byte-identical.
+	if n := cfg.Security.BodyLimit.MaxBytes; n > 0 {
+		gated = handler.BodyLimitMiddleware(n, nil)(gated)
+	}
 	mux := http.NewServeMux()
 	mux.Handle(adminAPIPathPrefix, gated)
 	// The authz policy-bundle export is a custom HTTP handler on the SSO
