@@ -16,10 +16,15 @@ import (
 // no-store headers. Emits subject_data_exported (the bundle is never recorded).
 func HandleMyDataExport(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
-	userID, ok := d.MeSubjectOrChallenge(ctx)
+	claims, ok := d.MeClaimsOrChallenge(ctx)
 	if !ok {
 		return
 	}
+	if code, denied := d.ResidencyGateAccess(ctx, claims); denied {
+		ctx.JSON(http.StatusForbidden, d.ErrorBody(code))
+		return
+	}
+	userID := claims.Subject
 	exporter := d.DataExporter()
 	if exporter == nil {
 		ctx.JSON(http.StatusNotImplemented, d.ErrorBody(core.ErrInternal))
@@ -58,10 +63,15 @@ func HandleMyDataExport(d Deps, ctx core.HandlerContext) {
 // failures are recorded in the audit event. Credential-adjacent: no-store.
 func HandleMyAccountErase(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
-	userID, ok := d.MeSubjectOrChallenge(ctx)
+	claims, ok := d.MeClaimsOrChallenge(ctx)
 	if !ok {
 		return
 	}
+	if code, denied := d.ResidencyGateWrite(ctx, claims); denied {
+		ctx.JSON(http.StatusForbidden, d.ErrorBody(code))
+		return
+	}
+	userID := claims.Subject
 	var req struct {
 		Confirm string `json:"confirm"`
 		DryRun  bool   `json:"dry_run"`

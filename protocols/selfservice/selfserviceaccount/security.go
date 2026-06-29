@@ -18,10 +18,15 @@ import (
 // store's VerifyPassword is itself anti-enumeration (dummy compare on unknown).
 func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
-	userID, ok := d.MeSubjectOrChallenge(ctx)
+	claims, ok := d.MeClaimsOrChallenge(ctx)
 	if !ok {
 		return
 	}
+	if code, denied := d.ResidencyGateWrite(ctx, claims); denied {
+		ctx.JSON(http.StatusForbidden, d.ErrorBody(code))
+		return
+	}
+	userID := claims.Subject
 	var req struct {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`

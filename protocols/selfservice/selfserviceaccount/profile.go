@@ -7,6 +7,40 @@ import (
 	"github.com/snaplink/sso/shared/core"
 )
 
+// safeProfileAttrs is the OIDC Core §5.1 standard-claim set — the ONLY
+// User.Attributes keys safe to return from the self-service /me profile view.
+// DEFAULT-DENY: User.Attributes is a shared bag that also holds credentials
+// (password_hash, seeded_password) and internal metadata; only the operator-
+// visible profile keys belong in an API response. Matches the allowlist that
+// /userinfo enforces (protocols/oidc/oidcsupport).
+var safeProfileAttrs = map[string]struct{}{
+	"name": {}, "given_name": {}, "family_name": {}, "middle_name": {},
+	"nickname": {}, "preferred_username": {}, "profile": {}, "picture": {},
+	"website": {}, "email": {}, "email_verified": {}, "gender": {},
+	"birthdate": {}, "zoneinfo": {}, "locale": {}, "phone_number": {},
+	"phone_number_verified": {}, "address": {}, "updated_at": {},
+}
+
+// sanitizeProfileUser returns a shallow copy of u with Attributes filtered to
+// the allowlist above so credentials never appear in /me responses.
+func sanitizeProfileUser(u *core.User) *core.User {
+	if u == nil {
+		return u
+	}
+	var clean map[string]string
+	for k, v := range u.Attributes {
+		if _, ok := safeProfileAttrs[k]; ok {
+			if clean == nil {
+				clean = make(map[string]string, len(u.Attributes))
+			}
+			clean[k] = v
+		}
+	}
+	cp := *u
+	cp.Attributes = clean
+	return &cp
+}
+
 // HandleMe serves GET /me — the authenticated user's self-service account
 // overview: their own profile plus active-session and granted-app counts. The
 // landing entry for a self-service portal, consolidating data the SPA would
@@ -17,17 +51,22 @@ import (
 // response, and the sub/iss baseline is always present.
 func HandleMe(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
-	userID, ok := d.MeSubjectOrChallenge(ctx)
+	claims, ok := d.MeClaimsOrChallenge(ctx)
 	if !ok {
 		return
 	}
+	if code, denied := d.ResidencyGateAccess(ctx, claims); denied {
+		ctx.JSON(http.StatusForbidden, d.ErrorBody(code))
+		return
+	}
+	userID := claims.Subject
 	out := map[string]any{
 		core.KeyIss: d.ResolveIssuer(ctx),
 		core.KeySub: userID,
 	}
 	if up := d.UserProvider(); up != nil {
 		if u, err := up.GetByID(ctx.Request().Context(), userID); err == nil && u != nil {
-			out["user"] = u
+			out["user"] = sanitizeProfileUser(u)
 		}
 	}
 	if sm := d.SessionManager(); sm != nil {
@@ -54,10 +93,15 @@ func HandleMe(d Deps, ctx core.HandlerContext) {
 // lives outside self-service. Credential-adjacent: no-store headers.
 func HandleMyProfileUpdate(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
-	userID, ok := d.MeSubjectOrChallenge(ctx)
+	claims, ok := d.MeClaimsOrChallenge(ctx)
 	if !ok {
 		return
 	}
+	if code, denied := d.ResidencyGateWrite(ctx, claims); denied {
+		ctx.JSON(http.StatusForbidden, d.ErrorBody(code))
+		return
+	}
+	userID := claims.Subject
 	var req struct {
 		Name       string            `json:"name"`
 		Attributes map[string]string `json:"attributes"`
@@ -92,5 +136,5 @@ func HandleMyProfileUpdate(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
-	ctx.JSON(http.StatusOK, map[string]any{"user": u, core.KeyIss: d.ResolveIssuer(ctx)})
+	ctx.JSON(http.StatusOK, map[string]any{"user": sanitizeProfileUser(u), core.KeyIss: d.ResolveIssuer(ctx)})
 }

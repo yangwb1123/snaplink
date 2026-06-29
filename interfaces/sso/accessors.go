@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -108,6 +109,31 @@ func (s *Server) CrossReplicaRevocationEnabled() bool       { return s.crossRepl
 func (s *Server) InvalidationBus() cluster.Bus              { return s.invalidationBus }
 func (s *Server) DataExporter() *compliance.Exporter        { return s.dataExporter }
 func (s *Server) AccountEraser() *compliance.Eraser         { return s.accountEraser }
+
+// ResidencyGateAccess is the data-residency READ gate for the /me/* surface.
+// It delegates to the same engine as /userinfo; returns (code, true) when the
+// region denies access and the caller must write a 403.
+func (s *Server) ResidencyGateAccess(ctx HandlerContext, claims *TokenClaims) (string, bool) {
+	return s.residencyDeniedForAccess(ctx, claims)
+}
+
+// ResidencyGateWrite is the data-residency WRITE gate for the /me/* surface.
+// It resolves clientID → tenant and delegates to ResidencyDecision. Returns
+// (code, true) when the write must be denied; ("", false) when it may proceed.
+func (s *Server) ResidencyGateWrite(ctx HandlerContext, claims *TokenClaims) (string, bool) {
+	if !s.tenantResidencyEnabled || claims == nil || claims.ClientID == "" {
+		return "", false
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), claims.ClientID)
+	if err != nil || client == nil || client.TenantID == "" {
+		return "", false
+	}
+	servingRegion, ok := region.FromHandlerContext(ctx)
+	if !ok || servingRegion == "" {
+		return "", false
+	}
+	return s.ResidencyDecision(ctx.Request().Context(), client.TenantID, servingRegion, true)
+}
 
 // RecordConsentRevoked emits the consent-revoked audit event (selfservice seam).
 func (s *Server) RecordConsentRevoked(ctx HandlerContext, userID, clientID string) {

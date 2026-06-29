@@ -67,6 +67,16 @@ type Deps interface {
 	ResolveIssuer(ctx core.HandlerContext) string
 	SelfEditableAttrs() map[string]struct{}
 
+	// Data-residency gates for the /me/* surface. Both return (code, true) when
+	// the request must be denied (caller writes the 403); (_, false) when it may
+	// proceed. Zero-cost when residency is not wired (returns "", false).
+	//
+	// ResidencyGateAccess covers the read paths (GET /me, GET /me/data-export).
+	// ResidencyGateWrite covers the write paths (PATCH /me, POST /me/password,
+	// TOTP/passkey enroll, email change, account erase).
+	ResidencyGateAccess(ctx core.HandlerContext, claims *core.TokenClaims) (code string, denied bool)
+	ResidencyGateWrite(ctx core.HandlerContext, claims *core.TokenClaims) (code string, denied bool)
+
 	// WebAuthn passkey self-registration (POST /me/mfa/webauthn/{begin,finish}).
 	WebAuthnRegistrar() core.WebAuthnRegistrar
 
