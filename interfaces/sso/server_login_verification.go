@@ -18,7 +18,8 @@ func (s *Server) rejectUnverifiedEmail(ctx HandlerContext, req *login.Request, r
 		return false
 	}
 	u, uerr := s.userProvider.GetByID(ctx.Request().Context(), result.UserID)
-	if uerr == nil && u != nil && u.Attributes["email_verified"] != "true" {
+	// Fail closed: a store error or missing record cannot confirm verified status.
+	if uerr != nil || u == nil || u.Attributes["email_verified"] != "true" {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrEmailNotVerified)
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrEmailNotVerified))
 		return true
