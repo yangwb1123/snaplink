@@ -95,7 +95,12 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
   var ru = new URLSearchParams(window.location.search).get('redirect_uri');
   if (ru) {
-    document.getElementById('redirect-uri').setAttribute('data-uri', ru);
+    try {
+      var p = new URL(ru);
+      if (p.protocol === 'https:' || p.protocol === 'http:') {
+        document.getElementById('redirect-uri').setAttribute('data-uri', p.href);
+      }
+    } catch(e) {}
   }
 })();
 
@@ -162,9 +167,18 @@ function showSuccess() {
   document.getElementById('success-section').style.display = 'block';
   var ru = document.getElementById('redirect-uri').getAttribute('data-uri');
   if (ru) {
+    try {
+      var parsed = new URL(ru);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') { return; }
+    } catch(e) { return; }
     var msg = document.getElementById('redirect-message');
-    msg.innerHTML = 'Redirecting to <a href="' + ru + '">' + ru + '<\/a>\u2026';
-    setTimeout(function(){ window.location.href = ru; }, 2000);
+    var a = document.createElement('a');
+    a.href = parsed.href;
+    a.textContent = parsed.href;
+    msg.textContent = 'Redirecting to ';
+    msg.appendChild(a);
+    msg.appendChild(document.createTextNode('\u2026'));
+    setTimeout(function(){ window.location.href = parsed.href; }, 2000);
   }
 }
 
