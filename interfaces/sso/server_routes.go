@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -121,6 +122,11 @@ func (s *Server) mountCoreOAuthOIDC() {
 	// store (set password). Default-off — byte-identical when not enabled.
 	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil {
 		s.router.POST(PathSignup, s.handleSelfRegister)
+		// Mandatory email verification endpoint (Mode B). Mounted only when
+		// signup requires verification AND the store + sender are wired.
+		if s.signupRequireVerification && s.emailVerificationStore != nil && s.emailVerificationSender != nil {
+			s.router.POST(PathVerifyEmail, s.handleVerifyEmail)
+		}
 	}
 	s.router.POST(PathToken, s.handleToken)
 	s.router.POST(PathIntrospect, s.handleIntrospect)
@@ -340,6 +346,15 @@ func (s *Server) Handler() http.Handler {
 // the documented outermost->innermost order. trustedProxies MUST wrap before
 // rate limiting so the limiter keys on the validated real client IP.
 func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
+	// Security headers wrap the router innermost so they fire during
+	// response writing — after inner handlers have set their own headers
+	// (Cache-Control: no-store, X-Frame-Options: DENY, etc). The
+	// headerOnceResponseWriter pattern prevents overwriting already-set
+	// headers. Probe endpoints (/livez, /readyz, /metrics) are served by
+	// buildProbeMux outside this chain and are NOT affected.
+	if s.securityHeadersEnabled {
+		inner = handler.SecurityHeaders(inner)
+	}
 	if s.corsPolicy != nil {
 		// CORS sits innermost (just outside the router) so preflight
 		// 204s don't traverse routing, but still get counted by metrics

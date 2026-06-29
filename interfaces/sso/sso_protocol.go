@@ -39,6 +39,7 @@ type protocolState struct {
 	readyChecks                    []namedReadyCheck
 	tracingOperation               string
 	corsPolicy                     *cors.Policy
+	securityHeadersEnabled         bool
 	issuer                         string
 	authCodeStore                  oauth.AuthCodeStore
 	authCodeTTL                    time.Duration

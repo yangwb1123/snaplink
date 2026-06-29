@@ -61,3 +61,35 @@ type EmailChangeLister interface {
 // missing, expired, or already consumed. Callers MUST collapse all three to a
 // single email_change_invalid wire response.
 var ErrEmailChangeTokenNotFound = errors.New("sso: email change token not found or expired")
+
+// EmailVerificationToken is a single-use, short-TTL token authorizing signup
+// email verification. Bound to (Username, Email) at issue time and delivered
+// to the target address — consuming it before user creation proves the
+// registrant controls that email.
+type EmailVerificationToken struct {
+	Token     string    // SHA-256 hash of the raw token (store primary key)
+	Username  string    // the desired username at signup
+	Email     string    // the address being verified
+	ExpiresAt time.Time // absolute expiry
+}
+
+// IsExpired reports whether the token has passed its expiry.
+func (e *EmailVerificationToken) IsExpired() bool { return time.Now().After(e.ExpiresAt) }
+
+// EmailVerificationStore persists single-use signup email-verification tokens.
+// Issue stores the SHA-256 hash as the key; Consume atomically retrieves AND
+// deletes the token by SHA-256 hash. Missing, expired, or already-consumed all
+// return ErrVerificationTokenNotFound (oracle-safe).
+type EmailVerificationStore interface {
+	// Issue stores a new token (keyed by tok.Token — the SHA-256 hash).
+	Issue(ctx context.Context, tok *EmailVerificationToken) error
+
+	// Consume atomically retrieves AND deletes the token by its SHA-256 hash.
+	// Returns ErrVerificationTokenNotFound on any failure.
+	Consume(ctx context.Context, token string) (*EmailVerificationToken, error)
+}
+
+// ErrVerificationTokenNotFound is the sentinel Consume returns when a token is
+// missing, expired, or already consumed. Callers MUST collapse all cases to a
+// single verification_invalid wire response.
+var ErrVerificationTokenNotFound = errors.New("sso: email verification token not found or expired")

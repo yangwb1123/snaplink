@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/domains/metering"
 	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -80,6 +81,15 @@ type selfServiceState struct {
 	emailChangeStore  EmailChangeStore
 	emailChangeTTL    time.Duration
 	emailChangeSender spi.EmailChangeSender
+
+	// Signup email verification. emailVerificationStore persists verification
+	// tokens (SHA-256 hashed); emailVerificationSender delivers them.
+	// signupRequireVerification gates mandatory verification mode (Mode B);
+	// emailVerificationTTL bounds token validity (default 15 min).
+	emailVerificationStore   core.EmailVerificationStore
+	emailVerificationSender  spi.EmailVerificationSender
+	signupRequireVerification bool
+	emailVerificationTTL     time.Duration
 
 	// signupEnabled gates POST /auth/register (opt-in self-service signup).
 	// Mounts only when also a UserProvider + PasswordCredentialStore are wired

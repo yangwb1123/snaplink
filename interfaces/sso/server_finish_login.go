@@ -361,6 +361,11 @@ func validatePKCEForCode(req *login.Request, client *Client, oauth21Strict bool)
 	if req.CodeChallengeMethod == "" {
 		req.CodeChallengeMethod = PKCEMethodPlain
 	}
+	// OAuth 2.1 §7.6 requires S256. An omitted method (defaulted to "plain")
+	// and an explicit "plain" are both rejected when strict mode is on.
+	if oauth21Strict && req.CodeChallengeMethod != PKCEMethodS256 {
+		return ErrInvalidPKCEMethod
+	}
 	// Per-client PKCE method allowlist (Client.AllowedPKCEMethods): when set,
 	// every challenge method MUST appear in the list — the canonical use case is
 	// forcing S256 on production clients while leaving legacy clients on the

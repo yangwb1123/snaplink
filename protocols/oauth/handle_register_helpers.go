@@ -122,6 +122,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
 		RegistrationAccessToken: regToken,
 
+		GrantTypes:                  append([]string(nil), req.GrantTypes...),
 		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
@@ -210,6 +211,7 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string)
 		RequirePKCE:      req.RequirePKCE || client.Secret == "",
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
+		GrantTypes:              append([]string(nil), req.GrantTypes...),
 
 		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,

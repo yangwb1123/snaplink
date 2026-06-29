@@ -140,6 +140,10 @@ func (s *Server) handleSendCode(ctx HandlerContext) {
 	if err := sender.SendCode(ctx.Request().Context(), req.Target); err != nil {
 		s.logger.Error("send code failed", "provider", req.Provider, "error", err)
 		s.recordCodeSent(ctx, req.Provider, req.Target, false)
+		if errors.Is(err, spi.ErrCodeCooldownActive) {
+			ctx.JSON(http.StatusTooManyRequests, errorBody(ErrResendTooSoon))
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrSendFailed))
 		return
 	}

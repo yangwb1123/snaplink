@@ -10,11 +10,16 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/shared/spi"
 )
 
-const otpCodePrefix = "sso:otp:" // sso:otp:<key> -> the one-time code
+const (
+	otpCodePrefix     = "sso:otp:"    // sso:otp:<key> -> the one-time code
+	otpCooldownPrefix = "sso:otp:cd:" // sso:otp:cd:<key> -> cooldown sentinel
+)
 
-func otpCodeKey(key string) string { return otpCodePrefix + key }
+func otpCodeKey(key string) string     { return otpCodePrefix + key }
+func otpCooldownKey(key string) string { return otpCooldownPrefix + key }
 
 // CodeStore is the Redis-backed, cluster-shared [authenticators.CodeStore] for
 // passwordless email/phone OTP. The memory peer keeps the code in one replica's
@@ -31,12 +36,13 @@ func otpCodeKey(key string) string { return otpCodePrefix + key }
 // CORRECT submissions of the same code both succeeding — a benign double-use far
 // less consequential than dropping a typo retry or leaking a timing signal.
 type CodeStore struct {
-	rdb goredis.Cmdable
+	rdb      goredis.Cmdable
+	cooldown time.Duration
 }
 
 // NewCodeStore builds the store over an existing go-redis client.
 func NewCodeStore(rdb goredis.Cmdable) *CodeStore {
-	return &CodeStore{rdb: rdb}
+	return &CodeStore{rdb: rdb, cooldown: authenticators.DefaultCodeResendCooldown}
 }
 
 // Ping reports Redis health for [sso.WithReadyCheck].
@@ -50,9 +56,19 @@ func (s *CodeStore) Ping(ctx context.Context) error {
 // Save stores code under key with the given TTL (redis evicts it on expiry, so
 // Verify's expiry check is just a GET miss). A non-positive TTL is a no-op
 // (mirrors the auth_code/par stores) — a code with no expiry must never persist.
+// When a cooldown is configured (default 60 s), a SetNX on the cooldown key
+// gates repeated sends: if the key already exists the cooldown is active and
+// spi.ErrCodeCooldownActive is returned without overwriting the live code.
 func (s *CodeStore) Save(ctx context.Context, key, code string, ttl time.Duration) error {
 	if ttl <= 0 {
 		return nil
+	}
+	if s.cooldown > 0 {
+		ok, err := s.rdb.SetNX(ctx, otpCooldownKey(key), 1, s.cooldown).Result()
+		if err == nil && !ok {
+			return spi.ErrCodeCooldownActive
+		}
+		// On Redis error: fail open — don't block code sends due to Redis issues.
 	}
 	if err := s.rdb.Set(ctx, otpCodeKey(key), code, ttl).Err(); err != nil {
 		return fmt.Errorf("redis: save otp code: %w", err)

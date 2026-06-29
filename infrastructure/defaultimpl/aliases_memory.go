@@ -64,8 +64,9 @@ var (
 
 // --- memorystorecredential ---
 type (
-	MemoryEmailChangeStore        = memorystorecredential.MemoryEmailChangeStore
-	MemoryIPFailureCounter        = memorystorecredential.MemoryIPFailureCounter
+	MemoryEmailChangeStore            = memorystorecredential.MemoryEmailChangeStore
+	MemoryEmailVerificationStore      = memorystorecredential.MemoryEmailVerificationStore
+	MemoryIPFailureCounter            = memorystorecredential.MemoryIPFailureCounter
 	MemoryJTIReplayStore          = memorystorecredential.MemoryJTIReplayStore
 	MemoryPasswordCredentialStore = memorystorecredential.MemoryPasswordCredentialStore
 	MemoryPasswordResetStore      = memorystorecredential.MemoryPasswordResetStore
@@ -74,8 +75,9 @@ type (
 )
 
 var (
-	NewMemoryEmailChangeStore        = memorystorecredential.NewMemoryEmailChangeStore
-	NewMemoryIPFailureCounter        = memorystorecredential.NewMemoryIPFailureCounter
+	NewMemoryEmailChangeStore            = memorystorecredential.NewMemoryEmailChangeStore
+	NewMemoryEmailVerificationStore      = memorystorecredential.NewMemoryEmailVerificationStore
+	NewMemoryIPFailureCounter            = memorystorecredential.NewMemoryIPFailureCounter
 	NewMemoryJTIReplayStore          = memorystorecredential.NewMemoryJTIReplayStore
 	NewMemoryPasswordCredentialStore = memorystorecredential.NewMemoryPasswordCredentialStore
 	NewMemoryPasswordResetStore      = memorystorecredential.NewMemoryPasswordResetStore

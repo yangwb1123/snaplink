@@ -1,8 +1,12 @@
 package selfservice
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/platform/audit"
@@ -15,6 +19,17 @@ import (
 // account and sets the password, reusing the wired UserProvider +
 // PasswordCredentialStore. The username becomes the userID (the same identity
 // assumption the default forgot-password resolver makes).
+//
+// When require_verification is true (Mode B — mandatory email verification):
+//   - Email is required (400 if empty)
+//   - A verification token is issued, stored as SHA-256 hash, and sent
+//   - Returns 201 {"status":"pending"} — user is NOT created yet
+//   - POST /auth/verify-email (HandleVerifyEmail) completes the flow
+//
+// When require_verification is false (Mode A — optional, default):
+//   - Current flow preserved for backward compatibility
+//   - When email is provided, sets email_verified="true" (short-circuit trust)
+//   - Supports ?send_verification=true query param for optional verification
 //
 // NEVER overwrites an existing account: it pre-checks GetByID and rejects a
 // taken username with 409 account_exists (CreateOrUpdate is an upsert, so the
@@ -39,6 +54,7 @@ func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	rctx := ctx.Request().Context()
+
 	if existing, err := d.UserProvider().GetByID(rctx, username); err == nil && existing != nil {
 		// Username taken — signup must not overwrite. (Operators who treat the
 		// username as PII/email and want anti-enumeration should front this.)
@@ -46,12 +62,89 @@ func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusConflict, d.ErrorBody(core.ErrAccountExists))
 		return
 	}
-	if err := d.UserProvider().CreateOrUpdate(rctx, &core.User{ID: username, Email: strings.TrimSpace(req.Email)}); err != nil {
+
+	if d.SignupRequiresVerification() {
+		handleMandatoryVerificationSignup(d, ctx, username, req.Password, strings.TrimSpace(req.Email))
+		return
+	}
+	handleOptionalVerificationSignup(d, ctx, username, req.Password, strings.TrimSpace(req.Email))
+}
+
+// handleMandatoryVerificationSignup implements Mode B: requires email, issues
+// a verification token, sends it, and returns 201 {"status":"pending"} without
+// creating the user. They complete via POST /auth/verify-email.
+func handleMandatoryVerificationSignup(d Deps, ctx core.HandlerContext, username, password, email string) {
+	if email == "" {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+
+	rctx := ctx.Request().Context()
+
+	// Generate a 32-byte random token.
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		d.Logger().Error("signup: generate verification token failed", "username", username, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	rawToken := hex.EncodeToString(raw)
+
+	// SHA-256 hash for storage.
+	h := sha256.Sum256([]byte(rawToken))
+	hash := hex.EncodeToString(h[:])
+
+	ttl := d.EmailVerificationTTL()
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+
+	tok := &core.EmailVerificationToken{
+		Token:     hash,
+		Username:  username,
+		Email:     email,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+
+	if err := d.EmailVerificationStore().Issue(rctx, tok); err != nil {
+		d.Logger().Error("signup: issue verification token failed", "username", username, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+
+	// Send the plaintext token (never persisted).
+	if err := d.EmailVerificationSender().SendEmailVerificationToken(rctx, email, rawToken); err != nil {
+		d.Logger().Error("signup: send verification token failed", "username", username, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+
+	recordSelfRegister(d, ctx, username, true)
+	ctx.JSON(http.StatusCreated, map[string]any{"status": "pending"})
+}
+
+// handleOptionalVerificationSignup implements Mode A: creates the user
+// immediately. When email is provided, sets email_verified="true" (short-
+// circuit trust). Supports ?send_verification=true for optional verification.
+func handleOptionalVerificationSignup(d Deps, ctx core.HandlerContext, username, password, email string) {
+	rctx := ctx.Request().Context()
+
+	attrs := make(map[string]string)
+	if email != "" {
+		attrs["email_verified"] = "true"
+	}
+
+	u := &core.User{
+		ID:         username,
+		Email:      email,
+		Attributes: attrs,
+	}
+	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
 		d.Logger().Error("signup: create user failed", "username", username, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
-	if err := d.PasswordCredentialStore().SetPassword(rctx, username, req.Password); err != nil {
+	if err := d.PasswordCredentialStore().SetPassword(rctx, username, password); err != nil {
 		// Roll back the just-created user so we don't leave a passwordless
 		// orphan account (best-effort; Delete is idempotent).
 		d.Logger().Error("signup: set password failed, rolling back user", "username", username, "error", err)
@@ -61,8 +154,53 @@ func HandleSelfRegister(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
+
+	// Optional: send verification token even in Mode A if ?send_verification=true.
+	if email != "" && ctx.Query("send_verification") == "true" {
+		sendOptionalVerification(d, ctx, username, email)
+	}
+
 	recordSelfRegister(d, ctx, username, true)
 	ctx.JSON(http.StatusCreated, map[string]any{"status": "created", "user_id": username})
+}
+
+// sendOptionalVerification sends a verification token for Mode A when the
+// ?send_verification=true query param is set. Best-effort; failures are
+// logged but do not block the signup response.
+func sendOptionalVerification(d Deps, ctx core.HandlerContext, username, email string) {
+	if d.EmailVerificationStore() == nil || d.EmailVerificationSender() == nil {
+		return
+	}
+	rctx := ctx.Request().Context()
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		d.Logger().Error("signup: optional verification token generation failed", "username", username, "error", err)
+		return
+	}
+	rawToken := hex.EncodeToString(raw)
+
+	h := sha256.Sum256([]byte(rawToken))
+	hash := hex.EncodeToString(h[:])
+
+	ttl := d.EmailVerificationTTL()
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+
+	tok := &core.EmailVerificationToken{
+		Token:     hash,
+		Username:  username,
+		Email:     email,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+	if err := d.EmailVerificationStore().Issue(rctx, tok); err != nil {
+		d.Logger().Error("signup: optional verification issue failed", "username", username, "error", err)
+		return
+	}
+	if err := d.EmailVerificationSender().SendEmailVerificationToken(rctx, email, rawToken); err != nil {
+		d.Logger().Error("signup: optional verification send failed", "username", username, "error", err)
+	}
 }
 
 func recordSelfRegister(d Deps, ctx core.HandlerContext, username string, ok bool) {

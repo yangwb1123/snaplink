@@ -323,6 +323,14 @@ type Client struct {
 	// not DCR-settable.
 	ConsentRefreshInterval time.Duration `json:"consent_refresh_interval,omitempty" yaml:"consent_refresh_interval,omitempty"`
 
+	// GrantTypes restricts which OAuth 2.0 grant types this client may use at
+	// /token. When non-empty, the token endpoint returns unauthorized_client
+	// for any grant not in the list (RFC 6749 §5.2, RFC 8693 §4.5). Empty
+	// means unrestricted — any server-supported grant type is accepted
+	// (backward-compatible default for operator-provisioned clients). DCR
+	// clients have this set from the registration request's grant_types.
+	GrantTypes []string `json:"grant_types,omitempty" yaml:"grant_types,omitempty"`
+
 	// Attributes is an open per-client extension bag for optional
 	// capabilities that don't warrant a first-class field. It carries
 	// REGISTERED, server-side configuration only — never request input.

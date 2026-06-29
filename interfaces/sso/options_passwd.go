@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -75,6 +76,36 @@ func WithEmailChangeStore(store EmailChangeStore, ttl time.Duration) Option {
 // the user's NEW address (proving they control it). Required for the flow.
 func WithEmailChangeSender(sender spi.EmailChangeSender) Option {
 	return func(srv *Server) { srv.emailChangeSender = sender }
+}
+
+// WithSignupRequireVerification enables mandatory email verification for
+// self-service signup (Mode B). When true, POST /auth/register requires an
+// email field, issues a verification token, and returns 201 {"status":"pending"}
+// without creating the user. The user completes signup via POST /auth/verify-email.
+// Requires WithEmailVerificationStore and WithEmailVerificationSender to be wired
+// as well. Default false (Mode A — optional verification, backward compatible).
+func WithSignupRequireVerification(require bool) Option {
+	return func(srv *Server) { srv.signupRequireVerification = require }
+}
+
+// WithEmailVerificationStore wires the single-use token store for signup email
+// verification (POST /auth/verify-email). ttl bounds a token's life (0 = 15 min).
+// The route mounts only when signup is enabled AND require_verification is true.
+// Nil ⇒ byte-identical.
+func WithEmailVerificationStore(store core.EmailVerificationStore, ttl time.Duration) Option {
+	return func(srv *Server) {
+		srv.emailVerificationStore = store
+		if ttl > 0 {
+			srv.emailVerificationTTL = ttl
+		}
+	}
+}
+
+// WithEmailVerificationSender wires delivery of the signup email verification
+// token to the target address. Required for mandatory verification (Mode B) and
+// optional ?send_verification=true support (Mode A).
+func WithEmailVerificationSender(sender spi.EmailVerificationSender) Option {
+	return func(srv *Server) { srv.emailVerificationSender = sender }
 }
 
 // WithSelfServiceSignup enables the opt-in UNAUTHENTICATED self-service
@@ -290,11 +321,23 @@ func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
 	return func(srv *Server) { srv.passwordCredentialStore = s }
 }
 
-// WithPasswordResetStore wires the single-use reset-token store backing the
-// UNAUTHENTICATED forgot-password flow (POST /auth/forgot-password +
-// /auth/reset-password). ttl bounds a token's life (0 = DefaultPasswordResetTTL).
-// The routes mount only when this AND a PasswordCredentialStore are both wired
-// (the reset must SetPassword on success). Nil ⇒ byte-identical to a build
-// without the flow. The resolver + sender (below) are also required for
-// forgot-password to actually resolve + deliver — without them the endpoint
-// still returns 200 (anti-enumeration) but does nothing.
+// WithSecurityHeaders enables a global HTTP middleware that adds browser-security
+// response headers to every SSO router endpoint:
+//
+//   - X-Content-Type-Options: nosniff
+//   - X-Frame-Options: DENY
+//   - Referrer-Policy: no-referrer
+//   - Strict-Transport-Security: max-age=31536000; includeSubDomains (TLS only)
+//
+// Headers already set by inner handlers are NOT overwritten (existing per-handler
+// X-Frame-Options: DENY on form_post/jarm survive). Cache-Control: no-store set
+// by credential endpoints is also preserved. HSTS is only emitted when the request
+// arrived over TLS to avoid breaking the dev HTTP workflow.
+//
+// Probe endpoints (/livez, /readyz, /metrics) are served outside the router chain
+// and are NOT affected — they remain header-free.
+//
+// Off by default (byte-identical to a build without the feature).
+func WithSecurityHeaders() Option {
+	return func(s *Server) { s.securityHeadersEnabled = true }
+}

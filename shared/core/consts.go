@@ -75,6 +75,12 @@ const (
 	PathMyEmailChange = "/me/email/change"
 	PathMyEmailVerify = "/me/email/verify"
 
+	// PathVerifyEmail is the unauthenticated endpoint for completing signup
+	// email verification (POST {token}). Consumes the token and atomically
+	// creates the user. Only mounted when signup with require_verification is
+	// enabled.
+	PathVerifyEmail = "/auth/verify-email"
+
 	// PathMyDataExport is the authenticated GDPR Art. 15 self-service data
 	// export: the bearer downloads a portable bundle of their OWN data (GET).
 	// The admin-gated /api/v1/compliance path exports an arbitrary subject;

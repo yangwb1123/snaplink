@@ -3,6 +3,7 @@ package sso
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/snaplink/sso/internal/handler/tokengrant"
@@ -47,6 +48,13 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	}
 
 	if s.enforceFAPITokenRules(ctx, req, basicAuthUsed, dpopJKT, mtlsX5T) {
+		return
+	}
+
+	// RFC 6749 §5.2 / RFC 8693 §4.5: when a client declares GrantTypes the AS
+	// MUST reject any grant not in the list. Empty = unrestricted (backward compat).
+	if len(client.GrantTypes) > 0 && !slices.Contains(client.GrantTypes, req.GrantType) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnauthorizedClient))
 		return
 	}
 

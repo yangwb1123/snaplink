@@ -5,12 +5,18 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/protocols/selfservice"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
 
 // handleSelfRegister delegates to selfservice.HandleSelfRegister.
 func (s *Server) handleSelfRegister(ctx HandlerContext) {
 	selfservice.HandleSelfRegister(s, ctx)
+}
+
+// handleVerifyEmail delegates to selfservice.HandleVerifyEmail.
+func (s *Server) handleVerifyEmail(ctx HandlerContext) {
+	selfservice.HandleVerifyEmail(s, ctx)
 }
 
 // Deps interface implementation for selfservice.Deps
@@ -110,6 +116,27 @@ func (s *Server) handleMyEmailVerify(ctx HandlerContext) {
 // EmailChangeSender returns the email change sender.
 func (s *Server) EmailChangeSender() spi.EmailChangeSender {
 	return s.emailChangeSender
+}
+
+// EmailVerificationStore returns the email verification store.
+func (s *Server) EmailVerificationStore() core.EmailVerificationStore {
+	return s.emailVerificationStore
+}
+
+// EmailVerificationSender returns the email verification sender.
+func (s *Server) EmailVerificationSender() spi.EmailVerificationSender {
+	return s.emailVerificationSender
+}
+
+// SignupRequiresVerification returns whether mandatory email verification is
+// enabled for self-service signup.
+func (s *Server) SignupRequiresVerification() bool {
+	return s.signupRequireVerification
+}
+
+// EmailVerificationTTL returns the email verification token TTL.
+func (s *Server) EmailVerificationTTL() time.Duration {
+	return s.emailVerificationTTL
 }
 
 // handleForgotPassword delegates to selfservice.HandleForgotPassword.

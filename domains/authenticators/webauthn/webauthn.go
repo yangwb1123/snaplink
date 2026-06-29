@@ -76,6 +76,13 @@ type Helper struct {
 	sessions   SessionStore
 	sessionTTL time.Duration
 
+	// ceremonyTimeout, when > 0, sets the timeout (in milliseconds) sent
+	// to the browser in the PublicKeyCredential's timeout parameter. After
+	// this duration the browser cancels the ceremony automatically. 0 = no
+	// explicit timeout — the library default is used (backward compatible).
+	// Recommended: 60 * time.Second.
+	ceremonyTimeout time.Duration
+
 	// conveyance, when non-empty, is passed to BeginRegistration as
 	// gw.WithConveyancePreference so the authenticator is asked to
 	// produce an attestation statement ("direct"/"enterprise") or a
@@ -110,6 +117,13 @@ type Config struct {
 	RPDisplayName string
 	RPOrigins     []string
 	SessionTTL    time.Duration
+
+	// CeremonyTimeout is the timeout sent to the browser in the
+	// PublicKeyCredential's timeout parameter (milliseconds). After this
+	// duration the browser cancels the ceremony automatically. 0 = no
+	// explicit timeout — the library default is used (backward compatible).
+	// Recommended: 60 * time.Second.
+	CeremonyTimeout time.Duration
 
 	// AttestationConveyance sets the WebAuthn attestation conveyance
 	// preference sent to the client at BeginRegistration. Accepts
@@ -192,6 +206,7 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		users:                   users,
 		sessions:                sessions,
 		sessionTTL:              ttl,
+		ceremonyTimeout:         cfg.CeremonyTimeout,
 		conveyance:              conveyance,
 		attestationPolicy:       cfg.AttestationPolicy,
 		requireUserVerification: cfg.RequireUserVerification,
@@ -300,6 +315,12 @@ func (h *Helper) BeginRegistration(ctx context.Context, name, displayName string
 		// is passed and the creation options are byte-identical to today.
 		opts = append(opts, gw.WithConveyancePreference(h.conveyance))
 	}
+	if h.ceremonyTimeout > 0 {
+		timeoutMs := int(h.ceremonyTimeout.Milliseconds())
+		opts = append(opts, func(cco *protocol.PublicKeyCredentialCreationOptions) {
+			cco.Timeout = timeoutMs
+		})
+	}
 	creation, session, err := h.core.BeginRegistration(user, opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("webauthn: begin registration: %w", err)
@@ -342,66 +363,6 @@ func (h *Helper) FinishRegistration(ctx context.Context, sessionID string, r *ht
 	return cred, nil
 }
 
-// MDSEnabled reports whether this Helper was wired with a FIDO Metadata
-// Service provider (gw.Config.MDS), i.e. whether go-webauthn's
-// VerifyAttestation will root-validate the attestation chain against the MDS
-// (the adversary-resistant posture). The wiring layer uses it for the startup
-// signal + tests; nil/unset ⇒ false (the operational-control default).
-func (h *Helper) MDSEnabled() bool {
-	return h != nil && h.core != nil && h.core.Config != nil && h.core.Config.MDS != nil
-}
-
-// AttestationPolicyEnabled reports whether this Helper has an active
-// attestation policy (mode != off). The wiring layer uses it to decide
-// whether to emit the registration audit events — keeping a Helper WITHOUT
-// a policy byte-identical to a pre-policy build (no new audit on the
-// success path). When the operator opts into a policy, the success +
-// denial audit events become part of that feature.
-func (h *Helper) AttestationPolicyEnabled() bool {
-	return h.attestationPolicy.Enabled()
-}
-
-// checkAttestationPolicy applies the configured [AttestationPolicy] to a
-// freshly-verified credential. Returns nil when no policy is configured
-// (mode off) or the authenticator is permitted; otherwise an
-// [AttestationDeniedError] carrying the canonical AAGUID + the policy mode +
-// a machine-readable Reason. The canonical AAGUID is best-effort for the
-// error/audit (an unparseable AAGUID yields "" but the denial still stands
-// under allowlist).
-//
-// When a policy is ACTIVE the gate FIRST rejects a credential that conveyed
-// NO attestation (format "none"). go-webauthn's VerifyAttestation accepts the
-// "none" format with ZERO signature verification, so such a credential's
-// AAGUID is the all-zero / unverifiable value: a denylist would never match
-// it (a banned authenticator could downgrade to "none" and slip through) and
-// an allowlist gate on an un-attested AAGUID is meaningless. Conveyance is
-// only a PREFERENCE the client may ignore, so even an RP that asked for
-// "direct" can receive a "none" credential — this is the structural fix that
-// makes an active policy demand a verified attestation statement. The boot
-// guard (requiring conveyance >= direct for an active policy) is the
-// complementary half; together they close the downgrade bypass. Default-off
-// (no policy) performs NO format check — byte-identical to a pre-policy build.
-func (h *Helper) checkAttestationPolicy(cred *gw.Credential) error {
-	if !h.attestationPolicy.Enabled() {
-		return nil
-	}
-	if strings.EqualFold(strings.TrimSpace(cred.AttestationFormat), AttestationFormatNone) {
-		return &AttestationDeniedError{
-			AAGUID: CredentialAAGUID(cred.Authenticator.AAGUID),
-			Mode:   h.attestationPolicy.Mode,
-			Reason: ReasonAttestationFormatNone,
-		}
-	}
-	if err := h.attestationPolicy.Check(cred.Authenticator.AAGUID); err != nil {
-		canon, cerr := canonicalAAGUIDFromBytes(cred.Authenticator.AAGUID)
-		if cerr != nil {
-			canon = ""
-		}
-		return &AttestationDeniedError{AAGUID: canon, Mode: h.attestationPolicy.Mode, Reason: ReasonAAGUIDNotPermitted}
-	}
-	return nil
-}
-
 // BeginLogin starts an authentication ceremony for name. Returns
 // the CredentialAssertion options + an opaque sessionID. When the
 // Helper was built with RequireUserVerification, the assertion demands
@@ -428,6 +389,12 @@ func (h *Helper) beginLogin(ctx context.Context, name string, requireUV bool) (*
 		// session.UserVerification is "required" regardless of any future
 		// library default for AuthenticatorSelection.
 		opts = append(opts, gw.WithUserVerification(protocol.VerificationRequired))
+	}
+	if h.ceremonyTimeout > 0 {
+		timeoutMs := int(h.ceremonyTimeout.Milliseconds())
+		opts = append(opts, func(cco *protocol.PublicKeyCredentialRequestOptions) {
+			cco.Timeout = timeoutMs
+		})
 	}
 	assertion, session, err := h.core.BeginLogin(user, opts...)
 	if err != nil {

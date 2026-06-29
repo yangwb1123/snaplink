@@ -34,6 +34,12 @@ type Deps interface {
 	EmailChangeSender() spi.EmailChangeSender
 	EmailChangeStore() core.EmailChangeStore
 
+	// Email verification (signup)
+	EmailVerificationStore() core.EmailVerificationStore
+	EmailVerificationSender() spi.EmailVerificationSender
+	SignupRequiresVerification() bool
+	EmailVerificationTTL() time.Duration
+
 	// Session management
 	SessionManager() core.SessionManager
 
