@@ -11,6 +11,23 @@ import (
 	"github.com/snaplink/sso/shared/security"
 )
 
+// MaxActChainDepth caps the RFC 8693 §4.1 `act` delegation chain length.
+// A subject_token whose act chain has already reached this depth cannot
+// accept another prepend; unbounded nesting risks exponential processing
+// on each subsequent exchange hop.
+const MaxActChainDepth = 10
+
+// actChainDepth counts the links in an *core.ActorClaim chain.
+// nil (no delegation) returns 0.
+func actChainDepth(actor *core.ActorClaim) int {
+	depth := 0
+	for actor != nil {
+		depth++
+		actor = actor.Actor
+	}
+	return depth
+}
+
 // tokExState carries the values resolved across the RFC 8693 token-exchange
 // stage helpers. It exists only to keep each stage under the per-function
 // budgets while leaving every wire code emitted at its original gate position;
@@ -113,6 +130,22 @@ func tokExResolveSubject(d TokenExchangeDeps, ctx core.HandlerContext, req Token
 		return true
 	}
 	st.claims = claims
+	// RFC 8693 §2.1 + RFC 9449 §5: the exchange MUST NOT reduce the protection
+	// level below the subject_token. A DPoP-bound subject (cnf.jkt present) MUST
+	// be exchanged by a requester that also presents a DPoP proof — absence would
+	// issue an unbound (bearer) token from a bound one. We do NOT require the SAME
+	// key; an intermediary may legitimately bind to its own key. The violation is
+	// presenting NO proof at all. Mirrors the key-continuity check at refresh:79
+	// but uses a presence-only guard rather than an exact-match guard. Same rule
+	// for mTLS-bound subjects (cnf.x5t#S256 — a client cert must be presented).
+	if st.claims.ConfirmationJKT != "" && req.DPoPJKT == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
+	if st.claims.ConfirmationX5TS256 != "" && req.MTLSX5T == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
 	return false
 }
 
@@ -179,6 +212,12 @@ func tokExResolveActor(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 	// RFC 8693 §4.1.1: when the subject_token already carries an `act` claim
 	// (it was itself a delegated token), the new act prepends the current
 	// actor and nests the previous chain beneath, preserving full provenance.
+	// Guard: reject before prepending so the resulting chain stays within the
+	// depth cap — unbounded nesting risks exponential cost on further hops.
+	if actChainDepth(st.claims.Actor) >= MaxActChainDepth {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true, false
+	}
 	st.actor = &core.ActorClaim{Subject: actorClaims.Subject, Actor: st.claims.Actor}
 	return false, false
 }

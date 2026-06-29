@@ -678,3 +678,90 @@ func TestTokenExchange_DiscoveryAdvertisesGrant(t *testing.T) {
 		t.Errorf("token-exchange grant not advertised in discovery: %v", grants)
 	}
 }
+
+// TestTokenExchange_DPoPBoundSubject_NoProofRejected locks RFC 8693 §2.1 +
+// RFC 9449 §5: exchanging a DPoP-bound subject_token without a DPoP proof MUST
+// be rejected with invalid_grant. Issuing an unbound (bearer) token from a
+// cnf-bound one would silently reduce the protection level.
+func TestTokenExchange_DPoPBoundSubject_NoProofRejected(t *testing.T) {
+	srv := newDPoPHarness(t)
+	priv, x := dpopGenKey(t)
+
+	// Obtain a DPoP-bound access token via client_credentials.
+	proof := signDPoPProof(t, priv, x, http.MethodPost, srv.URL+"/token")
+	_, ccBody := callTokenWithDPoP(t, srv, proof)
+	subjectToken, _ := ccBody["access_token"].(string)
+	if subjectToken == "" {
+		t.Fatalf("no access_token from DPoP client_credentials: %v", ccBody)
+	}
+
+	// Exchange the DPoP-bound token WITHOUT presenting a DPoP proof — must fail.
+	form := url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"client_id":          {dpopClient},
+		"client_secret":      {dpopSecret},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/token",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("no-proof exchange: status=%d want 400; body=%s", resp.StatusCode, raw)
+	}
+	var errBody map[string]any
+	_ = json.Unmarshal(raw, &errBody)
+	if errBody["error"] != "invalid_grant" {
+		t.Errorf("no-proof exchange: error=%q want invalid_grant; body=%s", errBody["error"], raw)
+	}
+}
+
+// TestTokenExchange_DPoPBoundSubject_WithProofSucceeds locks that a valid DPoP
+// proof satisfies the RFC 9449 protection-level requirement and the exchange
+// proceeds to issue a new access token.
+func TestTokenExchange_DPoPBoundSubject_WithProofSucceeds(t *testing.T) {
+	srv := newDPoPHarness(t)
+	priv, x := dpopGenKey(t)
+
+	// Obtain a DPoP-bound access token.
+	proof1 := signDPoPProof(t, priv, x, http.MethodPost, srv.URL+"/token")
+	_, ccBody := callTokenWithDPoP(t, srv, proof1)
+	subjectToken, _ := ccBody["access_token"].(string)
+	if subjectToken == "" {
+		t.Fatalf("no access_token from DPoP client_credentials: %v", ccBody)
+	}
+
+	// Exchange it WITH a DPoP proof — must proceed (protection level preserved).
+	proof2 := signDPoPProof(t, priv, x, http.MethodPost, srv.URL+"/token")
+	form := url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"client_id":          {dpopClient},
+		"client_secret":      {dpopSecret},
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/token",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("DPoP", proof2)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("with-proof exchange: status=%d want 200; body=%s", resp.StatusCode, raw)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(raw, &body)
+	if body["access_token"] == nil {
+		t.Errorf("with-proof exchange: no access_token in response; body=%s", raw)
+	}
+}
