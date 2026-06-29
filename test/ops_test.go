@@ -114,8 +114,10 @@ func TestReadyz_OneCheckFails_Returns503(t *testing.T) {
 	if body.Checks["db"] != "ok" {
 		t.Errorf("db check leaked failure: %v", body.Checks)
 	}
-	if !strings.Contains(body.Checks["etcd"], "connection refused") {
-		t.Errorf("etcd error not surfaced: %v", body.Checks["etcd"])
+	// /readyz sanitizes raw error strings (unauthenticated endpoint); failed
+	// checks surface "check failed" rather than the internal error message.
+	if body.Checks["etcd"] != "check failed" {
+		t.Errorf("etcd check = %q, want %q (sanitized)", body.Checks["etcd"], "check failed")
 	}
 }
 
