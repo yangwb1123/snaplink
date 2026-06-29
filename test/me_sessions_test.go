@@ -16,7 +16,6 @@ import (
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oauth"
 )
 
 // newMeSessionsHarness wires a minimal server for /sessions/me and
@@ -780,9 +779,6 @@ func TestDeleteMeSession_NoBearer(t *testing.T) {
 }
 
 // ---------- POST /me/sessions/revoke-all ----------
-//
-// Uses the same harness as /token/revoke-all since both delegate to
-// oauth.HandleRevokeAll internally.
 
 func postMeSessionsRevokeAll(t *testing.T, srv *httptest.Server, bearer string) (int, map[string]any) {
 	t.Helper()
@@ -801,27 +797,35 @@ func postMeSessionsRevokeAll(t *testing.T, srv *httptest.Server, bearer string) 
 	return resp.StatusCode, out
 }
 
-func TestMeSessionsRevokeAll_KillsAllRefreshTokens(t *testing.T) {
-	srv, store := newRevokeAllServer(t)
+func TestMeSessionsRevokeAll_DestroysOtherSessions(t *testing.T) {
+	srv, sessions, loginAs := newMeSessionsHarness(t)
 
-	access, _ := loginAndCaptureTokens(t, srv)
-	_, r2 := loginAndCaptureTokens(t, srv)
+	// Two logins create two sessions for alice.
+	tok1 := loginAs("alice")
+	_ = loginAs("alice")
 
-	status, body := postMeSessionsRevokeAll(t, srv, access)
+	before, _ := sessions.ListByUser(context.Background(), "u-alice")
+	if len(before) < 2 {
+		t.Fatalf("expected >= 2 sessions before revoke-all, got %d", len(before))
+	}
+
+	// Revoke-all with tok1 preserves tok1's session and destroys the rest.
+	status, body := postMeSessionsRevokeAll(t, srv, tok1)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d body=%v", status, body)
 	}
-	if _, err := store.Consume(context.Background(), r2); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
-		t.Errorf("refresh token survived revoke-all: err=%v", err)
+	revoked, _ := body["revoked"].(float64)
+	if revoked < 1 {
+		t.Errorf("revoked = %v want >= 1", revoked)
 	}
-	count, _ := body["refresh_tokens_revoked"].(float64)
-	if count < 2 {
-		t.Errorf("refresh_tokens_revoked = %v want >= 2", count)
+	after, _ := sessions.ListByUser(context.Background(), "u-alice")
+	if len(after) >= len(before) {
+		t.Errorf("sessions not reduced: before=%d after=%d", len(before), len(after))
 	}
 }
 
 func TestMeSessionsRevokeAll_RequiresBearer(t *testing.T) {
-	srv, _ := newRevokeAllServer(t)
+	srv, _, _ := newMeSessionsHarness(t)
 	status, body := postMeSessionsRevokeAll(t, srv, "")
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d want 401", status)
@@ -832,7 +836,7 @@ func TestMeSessionsRevokeAll_RequiresBearer(t *testing.T) {
 }
 
 func TestMeSessionsRevokeAll_InvalidBearer(t *testing.T) {
-	srv, _ := newRevokeAllServer(t)
+	srv, _, _ := newMeSessionsHarness(t)
 	status, body := postMeSessionsRevokeAll(t, srv, "garbage-bearer")
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d want 401", status)
@@ -858,14 +862,22 @@ func TestMeSessionRoutes_NotMountedWithoutSessionMgr(t *testing.T) {
 	hs := httptest.NewServer(srv.Handler())
 	defer hs.Close()
 
-	for _, path := range []string{"/me/sessions", "/me/sessions/any-id", "/me/sessions/revoke-all"} {
-		resp, err := http.Get(hs.URL + path)
+	type check struct {
+		method, path string
+	}
+	for _, c := range []check{
+		{http.MethodGet, "/me/sessions"},
+		{http.MethodDelete, "/me/sessions/any-id"},
+		{http.MethodPost, "/me/sessions/revoke-all"},
+	} {
+		req, _ := http.NewRequest(c.method, hs.URL+c.path, nil)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
+			t.Fatalf("%s %s: %v", c.method, c.path, err)
 		}
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("%s: status = %d, want 404 (route unmounted)", path, resp.StatusCode)
+			t.Errorf("%s %s: status = %d, want 404 (route unmounted)", c.method, c.path, resp.StatusCode)
 		}
 	}
 }

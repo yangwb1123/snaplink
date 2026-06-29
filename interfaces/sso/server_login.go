@@ -63,7 +63,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 // bootstrapLoginRequest performs the /auth/login prologue — identical in
 // behavior and ORDER to the original inline opening — and returns the bound
 // request plus ok=false the instant a guard wrote a response (the caller MUST
-//     return):
+// return). Guards in order:
 //   - RFC 6749 §5.1: stamps Cache-Control: no-store + Pragma: no-cache, because
 //     /auth/login bodies carry access_token + refresh_token (and PKCE-flow code
 //     values) an intermediary cache must not retain.
