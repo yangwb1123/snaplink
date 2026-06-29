@@ -39,6 +39,7 @@ exact emission site.
 | `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
 | `unknown_provider`                    | 400  | OAuth/OIDC callback received an unknown provider in `state`        | Restart the auth flow                      |
 | `unsupported_grant_type`              | 400  | `/token` received an unrecognized `grant_type`                     | Use a supported grant type                 |
+| `unauthorized_client`                 | 400  | Client's DCR-registered `grant_types` list excludes the requested `grant_type` (RFC 6749 §5.2 / RFC 8693 §4.5); empty `grant_types` = unrestricted | Register the client with the needed grant type or remove the restriction |
 | `invalid_callback`                    | 400  | OAuth callback body malformed                                      | Restart the auth flow                      |
 | `callback_failed`                     | 401  | OAuth provider rejected the exchange                               | Restart the auth flow                      |
 | `login_required`                      | 400  | `prompt=none` was requested but no live session can fulfill the silent renewal (missing/bad `id_token_hint`, session ended, or hint bound to a different client) | Fall back to the visible login flow        |
@@ -54,6 +55,7 @@ exact emission site.
 | `provider_and_target_required`  | 400  | Either `provider` or `target` missing from request body |
 | `provider_does_not_send_codes`  | 400  | Named provider doesn't implement `CodeSender`           |
 | `send_failed`                   | 500  | Downstream SMS / email delivery error                   |
+| `resend_too_soon`               | 429  | A code was already sent to this target within the cooldown window (default 60 s); prevents send-code amplification attacks |
 
 ### Logout
 
