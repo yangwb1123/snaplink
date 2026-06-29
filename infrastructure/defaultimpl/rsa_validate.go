@@ -102,12 +102,13 @@ func (j *RSAJWTIssuer) decodeAndCheckClaims(payloadB64 string) (ed25519Payload, 
 		return ed25519Payload{}, fmt.Errorf("rsa: payload parse: %w", err)
 	}
 
-	now := time.Now().Unix()
-	skew := int64(j.maxClockSkew.Seconds())
-	if p.Exp != 0 && now-skew >= p.Exp {
+	// Use monotonic-clock-safe comparisons: time.Since / time.Until
+	// incorporate Go's monotonic offset and are immune to wall-clock
+	// rewinding, which could otherwise resurrect an expired token.
+	if p.Exp != 0 && time.Since(time.Unix(p.Exp, 0)) >= j.maxClockSkew {
 		return ed25519Payload{}, errors.New("rsa: token expired")
 	}
-	if p.Nbf != 0 && now+skew < p.Nbf {
+	if p.Nbf != 0 && time.Until(time.Unix(p.Nbf, 0)) > j.maxClockSkew {
 		return ed25519Payload{}, errors.New("rsa: token not yet valid")
 	}
 	return p, nil

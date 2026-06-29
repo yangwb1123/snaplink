@@ -68,15 +68,17 @@ func (s *ChallengeStore) Consume(id, userID, clientID string, scopes []string) b
 		return false
 	}
 
-	now := time.Now()
+	// Prune expired challenges using monotonic-clock-safe comparison.
+	// time.Since incorporates Go's monotonic offset, so a wall-clock
+	// rewind cannot resurrect an expired challenge.
 	for k, v := range s.challenges {
-		if now.After(v.ExpiresAt) {
+		if time.Since(v.ExpiresAt) > 0 {
 			delete(s.challenges, k)
 		}
 	}
 
 	ch, ok := s.challenges[id]
-	if !ok || now.After(ch.ExpiresAt) {
+	if !ok || time.Since(ch.ExpiresAt) > 0 {
 		return false
 	}
 	if ch.UserID != userID || ch.ClientID != clientID || !ScopesMatch(ch.Scopes, scopes) {

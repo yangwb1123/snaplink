@@ -39,7 +39,7 @@ func (m *MemoryIntrospectionCache) Get(key string) (*oauth.CachedResult, bool) {
 		return nil, false
 	}
 	entry := v.(memoryCacheEntry)
-	if timeNow().After(entry.expiresAt) {
+	if time.Since(entry.expiresAt) > 0 {
 		m.entries.Delete(key)
 		return nil, false
 	}
@@ -53,12 +53,13 @@ func (m *MemoryIntrospectionCache) Set(key string, result *oauth.CachedResult, t
 	}
 	m.entries.Store(key, memoryCacheEntry{
 		result:    result,
-		expiresAt: timeNow().Add(ttl),
+		expiresAt: time.Now().Add(ttl),
 	})
 }
 
-// timeNow is a package-level var for test injection. Production code calls
-// time.Now; tests can replace it with a fake clock.
+// timeNow is a package-level var for test injection. Deprecated: use
+// time.Now() directly; monotonic comparison is now handled by time.Since
+// in Get() which does not depend on this var.
 var timeNow = time.Now
 
 // NoopIntrospectionCache is a no-op implementation that never caches
