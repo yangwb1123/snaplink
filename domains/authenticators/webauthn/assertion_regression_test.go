@@ -92,8 +92,9 @@ func (a *softwareAuthenticator) credential(t *testing.T, startCounter uint32) *g
 // assertJSON produces the navigator.credentials.get() response JSON for the
 // given session challenge, asserting signCount and the user-verified bit. It
 // is a fully valid, signed assertion the real library accepts (modulo the UV /
-// counter conditions under test).
-func (a *softwareAuthenticator) assertJSON(t *testing.T, rpID, origin, challenge string, signCount uint32, userVerified bool) string {
+// counter conditions under test). When userHandle is non-nil, it is included
+// in the response — required for discoverable/conditional login tests.
+func (a *softwareAuthenticator) assertJSON(t *testing.T, rpID, origin, challenge string, signCount uint32, userVerified bool, userHandle []byte) string {
 	t.Helper()
 
 	clientData := map[string]string{
@@ -125,6 +126,9 @@ func (a *softwareAuthenticator) assertJSON(t *testing.T, rpID, origin, challenge
 			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientDataJSON),
 			"signature":         base64.RawURLEncoding.EncodeToString(sig),
 		},
+	}
+	if len(userHandle) > 0 {
+		resp["response"].(map[string]string)["userHandle"] = base64.RawURLEncoding.EncodeToString(userHandle)
 	}
 	b, err := json.Marshal(resp)
 	if err != nil {
@@ -202,7 +206,7 @@ func TestFinishLogin_ValidAssertionSucceeds(t *testing.T) {
 	session := mustPeekSession(t, h, ctx, testUserUV)
 
 	// counter advances (6 > 5), UV present.
-	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 6, true)
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 6, true, nil)
 	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
 	user, cred, err := h.FinishLogin(ctx, sessionID, req)
 	if err != nil {
@@ -236,7 +240,7 @@ func TestFinishLogin_CounterRegressionRejected(t *testing.T) {
 	session := mustPeekSession(t, h, ctx, testUserUV)
 
 	// Replay/clone: present counter 10, equal to the stored 10 → no advance.
-	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 10, true)
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 10, true, nil)
 	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
 	_, _, err = h.FinishLogin(ctx, sessionID, req)
 	if !errors.Is(err, ErrClonedAuthenticator) {
@@ -269,7 +273,7 @@ func TestFinishLogin_ZeroCounterPasskeyAccepted(t *testing.T) {
 	}
 	session := mustPeekSession(t, h, ctx, testUserUV)
 
-	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 0, true)
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 0, true, nil)
 	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
 	if _, _, err := h.FinishLogin(ctx, sessionID, req); err != nil {
 		t.Fatalf("zero-counter passkey rejected: %v", err)
@@ -297,7 +301,7 @@ func TestFinishLogin_UserVerificationRequiredRejectsUVMissing(t *testing.T) {
 	}
 
 	// Counter advances (2 > 1) so only the UV bit can cause rejection.
-	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, false)
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, false, nil)
 	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
 	_, _, err = h.FinishLogin(ctx, sessionID, req)
 	if err == nil {
@@ -324,7 +328,7 @@ func TestFinishLogin_UserVerificationRequiredAcceptsUVPresent(t *testing.T) {
 	}
 	session := mustPeekSession(t, h, ctx, testUserUV)
 
-	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, true)
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, true, nil)
 	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
 	if _, _, err := h.FinishLogin(ctx, sessionID, req); err != nil {
 		t.Fatalf("UV-present assertion rejected: %v", err)
@@ -358,7 +362,7 @@ func TestMFAProvider_AlwaysRequiresUserVerification(t *testing.T) {
 	}
 
 	// UV-missing assertion (counter advances) → Verify must fail.
-	bad := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, false)
+	bad := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, false, nil)
 	if err := p.Verify(ctx, testUserCnt, MethodWebAuthn, map[string]string{
 		"session":   sessionID,
 		"assertion": bad,
@@ -384,7 +388,7 @@ func TestMFAProvider_AcceptsUserVerifiedAssertion(t *testing.T) {
 	}
 	session := mustPeekSession(t, h, ctx, testUserCnt)
 
-	good := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, true)
+	good := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 2, true, nil)
 	if err := p.Verify(ctx, testUserCnt, MethodWebAuthn, map[string]string{
 		"session":   data["session"],
 		"assertion": good,

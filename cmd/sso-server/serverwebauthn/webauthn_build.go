@@ -274,10 +274,12 @@ func buildWebAuthnSessionStore(cfg config.WebAuthnBackendConfig, rdb goredis.Cmd
 // WebAuthn ceremony endpoint paths. Public so embedders writing
 // docs / client code can reference them.
 const (
-	PathWebAuthnRegistrationBegin  = "/webauthn/registration/begin"
-	PathWebAuthnRegistrationFinish = "/webauthn/registration/finish"
-	PathWebAuthnLoginBegin         = "/webauthn/login/begin"
-	PathWebAuthnLoginFinish        = "/webauthn/login/finish"
+	PathWebAuthnRegistrationBegin         = "/webauthn/registration/begin"
+	PathWebAuthnRegistrationFinish        = "/webauthn/registration/finish"
+	PathWebAuthnLoginBegin                = "/webauthn/login/begin"
+	PathWebAuthnLoginFinish               = "/webauthn/login/finish"
+	PathWebAuthnLoginConditionalBegin     = "/webauthn/login/conditional/begin"
+	PathWebAuthnLoginConditionalFinish    = "/webauthn/login/conditional/finish"
 )
 
 // WebAuthnDeps bundles everything the ceremony handlers need.

@@ -43,6 +43,8 @@ func MountWebAuthnRoutes(srv *sso.Server, deps *WebAuthnDeps) error {
 		{PathWebAuthnRegistrationFinish, webauthnFinishRegistrationHandler(deps)},
 		{PathWebAuthnLoginBegin, webauthnBeginLoginHandler(deps.Helper)},
 		{PathWebAuthnLoginFinish, webauthnFinishLoginHandler(deps)},
+		{PathWebAuthnLoginConditionalBegin, webauthnBeginLoginConditionalHandler(deps.Helper)},
+		{PathWebAuthnLoginConditionalFinish, webauthnFinishLoginConditionalHandler(deps)},
 	}
 	for _, r := range routes {
 		if err := srv.Handle(http.MethodPost, r.path, r.handler); err != nil {

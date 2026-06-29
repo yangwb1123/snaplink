@@ -446,3 +446,4 @@ func (h *Helper) FinishLogin(ctx context.Context, sessionID string, r *http.Requ
 	}
 	return user, cred, nil
 }
+

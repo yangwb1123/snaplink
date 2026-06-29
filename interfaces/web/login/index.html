@@ -265,7 +265,7 @@ input:focus, select:focus {
       </div>
       <div class="field" id="field-username">
         <label for="username">Username or email</label>
-        <input type="text" id="username" name="username" autocomplete="username" required placeholder="you@example.com">
+        <input type="text" id="username" name="username" autocomplete="username webauthn" required placeholder="you@example.com">
       </div>
       <div class="field" id="field-password">
         <label for="password">Password</label>
@@ -434,6 +434,11 @@ input:focus, select:focus {
   var forgotURL   = "../auth/forgot-password";
   var registerURL = "../auth/register";
 
+  // WebAuthn conditional-mediation (passkey autofill) endpoints.
+  // Relative from /login/ — the server mounts them at /webauthn/login/conditional/*.
+  var conditionalBeginURL  = "../webauthn/login/conditional/begin";
+  var conditionalFinishURL = "../webauthn/login/conditional/finish";
+
   // --- State ---
   var currentMFAChallengeID = "";
   var currentMFAMethods     = [];
@@ -522,6 +527,94 @@ input:focus, select:focus {
       }
     })
     .catch(function(){});
+  })();
+
+  // --- Conditional Mediation (Passkey Autofill) ---
+  // If the browser supports it, initiate a conditional mediation WebAuthn
+  // ceremony on page load. This lets the browser show available passkeys in
+  // the username field's autofill dropdown WITHOUT a modal dialog. The user
+  // can select a passkey directly and complete authentication seamlessly.
+  // If the browser doesn't support it, or no passkeys are available, the
+  // normal password login form remains fully functional.
+  //
+  // The conditional path uses a separate /webauthn/login/conditional/begin
+  // endpoint that does NOT require a username — the authenticator resolves
+  // the credential from its resident-key store (discoverable credentials).
+  // The finish endpoint resolves the user identity from the authenticator's
+  // userHandle, then issues tokens the same way as the regular flow.
+
+  // WebAuthn helper: convert an ArrayBuffer to a base64url-encoded string.
+  function arrayBufferToBase64URL(buf) {
+    var bytes = new Uint8Array(buf);
+    var str = "";
+    for (var i = 0; i < bytes.length; i++) {
+      str += String.fromCharCode(bytes[i]);
+    }
+    return btoa(str)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  // WebAuthn helper: convert a PublicKeyCredential (containing ArrayBuffer
+  // fields) to a JSON-serializable object the server expects.
+  function publicKeyCredentialToJSON(cred) {
+    var resp = cred.response;
+    return {
+      id: cred.id,
+      rawId: arrayBufferToBase64URL(cred.rawId),
+      type: cred.type,
+      response: {
+        clientDataJSON: arrayBufferToBase64URL(resp.clientDataJSON),
+        authenticatorData: arrayBufferToBase64URL(resp.authenticatorData),
+        signature: arrayBufferToBase64URL(resp.signature),
+        userHandle: resp.userHandle ? arrayBufferToBase64URL(resp.userHandle) : null,
+      },
+    };
+  }
+
+  (function initConditionalMediation() {
+    // Detect browser support.
+    if (!window.PublicKeyCredential ||
+        !PublicKeyCredential.isConditionalMediationAvailable) {
+      return;
+    }
+    PublicKeyCredential.isConditionalMediationAvailable().then(function(avail) {
+      if (!avail) return;
+      // Fetch the conditional-mediation challenge.
+      fetch(conditionalBeginURL, {method: "POST"})
+        .then(function(r) { return r.json().then(function(d) { return {status: r.status, data: d}; }); })
+        .then(function(res) {
+          if (res.status !== 200 || !res.data.options) return;
+          var opts = res.data.options;
+          var sessionID = res.data.session_id;
+          // opts is the full CredentialAssertion JSON from go-webauthn:
+          //   { publicKey: { challenge, rpId, ... }, mediation: "conditional" }
+          // Pass it directly to navigator.credentials.get().
+          return navigator.credentials.get(opts).then(function(assertion) {
+            // Serialize the PublicKeyCredential to JSON for the server.
+            var body = JSON.stringify(publicKeyCredentialToJSON(assertion));
+            // Send the assertion to the conditional finish endpoint.
+            var finishURL = conditionalFinishURL + "?session_id=" + encodeURIComponent(sessionID);
+            var clientID = oauthParams.client_id;
+            if (clientID) finishURL += "&client_id=" + encodeURIComponent(clientID);
+            return fetch(finishURL, {
+              method: "POST",
+              headers: {"Content-Type":"application/json"},
+              body: body
+            }).then(function(r2) { return r2.json().then(function(d2) { return {status: r2.status, data: d2}; }); });
+          }).then(function(res2) {
+            if (res2.status === 200 && !res2.data.error) {
+              handleSuccess(res2.data);
+            }
+          });
+        })
+        .catch(function() {
+          // Conditional mediation failed silently — user can still use the
+          // regular login form. This is expected when no passkey is
+          // registered or the user closes the autofill without selecting one.
+        });
+    }).catch(function() { /* ignore detection errors */ });
   })();
 
   // --- Home-realm discovery notice (B2B) ---

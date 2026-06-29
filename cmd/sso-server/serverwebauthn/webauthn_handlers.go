@@ -216,3 +216,74 @@ var errWebAuthnResidency = errors.New("webauthn: residency denied")
 // to a generic one — mirroring residencyGateLogin's authz-error shape on the
 // in-pipeline login path. Wraps errWebAuthnResidency for errors.Is.
 type webauthnResidencyError struct{ code string }
+
+// webauthnBeginLoginConditionalHandler starts a conditional-mediation
+// (passkey autofill) login ceremony. Unlike the regular begin-login handler,
+// this endpoint requires NO username — the browser discovers available
+// passkeys via the authenticator's resident-key (discoverable credential)
+// mechanism. The returned CredentialAssertion carries mediation:"conditional"
+// so the browser presents passkeys in the autofill dropdown.
+//
+// Request: POST /webauthn/login/conditional/begin (empty body).
+// Response: {"session_id":"...", "options":{...with mediation:"conditional"}}
+func webauthnBeginLoginConditionalHandler(h *webauthn.Helper) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		assertion, sessionID, err := h.BeginLoginConditional(r.Context())
+		if err != nil {
+			status, code := webauthnErrorStatus(err)
+			writeWebAuthnError(w, status, code, err.Error())
+			return
+		}
+		body, err := json.Marshal(assertion)
+		if err != nil {
+			writeWebAuthnError(w, http.StatusInternalServerError, "server_error", err.Error())
+			return
+		}
+		writeWebAuthnJSON(w, http.StatusOK, webauthnBeginLoginResponse{
+			SessionID: sessionID,
+			Options:   body,
+		})
+	}
+}
+
+// webauthnFinishLoginConditionalHandler completes a conditional-mediation
+// (passkey autofill) login ceremony. It uses the userHandle from the
+// authenticator response to resolve the user identity (since the begin
+// endpoint did not know the user). Optional token issuance works the same
+// way as the regular FinishLogin handler.
+//
+// Request: POST /webauthn/login/conditional/finish?session_id=<id>
+// Body: the credential assertion response from navigator.credentials.get()
+// Response: {"username":"...", "credential_id":"...", optional token fields}
+func webauthnFinishLoginConditionalHandler(deps *WebAuthnDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.URL.Query().Get("session_id")
+		if sessionID == "" {
+			writeWebAuthnError(w, http.StatusBadRequest, "invalid_request", "session_id required")
+			recordWebAuthnAssertion(deps, "failure")
+			return
+		}
+		user, cred, err := deps.Helper.FinishLoginConditional(r.Context(), sessionID, r)
+		if err != nil {
+			status, code := webauthnErrorStatus(err)
+			writeWebAuthnError(w, status, code, err.Error())
+			recordWebAuthnAssertion(deps, "failure")
+			return
+		}
+		resp := webauthnFinishLoginResponse{
+			Username:     user.Name,
+			CredentialID: base64.RawURLEncoding.EncodeToString(cred.ID),
+		}
+		// Optional token issuance: when client_id is supplied AND
+		// the cmd has a ClientStore + TokenIssuers wired, mint an
+		// access token for the authenticated subject.
+		clientID := r.URL.Query().Get("client_id")
+		if clientID != "" && deps.ClientStore != nil && len(deps.TokenIssuers) > 0 {
+			if !applyWebAuthnTokenIssuance(w, r, deps, clientID, user.Name, &resp) {
+				return
+			}
+		}
+		writeWebAuthnJSON(w, http.StatusOK, resp)
+		recordWebAuthnAssertion(deps, "success")
+	}
+}
