@@ -613,3 +613,35 @@ func TestMFA_SecondFactorLockout(t *testing.T) {
 		t.Errorf("MFA failures not registered on the namespaced key: %d", lock.failures["mfa lockout:alice"])
 	}
 }
+
+// TestMFA_EmailVerificationGate_BlocksUnverified is a regression test for the
+// MFA step-up bypass that existed before the rejectUnverifiedEmail call was
+// added to resumeLoginAfterMFA. When signupRequireVerification is true, a user
+// who has NOT set email_verified="true" must be blocked at MFA completion —
+// not at /auth/login (where the gate cannot fire, because MFA completion hasn't
+// happened yet) but at POST /auth/mfa. buildMFAHarness creates alice without
+// email_verified, so no special setup is required.
+func TestMFA_EmailVerificationGate_BlocksUnverified(t *testing.T) {
+	srv, _, secret := buildMFAHarness(t, sso.WithSignupRequireVerification(true))
+
+	status, body := loginMFA(t, srv)
+	if status != http.StatusOK {
+		t.Fatalf("login status = %d, want 200 (mfa_required is success-shaped); body=%v", status, body)
+	}
+	if body["error"] != sso.ErrMFARequired {
+		t.Errorf("error = %v, want mfa_required", body["error"])
+	}
+	chal, _ := body["mfa_challenge_id"].(string)
+	if chal == "" {
+		t.Fatalf("mfa_challenge_id missing; body=%v", body)
+	}
+
+	code := validTOTPCode(t, secret)
+	status, body = completeMFA(t, srv, chal, authenticators.MethodTOTP, code)
+	if status != http.StatusForbidden {
+		t.Errorf("MFA completion for unverified user: status = %d, want 403; body=%v", status, body)
+	}
+	if body["error"] != sso.ErrEmailNotVerified {
+		t.Errorf("error = %v, want %v", body["error"], sso.ErrEmailNotVerified)
+	}
+}

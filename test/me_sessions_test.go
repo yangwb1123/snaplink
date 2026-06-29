@@ -797,30 +797,30 @@ func postMeSessionsRevokeAll(t *testing.T, srv *httptest.Server, bearer string) 
 	return resp.StatusCode, out
 }
 
-func TestMeSessionsRevokeAll_DestroysOtherSessions(t *testing.T) {
+func TestMeSessionsRevokeAll_RevokesAllIncludingCurrent(t *testing.T) {
+	// POST /me/sessions/revoke-all is a hard sign-out-everywhere: it revokes
+	// ALL sessions including the caller's current session (no keepCurrent logic).
 	srv, sessions, loginAs := newMeSessionsHarness(t)
 
-	// Two logins create two sessions for alice.
 	tok1 := loginAs("alice")
-	_ = loginAs("alice")
+	_ = loginAs("alice") // second session
 
 	before, _ := sessions.ListByUser(context.Background(), "u-alice")
 	if len(before) < 2 {
 		t.Fatalf("expected >= 2 sessions before revoke-all, got %d", len(before))
 	}
 
-	// Revoke-all with tok1 preserves tok1's session and destroys the rest.
 	status, body := postMeSessionsRevokeAll(t, srv, tok1)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d body=%v", status, body)
 	}
-	revoked, _ := body["revoked"].(float64)
-	if revoked < 1 {
-		t.Errorf("revoked = %v want >= 1", revoked)
+	if revoked, _ := body["revoked"].(float64); int(revoked) != len(before) {
+		t.Errorf("revoked = %v want %d (all sessions including current)", revoked, len(before))
 	}
+	// No sessions must remain — including the caller's current one.
 	after, _ := sessions.ListByUser(context.Background(), "u-alice")
-	if len(after) >= len(before) {
-		t.Errorf("sessions not reduced: before=%d after=%d", len(before), len(after))
+	if len(after) != 0 {
+		t.Errorf("sessions remaining = %d, want 0 after revoke-all", len(after))
 	}
 }
 
